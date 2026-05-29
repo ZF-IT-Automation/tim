@@ -1,0 +1,9 @@
+{
+  "name": "tim-migrate",
+  "version": "0.1.0-alpha",
+  "description": "TIM migration: hmem → TIM schema converter",
+  "main": "dist/index.js",
+  "files": ["dist"],
+  "scripts": { "build": "tsc", "test": "vitest run" },
+  "dependencies": { "tim-core": "*", "tim-store": "*", "better-sqlite3": "^11.7.0" }
+}

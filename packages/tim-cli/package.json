@@ -1,0 +1,10 @@
+{
+  "name": "tim-cli",
+  "version": "0.1.0-alpha",
+  "description": "TIM CLI: init, write, read, search, sync, doctor, visualize",
+  "main": "dist/index.js",
+  "bin": { "tim": "dist/cli.js" },
+  "files": ["dist"],
+  "scripts": { "build": "tsc", "test": "vitest run" },
+  "dependencies": { "tim-core": "*", "tim-store": "*", "tim-sync": "*", "tim-search": "*" }
+}

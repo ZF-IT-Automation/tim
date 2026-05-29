@@ -1,0 +1,27 @@
+{
+  "name": "tim",
+  "version": "0.1.0-alpha",
+  "private": true,
+  "description": "TIM — Theoretically Infinite Memory. Local-first, self-optimizing cognitive OS for AI agents.",
+  "workspaces": [
+    "packages/tim-core",
+    "packages/tim-store",
+    "packages/tim-sync",
+    "packages/tim-search",
+    "packages/tim-cli",
+    "packages/tim-mcp",
+    "packages/tim-migrate"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "test": "vitest run",
+    "lint": "tsc --noEmit",
+    "clean": "rm -rf packages/*/dist"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}

@@ -1,0 +1,219 @@
+// TIM Core Types — v0.1.0-alpha
+// These types define the contract that all modules must implement.
+
+import { ulid } from 'ulid';
+
+// ─── Entry ────────────────────────────────────────────────
+
+export type ContentType = 'text' | 'json' | 'blob';
+
+export interface Entry {
+  id: string;                    // ULID
+  parentId: string | null;       // null = root
+  content: string;
+  contentType: ContentType;
+  depth: number;                 // 1-5
+  confidence: number;            // 0.0-1.0
+  createdAt: string;             // ISO 8601
+  accessedAt: string;
+  decayRate: number;             // 0.0 = never decay
+  visibility: number;            // bitmask: 1=owner, 2=trusted, 4=leased, 8=public
+  tags: string[];                // e.g. ['#sql', '#bug']
+  irrelevant: boolean;           // soft delete
+  tombstonedAt: string | null;   // hard-delete marker
+  metadata: Record<string, unknown>; // extensible
+}
+
+// ─── Edge ─────────────────────────────────────────────────
+
+export type EdgeType = 'relates' | 'extends' | 'contradicts' | 'implements' |
+                       'blocks' | 'leases' | 'tagged' | 'summarizes' |
+                       'session_exchange' | 'contradicted_by';
+
+export interface Edge {
+  id: string;                    // ULID
+  sourceId: string;
+  targetId: string;
+  type: EdgeType;
+  weight: number;                // 0.0-1.0
+  metadata: Record<string, unknown>; // lease_expiry, confidence_override, ...
+}
+
+// ─── Agent ────────────────────────────────────────────────
+
+export interface AgentIdentity {
+  id: string;                    // ULID
+  name: string;                  // e.g. "Claude Code"
+  label: string;                 // e.g. "claude"
+  registeredAt: string;
+  visibilityMask: number;        // default: 1 (owner)
+}
+
+// ─── Read/Write Options ───────────────────────────────────
+
+export interface ReadOptions {
+  depth?: number;                // 1-5, default: 2
+  includeEdges?: boolean;
+  includeChildren?: boolean;
+  confidenceAbove?: number;      // filter: only high-confidence entries
+  visibilityMask?: number;       // which agents can see this
+  showIrrelevant?: boolean;
+}
+
+export interface WriteOptions {
+  parentId?: string | null;
+  contentType?: ContentType;
+  confidence?: number;
+  decayRate?: number;
+  visibility?: number;
+  tags?: string[];
+  edges?: Omit<Edge, 'id'>[];   // edges to create alongside entry
+  metadata?: Record<string, unknown>;
+}
+
+export interface SearchOptions {
+  query: string;
+  topK?: number;
+  searchType?: 'fts' | 'vector' | 'hybrid';
+  confidenceAbove?: number;
+  visibilityMask?: number;
+}
+
+// ─── Staging (for sync) ───────────────────────────────────
+
+export type SyncOperation = 'upsert' | 'delete';
+export type SyncEntity = 'entry' | 'edge';
+
+export interface StagingRecord {
+  key: string;                   // entry_id or edge_id
+  entityType: SyncEntity;
+  operation: SyncOperation;
+  payload: string;               // full row as JSON
+  lwwTimestamp: number;          // Unix ms
+  lwwDevice: string;             // device ULID
+  lwwConfidence: number;
+  acked: boolean;
+}
+
+// ─── Memory Interface (implemented by tim-store) ──────────
+
+export interface MemoryInterface {
+  // CRUD
+  read(id: string, options?: ReadOptions): Promise<Entry | null>;
+  write(content: string, options?: WriteOptions): Promise<Entry>;
+  update(id: string, patch: Partial<Entry>): Promise<Entry>;
+  delete(id: string, hard?: boolean): Promise<void>;
+
+  // Search
+  search(options: SearchOptions): Promise<Entry[]>;
+  searchFts(query: string, limit?: number): Promise<Entry[]>;
+
+  // Edges
+  link(sourceId: string, targetId: string, type: EdgeType,
+       weight?: number, metadata?: Record<string, unknown>): Promise<Edge>;
+  getEdges(id: string, direction?: 'outgoing' | 'incoming' | 'both'): Promise<Edge[]>;
+  traceChain(startId: string, edgeType?: EdgeType, depth?: number): Promise<Entry[]>;
+
+  // Agents
+  registerAgent(name: string, label: string): Promise<AgentIdentity>;
+  getAgents(): Promise<AgentIdentity[]>;
+
+  // Sync
+  getStaging(cursor?: number): Promise<StagingRecord[]>;
+  applyStaging(records: StagingRecord[]): Promise<void>;
+  getStagingCursor(): Promise<number>;
+  gcStaging(olderThanDays: number): Promise<number>;
+
+  // Health
+  health(): Promise<HealthReport>;
+  stats(): Promise<MemoryStats>;
+
+  // Suppression
+  suppress(pattern: string, reason: string, ttl?: string): Promise<void>;
+  isSuppressed(content: string): Promise<boolean>;
+}
+
+// ─── Health / Stats ───────────────────────────────────────
+
+export interface HealthReport {
+  brokenLinks: number;
+  orphanEntries: number;
+  ftsIntegrity: boolean;
+  totalEntries: number;
+  totalEdges: number;
+  issues: string[];
+}
+
+export interface MemoryStats {
+  totalEntries: number;
+  totalEdges: number;
+  entriesByDepth: Record<number, number>;
+  entriesByType: Record<string, number>;
+  topTags: { tag: string; count: number }[];
+  avgConfidence: number;
+  oldestEntry: string | null;    // ISO 8601
+  newestEntry: string | null;
+  staleCount: number;            // not accessed in 30d
+}
+
+// ─── Event Bus ────────────────────────────────────────────
+
+export type EventType =
+  | 'memory:written'
+  | 'memory:updated'
+  | 'memory:deleted'
+  | 'edge:created'
+  | 'sync:pushed'
+  | 'sync:pulled'
+  | 'agent:registered'
+  | 'rem:decay'
+  | 'rem:compress'
+  | 'rem:health';
+
+export interface MemoryEvent {
+  type: EventType;
+  timestamp: string;
+  payload: unknown;
+}
+
+export type EventHandler = (event: MemoryEvent) => void | Promise<void>;
+
+export interface EventBus {
+  on(type: EventType, handler: EventHandler): void;
+  off(type: EventType, handler: EventHandler): void;
+  emit(type: EventType, payload: unknown): Promise<void>;
+}
+
+// ─── Plugin System ────────────────────────────────────────
+
+export interface Plugin {
+  name: string;
+  version: string;
+  hooks: Partial<Record<EventType, EventHandler>>;
+}
+
+export interface PluginRegistry {
+  register(plugin: Plugin): void;
+  unregister(name: string): void;
+  get(name: string): Plugin | undefined;
+  list(): Plugin[];
+}
+
+// ─── Kernel ────────────────────────────────────────────────
+
+export interface TimKernel {
+  memory: MemoryInterface;
+  events: EventBus;
+  plugins: PluginRegistry;
+  agents: AgentIdentity[];
+  config: TimConfig;
+}
+
+export interface TimConfig {
+  dbPath: string;
+  deviceId: string;
+  syncServer?: string;
+  remSleepInterval?: number;      // ms between REM cycles, default: 3600000
+  defaultVisibility?: number;
+  defaultConfidence?: number;
+}
