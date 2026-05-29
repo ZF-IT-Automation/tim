@@ -1,0 +1,404 @@
+"use strict";
+// TIM Store — v0.1.0-alpha
+// SQLite-backed MemoryInterface implementation.
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.TimStore = void 0;
+const better_sqlite3_1 = __importDefault(require("better-sqlite3"));
+const ulid_1 = require("ulid");
+const schema_js_1 = require("./schema.js");
+class TimStore {
+    db;
+    constructor(dbPath) {
+        this.db = new better_sqlite3_1.default(dbPath);
+        (0, schema_js_1.runMigrations)(this.db);
+        (0, schema_js_1.createTriggers)(this.db);
+    }
+    close() {
+        this.db.close();
+    }
+    // ─── CRUD ──────────────────────────────────────────────
+    async read(id, options = {}) {
+        const entry = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(id);
+        if (!entry)
+            return null;
+        // Visibility check
+        const mask = options.visibilityMask ?? 7; // default: owner+trusted+leased
+        if ((entry.visibility & mask) === 0)
+            return null;
+        if (!options.showIrrelevant && entry.irrelevant)
+            return null;
+        return rowToEntry(entry);
+    }
+    async write(content, options = {}) {
+        const id = (0, ulid_1.ulid)();
+        const now = new Date().toISOString();
+        const timestamp = Date.now();
+        // Calculate depth
+        let depth = 1;
+        if (options.parentId) {
+            const parent = this.db.prepare('SELECT depth FROM entries WHERE id = ?').get(options.parentId);
+            if (parent)
+                depth = Math.min(parent.depth + 1, 5);
+        }
+        const entry = {
+            id,
+            parent_id: options.parentId ?? null,
+            content,
+            content_type: options.contentType ?? 'text',
+            depth,
+            confidence: options.confidence ?? 1.0,
+            created_at: now,
+            accessed_at: now,
+            decay_rate: options.decayRate ?? 0.0,
+            visibility: options.visibility ?? 1,
+            tags: JSON.stringify(options.tags ?? []),
+            irrelevant: 0,
+            tombstoned_at: null,
+            metadata: JSON.stringify(options.metadata ?? {}),
+        };
+        this.db.prepare(`INSERT INTO entries (id, parent_id, content, content_type, depth,
+      confidence, created_at, accessed_at, decay_rate, visibility, tags, irrelevant,
+      tombstoned_at, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(entry.id, entry.parent_id, entry.content, entry.content_type, entry.depth, entry.confidence, entry.created_at, entry.accessed_at, entry.decay_rate, entry.visibility, entry.tags, entry.irrelevant, entry.tombstoned_at, entry.metadata);
+        // Write to staging for sync
+        this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
+      lww_timestamp, lww_device, lww_confidence)
+      VALUES (?, 'entry', 'upsert', ?, ?, ?, ?)`).run(id, JSON.stringify(entry), timestamp, 'local', options.confidence ?? 1.0);
+        // Create edges if provided
+        if (options.edges) {
+            for (const edge of options.edges) {
+                await this.link(entry.id, edge.targetId, edge.type, edge.weight, edge.metadata);
+            }
+        }
+        return rowToEntry(entry);
+    }
+    async update(id, patch) {
+        const existing = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(id);
+        if (!existing)
+            throw new Error(`Entry not found: ${id}`);
+        const now = new Date().toISOString();
+        const timestamp = Date.now();
+        const updated = {
+            ...existing,
+            content: patch.content ?? existing.content,
+            content_type: patch.contentType ?? existing.content_type,
+            confidence: patch.confidence ?? existing.confidence,
+            decay_rate: patch.decayRate ?? existing.decay_rate,
+            visibility: patch.visibility ?? existing.visibility,
+            tags: patch.tags ? JSON.stringify(patch.tags) : existing.tags,
+            irrelevant: patch.irrelevant ? 1 : existing.irrelevant,
+            tombstoned_at: patch.tombstonedAt ?? existing.tombstoned_at,
+            metadata: patch.metadata ? JSON.stringify(patch.metadata) : existing.metadata,
+            accessed_at: now,
+        };
+        this.db.prepare(`UPDATE entries SET content=?, content_type=?, confidence=?,
+      decay_rate=?, visibility=?, tags=?, irrelevant=?, tombstoned_at=?, metadata=?,
+      accessed_at=? WHERE id=?`).run(updated.content, updated.content_type, updated.confidence, updated.decay_rate, updated.visibility, updated.tags, updated.irrelevant, updated.tombstoned_at, updated.metadata, updated.accessed_at, id);
+        // Write to staging
+        this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
+      lww_timestamp, lww_device, lww_confidence)
+      VALUES (?, 'entry', 'upsert', ?, ?, ?, ?)`).run(id, JSON.stringify(updated), timestamp, 'local', updated.confidence);
+        return rowToEntry(updated);
+    }
+    async delete(id, hard = false) {
+        if (hard) {
+            const now = new Date().toISOString();
+            this.db.prepare('UPDATE entries SET tombstoned_at = ? WHERE id = ?').run(now, id);
+            this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
+        lww_timestamp, lww_device, lww_confidence)
+        VALUES (?, 'entry', 'delete', ?, ?, ?, ?)`).run(id, JSON.stringify({ id, tombstoned_at: now }), Date.now(), 'local', 1.0);
+        }
+        else {
+            this.db.prepare('UPDATE entries SET irrelevant = 1 WHERE id = ?').run(id);
+        }
+    }
+    // ─── Search ────────────────────────────────────────────
+    async search(options) {
+        return this.searchFts(options.query, options.topK ?? 10);
+    }
+    async searchFts(query, limit = 10) {
+        // Sanitize FTS5 query
+        const sanitized = query.replace(/['"]/g, '');
+        const rows = this.db.prepare(`
+      SELECT e.* FROM entries e
+      INNER JOIN fts_entries f ON e.rowid = f.rowid
+      WHERE fts_entries MATCH ?
+      AND e.irrelevant = 0
+      ORDER BY rank
+      LIMIT ?
+    `).all(sanitized, limit);
+        return rows.map(rowToEntry);
+    }
+    // ─── Edges ─────────────────────────────────────────────
+    async link(sourceId, targetId, type, weight = 1.0, metadata = {}) {
+        const id = (0, ulid_1.ulid)();
+        this.db.prepare(`INSERT INTO edges (id, source_id, target_id, type, weight, metadata)
+      VALUES (?, ?, ?, ?, ?, ?)`).run(id, sourceId, targetId, type, weight, JSON.stringify(metadata));
+        return { id, sourceId, targetId, type, weight, metadata };
+    }
+    async getEdges(id, direction = 'both') {
+        let rows = [];
+        if (direction === 'outgoing' || direction === 'both') {
+            const out = this.db.prepare('SELECT * FROM edges WHERE source_id = ?').all(id);
+            rows.push(...out);
+        }
+        if (direction === 'incoming' || direction === 'both') {
+            const inc = this.db.prepare('SELECT * FROM edges WHERE target_id = ?').all(id);
+            rows.push(...inc);
+        }
+        return rows.map(rowToEdge);
+    }
+    async traceChain(startId, edgeType, depth = 5) {
+        const visited = new Set();
+        const result = [];
+        const queue = [startId];
+        while (queue.length > 0 && depth > 0) {
+            const current = queue.shift();
+            if (visited.has(current))
+                continue;
+            visited.add(current);
+            const entry = await this.read(current);
+            if (entry)
+                result.push(entry);
+            let edges;
+            if (edgeType) {
+                edges = this.db.prepare('SELECT * FROM edges WHERE source_id = ? AND type = ?')
+                    .all(current, edgeType);
+            }
+            else {
+                edges = this.db.prepare('SELECT * FROM edges WHERE source_id = ?')
+                    .all(current);
+            }
+            for (const edge of edges) {
+                if (!visited.has(edge.target_id)) {
+                    queue.push(edge.target_id);
+                }
+            }
+            depth--;
+        }
+        return result;
+    }
+    // ─── Agents ────────────────────────────────────────────
+    async registerAgent(name, label) {
+        const id = (0, ulid_1.ulid)();
+        const now = new Date().toISOString();
+        this.db.prepare(`INSERT INTO agents (id, name, label, registered_at, visibility_mask)
+      VALUES (?, ?, ?, ?, 1)`).run(id, name, label, now);
+        return { id, name, label, registeredAt: now, visibilityMask: 1 };
+    }
+    async getAgents() {
+        const rows = this.db.prepare('SELECT * FROM agents').all();
+        return rows.map(r => ({
+            id: r.id,
+            name: r.name,
+            label: r.label,
+            registeredAt: r.registered_at,
+            visibilityMask: r.visibility_mask,
+        }));
+    }
+    // ─── Sync / Staging ────────────────────────────────────
+    async getStaging(cursor) {
+        let rows;
+        if (cursor !== undefined) {
+            rows = this.db.prepare('SELECT * FROM staging WHERE rowid > ? ORDER BY rowid')
+                .all(cursor);
+        }
+        else {
+            rows = this.db.prepare('SELECT * FROM staging WHERE acked = 0 ORDER BY rowid')
+                .all();
+        }
+        return rows.map(rowToStaging);
+    }
+    async applyStaging(records) {
+        const upsertEntry = this.db.prepare(`INSERT OR REPLACE INTO entries
+      (id, parent_id, content, content_type, depth, confidence, created_at,
+       accessed_at, decay_rate, visibility, tags, irrelevant, tombstoned_at, metadata)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+        const upsertEdge = this.db.prepare(`INSERT OR REPLACE INTO edges
+      (id, source_id, target_id, type, weight, metadata)
+      VALUES (?, ?, ?, ?, ?, ?)`);
+        const deleteEntry = this.db.prepare('DELETE FROM entries WHERE id = ?');
+        const deleteEdge = this.db.prepare('DELETE FROM edges WHERE id = ?');
+        const transaction = this.db.transaction(() => {
+            for (const record of records) {
+                if (record.entityType === 'entry') {
+                    if (record.operation === 'delete') {
+                        const payload = JSON.parse(record.payload);
+                        deleteEntry.run(payload.id);
+                    }
+                    else {
+                        const entry = JSON.parse(record.payload);
+                        upsertEntry.run(entry.id, entry.parent_id, entry.content, entry.content_type, entry.depth, entry.confidence, entry.created_at, entry.accessed_at, entry.decay_rate, entry.visibility, entry.tags, entry.irrelevant, entry.tombstoned_at, entry.metadata);
+                    }
+                }
+                else if (record.entityType === 'edge') {
+                    if (record.operation === 'delete') {
+                        const payload = JSON.parse(record.payload);
+                        deleteEdge.run(payload.id);
+                    }
+                    else {
+                        const edge = JSON.parse(record.payload);
+                        upsertEdge.run(edge.id, edge.source_id, edge.target_id, edge.type, edge.weight, edge.metadata);
+                    }
+                }
+            }
+        });
+        transaction();
+    }
+    async getStagingCursor() {
+        const row = this.db.prepare('SELECT MAX(rowid) as cursor FROM staging').get();
+        return row.cursor ?? 0;
+    }
+    async gcStaging(olderThanDays) {
+        const threshold = Date.now() - olderThanDays * 86400_000;
+        const result = this.db.prepare('DELETE FROM staging WHERE acked = 1 AND lww_timestamp < ?').run(threshold);
+        return result.changes;
+    }
+    // ─── Health ────────────────────────────────────────────
+    async health() {
+        const issues = [];
+        // Broken links: edges referencing deleted/tombstoned entries
+        const brokenLinks = this.db.prepare(`
+      SELECT COUNT(*) as count FROM edges e
+      LEFT JOIN entries s ON e.source_id = s.id
+      LEFT JOIN entries t ON e.target_id = t.id
+      WHERE s.id IS NULL OR s.tombstoned_at IS NOT NULL
+         OR t.id IS NULL OR t.tombstoned_at IS NOT NULL
+    `).get();
+        if (brokenLinks.count > 0) {
+            issues.push(`${brokenLinks.count} broken links`);
+        }
+        // Orphan entries: no edges, no children, not root
+        const orphans = this.db.prepare(`
+      SELECT COUNT(*) as count FROM entries e
+      WHERE e.parent_id IS NOT NULL
+        AND e.id NOT IN (SELECT DISTINCT parent_id FROM entries WHERE parent_id IS NOT NULL)
+        AND e.id NOT IN (SELECT source_id FROM edges)
+        AND e.id NOT IN (SELECT target_id FROM edges)
+    `).get();
+        if (orphans.count > 0) {
+            issues.push(`${orphans.count} orphan entries`);
+        }
+        // FTS integrity
+        let ftsOk = true;
+        try {
+            this.db.prepare("INSERT INTO fts_entries(fts_entries) VALUES ('integrity-check')").run();
+        }
+        catch {
+            ftsOk = false;
+            issues.push('FTS5 index integrity failure');
+        }
+        // Counts
+        const totalEntries = this.db.prepare('SELECT COUNT(*) as count FROM entries WHERE irrelevant = 0').get().count;
+        const totalEdges = this.db.prepare('SELECT COUNT(*) as count FROM edges').get().count;
+        return {
+            brokenLinks: brokenLinks.count,
+            orphanEntries: orphans.count,
+            ftsIntegrity: ftsOk,
+            totalEntries,
+            totalEdges,
+            issues,
+        };
+    }
+    async stats() {
+        const totalEntries = this.db.prepare('SELECT COUNT(*) as c FROM entries WHERE irrelevant = 0').get().c;
+        const totalEdges = this.db.prepare('SELECT COUNT(*) as c FROM edges').get().c;
+        // Depth distribution
+        const depthRows = this.db.prepare('SELECT depth, COUNT(*) as c FROM entries WHERE irrelevant = 0 GROUP BY depth').all();
+        const entriesByDepth = {};
+        for (const r of depthRows)
+            entriesByDepth[r.depth] = r.c;
+        // Content type distribution
+        const typeRows = this.db.prepare('SELECT content_type, COUNT(*) as c FROM entries WHERE irrelevant = 0 GROUP BY content_type').all();
+        const entriesByType = {};
+        for (const r of typeRows)
+            entriesByType[r.content_type] = r.c;
+        // Top tags
+        const allTags = this.db.prepare("SELECT tags FROM entries WHERE irrelevant = 0 AND tags != '[]'").all();
+        const tagCounts = new Map();
+        for (const row of allTags) {
+            const tags = JSON.parse(row.tags);
+            for (const tag of tags) {
+                tagCounts.set(tag, (tagCounts.get(tag) ?? 0) + 1);
+            }
+        }
+        const topTags = [...tagCounts.entries()]
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 20)
+            .map(([tag, count]) => ({ tag, count }));
+        // Confidence
+        const avgConf = this.db.prepare('SELECT AVG(confidence) as avg FROM entries WHERE irrelevant = 0').get().avg;
+        // Temporal
+        const oldest = this.db.prepare('SELECT created_at FROM entries WHERE irrelevant = 0 ORDER BY created_at LIMIT 1').get()?.created_at ?? null;
+        const newest = this.db.prepare('SELECT created_at FROM entries WHERE irrelevant = 0 ORDER BY created_at DESC LIMIT 1').get()?.created_at ?? null;
+        const thirtyDaysAgo = new Date(Date.now() - 30 * 86400_000).toISOString();
+        const stale = this.db.prepare('SELECT COUNT(*) as c FROM entries WHERE irrelevant = 0 AND accessed_at < ?').get(thirtyDaysAgo).c;
+        return { totalEntries, totalEdges, entriesByDepth, entriesByType, topTags, avgConfidence: avgConf, oldestEntry: oldest, newestEntry: newest, staleCount: stale };
+    }
+    // ─── Suppression ───────────────────────────────────────
+    async suppress(pattern, reason, ttl) {
+        const now = new Date().toISOString();
+        let expiresAt = null;
+        if (ttl) {
+            const match = ttl.match(/^(\d+)([hdm])$/);
+            if (match) {
+                const value = parseInt(match[1]);
+                const unit = match[2];
+                const ms = unit === 'h' ? 3600_000 : unit === 'd' ? 86400_000 : 60_000;
+                expiresAt = new Date(Date.now() + value * ms).toISOString();
+            }
+        }
+        this.db.prepare(`INSERT INTO suppressed (pattern, reason, suppressed_at, suppressed_by, expires_at)
+      VALUES (?, ?, ?, ?, ?)`).run(pattern, reason, now, 'system', expiresAt);
+    }
+    async isSuppressed(content) {
+        const now = new Date().toISOString();
+        const patterns = this.db.prepare('SELECT pattern FROM suppressed WHERE expires_at IS NULL OR expires_at > ?').all(now);
+        return patterns.some(p => content.toLowerCase().includes(p.pattern.toLowerCase()));
+    }
+}
+exports.TimStore = TimStore;
+// ─── Row → Domain Mappers ───────────────────────────────
+function rowToEntry(row) {
+    return {
+        id: row.id,
+        parentId: row.parent_id,
+        content: row.content,
+        contentType: row.content_type,
+        depth: row.depth,
+        confidence: row.confidence,
+        createdAt: row.created_at,
+        accessedAt: row.accessed_at,
+        decayRate: row.decay_rate,
+        visibility: row.visibility,
+        tags: JSON.parse(row.tags),
+        irrelevant: row.irrelevant === 1,
+        tombstonedAt: row.tombstoned_at,
+        metadata: JSON.parse(row.metadata),
+    };
+}
+function rowToEdge(row) {
+    return {
+        id: row.id,
+        sourceId: row.source_id,
+        targetId: row.target_id,
+        type: row.type,
+        weight: row.weight,
+        metadata: JSON.parse(row.metadata),
+    };
+}
+function rowToStaging(row) {
+    return {
+        key: row.key,
+        entityType: row.entity_type,
+        operation: row.operation,
+        payload: row.payload,
+        lwwTimestamp: row.lww_timestamp,
+        lwwDevice: row.lww_device,
+        lwwConfidence: row.lww_confidence,
+        acked: row.acked === 1,
+    };
+}
+//# sourceMappingURL=store.js.map

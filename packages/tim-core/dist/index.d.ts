@@ -1,0 +1,152 @@
+export type ContentType = 'text' | 'json' | 'blob';
+export interface Entry {
+    id: string;
+    parentId: string | null;
+    content: string;
+    contentType: ContentType;
+    depth: number;
+    confidence: number;
+    createdAt: string;
+    accessedAt: string;
+    decayRate: number;
+    visibility: number;
+    tags: string[];
+    irrelevant: boolean;
+    tombstonedAt: string | null;
+    metadata: Record<string, unknown>;
+}
+export type EdgeType = 'relates' | 'extends' | 'contradicts' | 'implements' | 'blocks' | 'leases' | 'tagged' | 'summarizes' | 'session_exchange' | 'contradicted_by';
+export interface Edge {
+    id: string;
+    sourceId: string;
+    targetId: string;
+    type: EdgeType;
+    weight: number;
+    metadata: Record<string, unknown>;
+}
+export interface AgentIdentity {
+    id: string;
+    name: string;
+    label: string;
+    registeredAt: string;
+    visibilityMask: number;
+}
+export interface ReadOptions {
+    depth?: number;
+    includeEdges?: boolean;
+    includeChildren?: boolean;
+    confidenceAbove?: number;
+    visibilityMask?: number;
+    showIrrelevant?: boolean;
+}
+export interface WriteOptions {
+    parentId?: string | null;
+    contentType?: ContentType;
+    confidence?: number;
+    decayRate?: number;
+    visibility?: number;
+    tags?: string[];
+    edges?: Omit<Edge, 'id'>[];
+    metadata?: Record<string, unknown>;
+}
+export interface SearchOptions {
+    query: string;
+    topK?: number;
+    searchType?: 'fts' | 'vector' | 'hybrid';
+    confidenceAbove?: number;
+    visibilityMask?: number;
+}
+export type SyncOperation = 'upsert' | 'delete';
+export type SyncEntity = 'entry' | 'edge';
+export interface StagingRecord {
+    key: string;
+    entityType: SyncEntity;
+    operation: SyncOperation;
+    payload: string;
+    lwwTimestamp: number;
+    lwwDevice: string;
+    lwwConfidence: number;
+    acked: boolean;
+}
+export interface MemoryInterface {
+    read(id: string, options?: ReadOptions): Promise<Entry | null>;
+    write(content: string, options?: WriteOptions): Promise<Entry>;
+    update(id: string, patch: Partial<Entry>): Promise<Entry>;
+    delete(id: string, hard?: boolean): Promise<void>;
+    search(options: SearchOptions): Promise<Entry[]>;
+    searchFts(query: string, limit?: number): Promise<Entry[]>;
+    link(sourceId: string, targetId: string, type: EdgeType, weight?: number, metadata?: Record<string, unknown>): Promise<Edge>;
+    getEdges(id: string, direction?: 'outgoing' | 'incoming' | 'both'): Promise<Edge[]>;
+    traceChain(startId: string, edgeType?: EdgeType, depth?: number): Promise<Entry[]>;
+    registerAgent(name: string, label: string): Promise<AgentIdentity>;
+    getAgents(): Promise<AgentIdentity[]>;
+    getStaging(cursor?: number): Promise<StagingRecord[]>;
+    applyStaging(records: StagingRecord[]): Promise<void>;
+    getStagingCursor(): Promise<number>;
+    gcStaging(olderThanDays: number): Promise<number>;
+    health(): Promise<HealthReport>;
+    stats(): Promise<MemoryStats>;
+    suppress(pattern: string, reason: string, ttl?: string): Promise<void>;
+    isSuppressed(content: string): Promise<boolean>;
+}
+export interface HealthReport {
+    brokenLinks: number;
+    orphanEntries: number;
+    ftsIntegrity: boolean;
+    totalEntries: number;
+    totalEdges: number;
+    issues: string[];
+}
+export interface MemoryStats {
+    totalEntries: number;
+    totalEdges: number;
+    entriesByDepth: Record<number, number>;
+    entriesByType: Record<string, number>;
+    topTags: {
+        tag: string;
+        count: number;
+    }[];
+    avgConfidence: number;
+    oldestEntry: string | null;
+    newestEntry: string | null;
+    staleCount: number;
+}
+export type EventType = 'memory:written' | 'memory:updated' | 'memory:deleted' | 'edge:created' | 'sync:pushed' | 'sync:pulled' | 'agent:registered' | 'rem:decay' | 'rem:compress' | 'rem:health';
+export interface MemoryEvent {
+    type: EventType;
+    timestamp: string;
+    payload: unknown;
+}
+export type EventHandler = (event: MemoryEvent) => void | Promise<void>;
+export interface EventBus {
+    on(type: EventType, handler: EventHandler): void;
+    off(type: EventType, handler: EventHandler): void;
+    emit(type: EventType, payload: unknown): Promise<void>;
+}
+export interface Plugin {
+    name: string;
+    version: string;
+    hooks: Partial<Record<EventType, EventHandler>>;
+}
+export interface PluginRegistry {
+    register(plugin: Plugin): void;
+    unregister(name: string): void;
+    get(name: string): Plugin | undefined;
+    list(): Plugin[];
+}
+export interface TimKernel {
+    memory: MemoryInterface;
+    events: EventBus;
+    plugins: PluginRegistry;
+    agents: AgentIdentity[];
+    config: TimConfig;
+}
+export interface TimConfig {
+    dbPath: string;
+    deviceId: string;
+    syncServer?: string;
+    remSleepInterval?: number;
+    defaultVisibility?: number;
+    defaultConfidence?: number;
+}
+//# sourceMappingURL=index.d.ts.map

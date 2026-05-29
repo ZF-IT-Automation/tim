@@ -7,6 +7,7 @@ import type {
   Entry, Edge, EdgeType, ReadOptions, WriteOptions,
   SearchOptions, MemoryInterface, HealthReport, MemoryStats,
   AgentIdentity, StagingRecord, ContentType,
+  SyncEntity, SyncOperation,
 } from 'tim-core';
 import { runMigrations, createTriggers, getCurrentVersion } from './schema.js';
 
@@ -532,8 +533,8 @@ function rowToEdge(row: RowEdge): Edge {
 function rowToStaging(row: RowStaging): StagingRecord {
   return {
     key: row.key,
-    entityType: row.entity_type,
-    operation: row.operation,
+    entityType: row.entity_type as SyncEntity,
+    operation: row.operation as SyncOperation,
     payload: row.payload,
     lwwTimestamp: row.lww_timestamp,
     lwwDevice: row.lww_device,
