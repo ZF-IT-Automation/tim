@@ -1,0 +1,165 @@
+// hmem format detection and v2 schema DDL
+
+import Database from 'better-sqlite3';
+import * as fs from 'fs';
+import * as path from 'path';
+
+export type HmemFormat = 'v2' | 'old' | 'unknown';
+
+export interface HmemFormatInfo {
+  format: HmemFormat;
+  entryCount: number;
+  error?: string;
+}
+
+export function detectHmemFormat(db: Database.Database): HmemFormat {
+  const tables = db.prepare(
+    "SELECT name FROM sqlite_master WHERE type='table'",
+  ).all() as { name: string }[];
+  const names = new Set(tables.map(t => t.name));
+
+  if (names.has('entries')) {
+    const cols = (db.prepare('PRAGMA table_info(entries)').all() as { name: string }[])
+      .map(c => c.name);
+    if (cols.includes('uid') && cols.includes('label')) return 'v2';
+  }
+
+  if (names.has('memories')) {
+    const cols = (db.prepare('PRAGMA table_info(memories)').all() as { name: string }[])
+      .map(c => c.name);
+    if (cols.includes('prefix') && cols.includes('seq')) return 'old';
+  }
+
+  return 'unknown';
+}
+
+export function inspectHmemFile(sourcePath: string): HmemFormatInfo {
+  try {
+    const db = new Database(sourcePath, { readonly: true });
+    const format = detectHmemFormat(db);
+    let entryCount = 0;
+    if (format === 'v2') {
+      entryCount = (db.prepare(
+        'SELECT COUNT(*) as c FROM entries WHERE deleted_at IS NULL',
+      ).get() as { c: number }).c;
+    } else if (format === 'old') {
+      entryCount = (db.prepare('SELECT COUNT(*) as c FROM memories').get() as { c: number }).c;
+    }
+    db.close();
+    return { format, entryCount };
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { format: 'unknown', entryCount: 0, error: message };
+  }
+}
+
+const V2_SCHEMA = `
+CREATE TABLE entries (
+  uid           TEXT PRIMARY KEY,
+  label         TEXT NOT NULL,
+  prefix        TEXT NOT NULL,
+  seq           INTEGER NOT NULL,
+  level_1       TEXT NOT NULL,
+  created_at    TEXT NOT NULL,
+  updated_at    TEXT NOT NULL,
+  access_count  INTEGER NOT NULL DEFAULT 0,
+  last_accessed TEXT,
+  obsolete      INTEGER NOT NULL DEFAULT 0,
+  favorite      INTEGER NOT NULL DEFAULT 0,
+  irrelevant    INTEGER NOT NULL DEFAULT 0,
+  pinned        INTEGER NOT NULL DEFAULT 0,
+  tags          TEXT,
+  deleted_at    TEXT
+);
+CREATE UNIQUE INDEX idx_entries_label ON entries(label) WHERE deleted_at IS NULL;
+CREATE INDEX idx_entries_prefix ON entries(prefix);
+
+CREATE TABLE nodes (
+  uid        TEXT PRIMARY KEY,
+  root_uid   TEXT NOT NULL,
+  parent_uid TEXT,
+  depth      INTEGER NOT NULL,
+  seq        INTEGER NOT NULL,
+  content    TEXT NOT NULL,
+  tags       TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  irrelevant INTEGER NOT NULL DEFAULT 0,
+  deleted_at TEXT
+);
+CREATE INDEX idx_nodes_root ON nodes(root_uid);
+CREATE INDEX idx_nodes_parent ON nodes(parent_uid);
+
+CREATE TABLE links (
+  src_uid TEXT NOT NULL,
+  dst_uid TEXT NOT NULL,
+  kind    TEXT,
+  PRIMARY KEY (src_uid, dst_uid)
+);
+
+CREATE TABLE schema_version (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+
+CREATE VIRTUAL TABLE fts USING fts5(level_1, node_content, content='', contentless_delete=1, tokenize='unicode61');
+
+CREATE TABLE fts_rowid_map (
+  fts_rowid INTEGER PRIMARY KEY,
+  root_uid  TEXT NOT NULL,
+  node_uid  TEXT
+);
+CREATE INDEX idx_fts_rm_root ON fts_rowid_map(root_uid);
+CREATE INDEX idx_fts_rm_node ON fts_rowid_map(node_uid);
+
+CREATE TRIGGER fts_entry_ai AFTER INSERT ON entries BEGIN
+  INSERT INTO fts(level_1, node_content) VALUES (coalesce(new.level_1, ''), '');
+  INSERT INTO fts_rowid_map(fts_rowid, root_uid, node_uid) VALUES (last_insert_rowid(), new.uid, NULL);
+END;
+CREATE TRIGGER fts_node_ai AFTER INSERT ON nodes BEGIN
+  INSERT INTO fts(level_1, node_content) VALUES ('', coalesce(new.content, ''));
+  INSERT INTO fts_rowid_map(fts_rowid, root_uid, node_uid) VALUES (last_insert_rowid(), new.root_uid, new.uid);
+END;
+CREATE TRIGGER fts_entry_au AFTER UPDATE OF level_1 ON entries BEGIN
+  DELETE FROM fts WHERE rowid = (SELECT fts_rowid FROM fts_rowid_map WHERE root_uid = old.uid AND node_uid IS NULL);
+  INSERT INTO fts(level_1, node_content) VALUES (coalesce(new.level_1, ''), '');
+  UPDATE fts_rowid_map SET fts_rowid = last_insert_rowid() WHERE root_uid = new.uid AND node_uid IS NULL;
+END;
+CREATE TRIGGER fts_node_au AFTER UPDATE OF content ON nodes BEGIN
+  DELETE FROM fts WHERE rowid = (SELECT fts_rowid FROM fts_rowid_map WHERE node_uid = old.uid);
+  INSERT INTO fts(level_1, node_content) VALUES ('', coalesce(new.content, ''));
+  UPDATE fts_rowid_map SET fts_rowid = last_insert_rowid() WHERE node_uid = new.uid;
+END;
+CREATE TRIGGER fts_entry_bd BEFORE DELETE ON entries BEGIN
+  DELETE FROM fts WHERE rowid = (SELECT fts_rowid FROM fts_rowid_map WHERE root_uid = old.uid AND node_uid IS NULL);
+  DELETE FROM fts_rowid_map WHERE root_uid = old.uid;
+END;
+CREATE TRIGGER fts_node_bd BEFORE DELETE ON nodes BEGIN
+  DELETE FROM fts WHERE rowid = (SELECT fts_rowid FROM fts_rowid_map WHERE node_uid = old.uid);
+  DELETE FROM fts_rowid_map WHERE node_uid = old.uid;
+END;
+`;
+
+export function createV2HmemDatabase(targetPath: string): Database.Database {
+  if (fs.existsSync(targetPath)) {
+    fs.unlinkSync(targetPath);
+  }
+  const dir = path.dirname(targetPath);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  const db = new Database(targetPath);
+  db.exec(V2_SCHEMA);
+  db.prepare("INSERT INTO schema_version (key, value) VALUES ('schema_major', '2')").run();
+  return db;
+}
+
+export function parseLabel(label: string): { prefix: string; seq: number } | null {
+  const match = label.match(/^([A-Z])(\d{4})$/);
+  if (!match) return null;
+  return { prefix: match[1], seq: parseInt(match[2], 10) };
+}
+
+export function formatLabel(prefix: string, seq: number): string {
+  return `${prefix}${seq.toString().padStart(4, '0')}`;
+}

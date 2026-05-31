@@ -12,6 +12,7 @@ export interface Entry {
     visibility: number;
     tags: string[];
     irrelevant: boolean;
+    favorite: boolean;
     tombstonedAt: string | null;
     metadata: Record<string, unknown>;
 }
@@ -40,6 +41,7 @@ export interface ReadOptions {
     showIrrelevant?: boolean;
 }
 export interface WriteOptions {
+    id?: string;
     parentId?: string | null;
     contentType?: ContentType;
     confidence?: number;
@@ -48,6 +50,10 @@ export interface WriteOptions {
     tags?: string[];
     edges?: Omit<Edge, 'id'>[];
     metadata?: Record<string, unknown>;
+}
+export interface DecayOptions {
+    before: string;
+    exclude?: string[];
 }
 export interface SearchOptions {
     query: string;
@@ -88,6 +94,7 @@ export interface MemoryInterface {
     stats(): Promise<MemoryStats>;
     suppress(pattern: string, reason: string, ttl?: string): Promise<void>;
     isSuppressed(content: string): Promise<boolean>;
+    runDecay(options: DecayOptions): Promise<number>;
 }
 export interface HealthReport {
     brokenLinks: number;
@@ -141,6 +148,12 @@ export interface TimKernel {
     agents: AgentIdentity[];
     config: TimConfig;
 }
+export interface TimHooksConfig {
+    sessionStart?: string | string[];
+    sessionEnd?: string | string[];
+    enabled?: boolean;
+    timeoutMs?: number;
+}
 export interface TimConfig {
     dbPath: string;
     deviceId: string;
@@ -148,5 +161,8 @@ export interface TimConfig {
     remSleepInterval?: number;
     defaultVisibility?: number;
     defaultConfidence?: number;
+    hooks?: TimHooksConfig;
 }
+export { InProcessEventBus } from './event-bus.js';
+export { loadConfig, saveConfig, getConfigPath, getTimDir, normalizeHookScripts, hooksEnabled, type HooksConfig, type TimConfigFile, } from './config.js';
 //# sourceMappingURL=index.d.ts.map

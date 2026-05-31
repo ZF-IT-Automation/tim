@@ -20,6 +20,7 @@ export interface Entry {
   visibility: number;            // bitmask: 1=owner, 2=trusted, 4=leased, 8=public
   tags: string[];                // e.g. ['#sql', '#bug']
   irrelevant: boolean;           // soft delete
+  favorite: boolean;             // curated highlight flag
   tombstonedAt: string | null;   // hard-delete marker
   metadata: Record<string, unknown>; // extensible
 }
@@ -61,6 +62,7 @@ export interface ReadOptions {
 }
 
 export interface WriteOptions {
+  id?: string;                   // optional fixed ULID (e.g. session id)
   parentId?: string | null;
   contentType?: ContentType;
   confidence?: number;
@@ -69,6 +71,11 @@ export interface WriteOptions {
   tags?: string[];
   edges?: Omit<Edge, 'id'>[];   // edges to create alongside entry
   metadata?: Record<string, unknown>;
+}
+
+export interface DecayOptions {
+  before: string;                // ISO 8601 — decay entries older than this
+  exclude?: string[];            // entry IDs to skip
 }
 
 export interface SearchOptions {
@@ -131,6 +138,9 @@ export interface MemoryInterface {
   // Suppression
   suppress(pattern: string, reason: string, ttl?: string): Promise<void>;
   isSuppressed(content: string): Promise<boolean>;
+
+  // REM decay
+  runDecay(options: DecayOptions): Promise<number>;
 }
 
 // ─── Health / Stats ───────────────────────────────────────
@@ -209,6 +219,13 @@ export interface TimKernel {
   config: TimConfig;
 }
 
+export interface TimHooksConfig {
+  sessionStart?: string | string[];
+  sessionEnd?: string | string[];
+  enabled?: boolean;
+  timeoutMs?: number;
+}
+
 export interface TimConfig {
   dbPath: string;
   deviceId: string;
@@ -216,4 +233,17 @@ export interface TimConfig {
   remSleepInterval?: number;      // ms between REM cycles, default: 3600000
   defaultVisibility?: number;
   defaultConfidence?: number;
+  hooks?: TimHooksConfig;
 }
+
+export { InProcessEventBus } from './event-bus.js';
+export {
+  loadConfig,
+  saveConfig,
+  getConfigPath,
+  getTimDir,
+  normalizeHookScripts,
+  hooksEnabled,
+  type HooksConfig,
+  type TimConfigFile,
+} from './config.js';

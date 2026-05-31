@@ -1,6 +1,39 @@
 "use strict";
 // TIM MCP Server — v0.1.0-alpha
-// MCP stdio server with 15 tools for AI agents.
+// MCP stdio server with curation, session, and core memory tools.
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.startServer = startServer;
 const index_js_1 = require("@modelcontextprotocol/sdk/server/index.js");
@@ -8,6 +41,11 @@ const stdio_js_1 = require("@modelcontextprotocol/sdk/server/stdio.js");
 const types_js_1 = require("@modelcontextprotocol/sdk/types.js");
 const zod_1 = require("zod");
 const tim_store_1 = require("tim-store");
+const tim_core_1 = require("tim-core");
+const tim_migrate_1 = require("tim-migrate");
+const fs = __importStar(require("fs"));
+const os = __importStar(require("os"));
+const path = __importStar(require("path"));
 // ─── Tool Schemas ───────────────────────────────────────
 const TimReadSchema = zod_1.z.object({
     id: zod_1.z.string().describe('Entry ID (ULID)'),
@@ -81,20 +119,71 @@ const TimSuppressSchema = zod_1.z.object({
     ttl: zod_1.z.string().optional(),
 });
 const TimExportSchema = zod_1.z.object({
-    format: zod_1.z.enum(['md', 'tim', 'json']).optional().default('md'),
+    format: zod_1.z.enum(['text', 'hmem', 'md']).optional().default('text'),
+    targetPath: zod_1.z.string().optional().describe('Output path for hmem export'),
 });
 const TimImportSchema = zod_1.z.object({
-    source: zod_1.z.string().describe('Path to .tim or .hmem file'),
+    source: zod_1.z.string().describe('Path to .hmem file'),
+    dryRun: zod_1.z.boolean().optional().default(false),
+    deduplicate: zod_1.z.boolean().optional().default(false),
 });
 const TimDoctorSchema = zod_1.z.object({});
+const TimSessionStartSchema = zod_1.z.object({
+    sessionId: zod_1.z.string(),
+    agentName: zod_1.z.string().optional().default('default'),
+    cwd: zod_1.z.string().optional(),
+    harness: zod_1.z.string().optional().default('mcp'),
+});
+const TimSessionLogSchema = zod_1.z.object({
+    sessionId: zod_1.z.string(),
+    entries: zod_1.z.array(zod_1.z.object({
+        role: zod_1.z.enum(['user', 'agent']),
+        content: zod_1.z.string(),
+    })),
+});
+const TimCheckpointSchema = zod_1.z.object({
+    sessionId: zod_1.z.string(),
+});
+const TimRenameEntrySchema = zod_1.z.object({
+    oldId: zod_1.z.string(),
+    newId: zod_1.z.string(),
+});
+const TimMoveEntrySchema = zod_1.z.object({
+    id: zod_1.z.string(),
+    newParentId: zod_1.z.string().nullable().optional().default(null),
+});
+const TimUpdateManySchema = zod_1.z.object({
+    ids: zod_1.z.array(zod_1.z.string()).min(1),
+    irrelevant: zod_1.z.boolean().optional(),
+    favorite: zod_1.z.boolean().optional(),
+});
+const TimTagAddSchema = zod_1.z.object({
+    id: zod_1.z.string(),
+    tags: zod_1.z.array(zod_1.z.string()).min(1),
+});
+const TimTagRemoveSchema = zod_1.z.object({
+    id: zod_1.z.string(),
+    tags: zod_1.z.array(zod_1.z.string()).min(1),
+});
+const TimTagRenameSchema = zod_1.z.object({
+    oldTag: zod_1.z.string(),
+    newTag: zod_1.z.string(),
+});
 // ─── MCP Server Setup ───────────────────────────────────
-const DB_PATH = process.env.TIM_DB_PATH || process.env.HOME + '/.tim/tim.db';
+const DB_PATH = process.env.TIM_DB_PATH || (0, tim_core_1.loadConfig)().dbPath || process.env.HOME + '/.tim/tim.db';
 let store;
+let sessions;
 function getStore() {
     if (!store) {
         store = new tim_store_1.TimStore(DB_PATH);
     }
     return store;
+}
+function getSessions() {
+    if (!sessions) {
+        sessions = new tim_store_1.SessionManager(getStore());
+    }
+    return sessions;
 }
 async function startServer() {
     const server = new index_js_1.Server({
@@ -259,21 +348,24 @@ async function startServer() {
             },
             {
                 name: 'tim_export',
-                description: 'Export TIM database to markdown, .tim, or JSON format.',
+                description: 'Export TIM database to markdown or .hmem SQLite format.',
                 inputSchema: {
                     type: 'object',
                     properties: {
-                        format: { type: 'string', enum: ['md', 'tim', 'json'], default: 'md' },
+                        format: { type: 'string', enum: ['text', 'hmem', 'md'], default: 'text' },
+                        targetPath: { type: 'string', description: 'Output path (required for hmem format)' },
                     },
                 },
             },
             {
                 name: 'tim_import',
-                description: 'Import entries from a .tim or .hmem file.',
+                description: 'Import entries from a .hmem SQLite file.',
                 inputSchema: {
                     type: 'object',
                     properties: {
                         source: { type: 'string' },
+                        dryRun: { type: 'boolean', default: false },
+                        deduplicate: { type: 'boolean', default: false },
                     },
                     required: ['source'],
                 },
@@ -282,6 +374,126 @@ async function startServer() {
                 name: 'tim_doctor',
                 description: 'Run comprehensive diagnostics: config, DB, API connectivity.',
                 inputSchema: { type: 'object', properties: {} },
+            },
+            {
+                name: 'tim_session_start',
+                description: 'Start a TIM session (idempotent). Creates a session root entry.',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        sessionId: { type: 'string' },
+                        agentName: { type: 'string', default: 'default' },
+                        cwd: { type: 'string' },
+                        harness: { type: 'string', default: 'mcp' },
+                    },
+                    required: ['sessionId'],
+                },
+            },
+            {
+                name: 'tim_session_log',
+                description: 'Append exchange entries to a session log.',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        sessionId: { type: 'string' },
+                        entries: {
+                            type: 'array',
+                            items: {
+                                type: 'object',
+                                properties: {
+                                    role: { type: 'string', enum: ['user', 'agent'] },
+                                    content: { type: 'string' },
+                                },
+                                required: ['role', 'content'],
+                            },
+                        },
+                    },
+                    required: ['sessionId', 'entries'],
+                },
+            },
+            {
+                name: 'tim_checkpoint',
+                description: 'Create a session checkpoint summary and run verify-before-decay.',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        sessionId: { type: 'string' },
+                    },
+                    required: ['sessionId'],
+                },
+            },
+            {
+                name: 'tim_rename_entry',
+                description: 'Atomically rename an entry ID and update all references (edges, parent_id, staging, metadata).',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        oldId: { type: 'string', description: 'Current entry ID' },
+                        newId: { type: 'string', description: 'New entry ID (must not exist)' },
+                    },
+                    required: ['oldId', 'newId'],
+                },
+            },
+            {
+                name: 'tim_move_entry',
+                description: 'Move an entry under a new parent and cascade depth updates to descendants.',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        id: { type: 'string', description: 'Entry ID to move' },
+                        newParentId: { type: ['string', 'null'], description: 'New parent ID, or null for root' },
+                    },
+                    required: ['id'],
+                },
+            },
+            {
+                name: 'tim_update_many',
+                description: 'Batch-update irrelevant and/or favorite flags on multiple entries (flags only, never content).',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        ids: { type: 'array', items: { type: 'string' }, minItems: 1 },
+                        irrelevant: { type: 'boolean' },
+                        favorite: { type: 'boolean' },
+                    },
+                    required: ['ids'],
+                },
+            },
+            {
+                name: 'tim_tag_add',
+                description: 'Add tags to an entry (deduplicated).',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        id: { type: 'string' },
+                        tags: { type: 'array', items: { type: 'string' }, minItems: 1 },
+                    },
+                    required: ['id', 'tags'],
+                },
+            },
+            {
+                name: 'tim_tag_remove',
+                description: 'Remove tags from an entry.',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        id: { type: 'string' },
+                        tags: { type: 'array', items: { type: 'string' }, minItems: 1 },
+                    },
+                    required: ['id', 'tags'],
+                },
+            },
+            {
+                name: 'tim_tag_rename',
+                description: 'Rename a tag across all entries (exact match only, safe for substring collisions).',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        oldTag: { type: 'string' },
+                        newTag: { type: 'string' },
+                    },
+                    required: ['oldTag', 'newTag'],
+                },
             },
         ],
     }));
@@ -414,24 +626,25 @@ async function startServer() {
                     };
                 }
                 case 'tim_export': {
-                    const { format } = TimExportSchema.parse(args);
-                    if (format === 'md') {
-                        // Dump all entries as markdown
-                        const stats = await s.stats();
-                        let md = `# TIM Export — ${new Date().toISOString()}\n\n`;
-                        md += `Entries: ${stats.totalEntries}, Edges: ${stats.totalEdges}\n\n`;
-                        // For now, return summary. Full export needs cursor-based pagination.
-                        md += `## Top Tags\n`;
-                        for (const t of stats.topTags.slice(0, 10)) {
-                            md += `- ${t.tag}: ${t.count}\n`;
-                        }
+                    const { format, targetPath } = TimExportSchema.parse(args);
+                    const exportFormat = format === 'md' ? 'text' : format;
+                    if (exportFormat === 'text') {
+                        const md = (0, tim_migrate_1.tim_export)(s, undefined, { format: 'text' });
                         return { content: [{ type: 'text', text: md }] };
                     }
-                    return { content: [{ type: 'text', text: `Export format '${format}' not yet implemented` }] };
+                    const outPath = targetPath ?? path.join(os.tmpdir(), `tim-export-${Date.now()}.hmem`);
+                    const result = (0, tim_migrate_1.tim_export)(s, outPath, { format: 'hmem' });
+                    return {
+                        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+                    };
                 }
                 case 'tim_import': {
-                    const { source } = TimImportSchema.parse(args);
-                    return { content: [{ type: 'text', text: `Import from ${source} not yet implemented` }] };
+                    const { source, dryRun, deduplicate } = TimImportSchema.parse(args);
+                    if (!fs.existsSync(source)) {
+                        return { content: [{ type: 'text', text: `Source not found: ${source}` }] };
+                    }
+                    const report = (0, tim_migrate_1.tim_import)(s, source, { dryRun, deduplicate });
+                    return { content: [{ type: 'text', text: JSON.stringify(report, null, 2) }] };
                 }
                 case 'tim_doctor': {
                     const report = await s.health();
@@ -447,6 +660,74 @@ async function startServer() {
                         ...report.issues.map(i => `⚠ ${i}`),
                     ].join('\n');
                     return { content: [{ type: 'text', text }] };
+                }
+                case 'tim_session_start': {
+                    const { sessionId, agentName, cwd, harness } = TimSessionStartSchema.parse(args);
+                    const entry = await getSessions().sessionStart({
+                        sessionId,
+                        agentName,
+                        cwd: cwd ?? process.cwd(),
+                        harness,
+                    });
+                    return {
+                        content: [{ type: 'text', text: JSON.stringify(entry, null, 2) }],
+                    };
+                }
+                case 'tim_session_log': {
+                    const { sessionId, entries } = TimSessionLogSchema.parse(args);
+                    const written = await getSessions().sessionLog(sessionId, entries);
+                    return {
+                        content: [{ type: 'text', text: JSON.stringify(written, null, 2) }],
+                    };
+                }
+                case 'tim_checkpoint': {
+                    const { sessionId } = TimCheckpointSchema.parse(args);
+                    const summary = await getSessions().checkpoint(sessionId);
+                    return {
+                        content: [{ type: 'text', text: JSON.stringify(summary, null, 2) }],
+                    };
+                }
+                case 'tim_rename_entry': {
+                    const { oldId, newId } = TimRenameEntrySchema.parse(args);
+                    const entry = s.curate().renameEntry(oldId, newId);
+                    return {
+                        content: [{ type: 'text', text: JSON.stringify(entry, null, 2) }],
+                    };
+                }
+                case 'tim_move_entry': {
+                    const { id, newParentId } = TimMoveEntrySchema.parse(args);
+                    const entry = s.curate().moveEntry(id, newParentId);
+                    return {
+                        content: [{ type: 'text', text: JSON.stringify(entry, null, 2) }],
+                    };
+                }
+                case 'tim_update_many': {
+                    const { ids, irrelevant, favorite } = TimUpdateManySchema.parse(args);
+                    const entries = s.curate().updateMany(ids, { irrelevant, favorite });
+                    return {
+                        content: [{ type: 'text', text: JSON.stringify(entries, null, 2) }],
+                    };
+                }
+                case 'tim_tag_add': {
+                    const { id, tags } = TimTagAddSchema.parse(args);
+                    const entry = s.curate().tagAdd(id, tags);
+                    return {
+                        content: [{ type: 'text', text: JSON.stringify(entry, null, 2) }],
+                    };
+                }
+                case 'tim_tag_remove': {
+                    const { id, tags } = TimTagRemoveSchema.parse(args);
+                    const entry = s.curate().tagRemove(id, tags);
+                    return {
+                        content: [{ type: 'text', text: JSON.stringify(entry, null, 2) }],
+                    };
+                }
+                case 'tim_tag_rename': {
+                    const { oldTag, newTag } = TimTagRenameSchema.parse(args);
+                    const count = s.curate().tagRename(oldTag, newTag);
+                    return {
+                        content: [{ type: 'text', text: JSON.stringify({ oldTag, newTag, updatedCount: count }, null, 2) }],
+                    };
                 }
                 default:
                     return {

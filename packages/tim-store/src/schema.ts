@@ -75,6 +75,12 @@ export const MIGRATIONS: { version: number; sql: string }[] = [
       CREATE INDEX IF NOT EXISTS idx_staging_key ON staging(key);
       CREATE INDEX IF NOT EXISTS idx_staging_acked ON staging(acked, lww_timestamp);
     `
+  },
+  {
+    version: 2,
+    sql: `
+      ALTER TABLE entries ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0;
+    `
   }
 ];
 

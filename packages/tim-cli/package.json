@@ -6,5 +6,12 @@
   "bin": { "tim": "dist/cli.js" },
   "files": ["dist"],
   "scripts": { "build": "tsc", "test": "vitest run" },
-  "dependencies": { "tim-core": "*", "tim-store": "*", "tim-sync": "*", "tim-search": "*" }
+  "dependencies": {
+    "tim-core": "*",
+    "tim-store": "*",
+    "tim-sync": "*",
+    "tim-search": "*",
+    "tim-hooks": "*",
+    "tim-migrate": "*"
+  }
 }

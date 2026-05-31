@@ -4,30 +4,53 @@
 import Database from 'better-sqlite3';
 import { ulid } from 'ulid';
 import type {
-  Entry, Edge, EdgeType, ReadOptions, WriteOptions,
+  Entry, Edge, EdgeType, ReadOptions, WriteOptions, DecayOptions,
   SearchOptions, MemoryInterface, HealthReport, MemoryStats,
   AgentIdentity, StagingRecord, ContentType,
-  SyncEntity, SyncOperation,
+  SyncEntity, SyncOperation, EventBus, EventType,
 } from 'tim-core';
 import { runMigrations, createTriggers, getCurrentVersion } from './schema.js';
+import { CurateManager } from './curate.js';
+
+export interface TimStoreOptions {
+  emitter?: Pick<EventBus, 'emit'>;
+  agentId?: string;
+}
 
 export class TimStore implements MemoryInterface {
   private db: Database.Database;
+  private emitter?: Pick<EventBus, 'emit'>;
+  private agentId: string;
 
-  constructor(dbPath: string) {
+  constructor(dbPath: string, options: TimStoreOptions = {}) {
     this.db = new Database(dbPath);
+    this.emitter = options.emitter;
+    this.agentId = options.agentId ?? 'system';
     runMigrations(this.db);
     createTriggers(this.db);
   }
 
-  close(): void {
-    this.db.close();
+  private emit(type: EventType, payload: unknown): void {
+    if (!this.emitter) return;
+    try {
+      void this.emitter.emit(type, payload).catch(err => {
+        console.error(`[TimStore] event handler failed (${type}):`, err);
+      });
+    } catch (err) {
+      console.error(`[TimStore] event emit failed (${type}):`, err);
+    }
   }
 
-  // ─── CRUD ──────────────────────────────────────────────
-
   async read(id: string, options: ReadOptions = {}): Promise<Entry | null> {
-    const entry = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(id) as RowEntry | undefined;
+    let entry = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(id) as RowEntry | undefined;
+
+    // Label-based fallback for hmem compatibility (e.g., "P0062", "L0042")
+    if (!entry && /^[A-Z]\d{4}$/.test(id)) {
+      entry = this.db.prepare(
+        "SELECT * FROM entries WHERE json_extract(metadata, '$.label') = ?",
+      ).get(id) as RowEntry | undefined;
+    }
+
     if (!entry) return null;
 
     // Visibility check
@@ -38,8 +61,46 @@ export class TimStore implements MemoryInterface {
     return rowToEntry(entry);
   }
 
+  async getChildren(
+    parentId: string,
+    filter?: { metadataKind?: string },
+  ): Promise<Entry[]> {
+    let sql = `
+      SELECT * FROM entries
+      WHERE parent_id = ?
+        AND irrelevant = 0
+        AND tombstoned_at IS NULL
+    `;
+    const params: unknown[] = [parentId];
+
+    if (filter?.metadataKind) {
+      sql += ` AND json_extract(metadata, '$.kind') = ?`;
+      params.push(filter.metadataKind);
+    }
+
+    sql += filter?.metadataKind === 'exchange'
+      ? ` ORDER BY CAST(json_extract(metadata, '$.seq') AS INTEGER) ASC`
+      : ` ORDER BY created_at ASC`;
+
+    const rows = this.db.prepare(sql).all(...params) as RowEntry[];
+    return rows.map(rowToEntry);
+  }
+
+  close(): void {
+    this.db.close();
+  }
+
+  curate(): CurateManager {
+    return new CurateManager(this.db);
+  }
+
+  /** @internal Exposed for tests */
+  getDb(): Database.Database {
+    return this.db;
+  }
+
   async write(content: string, options: WriteOptions = {}): Promise<Entry> {
-    const id = ulid();
+    const id = options.id ?? ulid();
     const now = new Date().toISOString();
     const timestamp = Date.now();
 
@@ -64,16 +125,17 @@ export class TimStore implements MemoryInterface {
       visibility: options.visibility ?? 1,
       tags: JSON.stringify(options.tags ?? []),
       irrelevant: 0,
+      favorite: 0,
       tombstoned_at: null,
       metadata: JSON.stringify(options.metadata ?? {}),
     };
 
     this.db.prepare(`INSERT INTO entries (id, parent_id, content, content_type, depth,
       confidence, created_at, accessed_at, decay_rate, visibility, tags, irrelevant,
-      tombstoned_at, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      favorite, tombstoned_at, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
       entry.id, entry.parent_id, entry.content, entry.content_type, entry.depth,
       entry.confidence, entry.created_at, entry.accessed_at, entry.decay_rate,
-      entry.visibility, entry.tags, entry.irrelevant, entry.tombstoned_at, entry.metadata
+      entry.visibility, entry.tags, entry.irrelevant, entry.favorite, entry.tombstoned_at, entry.metadata
     );
 
     // Write to staging for sync
@@ -90,7 +152,9 @@ export class TimStore implements MemoryInterface {
       }
     }
 
-    return rowToEntry(entry);
+    const result = rowToEntry(entry);
+    this.emit('memory:written', { entry: result, agentId: this.agentId, timestamp: now });
+    return result;
   }
 
   async update(id: string, patch: Partial<Entry>): Promise<Entry> {
@@ -130,12 +194,17 @@ export class TimStore implements MemoryInterface {
       id, JSON.stringify(updated), timestamp, 'local', updated.confidence
     );
 
-    return rowToEntry(updated);
+    const result = rowToEntry(updated);
+    this.emit('memory:updated', { entry: result, agentId: this.agentId, timestamp: now });
+    return result;
   }
 
   async delete(id: string, hard: boolean = false): Promise<void> {
+    const existing = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(id) as RowEntry | undefined;
+    if (!existing) return;
+
+    const now = new Date().toISOString();
     if (hard) {
-      const now = new Date().toISOString();
       this.db.prepare('UPDATE entries SET tombstoned_at = ? WHERE id = ?').run(now, id);
       this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
         lww_timestamp, lww_device, lww_confidence)
@@ -145,6 +214,12 @@ export class TimStore implements MemoryInterface {
     } else {
       this.db.prepare('UPDATE entries SET irrelevant = 1 WHERE id = ?').run(id);
     }
+
+    this.emit('memory:deleted', {
+      entry: rowToEntry(existing),
+      agentId: this.agentId,
+      timestamp: now,
+    });
   }
 
   // ─── Search ────────────────────────────────────────────
@@ -179,7 +254,13 @@ export class TimStore implements MemoryInterface {
     this.db.prepare(`INSERT INTO edges (id, source_id, target_id, type, weight, metadata)
       VALUES (?, ?, ?, ?, ?, ?)`).run(id, sourceId, targetId, type, weight, JSON.stringify(metadata));
 
-    return { id, sourceId, targetId, type, weight, metadata };
+    const edge = { id, sourceId, targetId, type, weight, metadata };
+    this.emit('edge:created', {
+      edge,
+      agentId: this.agentId,
+      timestamp: new Date().toISOString(),
+    });
+    return edge;
   }
 
   async getEdges(id: string, direction: 'outgoing' | 'incoming' | 'both' = 'both'): Promise<Edge[]> {
@@ -270,8 +351,8 @@ export class TimStore implements MemoryInterface {
   async applyStaging(records: StagingRecord[]): Promise<void> {
     const upsertEntry = this.db.prepare(`INSERT OR REPLACE INTO entries
       (id, parent_id, content, content_type, depth, confidence, created_at,
-       accessed_at, decay_rate, visibility, tags, irrelevant, tombstoned_at, metadata)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+       accessed_at, decay_rate, visibility, tags, irrelevant, favorite, tombstoned_at, metadata)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
 
     const upsertEdge = this.db.prepare(`INSERT OR REPLACE INTO edges
       (id, source_id, target_id, type, weight, metadata)
@@ -292,7 +373,7 @@ export class TimStore implements MemoryInterface {
               entry.id, entry.parent_id, entry.content, entry.content_type,
               entry.depth, entry.confidence, entry.created_at, entry.accessed_at,
               entry.decay_rate, entry.visibility, entry.tags,
-              entry.irrelevant, entry.tombstoned_at, entry.metadata
+              entry.irrelevant, entry.favorite ?? 0, entry.tombstoned_at, entry.metadata
             );
           }
         } else if (record.entityType === 'edge') {
@@ -448,6 +529,24 @@ export class TimStore implements MemoryInterface {
 
     return patterns.some(p => content.toLowerCase().includes(p.pattern.toLowerCase()));
   }
+
+  async runDecay(options: DecayOptions): Promise<number> {
+    const exclude = new Set(options.exclude ?? []);
+    const rows = this.db.prepare(`
+      SELECT id FROM entries
+      WHERE created_at < ?
+        AND irrelevant = 0
+        AND tombstoned_at IS NULL
+    `).all(options.before) as { id: string }[];
+
+    let count = 0;
+    for (const row of rows) {
+      if (exclude.has(row.id)) continue;
+      await this.delete(row.id);
+      count++;
+    }
+    return count;
+  }
 }
 
 // ─── Row Types (internal) ───────────────────────────────
@@ -465,6 +564,7 @@ interface RowEntry {
   visibility: number;
   tags: string;
   irrelevant: number;
+  favorite: number;
   tombstoned_at: string | null;
   metadata: string;
 }
@@ -514,6 +614,7 @@ function rowToEntry(row: RowEntry): Entry {
     visibility: row.visibility,
     tags: JSON.parse(row.tags),
     irrelevant: row.irrelevant === 1,
+    favorite: row.favorite === 1,
     tombstonedAt: row.tombstoned_at,
     metadata: JSON.parse(row.metadata),
   };

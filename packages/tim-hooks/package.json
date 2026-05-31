@@ -1,0 +1,16 @@
+{
+  "name": "tim-hooks",
+  "version": "0.1.0-alpha",
+  "description": "TIM hook scripts and checkpoint orchestration",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "tim-core": "*",
+    "tim-store": "*"
+  }
+}

@@ -21,7 +21,8 @@
     { "path": "packages/tim-search" },
     { "path": "packages/tim-cli" },
     { "path": "packages/tim-mcp" },
-    { "path": "packages/tim-migrate" }
+    { "path": "packages/tim-migrate" },
+    { "path": "packages/tim-hooks" }
   ],
   "files": []
 }

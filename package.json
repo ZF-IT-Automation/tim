@@ -10,7 +10,8 @@
     "packages/tim-search",
     "packages/tim-cli",
     "packages/tim-mcp",
-    "packages/tim-migrate"
+    "packages/tim-migrate",
+    "packages/tim-hooks"
   ],
   "scripts": {
     "build": "tsc -b",

@@ -1,9 +1,24 @@
-import type { Entry, Edge, EdgeType, ReadOptions, WriteOptions, SearchOptions, MemoryInterface, HealthReport, MemoryStats, AgentIdentity, StagingRecord } from 'tim-core';
+import Database from 'better-sqlite3';
+import type { Entry, Edge, EdgeType, ReadOptions, WriteOptions, DecayOptions, SearchOptions, MemoryInterface, HealthReport, MemoryStats, AgentIdentity, StagingRecord, EventBus } from 'tim-core';
+import { CurateManager } from './curate.js';
+export interface TimStoreOptions {
+    emitter?: Pick<EventBus, 'emit'>;
+    agentId?: string;
+}
 export declare class TimStore implements MemoryInterface {
     private db;
-    constructor(dbPath: string);
-    close(): void;
+    private emitter?;
+    private agentId;
+    constructor(dbPath: string, options?: TimStoreOptions);
+    private emit;
     read(id: string, options?: ReadOptions): Promise<Entry | null>;
+    getChildren(parentId: string, filter?: {
+        metadataKind?: string;
+    }): Promise<Entry[]>;
+    close(): void;
+    curate(): CurateManager;
+    /** @internal Exposed for tests */
+    getDb(): Database.Database;
     write(content: string, options?: WriteOptions): Promise<Entry>;
     update(id: string, patch: Partial<Entry>): Promise<Entry>;
     delete(id: string, hard?: boolean): Promise<void>;
@@ -22,5 +37,6 @@ export declare class TimStore implements MemoryInterface {
     stats(): Promise<MemoryStats>;
     suppress(pattern: string, reason: string, ttl?: string): Promise<void>;
     isSuppressed(content: string): Promise<boolean>;
+    runDecay(options: DecayOptions): Promise<number>;
 }
 //# sourceMappingURL=store.d.ts.map
