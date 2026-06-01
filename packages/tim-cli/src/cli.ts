@@ -227,9 +227,13 @@ async function cmdHook(args: string[]) {
         const agentName = flags.agent ?? 'default';
         const cwd = flags.cwd ?? process.cwd();
         const harness = flags.harness ?? 'unknown';
+        const projectId = flags.project;  // optional, auto-resolved from .tim-project
+        const tool = flags.tool;
+        const model = flags.model;
+        const taskSummary = flags['task-summary'];
 
         if (!sessionId) {
-          console.error('Usage: tim hook session-start --session <id> [--agent <name>] [--cwd <path>] [--harness <h>]');
+          console.error('Usage: tim hook session-start --session <id> [--agent <name>] [--cwd <path>] [--harness <h>] [--project <label>] [--tool <name>] [--model <name>]');
           process.exit(1);
         }
 
@@ -238,6 +242,10 @@ async function cmdHook(args: string[]) {
           agentName,
           cwd,
           harness,
+          projectId,
+          tool,
+          model,
+          taskSummary,
           hooksConfig: config.hooks,
         });
 
@@ -261,9 +269,26 @@ async function cmdHook(args: string[]) {
         break;
       }
 
+      case 'log': {
+        const sessionId = flags.session;
+        const userText = flags.user || '';
+        const agentText = flags.agent || '';
+        if (!sessionId || !userText || !agentText) {
+          console.error('Usage: tim hook log --session <id> --user <text> --agent <text>');
+          process.exit(1);
+        }
+        const sessions = new SessionManager(store);
+        const entries = await sessions.logExchange(sessionId, [
+          { role: 'user', content: userText },
+          { role: 'agent', content: agentText },
+        ]);
+        console.log(JSON.stringify({ count: entries.length }, null, 2));
+        break;
+      }
+
       default:
         console.error(`Unknown hook: ${sub ?? '(none)'}`);
-        console.error('Usage: tim hook <session-start|session-end> [options]');
+        console.error('Usage: tim hook <session-start|session-end|log> [options]');
         process.exit(1);
     }
   } finally {

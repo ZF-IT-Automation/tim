@@ -77,6 +77,9 @@ export async function runSessionStart(
     hooksConfig?: HooksConfig;
     projectId?: string;
     batchSize?: number;
+    tool?: string;
+    model?: string;
+    taskSummary?: string;
   },
 ): Promise<SessionStartResult> {
   const sessions = new SessionManager(store);
