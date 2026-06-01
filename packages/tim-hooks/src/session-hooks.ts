@@ -42,11 +42,13 @@ export function buildSummarizerCommand(
   lockPath: string,
   logPath: string,
   timeoutSec: number = DEFAULT_SUMMARIZER_TIMEOUT_SEC,
+  cli?: string,
 ): string {
   const q = (s: string) => JSON.stringify(s);
+  const cmd = cli ?? 'node ' + JSON.stringify(path.resolve(__dirname, '..', '..', '..', 'tim-summarizer', 'dist', 'summarize.js'));
   return (
     `{ trap ${q(`rm -f ${lockPath}`)} EXIT; ` +
-    `timeout ${timeoutSec} env TIM_SESSION_ID=${q(sessionId)} npx tim-summarizer >>${q(logPath)} 2>&1; }`
+    `timeout ${timeoutSec} env TIM_SESSION_ID=${q(sessionId)} ${cmd} >>${q(logPath)} 2>&1; }`
   );
 }
 
@@ -121,7 +123,7 @@ export async function maybeSpawnSummarizer(
   const timeoutSec = opts.timeoutSec ?? DEFAULT_SUMMARIZER_TIMEOUT_SEC;
 
   try {
-    spawn(buildSummarizerCommand(reconciled.session, lockPath, logPath, timeoutSec), {
+    spawn(buildSummarizerCommand(reconciled.session, lockPath, logPath, timeoutSec, reconciled.summarizer?.cli), {
       sessionId: reconciled.session,
       cwd,
     });

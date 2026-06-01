@@ -47,10 +47,11 @@ function summarizerLogPath(cwd) {
     return path.join(cwd, '.tim', 'summarizer.log');
 }
 /** Shell snippet: trap lock release, timeout, run tim-summarizer CLI with log append. */
-function buildSummarizerCommand(sessionId, lockPath, logPath, timeoutSec = exports.DEFAULT_SUMMARIZER_TIMEOUT_SEC) {
+function buildSummarizerCommand(sessionId, lockPath, logPath, timeoutSec = exports.DEFAULT_SUMMARIZER_TIMEOUT_SEC, cli) {
     const q = (s) => JSON.stringify(s);
+    const cmd = cli ?? 'node ' + JSON.stringify(path.resolve(__dirname, '..', '..', '..', 'tim-summarizer', 'dist', 'summarize.js'));
     return (`{ trap ${q(`rm -f ${lockPath}`)} EXIT; ` +
-        `timeout ${timeoutSec} env TIM_SESSION_ID=${q(sessionId)} npx tim-summarizer >>${q(logPath)} 2>&1; }`);
+        `timeout ${timeoutSec} env TIM_SESSION_ID=${q(sessionId)} ${cmd} >>${q(logPath)} 2>&1; }`);
 }
 /** Detached spawn with log dir creation and spawn-error capture (does not throw). */
 const spawnSummarizer = (command, ctx) => {
@@ -112,7 +113,7 @@ async function maybeSpawnSummarizer(store, cwd, opts = {}) {
     const logPath = summarizerLogPath(cwd);
     const timeoutSec = opts.timeoutSec ?? exports.DEFAULT_SUMMARIZER_TIMEOUT_SEC;
     try {
-        spawn(buildSummarizerCommand(reconciled.session, lockPath, logPath, timeoutSec), {
+        spawn(buildSummarizerCommand(reconciled.session, lockPath, logPath, timeoutSec, reconciled.summarizer?.cli), {
             sessionId: reconciled.session,
             cwd,
         });

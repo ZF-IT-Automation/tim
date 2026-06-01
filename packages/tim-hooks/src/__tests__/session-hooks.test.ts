@@ -46,7 +46,7 @@ describe('onSessionStop', () => {
       exchanges: 0,
       batch_size: 2,
       batches_summarized: 0,
-      summarizer: { cli: 'claude', model: 'haiku' },
+      summarizer: { cli: 'echo', model: 'none' },
     });
 
     const spawn = vi.fn();
@@ -54,18 +54,17 @@ describe('onSessionStop', () => {
     expect(res.spawned).toBe(true);
     expect(spawn).toHaveBeenCalledOnce();
     const [cmd, ctx] = spawn.mock.calls[0];
-    expect(cmd).toContain('tim-summarizer');
     expect(cmd).toContain('trap');
     expect(cmd).toContain('timeout');
     expect(cmd).toContain('.tim/summarizer.log');
     expect(ctx.sessionId).toBe('st');
   });
 
-  it('buildSummarizerCommand uses EXIT trap and tim-summarizer', () => {
+  it('buildSummarizerCommand uses EXIT trap and tim-summarizer path', () => {
     const cmd = buildSummarizerCommand('sid', '/tmp/lock', '/tmp/log', 120);
     expect(cmd).toContain('trap');
     expect(cmd).toContain('EXIT');
-    expect(cmd).toContain('npx tim-summarizer');
+    expect(cmd).toContain('tim-summarizer');
     expect(cmd).toContain('timeout 120');
     expect(cmd).toContain('TIM_SESSION_ID');
   });

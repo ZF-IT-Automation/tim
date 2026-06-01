@@ -3,5 +3,9 @@
   "session": "",
   "exchanges": 0,
   "batch_size": 5,
-  "batches_summarized": 0
+  "batches_summarized": 0,
+  "summarizer": {
+    "cli": "node /home/bbbee/projects/tim/packages/tim-summarizer/dist/summarize.js",
+    "model": "haiku"
+  }
 }
