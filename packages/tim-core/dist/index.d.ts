@@ -164,6 +164,11 @@ export interface TimConfig {
     defaultVisibility?: number;
     defaultConfidence?: number;
     hooks?: TimHooksConfig;
+    summarizer?: {
+        cli: string;
+        model: string;
+    };
+    batch_size?: number;
 }
 export { InProcessEventBus } from './event-bus.js';
 export { loadConfig, saveConfig, getConfigPath, getTimDir, normalizeHookScripts, hooksEnabled, type HooksConfig, type TimConfigFile, } from './config.js';

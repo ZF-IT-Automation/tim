@@ -41,6 +41,7 @@ exports.onSessionStop = onSessionStop;
 const child_process_1 = require("child_process");
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
+const tim_core_1 = require("tim-core");
 const marker_js_1 = require("./marker.js");
 exports.DEFAULT_SUMMARIZER_TIMEOUT_SEC = 600;
 function summarizerLogPath(cwd) {
@@ -113,7 +114,8 @@ async function maybeSpawnSummarizer(store, cwd, opts = {}) {
     const logPath = summarizerLogPath(cwd);
     const timeoutSec = opts.timeoutSec ?? exports.DEFAULT_SUMMARIZER_TIMEOUT_SEC;
     try {
-        spawn(buildSummarizerCommand(reconciled.session, lockPath, logPath, timeoutSec, reconciled.summarizer?.cli), {
+        const cli = (0, tim_core_1.loadConfig)().summarizer?.cli;
+        spawn(buildSummarizerCommand(reconciled.session, lockPath, logPath, timeoutSec, cli), {
             sessionId: reconciled.session,
             cwd,
         });

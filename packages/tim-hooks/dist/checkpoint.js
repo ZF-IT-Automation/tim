@@ -98,7 +98,6 @@ async function runSessionStart(store, params) {
             ? session.metadata.batch_size
             : 5,
         batches_summarized: 0,
-        summarizer: session.metadata.summarizer,
     });
     await (0, hooks_js_1.runConfiguredHooks)('sessionStart', params.hooksConfig, {
         TIM_SESSION_ID: params.sessionId,

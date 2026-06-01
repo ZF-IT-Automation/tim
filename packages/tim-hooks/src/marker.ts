@@ -6,18 +6,12 @@ import { deriveCounters } from 'tim-store';
 export const MARKER_FILENAME = '.tim-project';
 export const MARKER_LOCK = '.tim-project.lock';
 
-export interface SummarizerConfig {
-  cli: string;
-  model: string;
-}
-
 export interface ProjectMarker {
   project: string;
   session: string;
   exchanges: number;
   batch_size: number;
   batches_summarized: number;
-  summarizer?: SummarizerConfig;
 }
 
 export function markerPath(cwd: string): string {

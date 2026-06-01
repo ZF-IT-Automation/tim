@@ -33,7 +33,6 @@ export {
   isSessionLocked,
   type ProjectMarker,
   type MarkerLocation,
-  type SummarizerConfig,
 } from './marker.js';
 
 export {

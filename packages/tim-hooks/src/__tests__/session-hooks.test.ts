@@ -46,7 +46,6 @@ describe('onSessionStop', () => {
       exchanges: 0,
       batch_size: 2,
       batches_summarized: 0,
-      summarizer: { cli: 'echo', model: 'none' },
     });
 
     const spawn = vi.fn();

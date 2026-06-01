@@ -153,7 +153,6 @@ async function cmdBindProject(args: string[]) {
     exchanges: existing?.exchanges ?? 0,
     batch_size: existing?.batch_size ?? 5,
     batches_summarized: existing?.batches_summarized ?? 0,
-    summarizer: existing?.summarizer,
   };
   writeMarker(cwd, marker);
   console.log(`Wrote .tim-project → ${label} at ${cwd}`);

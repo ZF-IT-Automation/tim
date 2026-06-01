@@ -99,8 +99,6 @@ export async function runSessionStart(
       ? session.metadata.batch_size
       : 5,
     batches_summarized: 0,
-    summarizer:
-      session.metadata.summarizer as { cli: string; model: string } | undefined,
   });
 
   await runConfiguredHooks('sessionStart', params.hooksConfig, {

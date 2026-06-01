@@ -104,7 +104,7 @@ class SessionManager {
                 cwd,
                 date,
                 batch_size: params.batchSize ?? session_tree_js_1.DEFAULT_BATCH_SIZE,
-                summarizer: params.summarizer ?? { cli: 'claude', model: 'haiku' },
+                summarizer: params.summarizer ?? { cli: 'tim-summarizer', model: 'default' },
                 exchange_count: 0,
                 batches_summarized: 0,
                 device: os.hostname(),

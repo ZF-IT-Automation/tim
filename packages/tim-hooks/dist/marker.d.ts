@@ -1,17 +1,12 @@
 import type { TimStore } from 'tim-store';
 export declare const MARKER_FILENAME = ".tim-project";
 export declare const MARKER_LOCK = ".tim-project.lock";
-export interface SummarizerConfig {
-    cli: string;
-    model: string;
-}
 export interface ProjectMarker {
     project: string;
     session: string;
     exchanges: number;
     batch_size: number;
     batches_summarized: number;
-    summarizer?: SummarizerConfig;
 }
 export declare function markerPath(cwd: string): string;
 export declare function readMarker(cwd: string): ProjectMarker | null;

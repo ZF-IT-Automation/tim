@@ -49,6 +49,7 @@ const DEFAULT_CONFIG = {
         enabled: true,
         timeoutMs: 30_000,
     },
+    batch_size: 5,
 };
 function getTimDir() {
     return path.join(os.homedir(), '.tim');

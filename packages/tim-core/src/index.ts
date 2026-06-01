@@ -232,10 +232,15 @@ export interface TimConfig {
   dbPath: string;
   deviceId: string;
   syncServer?: string;
-  remSleepInterval?: number;      // ms between REM cycles, default: 3600000
+  remSleepInterval?: number;
   defaultVisibility?: number;
   defaultConfidence?: number;
   hooks?: TimHooksConfig;
+  summarizer?: {
+    cli: string;
+    model: string;
+  };
+  batch_size?: number;
 }
 
 export { InProcessEventBus } from './event-bus.js';

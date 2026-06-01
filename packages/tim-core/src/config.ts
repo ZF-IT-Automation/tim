@@ -21,6 +21,7 @@ const DEFAULT_CONFIG: TimConfigFile = {
     enabled: true,
     timeoutMs: 30_000,
   },
+  batch_size: 5,
 };
 
 export function getTimDir(): string {

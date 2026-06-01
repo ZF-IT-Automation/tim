@@ -76,24 +76,22 @@ const TEST_ROOT = path.join('/home/bbbee', '.tim-test-runs');
             exchanges: 0,
             batch_size: 2,
             batches_summarized: 0,
-            summarizer: { cli: 'claude', model: 'haiku' },
         });
         const spawn = vitest_1.vi.fn();
         const res = await (0, session_hooks_js_1.onSessionStop)(store, dir, { spawn });
         (0, vitest_1.expect)(res.spawned).toBe(true);
         (0, vitest_1.expect)(spawn).toHaveBeenCalledOnce();
         const [cmd, ctx] = spawn.mock.calls[0];
-        (0, vitest_1.expect)(cmd).toContain('tim-summarizer');
         (0, vitest_1.expect)(cmd).toContain('trap');
         (0, vitest_1.expect)(cmd).toContain('timeout');
         (0, vitest_1.expect)(cmd).toContain('.tim/summarizer.log');
         (0, vitest_1.expect)(ctx.sessionId).toBe('st');
     });
-    (0, vitest_1.it)('buildSummarizerCommand uses EXIT trap and tim-summarizer', () => {
+    (0, vitest_1.it)('buildSummarizerCommand uses EXIT trap and tim-summarizer path', () => {
         const cmd = (0, session_hooks_js_1.buildSummarizerCommand)('sid', '/tmp/lock', '/tmp/log', 120);
         (0, vitest_1.expect)(cmd).toContain('trap');
         (0, vitest_1.expect)(cmd).toContain('EXIT');
-        (0, vitest_1.expect)(cmd).toContain('npx tim-summarizer');
+        (0, vitest_1.expect)(cmd).toContain('tim-summarizer');
         (0, vitest_1.expect)(cmd).toContain('timeout 120');
         (0, vitest_1.expect)(cmd).toContain('TIM_SESSION_ID');
     });
