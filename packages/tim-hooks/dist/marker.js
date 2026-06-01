@@ -41,6 +41,8 @@ exports.detectProject = detectProject;
 exports.reconcileMarker = reconcileMarker;
 exports.acquireLock = acquireLock;
 exports.releaseLock = releaseLock;
+exports.findMarker = findMarker;
+exports.buildLoadDirective = buildLoadDirective;
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
 const tim_store_1 = require("tim-store");
@@ -109,5 +111,44 @@ function releaseLock(cwd) {
     catch {
         /* ignore */
     }
+}
+/**
+ * Walk up from `startCwd` to the filesystem root and return the NEAREST
+ * `.tim-project` (closest ancestor wins). Pure FS — no store, no network —
+ * so it is safe to call from a hook under a tight timeout.
+ *
+ * If the nearest marker FILE exists but is unparseable, we STOP and return
+ * null rather than silently binding an ancestor's project.
+ */
+function findMarker(startCwd) {
+    let dir = path.resolve(startCwd);
+    for (let i = 0; i < 256; i++) {
+        if (fs.existsSync(markerPath(dir))) {
+            const marker = readMarker(dir); // null when corrupt
+            return marker ? { marker, dir } : null;
+        }
+        const parent = path.dirname(dir);
+        if (parent === dir)
+            break; // reached the filesystem root
+        dir = parent;
+    }
+    return null;
+}
+/**
+ * Shared, harness-agnostic directive text. Every start hook (Hermes,
+ * Claude Code, Cursor) emits exactly this so wording stays DRY. The TIM
+ * marker is authoritative for project binding this turn (see plan §end-state).
+ */
+function buildLoadDirective(label, markerDir) {
+    return [
+        `📍 TIM project marker detected (.tim-project in ${markerDir}).`,
+        `This session is bound to TIM project ${label}.`,
+        ``,
+        `ACTION: call tim_load_project(label="${label}") now to load the project ` +
+            `brief from the TIM store, then run the o9k-session-start skill. STEP 1 ` +
+            `(project binding) is already decided by this marker — do NOT ask which ` +
+            `project, and do NOT run any hmem/active-project cwd→project resolution. ` +
+            `The TIM marker is authoritative for this turn.`,
+    ].join('\n');
 }
 //# sourceMappingURL=marker.js.map

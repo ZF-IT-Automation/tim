@@ -1,3 +1,66 @@
+# JOURNAL — Start-Hook (TIM project auto-load)
+
+## Done (Tasks 1–8)
+
+1. **Task 1** — `findMarker` walk-up, `buildLoadDirective`, `MarkerLocation`; re-exported from `tim-hooks/index.ts`; 6 new marker tests
+2. **Task 2** — `resolveSessionProjectId` uses `findMarker` instead of `detectProject`; parent-marker subdirectory test
+3. **Task 3** — CLI `resolve-project` + `bind-project` (store-free); 5 CLI tests
+4. **Task 4** — `tim-session-start.sh` Hermes `pre_llm_call`; symlink `~/.hermes/agent-hooks/`; `config.yaml` second hook
+5. **Task 5** — `tim-claude-session-start.sh`; `~/.claude/settings.json` SessionStart entry
+6. **Task 6** — `tim-cursor-inject.sh` (orchestrator prepends directive); cursor-agent has no SessionStart — path B only
+7. **Task 7** — `o9k-session-start` SKILL: TIM marker directive branch (authoritative, before "brief present")
+8. **Task 8** — `o9k-handoff` SKILL: Step 2.5 `bind-project` marker refresh
+
+## Decisions
+
+1. **TIM marker authoritative** — when `📍 TIM project marker` directive present, agent calls `tim_load_project(label=…)` once; skips hmem cwd→project resolution even if o9k-startup context also present
+2. **Walk-up in Node** — shell hooks thin; `findMarker` cross-platform
+3. **Corrupt nearest marker → null** — do not fall back to ancestor (explicit test)
+4. **Hermes `pre_llm_call` not SessionStart** — gate on `extra.is_first_turn`; inject `{"context":…}` into user message
+5. **No store in hook path** — `resolve-project` / `bind-project` never open TimStore (10s timeout safe)
+6. **Subagent guard** — `.parentUuid` / `parent_session_id` → `{}`; Hermes has no parent field today (no-op)
+
+## Edge Cases
+
+1. **No marker** — resolve-project exits 0 empty; hooks emit `{}`; session → Inbox P0000 (intended first-time base case)
+2. **Nearest wins** — child `.tim-project` overrides parent
+3. **`/tmp/.tim-project`** — pollutes walk-up for tests/cwd under `/tmp`; session-start hook test moved to `~/.tim-test-runs/`
+4. **Handoff P0000** — skip Step 2.5 (no project to pin)
+5. **bind-project** — preserves session/exchanges/batch counters; only changes `project`
+
+## Gotchas
+
+1. **Build order** — `tsc -b` needs `tim-hooks` built before `tim-cli` picks up new exports
+2. **Hermes allowlist** — `tim-session-start.sh` added to `~/.hermes/shell-hooks-allowlist.json` (required or hook skipped at runtime)
+3. **Machine state not in repo** — `config.yaml`, skills under `~/.hermes/skills/`, Claude `settings.json`, symlink, allowlist
+4. **Plan filename** — hook is `tim-session-start.sh` (not `tim-project-inject.sh`)
+
+## Subagent probe (Hermes)
+
+- `is_first_turn = not conversation_history` (`conversation_loop.py:555`) — subagents with history should not get first-turn injection
+- `.parentUuid` guard is Claude-only today; documented low-risk if Hermes adds subagent first-turn later
+
+## Verification
+
+```bash
+cd /home/bbbee/projects/tim
+npx tsc -b                    # clean
+npm test                      # 154 passed
+npx vitest run packages/tim-hooks/src/__tests__/marker.test.ts
+npx vitest run packages/tim-cli/src/__tests__/resolve-project.test.ts
+
+TMP=$(mktemp -d)
+echo '{"project":"P0063","session":"s","exchanges":0,"batch_size":5,"batches_summarized":0}' > "$TMP/.tim-project"
+node packages/tim-cli/dist/cli.js resolve-project --cwd "$TMP"
+node packages/tim-cli/dist/cli.js bind-project --cwd "$TMP" --label P0063
+printf '{"cwd":"%s","extra":{"is_first_turn":true}}' "$TMP" | bash ~/.hermes/agent-hooks/tim-session-start.sh
+hermes hooks doctor && hermes hooks test pre_llm_call
+```
+
+Plan: `docs/start-hook-plan.md`
+
+---
+
 # JOURNAL — Session tracking + summarization (Tasks 1–11 + P0000 Inbox)
 
 ## Done

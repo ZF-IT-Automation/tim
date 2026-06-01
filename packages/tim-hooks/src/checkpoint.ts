@@ -11,7 +11,7 @@ import {
   type TimStore,
 } from 'tim-store';
 import { runConfiguredHooks, type HookEnv } from './hooks.js';
-import { detectProject, writeMarker } from './marker.js';
+import { findMarker, writeMarker } from './marker.js';
 import { onSessionStop } from './session-hooks.js';
 
 export interface SessionEndOptions {
@@ -50,8 +50,8 @@ async function resolveSessionProjectId(
   explicitProjectId?: string,
 ): Promise<string> {
   if (explicitProjectId) return explicitProjectId;
-  const marker = detectProject(cwd);
-  if (marker) return marker.project;
+  const located = findMarker(cwd);
+  if (located) return located.marker.project;
   const active = getActiveProjectLabel();
   if (active) return active;
   await ensureInboxProject(store);

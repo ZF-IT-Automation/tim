@@ -21,6 +21,8 @@ export {
   readMarker,
   writeMarker,
   detectProject,
+  findMarker,
+  buildLoadDirective,
   reconcileMarker,
   acquireLock,
   releaseLock,
@@ -29,6 +31,7 @@ export {
   MARKER_LOCK,
   LOCK_TTL_MS,
   type ProjectMarker,
+  type MarkerLocation,
   type SummarizerConfig,
 } from './marker.js';
 

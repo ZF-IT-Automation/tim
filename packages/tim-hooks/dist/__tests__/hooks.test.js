@@ -112,7 +112,8 @@ const index_js_1 = require("../index.js");
     });
     (0, vitest_1.it)('session-start runs configured hook', async () => {
         const store = new tim_store_1.TimStore(':memory:');
-        const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tim-start-'));
+        fs.mkdirSync('/home/bbbee/.tim-test-runs', { recursive: true });
+        const tmpDir = fs.mkdtempSync(path.join('/home/bbbee/.tim-test-runs', 'tim-start-'));
         const marker = path.join(tmpDir, 'started.txt');
         const script = `touch "${marker}"`;
         await (0, index_js_1.runSessionStart)(store, {
@@ -156,6 +157,23 @@ const index_js_1 = require("../index.js");
             fs.rmSync(tmp, { recursive: true, force: true });
             store.close();
         }
+    });
+    (0, vitest_1.it)('runSessionStart resolves a parent .tim-project from a subdirectory', async () => {
+        const store = new tim_store_1.TimStore(':memory:');
+        await store.createProject('P0042');
+        const root = fs.mkdtempSync(path.join('/home/bbbee', '.tim-test-runs', 'sess-'));
+        fs.writeFileSync(path.join(root, '.tim-project'), JSON.stringify({ project: 'P0042', session: 'old', exchanges: 0, batch_size: 5, batches_summarized: 0 }));
+        const sub = path.join(root, 'pkg', 'inner');
+        fs.mkdirSync(sub, { recursive: true });
+        const { project } = await (0, index_js_1.runSessionStart)(store, {
+            sessionId: 'sess-sub',
+            agentName: 'a',
+            cwd: sub,
+            harness: 'test',
+        });
+        (0, vitest_1.expect)(project?.metadata.label ?? project?.id).toBe('P0042');
+        store.close();
+        fs.rmSync(root, { recursive: true, force: true });
     });
 });
 (0, vitest_1.describe)('saveConfig roundtrip', () => {

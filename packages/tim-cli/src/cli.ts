@@ -3,7 +3,16 @@
 
 import { TimStore, SessionManager } from 'tim-store';
 import { loadConfig, getTimDir, type TimConfigFile } from 'tim-core';
-import { runCheckpoint, runSessionEnd, runSessionStart } from 'tim-hooks';
+import {
+  runCheckpoint,
+  runSessionEnd,
+  runSessionStart,
+  findMarker,
+  buildLoadDirective,
+  readMarker,
+  writeMarker,
+  type ProjectMarker,
+} from 'tim-hooks';
 import { tim_export, tim_import, exportToMarkdown } from 'tim-migrate';
 import { cmdSync } from './sync-cli.js';
 import * as fs from 'fs';
@@ -107,6 +116,45 @@ async function cmdStats() {
   const stats = await store.stats();
   console.log(JSON.stringify(stats, null, 2));
   store.close();
+}
+
+async function cmdResolveProject(args: string[]) {
+  const flags = parseArgs(args);
+  const cwd = flags.cwd ?? process.cwd();
+  const format = flags.format ?? 'label';
+
+  const located = findMarker(cwd);
+  if (!located) return; // no marker (or corrupt nearest) → silent skip, exit 0
+
+  const { marker, dir } = located;
+  if (format === 'json') {
+    console.log(JSON.stringify({ ...marker, dir }));
+  } else if (format === 'directive') {
+    process.stdout.write(buildLoadDirective(marker.project, dir));
+  } else {
+    process.stdout.write(marker.project);
+  }
+}
+
+async function cmdBindProject(args: string[]) {
+  const flags = parseArgs(args);
+  const cwd = flags.cwd ?? process.cwd();
+  const label = flags.label;
+  if (!label) {
+    console.error('Usage: tim bind-project --label <P00XX> [--cwd <dir>] [--session <id>]');
+    process.exit(1);
+  }
+  const existing = readMarker(cwd);
+  const marker: ProjectMarker = {
+    project: label,
+    session: flags.session ?? existing?.session ?? '',
+    exchanges: existing?.exchanges ?? 0,
+    batch_size: existing?.batch_size ?? 5,
+    batches_summarized: existing?.batches_summarized ?? 0,
+    summarizer: existing?.summarizer,
+  };
+  writeMarker(cwd, marker);
+  console.log(`Wrote .tim-project → ${label} at ${cwd}`);
 }
 
 async function cmdHook(args: string[]) {
@@ -252,6 +300,12 @@ async function main() {
     case 'stats':
       await cmdStats();
       break;
+    case 'resolve-project':
+      await cmdResolveProject(rest);
+      break;
+    case 'bind-project':
+      await cmdBindProject(rest);
+      break;
     case 'hook':
       await cmdHook(rest);
       break;
@@ -283,6 +337,8 @@ Commands:
   init                  Initialize TIM (create DB, register agents, write MCP config)
   doctor                Run diagnostics
   stats                 Show memory statistics
+  resolve-project       Print bound project from nearest .tim-project (--cwd, --format label|json|directive)
+  bind-project          Write/refresh .tim-project for a project (--label, --cwd, --session)
   hook session-start    Start a session (--session, --agent, --cwd, --harness)
   hook session-end      End a session and run checkpoint (--session)
   checkpoint            Manual checkpoint for a session (--session)

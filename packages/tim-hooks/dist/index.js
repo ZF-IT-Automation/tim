@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.detachedSpawner = exports.onSessionStop = exports.LOCK_TTL_MS = exports.MARKER_LOCK = exports.MARKER_FILENAME = exports.markerPath = exports.releaseLock = exports.acquireLock = exports.reconcileMarker = exports.detectProject = exports.writeMarker = exports.readMarker = exports.getActiveProjectLabel = exports.loadProjectContext = exports.runSessionEnd = exports.runSessionStart = exports.runCheckpoint = exports.runConfiguredHooks = exports.runHooks = exports.runHookScript = void 0;
+exports.detachedSpawner = exports.onSessionStop = exports.LOCK_TTL_MS = exports.MARKER_LOCK = exports.MARKER_FILENAME = exports.markerPath = exports.releaseLock = exports.acquireLock = exports.reconcileMarker = exports.buildLoadDirective = exports.findMarker = exports.detectProject = exports.writeMarker = exports.readMarker = exports.getActiveProjectLabel = exports.loadProjectContext = exports.runSessionEnd = exports.runSessionStart = exports.runCheckpoint = exports.runConfiguredHooks = exports.runHooks = exports.runHookScript = void 0;
 var hooks_js_1 = require("./hooks.js");
 Object.defineProperty(exports, "runHookScript", { enumerable: true, get: function () { return hooks_js_1.runHookScript; } });
 Object.defineProperty(exports, "runHooks", { enumerable: true, get: function () { return hooks_js_1.runHooks; } });
@@ -15,6 +15,8 @@ var marker_js_1 = require("./marker.js");
 Object.defineProperty(exports, "readMarker", { enumerable: true, get: function () { return marker_js_1.readMarker; } });
 Object.defineProperty(exports, "writeMarker", { enumerable: true, get: function () { return marker_js_1.writeMarker; } });
 Object.defineProperty(exports, "detectProject", { enumerable: true, get: function () { return marker_js_1.detectProject; } });
+Object.defineProperty(exports, "findMarker", { enumerable: true, get: function () { return marker_js_1.findMarker; } });
+Object.defineProperty(exports, "buildLoadDirective", { enumerable: true, get: function () { return marker_js_1.buildLoadDirective; } });
 Object.defineProperty(exports, "reconcileMarker", { enumerable: true, get: function () { return marker_js_1.reconcileMarker; } });
 Object.defineProperty(exports, "acquireLock", { enumerable: true, get: function () { return marker_js_1.acquireLock; } });
 Object.defineProperty(exports, "releaseLock", { enumerable: true, get: function () { return marker_js_1.releaseLock; } });

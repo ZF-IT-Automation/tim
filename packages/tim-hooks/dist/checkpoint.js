@@ -66,9 +66,9 @@ async function loadProjectContext(store) {
 async function resolveSessionProjectId(store, cwd, explicitProjectId) {
     if (explicitProjectId)
         return explicitProjectId;
-    const marker = (0, marker_js_1.detectProject)(cwd);
-    if (marker)
-        return marker.project;
+    const located = (0, marker_js_1.findMarker)(cwd);
+    if (located)
+        return located.marker.project;
     const active = getActiveProjectLabel();
     if (active)
         return active;

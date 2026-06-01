@@ -5,6 +5,8 @@ import {
   readMarker,
   writeMarker,
   detectProject,
+  findMarker,
+  buildLoadDirective,
   reconcileMarker,
   acquireLock,
   releaseLock,
@@ -86,5 +88,48 @@ describe('marker', () => {
     expect(acquireLock(dir)).toBe(false);
     releaseLock(dir);
     expect(acquireLock(dir)).toBe(true);
+  });
+
+  it('findMarker returns the marker in the cwd itself', () => {
+    writeMarker(dir, { project: 'P1', session: 's', exchanges: 0, batch_size: 5, batches_summarized: 0 });
+    const found = findMarker(dir);
+    expect(found?.marker.project).toBe('P1');
+    expect(found?.dir).toBe(fs.realpathSync(dir));
+  });
+
+  it('findMarker walks up to a parent marker', () => {
+    writeMarker(dir, { project: 'PARENT', session: 's', exchanges: 0, batch_size: 5, batches_summarized: 0 });
+    const sub = path.join(dir, 'a', 'b', 'c');
+    fs.mkdirSync(sub, { recursive: true });
+    expect(findMarker(sub)?.marker.project).toBe('PARENT');
+  });
+
+  it('findMarker: nearest marker wins over an ancestor', () => {
+    writeMarker(dir, { project: 'PARENT', session: 's', exchanges: 0, batch_size: 5, batches_summarized: 0 });
+    const sub = path.join(dir, 'child');
+    fs.mkdirSync(sub, { recursive: true });
+    writeMarker(sub, { project: 'CHILD', session: 's', exchanges: 0, batch_size: 5, batches_summarized: 0 });
+    expect(findMarker(sub)?.marker.project).toBe('CHILD');
+  });
+
+  it('findMarker returns null when no marker exists up to root (no infinite loop)', () => {
+    const sub = path.join(dir, 'x', 'y');
+    fs.mkdirSync(sub, { recursive: true });
+    expect(findMarker(sub)).toBeNull();
+  });
+
+  it('findMarker stops at a corrupt nearest marker (does not silently use an ancestor)', () => {
+    writeMarker(dir, { project: 'PARENT', session: 's', exchanges: 0, batch_size: 5, batches_summarized: 0 });
+    const sub = path.join(dir, 'child');
+    fs.mkdirSync(sub, { recursive: true });
+    fs.writeFileSync(path.join(sub, '.tim-project'), '{ not valid json');
+    expect(findMarker(sub)).toBeNull();
+  });
+
+  it('buildLoadDirective embeds the label and the load instruction', () => {
+    const d = buildLoadDirective('P0063', '/home/bbbee/projects/tim');
+    expect(d).toContain('P0063');
+    expect(d).toContain('tim_load_project(label="P0063")');
+    expect(d).toContain('.tim-project');
   });
 });
