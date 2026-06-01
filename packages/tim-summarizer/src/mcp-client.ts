@@ -31,9 +31,11 @@ function dbPathFromEnv(): string {
 }
 
 export function createTimMcpTransport(): StdioClientTransport {
+  const serverPath = process.env.TIM_MCP_PATH
+    || path.resolve(__dirname, '..', '..', 'tim-mcp', 'dist', 'server.js');
   return new StdioClientTransport({
-    command: 'npx',
-    args: ['tim-mcp'],
+    command: 'node',
+    args: [serverPath],
     env: { ...process.env, TIM_DB_PATH: dbPathFromEnv() },
   });
 }
