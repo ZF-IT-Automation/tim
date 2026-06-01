@@ -164,9 +164,18 @@ export interface TimConfig {
     defaultVisibility?: number;
     defaultConfidence?: number;
     hooks?: TimHooksConfig;
+    sync?: {
+        server: string;
+        token?: string;
+    };
     summarizer?: {
-        cli: string;
-        model: string;
+        timeout_sec?: number;
+        chain: Array<{
+            cli: string;
+            model: string;
+            provider?: string;
+            label?: string;
+        }>;
     };
     batch_size?: number;
 }

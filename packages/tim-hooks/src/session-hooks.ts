@@ -2,7 +2,6 @@ import { spawn as nodeSpawn } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import type { TimStore } from 'tim-store';
-import { loadConfig } from 'tim-core';
 import {
   detectProject,
   reconcileMarker,
@@ -43,10 +42,9 @@ export function buildSummarizerCommand(
   lockPath: string,
   logPath: string,
   timeoutSec: number = DEFAULT_SUMMARIZER_TIMEOUT_SEC,
-  cli?: string,
 ): string {
   const q = (s: string) => JSON.stringify(s);
-  const cmd = cli ?? 'node ' + JSON.stringify(path.resolve(__dirname, '..', '..', '..', 'tim-summarizer', 'dist', 'summarize.js'));
+  const cmd = 'node ' + JSON.stringify(path.resolve(__dirname, '..', '..', '..', 'tim-summarizer', 'dist', 'summarize.js'));
   return (
     `{ trap ${q(`rm -f ${lockPath}`)} EXIT; ` +
     `timeout ${timeoutSec} env TIM_SESSION_ID=${q(sessionId)} ${cmd} >>${q(logPath)} 2>&1; }`
@@ -124,8 +122,7 @@ export async function maybeSpawnSummarizer(
   const timeoutSec = opts.timeoutSec ?? DEFAULT_SUMMARIZER_TIMEOUT_SEC;
 
   try {
-  const cli = loadConfig().summarizer?.cli;
-    spawn(buildSummarizerCommand(reconciled.session, lockPath, logPath, timeoutSec, cli), {
+    spawn(buildSummarizerCommand(reconciled.session, lockPath, logPath, timeoutSec), {
       sessionId: reconciled.session,
       cwd,
     });

@@ -1,4 +1,9 @@
 import type { UnsummarizedBatch } from './mcp-client.js';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
+import { loadConfig } from 'tim-core';
+
+const execFileAsync = promisify(execFile);
 
 /** Compact thematic summary for a batch (no external API required). */
 export function generateSummaryHeuristic(batch: UnsummarizedBatch): string {
@@ -25,46 +30,63 @@ export function generateSummaryHeuristic(batch: UnsummarizedBatch): string {
   return summary;
 }
 
-/** Optional Anthropic API when ANTHROPIC_API_KEY is set. */
-export async function generateSummary(batch: UnsummarizedBatch): Promise<string> {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) return generateSummaryHeuristic(batch);
+function buildPrompt(batch: UnsummarizedBatch): string {
+  return (
+    `Summarize this agent session batch thematically (bullet themes, decisions, open items). ` +
+    `Batch index ${batch.batchIndex}. JSON:\n${JSON.stringify({
+      exchanges: batch.exchanges,
+      previousSummaries: batch.previousSummaries,
+      sessionMeta: batch.sessionMeta,
+    })}`
+  );
+}
 
-  const model = process.env.TIM_SUMMARIZER_MODEL || 'claude-3-5-haiku-latest';
-  const payload = {
-    model,
-    max_tokens: 1024,
-    messages: [
-      {
-        role: 'user',
-        content:
-          `Summarize this agent session batch thematically (bullet themes, decisions, open items). ` +
-          `Batch index ${batch.batchIndex}. JSON:\n${JSON.stringify({
-            exchanges: batch.exchanges,
-            previousSummaries: batch.previousSummaries,
-            sessionMeta: batch.sessionMeta,
-          })}`,
-      },
-    ],
-  };
+async function tryCli(
+  cli: string,
+  model: string,
+  provider: string | undefined,
+  prompt: string,
+  timeoutSec: number,
+): Promise<string | null> {
+  const args = ['--model', model, '--prompt', prompt];
+  if (provider) args.unshift('--provider', provider);
 
   try {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify(payload),
+    const { stdout } = await execFileAsync(cli, args, {
+      timeout: timeoutSec * 1000,
+      maxBuffer: 64 * 1024,
     });
-    if (!res.ok) return generateSummaryHeuristic(batch);
-    const data = (await res.json()) as {
-      content?: Array<{ type: string; text?: string }>;
-    };
-    const text = data.content?.find(c => c.type === 'text')?.text?.trim();
-    return text && text.length > 0 ? text : generateSummaryHeuristic(batch);
+    const text = stdout.trim();
+    return text.length > 0 ? text : null;
   } catch {
-    return generateSummaryHeuristic(batch);
+    return null;
   }
+}
+
+export async function generateSummary(batch: UnsummarizedBatch): Promise<string> {
+  const config = loadConfig();
+  const chain = config.summarizer?.chain;
+  if (!chain || chain.length === 0) return generateSummaryHeuristic(batch);
+
+  const prompt = buildPrompt(batch);
+  const timeoutSec = config.summarizer?.timeout_sec ?? 600;
+
+  for (const entry of chain) {
+    const result = await tryCli(entry.cli, entry.model, entry.provider, prompt, timeoutSec);
+    if (result) {
+      if (process.env.TIM_SUMMARIZER_VERBOSE) {
+        console.error(`tim-summarizer: used ${entry.label || entry.cli}/${entry.model}`);
+      }
+      return result;
+    }
+    if (process.env.TIM_SUMMARIZER_VERBOSE) {
+      console.error(`tim-summarizer: ${entry.label || entry.cli}/${entry.model} failed, trying next`);
+    }
+  }
+
+  // All CLIs failed, fall back to heuristic
+  if (process.env.TIM_SUMMARIZER_VERBOSE) {
+    console.error('tim-summarizer: all CLIs failed, using heuristic');
+  }
+  return generateSummaryHeuristic(batch);
 }

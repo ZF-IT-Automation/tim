@@ -13,7 +13,7 @@ export interface SessionStopResult {
 export declare const DEFAULT_SUMMARIZER_TIMEOUT_SEC = 600;
 export declare function summarizerLogPath(cwd: string): string;
 /** Shell snippet: trap lock release, timeout, run tim-summarizer CLI with log append. */
-export declare function buildSummarizerCommand(sessionId: string, lockPath: string, logPath: string, timeoutSec?: number, cli?: string): string;
+export declare function buildSummarizerCommand(sessionId: string, lockPath: string, logPath: string, timeoutSec?: number): string;
 /** Detached spawn with log dir creation and spawn-error capture (does not throw). */
 export declare const spawnSummarizer: Spawner;
 /** @deprecated Use spawnSummarizer */

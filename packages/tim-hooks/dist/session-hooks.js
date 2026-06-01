@@ -41,16 +41,15 @@ exports.onSessionStop = onSessionStop;
 const child_process_1 = require("child_process");
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
-const tim_core_1 = require("tim-core");
 const marker_js_1 = require("./marker.js");
 exports.DEFAULT_SUMMARIZER_TIMEOUT_SEC = 600;
 function summarizerLogPath(cwd) {
     return path.join(cwd, '.tim', 'summarizer.log');
 }
 /** Shell snippet: trap lock release, timeout, run tim-summarizer CLI with log append. */
-function buildSummarizerCommand(sessionId, lockPath, logPath, timeoutSec = exports.DEFAULT_SUMMARIZER_TIMEOUT_SEC, cli) {
+function buildSummarizerCommand(sessionId, lockPath, logPath, timeoutSec = exports.DEFAULT_SUMMARIZER_TIMEOUT_SEC) {
     const q = (s) => JSON.stringify(s);
-    const cmd = cli ?? 'node ' + JSON.stringify(path.resolve(__dirname, '..', '..', '..', 'tim-summarizer', 'dist', 'summarize.js'));
+    const cmd = 'node ' + JSON.stringify(path.resolve(__dirname, '..', '..', '..', 'tim-summarizer', 'dist', 'summarize.js'));
     return (`{ trap ${q(`rm -f ${lockPath}`)} EXIT; ` +
         `timeout ${timeoutSec} env TIM_SESSION_ID=${q(sessionId)} ${cmd} >>${q(logPath)} 2>&1; }`);
 }
@@ -114,8 +113,7 @@ async function maybeSpawnSummarizer(store, cwd, opts = {}) {
     const logPath = summarizerLogPath(cwd);
     const timeoutSec = opts.timeoutSec ?? exports.DEFAULT_SUMMARIZER_TIMEOUT_SEC;
     try {
-        const cli = (0, tim_core_1.loadConfig)().summarizer?.cli;
-        spawn(buildSummarizerCommand(reconciled.session, lockPath, logPath, timeoutSec, cli), {
+        spawn(buildSummarizerCommand(reconciled.session, lockPath, logPath, timeoutSec), {
             sessionId: reconciled.session,
             cwd,
         });
