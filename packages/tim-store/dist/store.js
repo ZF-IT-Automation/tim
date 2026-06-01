@@ -150,6 +150,18 @@ class TimStore {
         const rows = this.db.prepare(sql).all(...params);
         return rows.map(rowToEntry);
     }
+    /** Get all entries with a given metadata.kind value (no parent filter). */
+    async getByMetadataKind(kind, limit = 200) {
+        const rows = this.db.prepare(`
+      SELECT * FROM entries
+      WHERE json_extract(metadata, '$.kind') = ?
+        AND irrelevant = 0
+        AND tombstoned_at IS NULL
+      ORDER BY created_at DESC
+      LIMIT ?
+    `).all(kind, limit);
+        return rows.map(rowToEntry);
+    }
     async getChildByKind(parentId, kind) {
         const rows = this.db.prepare(`
       SELECT * FROM entries

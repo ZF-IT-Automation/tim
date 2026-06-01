@@ -62,6 +62,8 @@ export declare class SessionManager {
     }): Promise<Entry>;
     rollUpSession(sessionId: string, fold: (batches: Entry[]) => Promise<string>): Promise<Entry>;
     getSessionExchanges(sessionId: string): Promise<Entry[]>;
+    /** Scan all project sessions and return their unsummarized batches (cleanup sweep). */
+    showAllUnsummarized(): Promise<UnsummarizedBatch[]>;
     checkpoint(sessionId: string, opts?: {
         summarize?: Summarizer;
         runDecay?: boolean;

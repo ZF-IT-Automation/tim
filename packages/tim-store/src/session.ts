@@ -428,6 +428,21 @@ export class SessionManager {
     return this.store.getChildren(sessionId, { metadataKind: KIND_EXCHANGE });
   }
 
+  /** Scan all project sessions and return their unsummarized batches (cleanup sweep). */
+  async showAllUnsummarized(): Promise<UnsummarizedBatch[]> {
+    const results: UnsummarizedBatch[] = [];
+    const sessions = await this.store.getByMetadataKind(KIND_SESSION, 100);
+    for (const session of sessions) {
+      try {
+        const batch = await this.showUnsummarized(session.id);
+        if (batch.exchanges.length > 0) results.push(batch);
+      } catch {
+        // Skip sessions with incomplete subtrees
+      }
+    }
+    return results;
+  }
+
   async checkpoint(
     sessionId: string,
     opts: { summarize?: Summarizer; runDecay?: boolean } = {},

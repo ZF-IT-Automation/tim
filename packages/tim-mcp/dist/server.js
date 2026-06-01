@@ -391,7 +391,7 @@ const WRITE_TOOLS = new Set([
 const READ_TOOLS = new Set([
     'tim_read', 'tim_search', 'tim_trace', 'tim_health', 'tim_stats',
     'tim_export', 'tim_doctor', 'tim_sync', 'tim_load_project', 'tim_tasks',
-    'tim_show_unsummarized',
+    'tim_show_unsummarized', 'tim_show_all_unsummarized',
 ]);
 function scheduleAutoSync(toolName, s) {
     if (WRITE_TOOLS.has(toolName)) {
@@ -638,6 +638,14 @@ async function startServer() {
                     type: 'object',
                     properties: { sessionId: { type: 'string' } },
                     required: ['sessionId'],
+                },
+            },
+            {
+                name: 'tim_show_all_unsummarized',
+                description: 'Scan ALL sessions and return every unsummarized batch. Use at startup for cleanup sweep of stale batches (crashed summarizer, missed triggers). No parameters needed.',
+                inputSchema: {
+                    type: 'object',
+                    properties: {},
                 },
             },
             {
@@ -1005,6 +1013,12 @@ async function startServer() {
                     const batch = await getSessions().showUnsummarized(sessionId);
                     return {
                         content: [{ type: 'text', text: JSON.stringify(batch, null, 2) }],
+                    };
+                }
+                case 'tim_show_all_unsummarized': {
+                    const batches = await getSessions().showAllUnsummarized();
+                    return {
+                        content: [{ type: 'text', text: JSON.stringify(batches, null, 2) }],
                     };
                 }
                 case 'tim_checkpoint': {

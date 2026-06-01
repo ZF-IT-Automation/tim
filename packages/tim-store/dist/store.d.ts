@@ -44,6 +44,8 @@ export declare class TimStore implements MemoryInterface {
     getChildren(parentId: string, filter?: {
         metadataKind?: string;
     }): Promise<Entry[]>;
+    /** Get all entries with a given metadata.kind value (no parent filter). */
+    getByMetadataKind(kind: string, limit?: number): Promise<Entry[]>;
     getChildByKind(parentId: string, kind: string): Promise<Entry[]>;
     getChildrenBySeq(parentId: string): Promise<Entry[]>;
     getTasks(opts?: GetTasksOptions): Promise<TaskRecord[]>;

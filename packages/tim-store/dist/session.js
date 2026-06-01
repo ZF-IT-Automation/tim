@@ -341,6 +341,22 @@ class SessionManager {
         }
         return this.store.getChildren(sessionId, { metadataKind: session_tree_js_1.KIND_EXCHANGE });
     }
+    /** Scan all project sessions and return their unsummarized batches (cleanup sweep). */
+    async showAllUnsummarized() {
+        const results = [];
+        const sessions = await this.store.getByMetadataKind(session_tree_js_1.KIND_SESSION, 100);
+        for (const session of sessions) {
+            try {
+                const batch = await this.showUnsummarized(session.id);
+                if (batch.exchanges.length > 0)
+                    results.push(batch);
+            }
+            catch {
+                // Skip sessions with incomplete subtrees
+            }
+        }
+        return results;
+    }
     async checkpoint(sessionId, opts = {}) {
         const session = await this.store.read(sessionId);
         if (!session || session.metadata.kind !== 'session') {

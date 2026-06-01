@@ -183,6 +183,19 @@ export class TimStore implements MemoryInterface {
     return rows.map(rowToEntry);
   }
 
+  /** Get all entries with a given metadata.kind value (no parent filter). */
+  async getByMetadataKind(kind: string, limit: number = 200): Promise<Entry[]> {
+    const rows = this.db.prepare(`
+      SELECT * FROM entries
+      WHERE json_extract(metadata, '$.kind') = ?
+        AND irrelevant = 0
+        AND tombstoned_at IS NULL
+      ORDER BY created_at DESC
+      LIMIT ?
+    `).all(kind, limit) as RowEntry[];
+    return rows.map(rowToEntry);
+  }
+
   async getChildByKind(parentId: string, kind: string): Promise<Entry[]> {
     const rows = this.db.prepare(`
       SELECT * FROM entries
