@@ -47,8 +47,13 @@ const DEFAULT_SUMMARIZER = async (exchanges) => {
 };
 class SessionManager {
     store;
+    onBatchFull;
     constructor(store) {
         this.store = store;
+    }
+    /** Live summarizer trigger when an exchange-batch fills (wired from tim-mcp). */
+    setOnBatchFull(handler) {
+        this.onBatchFull = handler;
     }
     async sessionStart(params) {
         const { sessionId, agentName, cwd, harness } = params;
@@ -152,11 +157,6 @@ class SessionManager {
         }
         return written;
     }
-    /** Fire-and-forget: spawn external summarizer for a full batch. Placeholder until summarizer-agent is built. */
-    async summarizeBatch(_sessionId, _batchId) {
-        // TODO: spawn detached summarizer process via onSessionStop hook
-        // The summarizer calls showUnsummarized → gets exchanges + context → writes Batch Summary
-    }
     async logExchange(sessionId, entries) {
         const session = await this.store.read(sessionId);
         if (!session || session.metadata.kind !== session_tree_js_1.KIND_SESSION) {
@@ -181,16 +181,20 @@ class SessionManager {
             if (e.role === 'user') {
                 if (usersInBatch.length >= batchSize) {
                     const fullBatchId = batchNode.id;
-                    const nextIndex = (typeof batchNode.metadata.batch_index === 'number'
+                    const fullBatchIndex = typeof batchNode.metadata.batch_index === 'number'
                         ? batchNode.metadata.batch_index
-                        : exchangeBatches.length) + 1;
+                        : exchangeBatches.length;
+                    const nextIndex = fullBatchIndex + 1;
                     batchNode = await this.store.write(`Batch ${nextIndex}`, {
                         parentId: exNode.id,
                         metadata: { kind: session_tree_js_1.KIND_EXCHANGE_BATCH, batch_index: nextIndex, order: nextIndex },
                     });
                     usersInBatch = [];
-                    // Fire-and-forget: previous batch is full → spawn summarizer
-                    this.summarizeBatch(sessionId, fullBatchId).catch(() => { });
+                    this.onBatchFull?.({
+                        sessionId,
+                        batchId: fullBatchId,
+                        batchIndex: fullBatchIndex,
+                    });
                 }
                 seq += 1;
                 currentUser = await this.store.write(e.content, {
@@ -285,6 +289,7 @@ class SessionManager {
             .find(b => b.metadata.batch_index === batchIndex);
         if (existing)
             return existing;
+        const summarizedAt = new Date().toISOString();
         const node = await this.store.write(summaryText, {
             parentId: summaryNode.id,
             title: `Batch ${batchIndex}`,
@@ -294,8 +299,9 @@ class SessionManager {
                 seq_from: range.seqFrom,
                 seq_to: range.seqTo,
                 sessionId,
+                summarized_at: summarizedAt,
             },
-            tags: ['#batch-summary'],
+            tags: [session_tree_js_1.SESSION_SUMMARY_TAG, '#batch-summary'],
         });
         const session = await this.store.read(sessionId);
         const { batchesSummarized } = await (0, session_tree_js_1.deriveCounters)(this.store, sessionId);

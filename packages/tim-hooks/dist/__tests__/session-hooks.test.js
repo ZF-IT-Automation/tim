@@ -83,9 +83,33 @@ const TEST_ROOT = path.join('/home/bbbee', '.tim-test-runs');
         (0, vitest_1.expect)(res.spawned).toBe(true);
         (0, vitest_1.expect)(spawn).toHaveBeenCalledOnce();
         const [cmd, ctx] = spawn.mock.calls[0];
-        (0, vitest_1.expect)(cmd).toContain('claude');
-        (0, vitest_1.expect)(cmd).toContain('haiku');
+        (0, vitest_1.expect)(cmd).toContain('tim-summarizer');
+        (0, vitest_1.expect)(cmd).toContain('trap');
+        (0, vitest_1.expect)(cmd).toContain('timeout');
+        (0, vitest_1.expect)(cmd).toContain('.tim/summarizer.log');
         (0, vitest_1.expect)(ctx.sessionId).toBe('st');
+    });
+    (0, vitest_1.it)('buildSummarizerCommand uses EXIT trap and tim-summarizer', () => {
+        const cmd = (0, session_hooks_js_1.buildSummarizerCommand)('sid', '/tmp/lock', '/tmp/log', 120);
+        (0, vitest_1.expect)(cmd).toContain('trap');
+        (0, vitest_1.expect)(cmd).toContain('EXIT');
+        (0, vitest_1.expect)(cmd).toContain('npx tim-summarizer');
+        (0, vitest_1.expect)(cmd).toContain('timeout 120');
+        (0, vitest_1.expect)(cmd).toContain('TIM_SESSION_ID');
+    });
+    (0, vitest_1.it)('maybeSpawnSummarizer with batchFull skips below-threshold', async () => {
+        await sessions.logExchange('st', [{ role: 'user', content: 'only' }]);
+        (0, marker_js_1.writeMarker)(dir, {
+            project: 'P0003',
+            session: 'st',
+            exchanges: 1,
+            batch_size: 2,
+            batches_summarized: 0,
+        });
+        const spawn = vitest_1.vi.fn();
+        const res = await (0, session_hooks_js_1.maybeSpawnSummarizer)(store, dir, { spawn, batchFull: true });
+        (0, vitest_1.expect)(res.spawned).toBe(true);
+        (0, vitest_1.expect)(spawn).toHaveBeenCalledOnce();
     });
     (0, vitest_1.it)('does NOT spawn when pending < batch_size', async () => {
         await sessions.logExchange('st', [{ role: 'user', content: 'only one' }]);

@@ -24,6 +24,8 @@ export {
   type Summarizer,
   type UnsummarizedBatch,
   type UnsummarizedExchange,
+  type BatchFullInfo,
+  type OnBatchFullHandler,
 } from './session.js';
 export {
   deriveCounters,

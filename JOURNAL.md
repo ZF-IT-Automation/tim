@@ -210,3 +210,34 @@ npx vitest run packages/tim-store/src/__tests__/session.test.ts
 ```
 
 **2026-06-01:** tsc clean, 23/23 session tests pass.
+
+---
+
+# JOURNAL — Summarizer-Agent completion (3 gaps)
+
+## Done
+
+1. **GAP 1 — live trigger** — `SessionManager.setOnBatchFull()`; `logExchange` fires on batch roll; `tim-mcp` wires `maybeSpawnSummarizer(..., { batchFull: true })` using session `metadata.cwd`
+2. **GAP 2 — spawn hardening** — `maybeSpawnSummarizer` shared by `onSessionStop` + live path; `buildSummarizerCommand` → `npx tim-summarizer` (no `claude -p`); EXIT trap lock release; `timeout` default 600s; `.tim/summarizer.log`; spawn errors logged + lock released
+3. **GAP 3 — MCP tool** — `tim_write_batch_summary` → `writeBatchSummary`; metadata adds `summarized_at`; tags `#session-summary` + `#batch-summary`
+4. **Package** — `packages/tim-summarizer` CLI loop: `tim_show_unsummarized` → `generateSummary` → `tim_write_batch_summary`
+
+## Decisions
+
+1. **Store stays cwd-agnostic** — spawn only in tim-mcp / tim-hooks, not `session.ts`
+2. **Heuristic default** — no API key → compact local summary; `ANTHROPIC_API_KEY` optional for LLM
+3. **`batchFull` flag** — live trigger skips pending threshold; session-stop keeps threshold gate
+
+## Gotchas
+
+1. **Lock** — shell EXIT trap releases `.tim-project.lock`; stale lock TTL still 10min in `marker.ts`
+2. **MCP child** — summarizer spawns `npx tim-mcp` stdio client; needs built `tim-mcp` + `tim-summarizer` on PATH
+3. **batchFull test** — reconciled `exchanges` from DB may be 1 with one user; `batchFull` still spawns
+
+## Verify
+
+```bash
+cd ~/projects/tim && npm install && npx tsc -b
+npm test
+npx vitest run packages/tim-store/src/__tests__/session.test.ts packages/tim-hooks/src/__tests__/session-hooks.test.ts packages/tim-summarizer/src/__tests__
+```

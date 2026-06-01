@@ -33,47 +33,97 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.detachedSpawner = void 0;
+exports.detachedSpawner = exports.spawnSummarizer = exports.DEFAULT_SUMMARIZER_TIMEOUT_SEC = void 0;
+exports.summarizerLogPath = summarizerLogPath;
+exports.buildSummarizerCommand = buildSummarizerCommand;
+exports.maybeSpawnSummarizer = maybeSpawnSummarizer;
 exports.onSessionStop = onSessionStop;
 const child_process_1 = require("child_process");
+const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
 const marker_js_1 = require("./marker.js");
-const detachedSpawner = (command, ctx) => {
-    const child = (0, child_process_1.spawn)(command, {
-        shell: true,
-        cwd: ctx.cwd,
-        detached: true,
-        stdio: 'ignore',
-        env: { ...process.env, TIM_SESSION_ID: ctx.sessionId },
-    });
-    child.unref();
-};
-exports.detachedSpawner = detachedSpawner;
-function buildSummarizerCommand(cfg, sessionId, lockPath) {
-    const cli = cfg?.cli ?? 'claude';
-    const model = cfg?.model ?? 'haiku';
-    const prompt = `Summarize TIM session ${sessionId}: repeatedly call tim_show_unsummarized({sessionId:"${sessionId}"}), ` +
-        `summarize each returned batch thematically, and tim_write the summary as a Batch node under summaryNodeId ` +
-        `with metadata.kind="batch-summary". Stop when hasMore is false.`;
-    return `${cli} -p --model ${model} ${JSON.stringify(prompt)} ; rm -f ${JSON.stringify(lockPath)}`;
+exports.DEFAULT_SUMMARIZER_TIMEOUT_SEC = 600;
+function summarizerLogPath(cwd) {
+    return path.join(cwd, '.tim', 'summarizer.log');
 }
-async function onSessionStop(store, cwd, opts = {}) {
-    const spawn = opts.spawn ?? exports.detachedSpawner;
+/** Shell snippet: trap lock release, timeout, run tim-summarizer CLI with log append. */
+function buildSummarizerCommand(sessionId, lockPath, logPath, timeoutSec = exports.DEFAULT_SUMMARIZER_TIMEOUT_SEC) {
+    const q = (s) => JSON.stringify(s);
+    return (`{ trap ${q(`rm -f ${lockPath}`)} EXIT; ` +
+        `timeout ${timeoutSec} env TIM_SESSION_ID=${q(sessionId)} npx tim-summarizer >>${q(logPath)} 2>&1; }`);
+}
+/** Detached spawn with log dir creation and spawn-error capture (does not throw). */
+const spawnSummarizer = (command, ctx) => {
+    const timDir = path.join(ctx.cwd, '.tim');
+    try {
+        fs.mkdirSync(timDir, { recursive: true });
+    }
+    catch {
+        /* ignore */
+    }
+    const logPath = summarizerLogPath(ctx.cwd);
+    try {
+        const child = (0, child_process_1.spawn)(command, {
+            shell: true,
+            cwd: ctx.cwd,
+            detached: true,
+            stdio: 'ignore',
+            env: { ...process.env, TIM_SESSION_ID: ctx.sessionId },
+        });
+        child.on('error', err => {
+            try {
+                fs.appendFileSync(logPath, `[${new Date().toISOString()}] spawn error: ${err.message}\n`);
+            }
+            catch {
+                /* ignore */
+            }
+            (0, marker_js_1.releaseLock)(ctx.cwd);
+        });
+        child.unref();
+    }
+    catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        try {
+            fs.appendFileSync(logPath, `[${new Date().toISOString()}] spawn failed: ${msg}\n`);
+        }
+        catch {
+            /* ignore */
+        }
+        (0, marker_js_1.releaseLock)(ctx.cwd);
+    }
+};
+exports.spawnSummarizer = spawnSummarizer;
+/** @deprecated Use spawnSummarizer */
+exports.detachedSpawner = exports.spawnSummarizer;
+/** Shared spawn gate for session-stop hook and live batch-full trigger. */
+async function maybeSpawnSummarizer(store, cwd, opts = {}) {
+    const spawn = opts.spawn ?? exports.spawnSummarizer;
     const marker = (0, marker_js_1.detectProject)(cwd);
     if (!marker)
         return { spawned: false, reason: 'no-marker' };
     const reconciled = await (0, marker_js_1.reconcileMarker)(store, cwd);
     const pending = reconciled.exchanges - reconciled.batches_summarized * reconciled.batch_size;
-    if (pending < reconciled.batch_size) {
+    if (!opts.batchFull && pending < reconciled.batch_size) {
         return { spawned: false, reason: 'below-threshold', pending };
     }
     if (!(0, marker_js_1.acquireLock)(cwd))
         return { spawned: false, reason: 'locked', pending };
     const lockPath = path.join(cwd, marker_js_1.MARKER_LOCK);
-    spawn(buildSummarizerCommand(reconciled.summarizer, reconciled.session, lockPath), {
-        sessionId: reconciled.session,
-        cwd,
-    });
-    return { spawned: true, reason: 'spawned', pending };
+    const logPath = summarizerLogPath(cwd);
+    const timeoutSec = opts.timeoutSec ?? exports.DEFAULT_SUMMARIZER_TIMEOUT_SEC;
+    try {
+        spawn(buildSummarizerCommand(reconciled.session, lockPath, logPath, timeoutSec), {
+            sessionId: reconciled.session,
+            cwd,
+        });
+        return { spawned: true, reason: 'spawned', pending };
+    }
+    catch {
+        (0, marker_js_1.releaseLock)(cwd);
+        return { spawned: false, reason: 'spawn-failed', pending };
+    }
+}
+async function onSessionStop(store, cwd, opts = {}) {
+    return maybeSpawnSummarizer(store, cwd, opts);
 }
 //# sourceMappingURL=session-hooks.js.map

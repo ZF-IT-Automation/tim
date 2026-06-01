@@ -18,7 +18,7 @@ import {
   type ProjectSchema,
 } from 'tim-store';
 import { loadConfig, type EdgeType, type Entry } from 'tim-core';
-import { getActiveProjectLabel } from 'tim-hooks';
+import { getActiveProjectLabel, maybeSpawnSummarizer } from 'tim-hooks';
 import { tim_export, tim_import } from 'tim-migrate';
 import { autoPush, autoPull } from 'tim-sync-client';
 import * as fs from 'fs';
@@ -139,6 +139,14 @@ const TimSessionStartSchema = z.object({
 
 const TimShowUnsummarizedSchema = z.object({
   sessionId: z.string(),
+});
+
+const TimWriteBatchSummarySchema = z.object({
+  sessionId: z.string(),
+  batchIndex: z.number().int().positive(),
+  summary: z.string(),
+  seqFrom: z.number().int().nonnegative(),
+  seqTo: z.number().int().nonnegative(),
 });
 
 const TimSessionLogSchema = z.object({
@@ -401,14 +409,23 @@ function getStore(): TimStore {
 
 function getSessions(): SessionManager {
   if (!sessions) {
-    sessions = new SessionManager(getStore());
+    const mgr = new SessionManager(getStore());
+    mgr.setOnBatchFull(({ sessionId }) => {
+      void (async () => {
+        const session = await getStore().read(sessionId);
+        const cwd = typeof session?.metadata.cwd === 'string' ? session.metadata.cwd : undefined;
+        if (!cwd) return;
+        await maybeSpawnSummarizer(getStore(), cwd, { batchFull: true });
+      })();
+    });
+    sessions = mgr;
   }
   return sessions;
 }
 
 const WRITE_TOOLS = new Set([
   'tim_write', 'tim_update', 'tim_delete', 'tim_link',
-  'tim_session_start', 'tim_session_log', 'tim_checkpoint',
+  'tim_session_start', 'tim_session_log', 'tim_checkpoint', 'tim_write_batch_summary',
   'tim_rename_entry', 'tim_move_entry', 'tim_update_many',
   'tim_tag_add', 'tim_tag_remove', 'tim_tag_rename', 'tim_import',
   'tim_create_project',
@@ -680,6 +697,22 @@ export async function startServer(): Promise<void> {
         inputSchema: {
           type: 'object',
           properties: {},
+        },
+      },
+      {
+        name: 'tim_write_batch_summary',
+        description:
+          'Write an idempotent Batch summary node under the session Summary tree. Used by tim-summarizer CLI.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            sessionId: { type: 'string' },
+            batchIndex: { type: 'number', minimum: 1 },
+            summary: { type: 'string' },
+            seqFrom: { type: 'number', minimum: 0 },
+            seqTo: { type: 'number', minimum: 0 },
+          },
+          required: ['sessionId', 'batchIndex', 'summary', 'seqFrom', 'seqTo'],
         },
       },
       {
@@ -1077,6 +1110,18 @@ export async function startServer(): Promise<void> {
           const batches = await getSessions().showAllUnsummarized();
           return {
             content: [{ type: 'text', text: JSON.stringify(batches, null, 2) }],
+          };
+        }
+
+        case 'tim_write_batch_summary': {
+          const { sessionId, batchIndex, summary, seqFrom, seqTo } =
+            TimWriteBatchSummarySchema.parse(args);
+          const node = await getSessions().writeBatchSummary(sessionId, batchIndex, summary, {
+            seqFrom,
+            seqTo,
+          });
+          return {
+            content: [{ type: 'text', text: JSON.stringify(node, null, 2) }],
           };
         }
 

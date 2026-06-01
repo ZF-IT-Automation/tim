@@ -1,0 +1,13 @@
+{
+  "name": "tim-summarizer",
+  "version": "0.1.0-alpha",
+  "description": "TIM batch summarizer CLI — MCP client for tim_show_unsummarized / tim_write_batch_summary",
+  "main": "dist/summarize.js",
+  "bin": { "tim-summarizer": "dist/summarize.js" },
+  "files": ["dist"],
+  "scripts": { "build": "tsc", "test": "vitest run" },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "tim-core": "*"
+  }
+}

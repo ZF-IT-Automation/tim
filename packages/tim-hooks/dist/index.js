@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.detachedSpawner = exports.onSessionStop = exports.LOCK_TTL_MS = exports.MARKER_LOCK = exports.MARKER_FILENAME = exports.markerPath = exports.releaseLock = exports.acquireLock = exports.reconcileMarker = exports.buildLoadDirective = exports.findMarker = exports.detectProject = exports.writeMarker = exports.readMarker = exports.getActiveProjectLabel = exports.loadProjectContext = exports.runSessionEnd = exports.runSessionStart = exports.runCheckpoint = exports.runConfiguredHooks = exports.runHooks = exports.runHookScript = void 0;
+exports.DEFAULT_SUMMARIZER_TIMEOUT_SEC = exports.summarizerLogPath = exports.detachedSpawner = exports.spawnSummarizer = exports.buildSummarizerCommand = exports.maybeSpawnSummarizer = exports.onSessionStop = exports.LOCK_TTL_MS = exports.MARKER_LOCK = exports.MARKER_FILENAME = exports.markerPath = exports.releaseLock = exports.acquireLock = exports.reconcileMarker = exports.buildLoadDirective = exports.findMarker = exports.detectProject = exports.writeMarker = exports.readMarker = exports.getActiveProjectLabel = exports.loadProjectContext = exports.runSessionEnd = exports.runSessionStart = exports.runCheckpoint = exports.runConfiguredHooks = exports.runHooks = exports.runHookScript = void 0;
 var hooks_js_1 = require("./hooks.js");
 Object.defineProperty(exports, "runHookScript", { enumerable: true, get: function () { return hooks_js_1.runHookScript; } });
 Object.defineProperty(exports, "runHooks", { enumerable: true, get: function () { return hooks_js_1.runHooks; } });
@@ -26,5 +26,10 @@ Object.defineProperty(exports, "MARKER_LOCK", { enumerable: true, get: function 
 Object.defineProperty(exports, "LOCK_TTL_MS", { enumerable: true, get: function () { return marker_js_1.LOCK_TTL_MS; } });
 var session_hooks_js_1 = require("./session-hooks.js");
 Object.defineProperty(exports, "onSessionStop", { enumerable: true, get: function () { return session_hooks_js_1.onSessionStop; } });
+Object.defineProperty(exports, "maybeSpawnSummarizer", { enumerable: true, get: function () { return session_hooks_js_1.maybeSpawnSummarizer; } });
+Object.defineProperty(exports, "buildSummarizerCommand", { enumerable: true, get: function () { return session_hooks_js_1.buildSummarizerCommand; } });
+Object.defineProperty(exports, "spawnSummarizer", { enumerable: true, get: function () { return session_hooks_js_1.spawnSummarizer; } });
 Object.defineProperty(exports, "detachedSpawner", { enumerable: true, get: function () { return session_hooks_js_1.detachedSpawner; } });
+Object.defineProperty(exports, "summarizerLogPath", { enumerable: true, get: function () { return session_hooks_js_1.summarizerLogPath; } });
+Object.defineProperty(exports, "DEFAULT_SUMMARIZER_TIMEOUT_SEC", { enumerable: true, get: function () { return session_hooks_js_1.DEFAULT_SUMMARIZER_TIMEOUT_SEC; } });
 //# sourceMappingURL=index.js.map

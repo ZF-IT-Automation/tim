@@ -452,6 +452,8 @@ const index_js_1 = require("../index.js");
             });
             (0, vitest_1.expect)(node.metadata.kind).toBe('batch-summary');
             (0, vitest_1.expect)(node.metadata.batch_index).toBe(1);
+            (0, vitest_1.expect)(node.metadata.summarized_at).toBeTruthy();
+            (0, vitest_1.expect)(node.tags).toContain('#session-summary');
             const { batchesSummarized } = await (0, index_js_1.deriveCounters)(store, 'sb');
             (0, vitest_1.expect)(batchesSummarized).toBe(1);
         });
@@ -470,6 +472,33 @@ const index_js_1 = require("../index.js");
             (0, vitest_1.expect)(summary.metadata.summary).toContain('Themes:');
             (0, vitest_1.expect)(summary.metadata.exchanges).toBe(2);
             (0, vitest_1.expect)(summary.tags).toContain('#session-summary');
+        });
+    });
+    (0, vitest_1.describe)('onBatchFull live trigger', () => {
+        (0, vitest_1.it)('fires when logExchange rolls to a new batch', async () => {
+            const onBatchFull = vitest_1.vi.fn();
+            sessions.setOnBatchFull(onBatchFull);
+            await store.createProject('P0093');
+            await sessions.startProjectSession({
+                sessionId: 'live',
+                projectId: 'P0093',
+                agentName: 'a',
+                cwd: '/tmp/live',
+                harness: 't',
+                batchSize: 2,
+            });
+            await sessions.logExchange('live', [
+                { role: 'user', content: 'Q1' },
+                { role: 'agent', content: 'A1' },
+                { role: 'user', content: 'Q2' },
+                { role: 'agent', content: 'A2' },
+                { role: 'user', content: 'Q3' },
+            ]);
+            (0, vitest_1.expect)(onBatchFull).toHaveBeenCalledOnce();
+            (0, vitest_1.expect)(onBatchFull.mock.calls[0][0]).toMatchObject({
+                sessionId: 'live',
+                batchIndex: 1,
+            });
         });
     });
     (0, vitest_1.describe)('getSessionExchanges tree-awareness', () => {

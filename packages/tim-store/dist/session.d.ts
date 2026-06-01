@@ -6,6 +6,12 @@ export interface Exchange {
     content: string;
 }
 export type Summarizer = (exchanges: Entry[]) => Promise<string>;
+export interface BatchFullInfo {
+    sessionId: string;
+    batchId: string;
+    batchIndex: number;
+}
+export type OnBatchFullHandler = (info: BatchFullInfo) => void;
 export interface SessionStartParams {
     sessionId: string;
     agentName: string;
@@ -48,12 +54,13 @@ export interface UnsummarizedBatch {
 }
 export declare class SessionManager {
     private store;
+    private onBatchFull?;
     constructor(store: TimStore);
+    /** Live summarizer trigger when an exchange-batch fills (wired from tim-mcp). */
+    setOnBatchFull(handler: OnBatchFullHandler | undefined): void;
     sessionStart(params: SessionStartParams): Promise<Entry>;
     startProjectSession(params: ProjectSessionParams): Promise<Entry>;
     sessionLog(sessionId: string, entries: Exchange[]): Promise<Entry[]>;
-    /** Fire-and-forget: spawn external summarizer for a full batch. Placeholder until summarizer-agent is built. */
-    private summarizeBatch;
     logExchange(sessionId: string, entries: Exchange[]): Promise<Entry[]>;
     showUnsummarized(sessionId: string): Promise<UnsummarizedBatch>;
     writeBatchSummary(sessionId: string, batchIndex: number, summaryText: string, range: {

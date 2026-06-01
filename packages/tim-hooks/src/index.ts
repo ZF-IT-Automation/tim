@@ -37,8 +37,15 @@ export {
 
 export {
   onSessionStop,
+  maybeSpawnSummarizer,
+  buildSummarizerCommand,
+  spawnSummarizer,
   detachedSpawner,
+  summarizerLogPath,
+  DEFAULT_SUMMARIZER_TIMEOUT_SEC,
   type SpawnContext,
   type Spawner,
   type SessionStopResult,
+  type SessionStopReason,
+  type MaybeSpawnSummarizerOptions,
 } from './session-hooks.js';

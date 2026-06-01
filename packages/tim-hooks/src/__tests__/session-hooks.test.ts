@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
-import { onSessionStop } from '../session-hooks.js';
+import { onSessionStop, buildSummarizerCommand, maybeSpawnSummarizer } from '../session-hooks.js';
 import { writeMarker } from '../marker.js';
 import { TimStore, SessionManager } from 'tim-store';
 
@@ -54,9 +54,35 @@ describe('onSessionStop', () => {
     expect(res.spawned).toBe(true);
     expect(spawn).toHaveBeenCalledOnce();
     const [cmd, ctx] = spawn.mock.calls[0];
-    expect(cmd).toContain('claude');
-    expect(cmd).toContain('haiku');
+    expect(cmd).toContain('tim-summarizer');
+    expect(cmd).toContain('trap');
+    expect(cmd).toContain('timeout');
+    expect(cmd).toContain('.tim/summarizer.log');
     expect(ctx.sessionId).toBe('st');
+  });
+
+  it('buildSummarizerCommand uses EXIT trap and tim-summarizer', () => {
+    const cmd = buildSummarizerCommand('sid', '/tmp/lock', '/tmp/log', 120);
+    expect(cmd).toContain('trap');
+    expect(cmd).toContain('EXIT');
+    expect(cmd).toContain('npx tim-summarizer');
+    expect(cmd).toContain('timeout 120');
+    expect(cmd).toContain('TIM_SESSION_ID');
+  });
+
+  it('maybeSpawnSummarizer with batchFull skips below-threshold', async () => {
+    await sessions.logExchange('st', [{ role: 'user', content: 'only' }]);
+    writeMarker(dir, {
+      project: 'P0003',
+      session: 'st',
+      exchanges: 1,
+      batch_size: 2,
+      batches_summarized: 0,
+    });
+    const spawn = vi.fn();
+    const res = await maybeSpawnSummarizer(store, dir, { spawn, batchFull: true });
+    expect(res.spawned).toBe(true);
+    expect(spawn).toHaveBeenCalledOnce();
   });
 
   it('does NOT spawn when pending < batch_size', async () => {

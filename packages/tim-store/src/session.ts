@@ -29,6 +29,14 @@ export interface Exchange {
 
 export type Summarizer = (exchanges: Entry[]) => Promise<string>;
 
+export interface BatchFullInfo {
+  sessionId: string;
+  batchId: string;
+  batchIndex: number;
+}
+
+export type OnBatchFullHandler = (info: BatchFullInfo) => void;
+
 export interface SessionStartParams {
   sessionId: string;
   agentName: string;
@@ -81,7 +89,14 @@ const DEFAULT_SUMMARIZER: Summarizer = async (exchanges) => {
 };
 
 export class SessionManager {
+  private onBatchFull?: OnBatchFullHandler;
+
   constructor(private store: TimStore) {}
+
+  /** Live summarizer trigger when an exchange-batch fills (wired from tim-mcp). */
+  setOnBatchFull(handler: OnBatchFullHandler | undefined): void {
+    this.onBatchFull = handler;
+  }
 
   async sessionStart(params: SessionStartParams): Promise<Entry> {
     const { sessionId, agentName, cwd, harness } = params;
@@ -196,12 +211,6 @@ export class SessionManager {
     return written;
   }
 
-  /** Fire-and-forget: spawn external summarizer for a full batch. Placeholder until summarizer-agent is built. */
-  private async summarizeBatch(_sessionId: string, _batchId: string): Promise<void> {
-    // TODO: spawn detached summarizer process via onSessionStop hook
-    // The summarizer calls showUnsummarized → gets exchanges + context → writes Batch Summary
-  }
-
   async logExchange(sessionId: string, entries: Exchange[]): Promise<Entry[]> {
     const session = await this.store.read(sessionId);
     if (!session || session.metadata.kind !== KIND_SESSION) {
@@ -239,17 +248,21 @@ export class SessionManager {
       if (e.role === 'user') {
         if (usersInBatch.length >= batchSize) {
           const fullBatchId = batchNode.id;
-          const nextIndex =
-            (typeof batchNode.metadata.batch_index === 'number'
+          const fullBatchIndex =
+            typeof batchNode.metadata.batch_index === 'number'
               ? batchNode.metadata.batch_index
-              : exchangeBatches.length) + 1;
+              : exchangeBatches.length;
+          const nextIndex = fullBatchIndex + 1;
           batchNode = await this.store.write(`Batch ${nextIndex}`, {
             parentId: exNode.id,
             metadata: { kind: KIND_EXCHANGE_BATCH, batch_index: nextIndex, order: nextIndex },
           });
           usersInBatch = [];
-          // Fire-and-forget: previous batch is full → spawn summarizer
-          this.summarizeBatch(sessionId, fullBatchId).catch(() => {});
+          this.onBatchFull?.({
+            sessionId,
+            batchId: fullBatchId,
+            batchIndex: fullBatchIndex,
+          });
         }
         seq += 1;
         currentUser = await this.store.write(e.content, {
@@ -364,6 +377,7 @@ export class SessionManager {
       .find(b => b.metadata.batch_index === batchIndex);
     if (existing) return existing;
 
+    const summarizedAt = new Date().toISOString();
     const node = await this.store.write(summaryText, {
       parentId: summaryNode.id,
       title: `Batch ${batchIndex}`,
@@ -373,8 +387,9 @@ export class SessionManager {
         seq_from: range.seqFrom,
         seq_to: range.seqTo,
         sessionId,
+        summarized_at: summarizedAt,
       },
-      tags: ['#batch-summary'],
+      tags: [SESSION_SUMMARY_TAG, '#batch-summary'],
     });
 
     const session = await this.store.read(sessionId);
