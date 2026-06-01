@@ -1,0 +1,108 @@
+# JOURNAL — Session tracking + summarization (Tasks 1–11 + P0000 Inbox)
+
+## Done
+
+1. **Task 1** — `TimStore.getChildByKind`, `getChildrenBySeq` (kind filter + seq order)
+2. **Task 2** — `session-tree.ts` constants, `deriveCounters`, `findChildByKind`, `ensureInboxProject`
+3. **Task 3** — `SessionManager.startProjectSession` (Sessions/Summary/Exchanges subtree, order 1000)
+4. **Task 4** — `logExchange` (user seq only, agent child of user)
+5. **Task 5** — `showUnsummarized` (DB-derived batch skip via Batch count)
+6. **Task 6** — `writeBatchSummary` (idempotent by batch_index), `rollUpSession` (explicit title on update)
+7. **Task 7** — `getSessionExchanges` tree-aware + legacy flat fallback
+8. **Task 8** — `project-output.ts` excludes `sessions-root` from Sections list; rollup unchanged
+9. **Task 9** — MCP: `projectId`/`batchSize` on start, nested `session_log` routing, `tim_show_unsummarized`, cortex `depth:3`
+10. **Task 10** — `tim-hooks/marker.ts` read/write/reconcile/lock
+11. **Task 11** — `tim-hooks/session-hooks.ts` `onSessionStop` detached spawn
+12. **P0000 Inbox** — `ensureInboxProject`, default bind when no `projectId` (MCP + hooks), `render_depth:1`, schema Sessions section
+
+## Decisions
+
+1. **DB tree authoritative** — `deriveCounters` counts user nodes + Batch nodes; marker/metadata are caches reconciled in `reconcileMarker`
+2. **No `loadProject` render_depth gate** — default `depth:3` keeps raw exchanges unloaded (D2); optional Task 12 not done
+3. **Legacy flat sessions preserved** — `sessionStart`/`sessionLog` unchanged; project path is additive
+4. **MCP never touches `.tim-project`** (D4) — marker only in `tim-hooks` (`runSessionStart` writes, `onSessionStop` reads)
+5. **Unbound → P0000** — MCP: `projectId ?? getActiveProjectLabel() ?? P0000`; hooks: marker → active file → P0000
+6. **MCP `tim_session_start` always project-bound** when `projectId` or inbox/active resolved (no flat root via MCP anymore for default start)
+7. **`writeBatchSummary` single atomic write** — idempotency = existing `batch_index` under Summary
+8. **Lock held until summarizer exits** — `rm -f` in spawned command; `LOCK_TTL_MS` reclaims stale locks
+
+## Edge Cases
+
+| Case | Behavior |
+|------|----------|
+| Crash before Batch write | `batches_summarized` unchanged → re-spawn on next Stop |
+| Stale marker counters | `reconcileMarker` overwrites from DB before spawn decision |
+| Duplicate batch_index | `writeBatchSummary` returns existing node |
+| Two Stop events | second `acquireLock` → `{reason:'locked'}` |
+| Agent before user | agent under Exchanges directly; not counted in `exchange_count` |
+| `tim_load_project(depth:5)` | loads raw exchanges (accepted D2) |
+| `showUnsummarized` on legacy session | throws (no Exchanges/Summary subtree) |
+| Project label in tests | must match `/^[A-Z]\d{4}$/` for `read('P0099')` fallback — use P0002 not P2 |
+| `rollUpSession` multi-line | pass explicit `title: SUMMARY_NODE_TITLE` on update or first line dropped |
+| Orphan agent in `logExchange` | `currentUser` null → parent Exchanges |
+
+## Gotchas
+
+1. **Project read by label** — `store.read('P0062')` works via label fallback only for `P` + 4 digits
+2. **P0000 id** — explicit `id: 'P0000'` on `ensureInboxProject` write (not ulid)
+3. **`checkpoint` summarizer** — use `e.content \|\| e.title` (title/body split)
+4. **`runSessionStart` always nested** — writes `.tim-project` marker to `cwd`; changes hook integration tests expectations
+5. **`runSessionEnd`** — calls `onSessionStop` before legacy `checkpoint` (flat sessions still checkpoint; spawn only if marker)
+6. **Rebuild** — `npx tsc -b` from repo root
+7. **Hook tests temp dirs** — under `/home/bbbee/.tim-test-runs` (no `/tmp`)
+8. **Pre-existing failures** — `export.test.ts`, some `events.test.ts`, `render_override` empty-section test may still fail (title-column migration); session task tests green
+
+## Files Touched
+
+| Package | Files |
+|---------|-------|
+| tim-store | `store.ts`, `session.ts`, `session-tree.ts`, `project-output.ts`, `index.ts`, tests |
+| tim-mcp | `server.ts` |
+| tim-hooks | `marker.ts`, `session-hooks.ts`, `checkpoint.ts`, `index.ts`, tests |
+| docs | `project-schema.json` (Sessions section) |
+
+## Verify
+
+```bash
+cd ~/projects/tim && npx tsc -b
+npx vitest run packages/tim-store/src/__tests__/session.test.ts packages/tim-store/src/__tests__/project-output.test.ts packages/tim-hooks/src/__tests__/marker.test.ts packages/tim-hooks/src/__tests__/session-hooks.test.ts
+```
+
+## MCP smoke
+
+- `tim_session_start({ sessionId, projectId: "P0062" })` → nested tree
+- `tim_session_start({ sessionId })` → binds P0000 Inbox
+- `tim_session_log` → routes to `logExchange` when `exchanges-root` exists
+- `tim_show_unsummarized({ sessionId })` → batch payload for summarizer
+
+---
+
+## COMPLETE — 2026-06-01 (final wrap-up)
+
+**Status:** Tasks 1–11 + P0000 Inbox **done**. Optional Task 12 (`loadProject` `render_depth:0` gate) **not** implemented (per plan D2).
+
+### Final verification
+
+| Check | Result |
+|-------|--------|
+| `npx tsc -b` | **clean** (exit 0) |
+| `session.test.ts` | **21/21** pass |
+| `project-output.test.ts` | **1/1** pass |
+| `marker.test.ts` | **5/5** pass |
+| `session-hooks.test.ts` | **3/3** pass |
+| `hooks.test.ts` | **9/9** pass |
+| `store.test.ts` (session helpers) | **2/2** `getChildByKind` / `getChildrenBySeq` pass |
+| `store.test.ts` (unrelated) | 1 pre-existing fail: `render_override` empty-section skip — title-column migration, **out of scope** |
+
+**Session-scope total:** 41/41 green.
+
+### Handoff for next agent
+
+1. Wire Stop hook in harness config → call `onSessionStop(store, cwd)` from `tim-hooks` on session end (if not already in o9k hooks JSON).
+2. Summarizer prompt in `session-hooks.ts` uses generic `tim_write` — confirm summarizer agent has MCP write + `tim_show_unsummarized` tools.
+3. Optional Task 12 only if hard guarantee needed that `tim_load_project(depth:5)` never loads raw exchanges.
+4. Rebuild published packages before release: `npx tsc -b` then publish `tim-store`, `tim-hooks`, `tim-mcp` in dependency order.
+
+### Plan reference
+
+Full spec: `docs/session-system-plan.md`

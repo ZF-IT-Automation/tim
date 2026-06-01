@@ -5,6 +5,7 @@ import { TimStore, SessionManager } from 'tim-store';
 import { loadConfig, getTimDir, type TimConfigFile } from 'tim-core';
 import { runCheckpoint, runSessionEnd, runSessionStart } from 'tim-hooks';
 import { tim_export, tim_import, exportToMarkdown } from 'tim-migrate';
+import { cmdSync } from './sync-cli.js';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -263,6 +264,11 @@ async function main() {
     case 'import':
       await cmdImport(rest);
       break;
+    case 'sync': {
+      const sub = rest[0];
+      await cmdSync(sub, rest.slice(1));
+      break;
+    }
     case '--version':
     case '-v':
       console.log('tim v0.1.0-alpha');
@@ -282,6 +288,11 @@ Commands:
   checkpoint            Manual checkpoint for a session (--session)
   export [path]           Export to .hmem or markdown (--format hmem|text)
   import <path>           Import from .hmem (--dry-run, --deduplicate)
+  sync connect            Connect to o9k-sync server
+  sync push               Push unacked staging to server
+  sync pull               Pull remote changes
+  sync status             Show sync configuration and health
+  sync dev                Start local dev sync server (port 3100)
   --help                Show this help`);
       break;
     default:

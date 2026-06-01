@@ -1,0 +1,17 @@
+{
+  "name": "tim-sync-client",
+  "version": "0.1.0-alpha",
+  "description": "TIM o9k-sync HTTP client: encryption, push/pull cycles",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "tim-core": "*",
+    "tim-store": "*",
+    "tim-sync": "*"
+  }
+}

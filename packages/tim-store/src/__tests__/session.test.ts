@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { InProcessEventBus } from 'tim-core';
-import { TimStore, SessionManager } from '../index.js';
+import { TimStore, SessionManager, deriveCounters, ensureInboxProject } from '../index.js';
 
 describe('SessionManager', () => {
   let store: TimStore;
@@ -226,6 +226,313 @@ describe('SessionManager', () => {
       expect(await eventStore.read(summary.id)).not.toBeNull();
 
       eventStore.close();
+    });
+  });
+
+  describe('deriveCounters', () => {
+    it('returns zeros for a session with no Exchanges/Summary nodes', async () => {
+      const s = await store.write('bare', { id: 'bare-sess', metadata: { kind: 'session' } });
+      const c = await deriveCounters(store, s.id);
+      expect(c).toEqual({ exchangeCount: 0, batchesSummarized: 0 });
+    });
+  });
+
+  describe('ensureInboxProject', () => {
+    it('creates P0000 Inbox system project once', async () => {
+      const first = await ensureInboxProject(store);
+      const second = await ensureInboxProject(store);
+      expect(first.metadata.label).toBe('P0000');
+      expect(first.metadata.is_system).toBe(true);
+      expect(first.title).toBe('Inbox');
+      expect(second.id).toBe(first.id);
+    });
+  });
+
+  describe('startProjectSession', () => {
+    it('creates Sessions section + session node + Summary + Exchanges', async () => {
+      await store.createProject('P0099');
+      const session = await sessions.startProjectSession({
+        sessionId: 'sess-proj-1',
+        projectId: 'P0099',
+        agentName: 'claude',
+        cwd: '/p',
+        harness: 'claude-code',
+      });
+
+      expect(session.id).toBe('sess-proj-1');
+      expect(session.metadata.kind).toBe('session');
+      expect(session.metadata.project_ref).toBe('P0099');
+      expect(session.metadata.batch_size).toBe(5);
+
+      const project = await store.read('P0099');
+      const sectionKids = await store.getChildByKind(project!.id, 'sessions-root');
+      expect(sectionKids).toHaveLength(1);
+      expect(sectionKids[0].metadata.order).toBe(1000);
+
+      expect(session.parentId).toBe(sectionKids[0].id);
+
+      const summary = await store.getChildByKind(session.id, 'session-summary-root');
+      const exchanges = await store.getChildByKind(session.id, 'exchanges-root');
+      expect(summary).toHaveLength(1);
+      expect(exchanges).toHaveLength(1);
+      expect(summary[0].tags).toContain('#session-summary');
+
+      const batches = await store.getChildByKind(exchanges[0].id, 'exchange-batch');
+      expect(batches).toHaveLength(1);
+      expect(batches[0].title).toBe('Batch 1');
+      expect(batches[0].metadata.batch_index).toBe(1);
+    });
+
+    it('is idempotent and reuses the Sessions section across sessions', async () => {
+      await store.createProject('P0098');
+      await sessions.startProjectSession({
+        sessionId: 's1',
+        projectId: 'P0098',
+        agentName: 'a',
+        cwd: '/',
+        harness: 't',
+      });
+      await sessions.startProjectSession({
+        sessionId: 's1',
+        projectId: 'P0098',
+        agentName: 'a',
+        cwd: '/',
+        harness: 't',
+      });
+      await sessions.startProjectSession({
+        sessionId: 's2',
+        projectId: 'P0098',
+        agentName: 'a',
+        cwd: '/',
+        harness: 't',
+      });
+
+      const project = await store.read('P0098');
+      const sections = await store.getChildByKind(project!.id, 'sessions-root');
+      expect(sections).toHaveLength(1);
+      const sessionNodes = await store.getChildByKind(sections[0].id, 'session');
+      expect(sessionNodes.map(s => s.id).sort()).toEqual(['s1', 's2']);
+    });
+
+    it('binds unbound sessions to P0000 Inbox when using inbox helper', async () => {
+      await ensureInboxProject(store);
+      const session = await sessions.startProjectSession({
+        sessionId: 'inbox-sess',
+        projectId: 'P0000',
+        agentName: 'a',
+        cwd: '/',
+        harness: 't',
+      });
+      expect(session.metadata.project_ref).toBe('P0000');
+    });
+  });
+
+  describe('logExchange (nested)', () => {
+    beforeEach(async () => {
+      await store.createProject('P0097');
+      await sessions.startProjectSession({
+        sessionId: 'sx',
+        projectId: 'P0097',
+        agentName: 'a',
+        cwd: '/',
+        harness: 't',
+      });
+    });
+
+    it('nests agent reply under its user message and seqs only user nodes', async () => {
+      await sessions.logExchange('sx', [
+        { role: 'user', content: 'Q1' },
+        { role: 'agent', content: 'A1' },
+        { role: 'user', content: 'Q2' },
+        { role: 'agent', content: 'A2' },
+      ]);
+
+      const exNode = (await store.getChildByKind('sx', 'exchanges-root'))[0];
+      const batches = await store.getChildByKind(exNode.id, 'exchange-batch');
+      expect(batches).toHaveLength(1);
+      expect(batches[0].title).toBe('Batch 1');
+
+      const users = (await store.getChildrenBySeq(batches[0].id)).filter(
+        u => u.metadata.role === 'user',
+      );
+      expect(users.map(u => [u.title, u.metadata.seq, u.metadata.role])).toEqual([
+        ['Q1', 1, 'user'],
+        ['Q2', 2, 'user'],
+      ]);
+
+      const a1 = await store.getChildren(users[0].id);
+      expect(a1).toHaveLength(1);
+      expect(a1[0].title).toBe('A1');
+      expect(a1[0].metadata.role).toBe('agent');
+      expect(a1[0].metadata.seq).toBe(1);
+    });
+
+    it('continues seq across calls and updates the cached exchange_count', async () => {
+      await sessions.logExchange('sx', [{ role: 'user', content: 'first' }]);
+      await sessions.logExchange('sx', [{ role: 'user', content: 'second' }]);
+
+      const exNode = (await store.getChildByKind('sx', 'exchanges-root'))[0];
+      const batch = (await store.getChildByKind(exNode.id, 'exchange-batch'))[0];
+      const users = (await store.getChildrenBySeq(batch.id)).filter(
+        u => u.metadata.role === 'user',
+      );
+      expect(users.map(u => u.metadata.seq)).toEqual([1, 2]);
+
+      const session = await store.read('sx');
+      expect(session!.metadata.exchange_count).toBe(2);
+    });
+
+    it('splits into a new exchange-batch when batch_size is reached', async () => {
+      await sessions.startProjectSession({
+        sessionId: 'sx-split',
+        projectId: 'P0097',
+        agentName: 'a',
+        cwd: '/',
+        harness: 't',
+        batchSize: 2,
+      });
+      await sessions.logExchange('sx-split', [
+        { role: 'user', content: 'Q1' },
+        { role: 'agent', content: 'A1' },
+        { role: 'user', content: 'Q2' },
+        { role: 'agent', content: 'A2' },
+        { role: 'user', content: 'Q3' },
+        { role: 'agent', content: 'A3' },
+      ]);
+
+      const exNode = (await store.getChildByKind('sx-split', 'exchanges-root'))[0];
+      const batches = await store.getChildByKind(exNode.id, 'exchange-batch');
+      expect(batches.map(b => b.metadata.batch_index)).toEqual([1, 2]);
+
+      const batch1Users = (await store.getChildrenBySeq(batches[0].id)).filter(
+        u => u.metadata.role === 'user',
+      );
+      const batch2Users = (await store.getChildrenBySeq(batches[1].id)).filter(
+        u => u.metadata.role === 'user',
+      );
+      expect(batch1Users.map(u => u.title)).toEqual(['Q1', 'Q2']);
+      expect(batch2Users.map(u => u.title)).toEqual(['Q3']);
+    });
+  });
+
+  describe('showUnsummarized', () => {
+    beforeEach(async () => {
+      await store.createProject('P0096');
+      await sessions.startProjectSession({
+        sessionId: 'su',
+        projectId: 'P0096',
+        agentName: 'a',
+        cwd: '/',
+        harness: 't',
+        batchSize: 2,
+      });
+      await sessions.logExchange('su', [
+        { role: 'user', content: 'Q1' },
+        { role: 'agent', content: 'A1' },
+        { role: 'user', content: 'Q2' },
+        { role: 'agent', content: 'A2' },
+        { role: 'user', content: 'Q3' },
+        { role: 'agent', content: 'A3' },
+      ]);
+    });
+
+    it('returns the first unsummarized batch with user+agent content', async () => {
+      const batch = await sessions.showUnsummarized('su');
+      expect(batch.batchIndex).toBe(1);
+      expect(batch.batchSize).toBe(2);
+      expect(batch.exchanges.map(e => [e.seq, e.userContent, e.agentContent])).toEqual([
+        [1, 'Q1', 'A1'],
+        [2, 'Q2', 'A2'],
+      ]);
+      expect(batch.hasMore).toBe(true);
+      expect(batch.summaryNodeId).toBeTruthy();
+    });
+
+    it('skips already-summarized batches (derived from existing Batch nodes)', async () => {
+      const summaryNode = (await store.getChildByKind('su', 'session-summary-root'))[0];
+      await store.write('Batch 1', {
+        parentId: summaryNode.id,
+        metadata: { kind: 'batch-summary', batch_index: 1, seq_from: 1, seq_to: 2 },
+      });
+
+      const batch = await sessions.showUnsummarized('su');
+      expect(batch.batchIndex).toBe(2);
+      expect(batch.exchanges.map(e => e.seq)).toEqual([3]);
+      expect(batch.hasMore).toBe(false);
+    });
+  });
+
+  describe('writeBatchSummary + rollUpSession', () => {
+    beforeEach(async () => {
+      await store.createProject('P0095');
+      await sessions.startProjectSession({
+        sessionId: 'sb',
+        projectId: 'P0095',
+        agentName: 'a',
+        cwd: '/',
+        harness: 't',
+        batchSize: 2,
+      });
+      await sessions.logExchange('sb', [
+        { role: 'user', content: 'Q1' },
+        { role: 'agent', content: 'A1' },
+        { role: 'user', content: 'Q2' },
+        { role: 'agent', content: 'A2' },
+      ]);
+    });
+
+    it('writes a Batch node under Summary and bumps derived batches_summarized', async () => {
+      const batch = await sessions.showUnsummarized('sb');
+      const node = await sessions.writeBatchSummary('sb', batch.batchIndex, 'themes: greetings', {
+        seqFrom: 1,
+        seqTo: 2,
+      });
+      expect(node.metadata.kind).toBe('batch-summary');
+      expect(node.metadata.batch_index).toBe(1);
+
+      const { batchesSummarized } = await deriveCounters(store, 'sb');
+      expect(batchesSummarized).toBe(1);
+    });
+
+    it('is idempotent: re-writing the same batch_index does not duplicate', async () => {
+      await sessions.writeBatchSummary('sb', 1, 'first', { seqFrom: 1, seqTo: 2 });
+      await sessions.writeBatchSummary('sb', 1, 'again', { seqFrom: 1, seqTo: 2 });
+      const summaryNode = (await store.getChildByKind('sb', 'session-summary-root'))[0];
+      const batches = await store.getChildByKind(summaryNode.id, 'batch-summary');
+      expect(batches).toHaveLength(1);
+    });
+
+    it('rollUpSession folds all batches into the Summary node body + metadata (multi-line safe)', async () => {
+      await sessions.writeBatchSummary('sb', 1, 'batch one summary', { seqFrom: 1, seqTo: 2 });
+      const summary = await sessions.rollUpSession('sb', async batches =>
+        `Themes:\n${batches.map(b => b.content).join('\n')}`,
+      );
+
+      expect(summary.content.startsWith('Themes:')).toBe(true);
+      expect(summary.content).toContain('batch one summary');
+      expect(summary.metadata.summary).toContain('Themes:');
+      expect(summary.metadata.exchanges).toBe(2);
+      expect(summary.tags).toContain('#session-summary');
+    });
+  });
+
+  describe('getSessionExchanges tree-awareness', () => {
+    it('reads exchanges from the Exchanges subtree for project sessions', async () => {
+      await store.createProject('P0094');
+      await sessions.startProjectSession({
+        sessionId: 'sc',
+        projectId: 'P0094',
+        agentName: 'a',
+        cwd: '/',
+        harness: 't',
+      });
+      await sessions.logExchange('sc', [
+        { role: 'user', content: 'U1' },
+        { role: 'agent', content: 'Ag1' },
+      ]);
+
+      const ex = await sessions.getSessionExchanges('sc');
+      expect(ex.map(e => e.metadata.role)).toEqual(['user', 'agent']);
     });
   });
 });

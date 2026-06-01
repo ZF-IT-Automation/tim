@@ -10,6 +10,7 @@ export type ContentType = 'text' | 'json' | 'blob';
 export interface Entry {
   id: string;                    // ULID
   parentId: string | null;       // null = root
+  title: string;
   content: string;
   contentType: ContentType;
   depth: number;                 // 1-5
@@ -63,6 +64,7 @@ export interface ReadOptions {
 
 export interface WriteOptions {
   id?: string;                   // optional fixed ULID (e.g. session id)
+  title?: string;
   parentId?: string | null;
   contentType?: ContentType;
   confidence?: number;

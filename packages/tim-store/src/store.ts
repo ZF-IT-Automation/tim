@@ -17,6 +17,38 @@ export interface TimStoreOptions {
   agentId?: string;
 }
 
+export interface CreateProjectOptions {
+  content?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface LoadProjectOptions {
+  depth?: number;
+  budget?: number;
+  sections?: string[] | null;
+}
+
+export interface LoadProjectResult {
+  project: Entry;
+  children: Entry[];
+  truncated: boolean;
+}
+
+export interface TaskRecord {
+  id: string;
+  title: string;
+  content: string;
+  parent_id: string | null;
+  project_label: string | null;
+  status: string | null;
+  priority: string | null;
+  due: string | null;
+}
+
+export interface GetTasksOptions {
+  status?: string;
+}
+
 export class TimStore implements MemoryInterface {
   private db: Database.Database;
   private emitter?: Pick<EventBus, 'emit'>;
@@ -61,6 +93,70 @@ export class TimStore implements MemoryInterface {
     return rowToEntry(entry);
   }
 
+  async createProject(
+    label: string,
+    options: CreateProjectOptions = {},
+  ): Promise<Entry> {
+    const metadata = {
+      ...(options.metadata ?? {}),
+      kind: 'project',
+      label,
+    };
+
+    return this.write(options.content ?? label, { metadata });
+  }
+
+  async loadProject(
+    label: string,
+    options: LoadProjectOptions = {},
+  ): Promise<LoadProjectResult | null> {
+    const project = await this.read(label);
+    if (!project) return null;
+
+    const depth = options.depth ?? 3;
+    const budget = options.budget ?? 200;
+    const sections = options.sections ?? null;
+    const children: Entry[] = [];
+    let truncated = false;
+
+    const matchesSection = (entry: Entry): boolean => {
+      if (!sections?.length) return true;
+      const entryLabel = entry.metadata.label as string | undefined;
+      return sections.some(section => section === entry.id || section === entryLabel);
+    };
+
+    const loadChildren = (parentId: string, currentDepth: number, filterSections: boolean): void => {
+      if (currentDepth > depth || truncated) return;
+
+      let childEntries = this.db.prepare(`
+        SELECT * FROM entries
+        WHERE parent_id = ?
+          AND irrelevant = 0
+          AND tombstoned_at IS NULL
+        ORDER BY COALESCE(CAST(json_extract(metadata, '$.order') AS INTEGER), 999999), created_at ASC
+      `).all(parentId) as RowEntry[];
+
+      if (filterSections && sections?.length) {
+        childEntries = childEntries.filter(row => matchesSection(rowToEntry(row)));
+      }
+
+      for (const row of childEntries) {
+        if (children.length >= budget) {
+          truncated = true;
+          return;
+        }
+
+        const child = rowToEntry(row);
+        children.push(child);
+        loadChildren(child.id, currentDepth + 1, false);
+      }
+    };
+
+    loadChildren(project.id, 1, true);
+
+    return { project, children, truncated };
+  }
+
   async getChildren(
     parentId: string,
     filter?: { metadataKind?: string },
@@ -80,10 +176,100 @@ export class TimStore implements MemoryInterface {
 
     sql += filter?.metadataKind === 'exchange'
       ? ` ORDER BY CAST(json_extract(metadata, '$.seq') AS INTEGER) ASC`
-      : ` ORDER BY created_at ASC`;
+      : ` ORDER BY COALESCE(CAST(json_extract(metadata, '$.order') AS INTEGER), 999999), created_at ASC`;
 
     const rows = this.db.prepare(sql).all(...params) as RowEntry[];
     return rows.map(rowToEntry);
+  }
+
+  async getChildByKind(parentId: string, kind: string): Promise<Entry[]> {
+    const rows = this.db.prepare(`
+      SELECT * FROM entries
+      WHERE parent_id = ?
+        AND json_extract(metadata, '$.kind') = ?
+        AND irrelevant = 0
+        AND tombstoned_at IS NULL
+      ORDER BY COALESCE(CAST(json_extract(metadata, '$.seq') AS INTEGER), 999999),
+               COALESCE(CAST(json_extract(metadata, '$.order') AS INTEGER), 999999),
+               created_at ASC
+    `).all(parentId, kind) as RowEntry[];
+    return rows.map(rowToEntry);
+  }
+
+  async getChildrenBySeq(parentId: string): Promise<Entry[]> {
+    const rows = this.db.prepare(`
+      SELECT * FROM entries
+      WHERE parent_id = ?
+        AND irrelevant = 0
+        AND tombstoned_at IS NULL
+      ORDER BY COALESCE(CAST(json_extract(metadata, '$.seq') AS INTEGER), 999999),
+               created_at ASC
+    `).all(parentId) as RowEntry[];
+    return rows.map(rowToEntry);
+  }
+
+  async getTasks(opts?: GetTasksOptions): Promise<TaskRecord[]> {
+    let sql = `
+      SELECT e.* FROM entries e
+      WHERE json_extract(e.metadata, '$.task') = true
+        AND e.irrelevant = 0
+        AND e.tombstoned_at IS NULL
+    `;
+    const params: unknown[] = [];
+
+    if (opts?.status) {
+      sql += ` AND json_extract(e.metadata, '$.status') = ?`;
+      params.push(opts.status);
+    }
+
+    sql += `
+      ORDER BY
+        CASE json_extract(e.metadata, '$.status')
+          WHEN 'in_progress' THEN 0
+          WHEN 'todo' THEN 1
+          ELSE 2
+        END,
+        CASE json_extract(e.metadata, '$.priority')
+          WHEN 'high' THEN 0
+          WHEN 'medium' THEN 1
+          WHEN 'low' THEN 2
+          ELSE 3
+        END,
+        CASE WHEN json_extract(e.metadata, '$.due') IS NULL THEN 1 ELSE 0 END,
+        json_extract(e.metadata, '$.due') ASC
+    `;
+
+    const rows = this.db.prepare(sql).all(...params) as RowEntry[];
+    return rows.map(row => {
+      const meta = JSON.parse(row.metadata) as Record<string, unknown>;
+      return {
+        id: row.id,
+        title: row.title,
+        content: row.content,
+        parent_id: row.parent_id,
+        project_label: this.resolveProjectLabel(row.parent_id),
+        status: (meta.status as string | undefined) ?? null,
+        priority: (meta.priority as string | undefined) ?? null,
+        due: (meta.due as string | undefined) ?? null,
+      };
+    });
+  }
+
+  private resolveProjectLabel(startParentId: string | null): string | null {
+    let currentId = startParentId;
+    while (currentId) {
+      const row = this.db.prepare(
+        'SELECT parent_id, metadata FROM entries WHERE id = ?',
+      ).get(currentId) as { parent_id: string | null; metadata: string } | undefined;
+      if (!row) return null;
+
+      const meta = JSON.parse(row.metadata) as Record<string, unknown>;
+      if (meta.kind === 'project') {
+        return (meta.label as string | undefined) ?? null;
+      }
+      currentId = row.parent_id;
+    }
+    return null;
   }
 
   close(): void {
@@ -103,19 +289,31 @@ export class TimStore implements MemoryInterface {
     const id = options.id ?? ulid();
     const now = new Date().toISOString();
     const timestamp = Date.now();
+    const { title, body } = splitTitleBody(content, options.title);
 
     // Calculate depth
     let depth = 1;
-    if (options.parentId) {
-      const parent = this.db.prepare('SELECT depth FROM entries WHERE id = ?').get(options.parentId) as
+    const parentId = options.parentId ?? null;
+    if (parentId) {
+      const parent = this.db.prepare('SELECT depth FROM entries WHERE id = ?').get(parentId) as
         { depth: number } | undefined;
       if (parent) depth = Math.min(parent.depth + 1, 5);
     }
 
+    const metadata: Record<string, unknown> = { ...(options.metadata ?? {}) };
+    if (parentId && metadata.order === undefined) {
+      const maxRow = this.db.prepare(`
+        SELECT MAX(CAST(json_extract(metadata, '$.order') AS INTEGER)) AS max_order
+        FROM entries WHERE parent_id = ? AND irrelevant = 0
+      `).get(parentId) as { max_order: number | null };
+      metadata.order = (maxRow.max_order ?? -1) + 1;
+    }
+
     const entry = {
       id,
-      parent_id: options.parentId ?? null,
-      content,
+      parent_id: parentId,
+      title,
+      content: body,
       content_type: options.contentType ?? 'text',
       depth,
       confidence: options.confidence ?? 1.0,
@@ -127,13 +325,13 @@ export class TimStore implements MemoryInterface {
       irrelevant: 0,
       favorite: 0,
       tombstoned_at: null,
-      metadata: JSON.stringify(options.metadata ?? {}),
+      metadata: JSON.stringify(metadata),
     };
 
-    this.db.prepare(`INSERT INTO entries (id, parent_id, content, content_type, depth,
+    this.db.prepare(`INSERT INTO entries (id, parent_id, title, content, content_type, depth,
       confidence, created_at, accessed_at, decay_rate, visibility, tags, irrelevant,
-      favorite, tombstoned_at, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
-      entry.id, entry.parent_id, entry.content, entry.content_type, entry.depth,
+      favorite, tombstoned_at, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      entry.id, entry.parent_id, entry.title, entry.content, entry.content_type, entry.depth,
       entry.confidence, entry.created_at, entry.accessed_at, entry.decay_rate,
       entry.visibility, entry.tags, entry.irrelevant, entry.favorite, entry.tombstoned_at, entry.metadata
     );
@@ -164,9 +362,30 @@ export class TimStore implements MemoryInterface {
     const now = new Date().toISOString();
     const timestamp = Date.now();
 
+    let title = existing.title;
+    let body = existing.content;
+
+    if (patch.title !== undefined) {
+      title = patch.title.trim();
+    }
+
+    if (patch.content !== undefined) {
+      if (patch.title !== undefined) {
+        body = patch.content;
+      } else if (!existing.title.trim()) {
+        const split = splitTitleBody(patch.content);
+        title = split.title;
+        body = split.body;
+      } else {
+        const nl = patch.content.indexOf('\n');
+        body = nl === -1 ? patch.content.trim() : patch.content.slice(nl + 1).trim();
+      }
+    }
+
     const updated = {
       ...existing,
-      content: patch.content ?? existing.content,
+      title,
+      content: body,
       content_type: patch.contentType ?? existing.content_type,
       confidence: patch.confidence ?? existing.confidence,
       decay_rate: patch.decayRate ?? existing.decay_rate,
@@ -178,10 +397,10 @@ export class TimStore implements MemoryInterface {
       accessed_at: now,
     };
 
-    this.db.prepare(`UPDATE entries SET content=?, content_type=?, confidence=?,
+    this.db.prepare(`UPDATE entries SET title=?, content=?, content_type=?, confidence=?,
       decay_rate=?, visibility=?, tags=?, irrelevant=?, tombstoned_at=?, metadata=?,
       accessed_at=? WHERE id=?`).run(
-      updated.content, updated.content_type, updated.confidence,
+      updated.title, updated.content, updated.content_type, updated.confidence,
       updated.decay_rate, updated.visibility, updated.tags,
       updated.irrelevant, updated.tombstoned_at, updated.metadata,
       updated.accessed_at, id
@@ -251,8 +470,28 @@ export class TimStore implements MemoryInterface {
   ): Promise<Edge> {
     const id = ulid();
 
+    const edgeRow = {
+      id,
+      source_id: sourceId,
+      target_id: targetId,
+      type,
+      weight,
+      metadata: JSON.stringify(metadata),
+    };
+
     this.db.prepare(`INSERT INTO edges (id, source_id, target_id, type, weight, metadata)
-      VALUES (?, ?, ?, ?, ?, ?)`).run(id, sourceId, targetId, type, weight, JSON.stringify(metadata));
+      VALUES (?, ?, ?, ?, ?, ?)`).run(
+      edgeRow.id, edgeRow.source_id, edgeRow.target_id,
+      edgeRow.type, edgeRow.weight, edgeRow.metadata,
+    );
+
+    const edgeKey = `${sourceId}|${targetId}|${type}`;
+    const ts = Date.now();
+    this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
+      lww_timestamp, lww_device, lww_confidence)
+      VALUES (?, 'edge', 'upsert', ?, ?, ?, ?)`).run(
+      edgeKey, JSON.stringify(edgeRow), ts, this.agentId, 1.0,
+    );
 
     const edge = { id, sourceId, targetId, type, weight, metadata };
     this.emit('edge:created', {
@@ -350,9 +589,9 @@ export class TimStore implements MemoryInterface {
 
   async applyStaging(records: StagingRecord[]): Promise<void> {
     const upsertEntry = this.db.prepare(`INSERT OR REPLACE INTO entries
-      (id, parent_id, content, content_type, depth, confidence, created_at,
+      (id, parent_id, title, content, content_type, depth, confidence, created_at,
        accessed_at, decay_rate, visibility, tags, irrelevant, favorite, tombstoned_at, metadata)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
 
     const upsertEdge = this.db.prepare(`INSERT OR REPLACE INTO edges
       (id, source_id, target_id, type, weight, metadata)
@@ -370,7 +609,7 @@ export class TimStore implements MemoryInterface {
           } else {
             const entry = JSON.parse(record.payload) as RowEntry;
             upsertEntry.run(
-              entry.id, entry.parent_id, entry.content, entry.content_type,
+              entry.id, entry.parent_id, entry.title ?? '', entry.content, entry.content_type,
               entry.depth, entry.confidence, entry.created_at, entry.accessed_at,
               entry.decay_rate, entry.visibility, entry.tags,
               entry.irrelevant, entry.favorite ?? 0, entry.tombstoned_at, entry.metadata
@@ -554,6 +793,7 @@ export class TimStore implements MemoryInterface {
 interface RowEntry {
   id: string;
   parent_id: string | null;
+  title: string;
   content: string;
   content_type: string;
   depth: number;
@@ -600,10 +840,20 @@ interface RowStaging {
 
 // ─── Row → Domain Mappers ───────────────────────────────
 
+function splitTitleBody(content: string, explicitTitle?: string): { title: string; body: string } {
+  if (explicitTitle !== undefined) {
+    return { title: explicitTitle.trim(), body: content };
+  }
+  const nl = content.indexOf('\n');
+  if (nl === -1) return { title: content.trim(), body: '' };
+  return { title: content.slice(0, nl).trim(), body: content.slice(nl + 1).trim() };
+}
+
 function rowToEntry(row: RowEntry): Entry {
   return {
     id: row.id,
     parentId: row.parent_id,
+    title: row.title ?? '',
     content: row.content,
     contentType: row.content_type as ContentType,
     depth: row.depth,

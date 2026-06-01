@@ -9,6 +9,7 @@ import type { Entry } from 'tim-core';
 interface RowEntry {
   id: string;
   parent_id: string | null;
+  title: string;
   content: string;
   content_type: string;
   depth: number;
@@ -35,6 +36,7 @@ function rowToEntry(row: RowEntry): Entry {
   return {
     id: row.id,
     parentId: row.parent_id,
+    title: row.title ?? '',
     content: row.content,
     contentType: row.content_type as Entry['contentType'],
     depth: row.depth,
@@ -103,10 +105,10 @@ export class CurateManager {
 
       // Insert copy under newId so FK targets exist before repointing references
       this.db.prepare(`
-        INSERT INTO entries (id, parent_id, content, content_type, depth, confidence,
+        INSERT INTO entries (id, parent_id, title, content, content_type, depth, confidence,
           created_at, accessed_at, decay_rate, visibility, tags, irrelevant, favorite,
           tombstoned_at, metadata)
-        SELECT ?, parent_id, content, content_type, depth, confidence,
+        SELECT ?, parent_id, title, content, content_type, depth, confidence,
           created_at, accessed_at, decay_rate, visibility, tags, irrelevant, favorite,
           tombstoned_at, metadata
         FROM entries WHERE id = ?
@@ -174,7 +176,7 @@ export class CurateManager {
     return transaction();
   }
 
-  moveEntry(id: string, newParentId: string | null): Entry {
+  moveEntry(id: string, newParentId: string | null, order?: number): Entry {
     const transaction = this.db.transaction(() => {
       const entry = getEntry(this.db, id);
       if (!entry) throw new Error(`Entry not found: ${id}`);
@@ -193,6 +195,34 @@ export class CurateManager {
 
       this.db.prepare('UPDATE entries SET parent_id = ?, depth = ? WHERE id = ?')
         .run(newParentId, newDepth, id);
+
+      const meta = JSON.parse(entry.metadata) as Record<string, unknown>;
+      if (order !== undefined) {
+        const siblings = this.db.prepare(`
+          SELECT id, metadata FROM entries
+          WHERE parent_id IS ? AND irrelevant = 0 AND id != ?
+        `).all(newParentId, id) as { id: string; metadata: string }[];
+
+        for (const sibling of siblings) {
+          const sibMeta = JSON.parse(sibling.metadata) as Record<string, unknown>;
+          const sibOrder = Number(sibMeta.order);
+          if (Number.isFinite(sibOrder) && sibOrder >= order) {
+            sibMeta.order = sibOrder + 1;
+            this.db.prepare('UPDATE entries SET metadata = ? WHERE id = ?')
+              .run(JSON.stringify(sibMeta), sibling.id);
+          }
+        }
+        meta.order = order;
+      } else if (newParentId) {
+        const maxRow = this.db.prepare(`
+          SELECT MAX(CAST(json_extract(metadata, '$.order') AS INTEGER)) AS max_order
+          FROM entries WHERE parent_id = ? AND irrelevant = 0 AND id != ?
+        `).get(newParentId, id) as { max_order: number | null };
+        meta.order = (maxRow.max_order ?? -1) + 1;
+      }
+
+      this.db.prepare('UPDATE entries SET metadata = ? WHERE id = ?')
+        .run(JSON.stringify(meta), id);
 
       // Cascade depth to descendants via recursive CTE
       this.db.prepare(`

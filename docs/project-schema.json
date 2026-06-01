@@ -1,0 +1,127 @@
+{
+  "version": 1,
+  "description": "Standard project schema for TIM. Defines section ordering, nesting, and default render depth per node. Per-node override: set metadata.render_depth on any entry to override the schema default for that node.",
+  "render_override": "Nodes with metadata.render_depth override the schema default render_depth for that section/subnode.",
+  "render_depth_legend": {
+    "full": "Node body + ALL children recursively with full bodies",
+    "0": "Node body only, no children rendered",
+    "1": "Node body + 1 level of child titles",
+    "2": "Node body + 2 levels (titles, then child bodies)"
+  },
+  "task_annotation": {
+    "description": "When a node has task: true in metadata, it behaves as a task with additional rendering and sorting rules.",
+    "fields": {
+      "status":  { "type": "enum",   "values": ["todo", "in_progress", "done", "cancelled"], "default": "todo" },
+      "priority": { "type": "enum",   "values": ["high", "medium", "low"], "default": "medium" },
+      "due":      { "type": "date",   "optional": true, "description": "ISO 8601 date" },
+      "done_at":  { "type": "datetime","automatic": true, "description": "Set automatically when status → done" }
+    },
+    "render_rules": {
+      "todo":        "Prominent in Next Steps, sorted by priority (high first), overdue due dates in red",
+      "in_progress": "Highlighted, sorted above todo with same priority",
+      "done":        "Collapsed under Previous Steps, sorted by done_at descending",
+      "cancelled":   "Collapsed under Previous Steps, greyed out, below done items"
+    }
+  },
+  "sections": [
+    {
+      "name": "Overview",
+      "description": "Ein-Paragraf-Zusammenfassung: Was ist das Projekt, warum existiert es, aktueller Status.",
+      "render_depth": "full",
+      "children": []
+    },
+    {
+      "name": "Rules",
+      "description": "Constraints, Konventionen, Verbote — das Erste was ein neuer Agent lesen muss.",
+      "render_depth": "full",
+      "children": [
+        { "name": "Agent Rules", "description": "Regeln für AI Coding Agents", "render_depth": "full" },
+        { "name": "Git Rules", "description": "Branch-Strategie, Commit-Konventionen", "render_depth": 2 },
+        { "name": "Style Rules", "description": "Code-Style, Naming, Linting", "render_depth": 1 },
+        { "name": "Do Not", "description": "Explizit verbotene Aktionen", "render_depth": "full" }
+      ]
+    },
+    {
+      "name": "Next Steps",
+      "description": "Aktive Tasks. Kinder mit task: true werden nach Status/Priority gerendert — todo/in_progress hier, done/cancelled unter Previous Steps.",
+      "render_depth": 2,
+      "children": [
+        { "name": "Previous Steps", "description": "Erledigte Tasks (status=done/cancelled). Automatisch befüllt vom Renderer.", "render_depth": 0 }
+      ]
+    },
+    {
+      "name": "Log",
+      "description": "Chronologie: Entscheidungen, Meilensteine, Richtungswechsel. Einträge als Datumszeilen.",
+      "render_depth": 1,
+      "children": []
+    },
+    {
+      "name": "Decisions",
+      "description": "Wichtige Architektur- und Technologie-Entscheidungen mit Begründung.",
+      "render_depth": 1,
+      "children": []
+    },
+    {
+      "name": "Codebase",
+      "description": "Code-Struktur, Tech-Stack, Repo-Organisation.",
+      "render_depth": 2,
+      "children": [
+        { "name": "Modules", "description": "Top-Level-Module und ihre Verantwortung", "render_depth": 2,
+          "children": [
+            { "name": "Functions", "description": "Kern-Funktionen pro Modul", "render_depth": 1 }
+          ]
+        },
+        { "name": "Stack", "description": "Sprachen, Frameworks, Laufzeitumgebung", "render_depth": "full" },
+        { "name": "Entry Points", "description": "CLI, API, Web, Binaries", "render_depth": 1 },
+        { "name": "Dependencies", "description": "Runtime + Dev-Dependencies mit Begründung", "render_depth": 1 }
+      ]
+    },
+    {
+      "name": "Usage",
+      "description": "Bauen, Testen, Deployen, Entwickler-Workflows.",
+      "render_depth": 2,
+      "children": [
+        { "name": "Install", "description": "Setup und Installation", "render_depth": "full" },
+        { "name": "Build", "description": "Build-Kommandos und Konfiguration", "render_depth": 1 },
+        { "name": "Test", "description": "Test-Suite ausführen, Coverage, Test-Typen", "render_depth": 1 },
+        { "name": "Deploy", "description": "Deployment-Prozess, Umgebungen", "render_depth": "full" }
+      ]
+    },
+    {
+      "name": "Bugs",
+      "description": "Bekannte Probleme, Workarounds, offene Issues.",
+      "render_depth": 1,
+      "children": []
+    },
+    {
+      "name": "Roadmap",
+      "description": "Geplante Features, Meilensteine, Vision.",
+      "render_depth": 1,
+      "children": []
+    },
+    {
+      "name": "Ideas",
+      "description": "Brainstorming, Zukunftsideen, ungefiltert.",
+      "render_depth": 1,
+      "children": []
+    },
+    {
+      "name": "Tasks",
+      "description": "Work-Items mit task-Attribut. Sortiert nach Status > Priority > Due. Der Renderer zeigt todo/in_progress in Next Steps, done/cancelled hier.",
+      "render_depth": 1,
+      "children": []
+    },
+    {
+      "name": "Sessions",
+      "description": "Agent session logs. Summary nodes roll up here; raw exchanges stay under per-session Exchanges (render_depth 0). P0000 Inbox uses render_depth 1 at project level to show summaries only.",
+      "render_depth": 1,
+      "children": []
+    },
+    {
+      "name": "Commits",
+      "description": "Git commits made in this project. Each entry: commit hash (title), message + diff summary (body). Linked via 'relates' edge to the session that produced it. Session links back via 'implements' edge. n:m relationship — one session can have multiple commits, one commit can span sessions.",
+      "render_depth": 1,
+      "children": []
+    }
+  ]
+}

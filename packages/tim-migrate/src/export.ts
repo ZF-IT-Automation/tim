@@ -7,6 +7,7 @@ import { createV2HmemDatabase, formatLabel, parseLabel } from './hmem-format.js'
 export interface TimRowEntry {
   id: string;
   parent_id: string | null;
+  title: string;
   content: string;
   content_type: string;
   depth: number;
@@ -38,6 +39,7 @@ function rowToEntry(row: TimRowEntry): Entry {
   return {
     id: row.id,
     parentId: row.parent_id,
+    title: row.title ?? '',
     content: row.content,
     contentType: row.content_type as Entry['contentType'],
     depth: row.depth,
