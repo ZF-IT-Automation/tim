@@ -1,6 +1,39 @@
 "use strict";
 // TIM Store — v0.1.0-alpha
 // SQLite-backed MemoryInterface implementation.
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
@@ -8,6 +41,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.TimStore = void 0;
 const better_sqlite3_1 = __importDefault(require("better-sqlite3"));
 const ulid_1 = require("ulid");
+const os = __importStar(require("os"));
 const schema_js_1 = require("./schema.js");
 const curate_js_1 = require("./curate.js");
 class TimStore {
@@ -49,6 +83,55 @@ class TimStore {
             return null;
         return rowToEntry(entry);
     }
+    async createProject(label, options = {}) {
+        const metadata = {
+            ...(options.metadata ?? {}),
+            kind: 'project',
+            label,
+        };
+        return this.write(options.content ?? label, { metadata });
+    }
+    async loadProject(label, options = {}) {
+        const project = await this.read(label);
+        if (!project)
+            return null;
+        const depth = options.depth ?? 3;
+        const budget = options.budget ?? 200;
+        const sections = options.sections ?? null;
+        const children = [];
+        let truncated = false;
+        const matchesSection = (entry) => {
+            if (!sections?.length)
+                return true;
+            const entryLabel = entry.metadata.label;
+            return sections.some(section => section === entry.id || section === entryLabel);
+        };
+        const loadChildren = (parentId, currentDepth, filterSections) => {
+            if (currentDepth > depth || truncated)
+                return;
+            let childEntries = this.db.prepare(`
+        SELECT * FROM entries
+        WHERE parent_id = ?
+          AND irrelevant = 0
+          AND tombstoned_at IS NULL
+        ORDER BY COALESCE(CAST(json_extract(metadata, '$.order') AS INTEGER), 999999), created_at ASC
+      `).all(parentId);
+            if (filterSections && sections?.length) {
+                childEntries = childEntries.filter(row => matchesSection(rowToEntry(row)));
+            }
+            for (const row of childEntries) {
+                if (children.length >= budget) {
+                    truncated = true;
+                    return;
+                }
+                const child = rowToEntry(row);
+                children.push(child);
+                loadChildren(child.id, currentDepth + 1, false);
+            }
+        };
+        loadChildren(project.id, 1, true);
+        return { project, children, truncated };
+    }
     async getChildren(parentId, filter) {
         let sql = `
       SELECT * FROM entries
@@ -63,9 +146,90 @@ class TimStore {
         }
         sql += filter?.metadataKind === 'exchange'
             ? ` ORDER BY CAST(json_extract(metadata, '$.seq') AS INTEGER) ASC`
-            : ` ORDER BY created_at ASC`;
+            : ` ORDER BY COALESCE(CAST(json_extract(metadata, '$.order') AS INTEGER), 999999), created_at ASC`;
         const rows = this.db.prepare(sql).all(...params);
         return rows.map(rowToEntry);
+    }
+    async getChildByKind(parentId, kind) {
+        const rows = this.db.prepare(`
+      SELECT * FROM entries
+      WHERE parent_id = ?
+        AND json_extract(metadata, '$.kind') = ?
+        AND irrelevant = 0
+        AND tombstoned_at IS NULL
+      ORDER BY COALESCE(CAST(json_extract(metadata, '$.seq') AS INTEGER), 999999),
+               COALESCE(CAST(json_extract(metadata, '$.order') AS INTEGER), 999999),
+               created_at ASC
+    `).all(parentId, kind);
+        return rows.map(rowToEntry);
+    }
+    async getChildrenBySeq(parentId) {
+        const rows = this.db.prepare(`
+      SELECT * FROM entries
+      WHERE parent_id = ?
+        AND irrelevant = 0
+        AND tombstoned_at IS NULL
+      ORDER BY COALESCE(CAST(json_extract(metadata, '$.seq') AS INTEGER), 999999),
+               created_at ASC
+    `).all(parentId);
+        return rows.map(rowToEntry);
+    }
+    async getTasks(opts) {
+        let sql = `
+      SELECT e.* FROM entries e
+      WHERE json_extract(e.metadata, '$.task') = true
+        AND e.irrelevant = 0
+        AND e.tombstoned_at IS NULL
+    `;
+        const params = [];
+        if (opts?.status) {
+            sql += ` AND json_extract(e.metadata, '$.status') = ?`;
+            params.push(opts.status);
+        }
+        sql += `
+      ORDER BY
+        CASE json_extract(e.metadata, '$.status')
+          WHEN 'in_progress' THEN 0
+          WHEN 'todo' THEN 1
+          ELSE 2
+        END,
+        CASE json_extract(e.metadata, '$.priority')
+          WHEN 'high' THEN 0
+          WHEN 'medium' THEN 1
+          WHEN 'low' THEN 2
+          ELSE 3
+        END,
+        CASE WHEN json_extract(e.metadata, '$.due') IS NULL THEN 1 ELSE 0 END,
+        json_extract(e.metadata, '$.due') ASC
+    `;
+        const rows = this.db.prepare(sql).all(...params);
+        return rows.map(row => {
+            const meta = JSON.parse(row.metadata);
+            return {
+                id: row.id,
+                title: row.title,
+                content: row.content,
+                parent_id: row.parent_id,
+                project_label: this.resolveProjectLabel(row.parent_id),
+                status: meta.status ?? null,
+                priority: meta.priority ?? null,
+                due: meta.due ?? null,
+            };
+        });
+    }
+    resolveProjectLabel(startParentId) {
+        let currentId = startParentId;
+        while (currentId) {
+            const row = this.db.prepare('SELECT parent_id, metadata FROM entries WHERE id = ?').get(currentId);
+            if (!row)
+                return null;
+            const meta = JSON.parse(row.metadata);
+            if (meta.kind === 'project') {
+                return meta.label ?? null;
+            }
+            currentId = row.parent_id;
+        }
+        return null;
     }
     close() {
         this.db.close();
@@ -78,20 +242,31 @@ class TimStore {
         return this.db;
     }
     async write(content, options = {}) {
-        const id = options.id ?? (0, ulid_1.ulid)();
         const now = new Date().toISOString();
+        const id = options.id ?? `${os.hostname().slice(0, 4)}-${now.slice(5, 7)}${now.slice(8, 10)}-${(0, ulid_1.ulid)()}`;
         const timestamp = Date.now();
+        const { title, body } = splitTitleBody(content, options.title);
         // Calculate depth
         let depth = 1;
-        if (options.parentId) {
-            const parent = this.db.prepare('SELECT depth FROM entries WHERE id = ?').get(options.parentId);
+        const parentId = options.parentId ?? null;
+        if (parentId) {
+            const parent = this.db.prepare('SELECT depth FROM entries WHERE id = ?').get(parentId);
             if (parent)
                 depth = Math.min(parent.depth + 1, 5);
         }
+        const metadata = { ...(options.metadata ?? {}) };
+        if (parentId && metadata.order === undefined) {
+            const maxRow = this.db.prepare(`
+        SELECT MAX(CAST(json_extract(metadata, '$.order') AS INTEGER)) AS max_order
+        FROM entries WHERE parent_id = ? AND irrelevant = 0
+      `).get(parentId);
+            metadata.order = (maxRow.max_order ?? -1) + 1;
+        }
         const entry = {
             id,
-            parent_id: options.parentId ?? null,
-            content,
+            parent_id: parentId,
+            title,
+            content: body,
             content_type: options.contentType ?? 'text',
             depth,
             confidence: options.confidence ?? 1.0,
@@ -103,11 +278,11 @@ class TimStore {
             irrelevant: 0,
             favorite: 0,
             tombstoned_at: null,
-            metadata: JSON.stringify(options.metadata ?? {}),
+            metadata: JSON.stringify(metadata),
         };
-        this.db.prepare(`INSERT INTO entries (id, parent_id, content, content_type, depth,
+        this.db.prepare(`INSERT INTO entries (id, parent_id, title, content, content_type, depth,
       confidence, created_at, accessed_at, decay_rate, visibility, tags, irrelevant,
-      favorite, tombstoned_at, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(entry.id, entry.parent_id, entry.content, entry.content_type, entry.depth, entry.confidence, entry.created_at, entry.accessed_at, entry.decay_rate, entry.visibility, entry.tags, entry.irrelevant, entry.favorite, entry.tombstoned_at, entry.metadata);
+      favorite, tombstoned_at, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(entry.id, entry.parent_id, entry.title, entry.content, entry.content_type, entry.depth, entry.confidence, entry.created_at, entry.accessed_at, entry.decay_rate, entry.visibility, entry.tags, entry.irrelevant, entry.favorite, entry.tombstoned_at, entry.metadata);
         // Write to staging for sync
         this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
       lww_timestamp, lww_device, lww_confidence)
@@ -128,9 +303,29 @@ class TimStore {
             throw new Error(`Entry not found: ${id}`);
         const now = new Date().toISOString();
         const timestamp = Date.now();
+        let title = existing.title;
+        let body = existing.content;
+        if (patch.title !== undefined) {
+            title = patch.title.trim();
+        }
+        if (patch.content !== undefined) {
+            if (patch.title !== undefined) {
+                body = patch.content;
+            }
+            else if (!existing.title.trim()) {
+                const split = splitTitleBody(patch.content);
+                title = split.title;
+                body = split.body;
+            }
+            else {
+                const nl = patch.content.indexOf('\n');
+                body = nl === -1 ? patch.content.trim() : patch.content.slice(nl + 1).trim();
+            }
+        }
         const updated = {
             ...existing,
-            content: patch.content ?? existing.content,
+            title,
+            content: body,
             content_type: patch.contentType ?? existing.content_type,
             confidence: patch.confidence ?? existing.confidence,
             decay_rate: patch.decayRate ?? existing.decay_rate,
@@ -141,9 +336,9 @@ class TimStore {
             metadata: patch.metadata ? JSON.stringify(patch.metadata) : existing.metadata,
             accessed_at: now,
         };
-        this.db.prepare(`UPDATE entries SET content=?, content_type=?, confidence=?,
+        this.db.prepare(`UPDATE entries SET title=?, content=?, content_type=?, confidence=?,
       decay_rate=?, visibility=?, tags=?, irrelevant=?, tombstoned_at=?, metadata=?,
-      accessed_at=? WHERE id=?`).run(updated.content, updated.content_type, updated.confidence, updated.decay_rate, updated.visibility, updated.tags, updated.irrelevant, updated.tombstoned_at, updated.metadata, updated.accessed_at, id);
+      accessed_at=? WHERE id=?`).run(updated.title, updated.content, updated.content_type, updated.confidence, updated.decay_rate, updated.visibility, updated.tags, updated.irrelevant, updated.tombstoned_at, updated.metadata, updated.accessed_at, id);
         // Write to staging
         this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
       lww_timestamp, lww_device, lww_confidence)
@@ -192,8 +387,21 @@ class TimStore {
     // ─── Edges ─────────────────────────────────────────────
     async link(sourceId, targetId, type, weight = 1.0, metadata = {}) {
         const id = (0, ulid_1.ulid)();
+        const edgeRow = {
+            id,
+            source_id: sourceId,
+            target_id: targetId,
+            type,
+            weight,
+            metadata: JSON.stringify(metadata),
+        };
         this.db.prepare(`INSERT INTO edges (id, source_id, target_id, type, weight, metadata)
-      VALUES (?, ?, ?, ?, ?, ?)`).run(id, sourceId, targetId, type, weight, JSON.stringify(metadata));
+      VALUES (?, ?, ?, ?, ?, ?)`).run(edgeRow.id, edgeRow.source_id, edgeRow.target_id, edgeRow.type, edgeRow.weight, edgeRow.metadata);
+        const edgeKey = `${sourceId}|${targetId}|${type}`;
+        const ts = Date.now();
+        this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
+      lww_timestamp, lww_device, lww_confidence)
+      VALUES (?, 'edge', 'upsert', ?, ?, ?, ?)`).run(edgeKey, JSON.stringify(edgeRow), ts, this.agentId, 1.0);
         const edge = { id, sourceId, targetId, type, weight, metadata };
         this.emit('edge:created', {
             edge,
@@ -277,9 +485,9 @@ class TimStore {
     }
     async applyStaging(records) {
         const upsertEntry = this.db.prepare(`INSERT OR REPLACE INTO entries
-      (id, parent_id, content, content_type, depth, confidence, created_at,
+      (id, parent_id, title, content, content_type, depth, confidence, created_at,
        accessed_at, decay_rate, visibility, tags, irrelevant, favorite, tombstoned_at, metadata)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
         const upsertEdge = this.db.prepare(`INSERT OR REPLACE INTO edges
       (id, source_id, target_id, type, weight, metadata)
       VALUES (?, ?, ?, ?, ?, ?)`);
@@ -294,7 +502,7 @@ class TimStore {
                     }
                     else {
                         const entry = JSON.parse(record.payload);
-                        upsertEntry.run(entry.id, entry.parent_id, entry.content, entry.content_type, entry.depth, entry.confidence, entry.created_at, entry.accessed_at, entry.decay_rate, entry.visibility, entry.tags, entry.irrelevant, entry.favorite ?? 0, entry.tombstoned_at, entry.metadata);
+                        upsertEntry.run(entry.id, entry.parent_id, entry.title ?? '', entry.content, entry.content_type, entry.depth, entry.confidence, entry.created_at, entry.accessed_at, entry.decay_rate, entry.visibility, entry.tags, entry.irrelevant, entry.favorite ?? 0, entry.tombstoned_at, entry.metadata);
                     }
                 }
                 else if (record.entityType === 'edge') {
@@ -442,10 +650,20 @@ class TimStore {
 }
 exports.TimStore = TimStore;
 // ─── Row → Domain Mappers ───────────────────────────────
+function splitTitleBody(content, explicitTitle) {
+    if (explicitTitle !== undefined) {
+        return { title: explicitTitle.trim(), body: content };
+    }
+    const nl = content.indexOf('\n');
+    if (nl === -1)
+        return { title: content.trim(), body: '' };
+    return { title: content.slice(0, nl).trim(), body: content.slice(nl + 1).trim() };
+}
 function rowToEntry(row) {
     return {
         id: row.id,
         parentId: row.parent_id,
+        title: row.title ?? '',
         content: row.content,
         contentType: row.content_type,
         depth: row.depth,

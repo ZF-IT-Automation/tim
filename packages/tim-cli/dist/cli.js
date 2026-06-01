@@ -39,6 +39,7 @@ const tim_store_1 = require("tim-store");
 const tim_core_1 = require("tim-core");
 const tim_hooks_1 = require("tim-hooks");
 const tim_migrate_1 = require("tim-migrate");
+const sync_cli_js_1 = require("./sync-cli.js");
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
 const os = __importStar(require("os"));
@@ -265,6 +266,11 @@ async function main() {
         case 'import':
             await cmdImport(rest);
             break;
+        case 'sync': {
+            const sub = rest[0];
+            await (0, sync_cli_js_1.cmdSync)(sub, rest.slice(1));
+            break;
+        }
         case '--version':
         case '-v':
             console.log('tim v0.1.0-alpha');
@@ -284,6 +290,11 @@ Commands:
   checkpoint            Manual checkpoint for a session (--session)
   export [path]           Export to .hmem or markdown (--format hmem|text)
   import <path>           Import from .hmem (--dry-run, --deduplicate)
+  sync connect            Connect to o9k-sync server
+  sync push               Push unacked staging to server
+  sync pull               Pull remote changes
+  sync status             Show sync configuration and health
+  sync dev                Start local dev sync server (port 3100)
   --help                Show this help`);
             break;
         default:

@@ -21,7 +21,7 @@ const store_js_1 = require("../store.js");
         (0, vitest_1.expect)(handler).toHaveBeenCalledOnce();
         const event = handler.mock.calls[0][0];
         (0, vitest_1.expect)(event.payload).toMatchObject({
-            entry: { id: entry.id, content: 'hello' },
+            entry: { id: entry.id, title: 'hello' },
             agentId: 'test-agent',
         });
         (0, vitest_1.expect)(typeof event.payload.timestamp).toBe('string');
@@ -61,7 +61,7 @@ const store_js_1 = require("../store.js");
             throw new Error('handler boom');
         });
         const entry = await store.write('still works');
-        (0, vitest_1.expect)(entry.content).toBe('still works');
+        (0, vitest_1.expect)(entry.title || entry.content).toBe('still works');
     });
     (0, vitest_1.it)('works without emitter', async () => {
         const plain = new store_js_1.TimStore(':memory:');
@@ -91,8 +91,8 @@ const store_js_1 = require("../store.js");
         });
         (0, vitest_1.expect)(count).toBe(1);
         (0, vitest_1.expect)((await store.read(old.id, { showIrrelevant: true }))?.irrelevant).toBe(true);
-        (0, vitest_1.expect)((await store.read(keep.id))?.content).toBe('keep');
-        (0, vitest_1.expect)((await store.read(recent.id))?.content).toBe('recent');
+        (0, vitest_1.expect)((await store.read(keep.id))?.title || (await store.read(keep.id))?.content).toBe('keep');
+        (0, vitest_1.expect)((await store.read(recent.id))?.title || (await store.read(recent.id))?.content).toBe('recent');
     });
 });
 //# sourceMappingURL=events.test.js.map

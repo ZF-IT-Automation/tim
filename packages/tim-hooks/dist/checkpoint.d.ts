@@ -25,6 +25,8 @@ export declare function runSessionStart(store: TimStore, params: {
     cwd: string;
     harness: string;
     hooksConfig?: HooksConfig;
+    projectId?: string;
+    batchSize?: number;
 }): Promise<SessionStartResult>;
 export declare function runSessionEnd(store: TimStore, sessionId: string, opts?: SessionEndOptions): Promise<Entry>;
 //# sourceMappingURL=checkpoint.d.ts.map

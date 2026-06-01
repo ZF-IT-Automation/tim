@@ -625,7 +625,7 @@ describe('TimStore', () => {
       expect(output).not.toContain('Hidden child');
     });
 
-    it('formatProjectOutput skips empty nodes when render_depth resolves to 0', async () => {
+    it('formatProjectOutput shows empty nodes with — marker when render_depth is 0', async () => {
       const project = await store.createProject('P0401');
       await store.write('', {
         parentId: project.id,
@@ -641,7 +641,8 @@ describe('TimStore', () => {
       const loaded = await store.loadProject('P0401', { depth: 2 });
       const output = formatProjectOutput(loaded!, 50);
 
-      expect(output).not.toContain('Empty Section');
+      expect(output).toContain('Empty Section');
+      expect(output).toContain('—');
       expect(output).toContain('Visible Section');
     });
   });

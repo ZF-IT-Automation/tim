@@ -2,6 +2,7 @@ export type ContentType = 'text' | 'json' | 'blob';
 export interface Entry {
     id: string;
     parentId: string | null;
+    title: string;
     content: string;
     contentType: ContentType;
     depth: number;
@@ -42,6 +43,7 @@ export interface ReadOptions {
 }
 export interface WriteOptions {
     id?: string;
+    title?: string;
     parentId?: string | null;
     contentType?: ContentType;
     confidence?: number;

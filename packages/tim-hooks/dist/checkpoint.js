@@ -43,6 +43,8 @@ const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
 const tim_store_1 = require("tim-store");
 const hooks_js_1 = require("./hooks.js");
+const marker_js_1 = require("./marker.js");
+const session_hooks_js_1 = require("./session-hooks.js");
 /** Resolve active project label from TIM_PROJECT env or ~/.tim/active-project. */
 function getActiveProjectLabel() {
     const fromEnv = process.env.TIM_PROJECT?.trim();
@@ -61,33 +63,62 @@ async function loadProjectContext(store) {
         return null;
     return store.read(label);
 }
+async function resolveSessionProjectId(store, cwd, explicitProjectId) {
+    if (explicitProjectId)
+        return explicitProjectId;
+    const marker = (0, marker_js_1.detectProject)(cwd);
+    if (marker)
+        return marker.project;
+    const active = getActiveProjectLabel();
+    if (active)
+        return active;
+    await (0, tim_store_1.ensureInboxProject)(store);
+    return tim_store_1.INBOX_PROJECT_LABEL;
+}
 async function runCheckpoint(store, sessionId, opts = {}) {
     const sessions = new tim_store_1.SessionManager(store);
     return sessions.checkpoint(sessionId, opts);
 }
 async function runSessionStart(store, params) {
     const sessions = new tim_store_1.SessionManager(store);
-    const session = await sessions.sessionStart({
+    const projectId = await resolveSessionProjectId(store, params.cwd, params.projectId);
+    const session = await sessions.startProjectSession({
         sessionId: params.sessionId,
+        projectId,
         agentName: params.agentName,
         cwd: params.cwd,
         harness: params.harness,
+        batchSize: params.batchSize,
+    });
+    (0, marker_js_1.writeMarker)(params.cwd, {
+        project: projectId,
+        session: params.sessionId,
+        exchanges: 0,
+        batch_size: typeof session.metadata.batch_size === 'number'
+            ? session.metadata.batch_size
+            : 5,
+        batches_summarized: 0,
+        summarizer: session.metadata.summarizer,
     });
     await (0, hooks_js_1.runConfiguredHooks)('sessionStart', params.hooksConfig, {
         TIM_SESSION_ID: params.sessionId,
         TIM_CWD: params.cwd,
         TIM_AGENT: params.agentName,
         TIM_HARNESS: params.harness,
+        TIM_PROJECT: projectId,
     });
-    const project = await loadProjectContext(store);
+    const project = await store.read(projectId);
     return { session, project };
 }
 async function runSessionEnd(store, sessionId, opts = {}) {
+    const cwd = opts.env?.TIM_CWD ?? process.cwd();
     const env = {
         TIM_SESSION_ID: sessionId,
+        TIM_CWD: cwd,
         ...opts.env,
     };
     await (0, hooks_js_1.runConfiguredHooks)('sessionEnd', opts.hooksConfig, env);
+    await (0, session_hooks_js_1.onSessionStop)(store, cwd);
     return runCheckpoint(store, sessionId, {
         summarize: opts.summarize,
     });

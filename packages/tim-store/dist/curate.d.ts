@@ -8,7 +8,7 @@ export declare class CurateManager {
     private db;
     constructor(db: Database.Database);
     renameEntry(oldId: string, newId: string): Entry;
-    moveEntry(id: string, newParentId: string | null): Entry;
+    moveEntry(id: string, newParentId: string | null, order?: number): Entry;
     updateMany(ids: string[], flags: UpdateManyFlags): Entry[];
     tagAdd(id: string, tags: string[]): Entry;
     tagRemove(id: string, tags: string[]): Entry;

@@ -9,6 +9,7 @@ function rowToEntry(row) {
     return {
         id: row.id,
         parentId: row.parent_id,
+        title: row.title ?? '',
         content: row.content,
         contentType: row.content_type,
         depth: row.depth,
@@ -109,11 +110,14 @@ function renderMarkdownTree(entry, childrenByParent, edgesBySource, idToEntry) {
     const tagSuffix = entry.tags.length
         ? ' ' + entry.tags.filter(t => t.startsWith('#')).join(' ')
         : '';
-    lines.push(`${heading} ${entry.content.split('\n')[0]}${tagSuffix}`);
-    const bodyLines = entry.content.split('\n');
-    if (bodyLines.length > 1) {
+    const firstLine = entry.title || entry.content.split('\n')[0];
+    lines.push(`${heading} ${firstLine}${tagSuffix}`);
+    const bodyLines = entry.title
+        ? entry.content.split('\n')
+        : entry.content.split('\n').slice(1);
+    if (bodyLines.length > 0 && bodyLines.some(l => l.trim())) {
         lines.push('');
-        lines.push(bodyLines.slice(1).join('\n'));
+        lines.push(bodyLines.join('\n'));
     }
     const children = childrenByParent.get(entry.id) ?? [];
     for (const child of children) {
@@ -197,7 +201,7 @@ function exportToHmem(store, targetPath, options = {}) {
         for (const root of roots) {
             const entry = rowToEntry(root);
             const { label, prefix, seq } = resolveLabel(entry, prefixCounters);
-            insertEntry.run(root.id, label, prefix, seq, root.content, root.created_at, root.accessed_at, 0, root.accessed_at, entry.confidence < 0.5 ? 1 : 0, root.favorite, root.irrelevant, 0, JSON.stringify(entry.tags));
+            insertEntry.run(root.id, label, prefix, seq, entry.title || root.content, root.created_at, root.accessed_at, 0, root.accessed_at, entry.confidence < 0.5 ? 1 : 0, root.favorite, root.irrelevant, 0, JSON.stringify(entry.tags));
             entriesExported++;
         }
         const children = rows.filter(r => r.parent_id && exportIds.has(r.id));
@@ -214,7 +218,7 @@ function exportToHmem(store, targetPath, options = {}) {
             const parentUid = child.parent_id === rootId ? null : child.parent_id;
             const siblings = childrenByParent.get(child.parent_id) ?? [child];
             const seq = siblingSeq(child, siblings);
-            insertNode.run(child.id, rootId, parentUid, child.depth, seq, child.content, JSON.stringify(entry.tags), child.created_at, child.accessed_at, child.irrelevant);
+            insertNode.run(child.id, rootId, parentUid, child.depth, seq, entry.title || child.content, JSON.stringify(entry.tags), child.created_at, child.accessed_at, child.irrelevant);
             nodesExported++;
         }
         const edges = loadAllEdges(store).filter(e => exportIds.has(e.sourceId) && exportIds.has(e.targetId));

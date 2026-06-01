@@ -147,7 +147,7 @@ describe('tim_export', () => {
     const result = tim_export(store, outPath, {
       format: 'hmem',
       entryFilter: e => (e.metadata.label as string) === 'P0001' ||
-        e.parentId !== null && e.content === 'Keep child',
+        e.parentId !== null && e.title === 'Keep child',
     });
 
     expect(result).toMatchObject({ entriesExported: 1, nodesExported: 1 });

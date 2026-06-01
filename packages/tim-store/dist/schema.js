@@ -67,7 +67,7 @@ exports.MIGRATIONS = [
       );
 
       CREATE VIRTUAL TABLE IF NOT EXISTS fts_entries USING fts5(
-        content, tags,
+        title, content, tags,
         content='entries', content_rowid='rowid'
       );
 
@@ -83,6 +83,39 @@ exports.MIGRATIONS = [
         version: 2,
         sql: `
       ALTER TABLE entries ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0;
+    `
+    },
+    {
+        version: 3,
+        sql: `
+      ALTER TABLE entries ADD COLUMN title TEXT NOT NULL DEFAULT '';
+
+      UPDATE entries SET
+        title = CASE
+          WHEN instr(content, char(10)) > 0 THEN trim(substr(content, 1, instr(content, char(10)) - 1))
+          ELSE trim(content)
+        END,
+        content = CASE
+          WHEN instr(content, char(10)) > 0 THEN trim(substr(content, instr(content, char(10)) + 1))
+          ELSE ''
+        END;
+    `
+    },
+    {
+        version: 4,
+        sql: `
+      DROP TRIGGER IF EXISTS entries_ai;
+      DROP TRIGGER IF EXISTS entries_ad;
+      DROP TRIGGER IF EXISTS entries_au;
+      DROP TABLE IF EXISTS fts_entries;
+
+      CREATE VIRTUAL TABLE fts_entries USING fts5(
+        title, content, tags,
+        content='entries', content_rowid='rowid'
+      );
+
+      INSERT INTO fts_entries(rowid, title, content, tags)
+      SELECT rowid, title, content, tags FROM entries;
     `
     }
 ];
@@ -113,20 +146,20 @@ function createTriggers(db) {
     // FTS5 sync triggers — keep FTS index in sync with entries table
     db.exec(`
     CREATE TRIGGER IF NOT EXISTS entries_ai AFTER INSERT ON entries BEGIN
-      INSERT INTO fts_entries(rowid, content, tags)
-      VALUES (new.rowid, new.content, new.tags);
+      INSERT INTO fts_entries(rowid, title, content, tags)
+      VALUES (new.rowid, new.title, new.content, new.tags);
     END;
 
     CREATE TRIGGER IF NOT EXISTS entries_ad AFTER DELETE ON entries BEGIN
-      INSERT INTO fts_entries(fts_entries, rowid, content, tags)
-      VALUES ('delete', old.rowid, old.content, old.tags);
+      INSERT INTO fts_entries(fts_entries, rowid, title, content, tags)
+      VALUES ('delete', old.rowid, old.title, old.content, old.tags);
     END;
 
     CREATE TRIGGER IF NOT EXISTS entries_au AFTER UPDATE ON entries BEGIN
-      INSERT INTO fts_entries(fts_entries, rowid, content, tags)
-      VALUES ('delete', old.rowid, old.content, old.tags);
-      INSERT INTO fts_entries(rowid, content, tags)
-      VALUES (new.rowid, new.content, new.tags);
+      INSERT INTO fts_entries(fts_entries, rowid, title, content, tags)
+      VALUES ('delete', old.rowid, old.title, old.content, old.tags);
+      INSERT INTO fts_entries(rowid, title, content, tags)
+      VALUES (new.rowid, new.title, new.content, new.tags);
     END;
   `);
 }

@@ -155,7 +155,7 @@ let tmpDir;
         const result = (0, export_js_1.tim_export)(store, outPath, {
             format: 'hmem',
             entryFilter: e => e.metadata.label === 'P0001' ||
-                e.parentId !== null && e.content === 'Keep child',
+                e.parentId !== null && e.title === 'Keep child',
         });
         (0, vitest_1.expect)(result).toMatchObject({ entriesExported: 1, nodesExported: 1 });
         const db = new better_sqlite3_1.default(outPath, { readonly: true });

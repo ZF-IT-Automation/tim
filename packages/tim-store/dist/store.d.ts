@@ -5,6 +5,33 @@ export interface TimStoreOptions {
     emitter?: Pick<EventBus, 'emit'>;
     agentId?: string;
 }
+export interface CreateProjectOptions {
+    content?: string;
+    metadata?: Record<string, unknown>;
+}
+export interface LoadProjectOptions {
+    depth?: number;
+    budget?: number;
+    sections?: string[] | null;
+}
+export interface LoadProjectResult {
+    project: Entry;
+    children: Entry[];
+    truncated: boolean;
+}
+export interface TaskRecord {
+    id: string;
+    title: string;
+    content: string;
+    parent_id: string | null;
+    project_label: string | null;
+    status: string | null;
+    priority: string | null;
+    due: string | null;
+}
+export interface GetTasksOptions {
+    status?: string;
+}
 export declare class TimStore implements MemoryInterface {
     private db;
     private emitter?;
@@ -12,9 +39,15 @@ export declare class TimStore implements MemoryInterface {
     constructor(dbPath: string, options?: TimStoreOptions);
     private emit;
     read(id: string, options?: ReadOptions): Promise<Entry | null>;
+    createProject(label: string, options?: CreateProjectOptions): Promise<Entry>;
+    loadProject(label: string, options?: LoadProjectOptions): Promise<LoadProjectResult | null>;
     getChildren(parentId: string, filter?: {
         metadataKind?: string;
     }): Promise<Entry[]>;
+    getChildByKind(parentId: string, kind: string): Promise<Entry[]>;
+    getChildrenBySeq(parentId: string): Promise<Entry[]>;
+    getTasks(opts?: GetTasksOptions): Promise<TaskRecord[]>;
+    private resolveProjectLabel;
     close(): void;
     curate(): CurateManager;
     /** @internal Exposed for tests */

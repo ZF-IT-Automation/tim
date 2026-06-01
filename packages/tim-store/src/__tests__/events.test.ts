@@ -25,7 +25,7 @@ describe('TimStore events', () => {
     expect(handler).toHaveBeenCalledOnce();
     const event = handler.mock.calls[0][0];
     expect(event.payload).toMatchObject({
-      entry: { id: entry.id, content: 'hello' },
+      entry: { id: entry.id, title: 'hello' },
       agentId: 'test-agent',
     });
     expect(typeof event.payload.timestamp).toBe('string');
@@ -78,7 +78,7 @@ describe('TimStore events', () => {
     });
 
     const entry = await store.write('still works');
-    expect(entry.content).toBe('still works');
+    expect(entry.title || entry.content).toBe('still works');
   });
 
   it('works without emitter', async () => {
@@ -115,7 +115,7 @@ describe('TimStore runDecay', () => {
 
     expect(count).toBe(1);
     expect((await store.read(old.id, { showIrrelevant: true }))?.irrelevant).toBe(true);
-    expect((await store.read(keep.id))?.content).toBe('keep');
-    expect((await store.read(recent.id))?.content).toBe('recent');
+    expect((await store.read(keep.id))?.title || (await store.read(keep.id))?.content).toBe('keep');
+    expect((await store.read(recent.id))?.title || (await store.read(recent.id))?.content).toBe('recent');
   });
 });

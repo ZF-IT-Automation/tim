@@ -3,6 +3,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 const vitest_1 = require("vitest");
 const store_js_1 = require("../store.js");
+const project_output_js_1 = require("../project-output.js");
 let store;
 (0, vitest_1.beforeEach)(() => {
     store = new store_js_1.TimStore(':memory:');
@@ -16,13 +17,15 @@ let store;
         (0, vitest_1.it)('should write and read an entry', async () => {
             const entry = await store.write('Hello World');
             (0, vitest_1.expect)(entry.id).toBeTruthy();
-            (0, vitest_1.expect)(entry.content).toBe('Hello World');
+            (0, vitest_1.expect)(entry.title).toBe('Hello World');
+            (0, vitest_1.expect)(entry.content).toBe('');
             (0, vitest_1.expect)(entry.depth).toBe(1);
             (0, vitest_1.expect)(entry.confidence).toBe(1.0);
             (0, vitest_1.expect)(entry.tags).toEqual([]);
             const read = await store.read(entry.id);
             (0, vitest_1.expect)(read).not.toBeNull();
-            (0, vitest_1.expect)(read.content).toBe('Hello World');
+            (0, vitest_1.expect)(read.title).toBe('Hello World');
+            (0, vitest_1.expect)(read.content).toBe('');
         });
         (0, vitest_1.it)('should write with options', async () => {
             const entry = await store.write('Important note', {
@@ -57,6 +60,7 @@ let store;
         (0, vitest_1.it)('should update an entry', async () => {
             const entry = await store.write('Original');
             const updated = await store.update(entry.id, { content: 'Updated' });
+            (0, vitest_1.expect)(updated.title).toBe('Original');
             (0, vitest_1.expect)(updated.content).toBe('Updated');
             (0, vitest_1.expect)(updated.id).toBe(entry.id);
         });
@@ -230,7 +234,7 @@ let store;
             await store2.applyStaging(staging);
             const read = await store2.read(entry.id);
             (0, vitest_1.expect)(read).not.toBeNull();
-            (0, vitest_1.expect)(read.content).toBe('From store1');
+            (0, vitest_1.expect)(read.title).toBe('From store1');
             store2.close();
         });
         (0, vitest_1.it)('should get staging cursor', async () => {
@@ -277,6 +281,274 @@ let store;
             (0, vitest_1.expect)(stats.totalEntries).toBe(2);
             (0, vitest_1.expect)(stats.topTags[0].tag).toBe('#a');
             (0, vitest_1.expect)(stats.topTags[0].count).toBe(2);
+        });
+    });
+    // ─── Projects ─────────────────────────────────────────
+    (0, vitest_1.describe)('createProject and loadProject', () => {
+        (0, vitest_1.it)('load_project returns project and children', async () => {
+            const project = await store.createProject('P0099', {
+                content: 'Test Project',
+                metadata: { name: 'Demo' },
+            });
+            const section = await store.write('Goals section', {
+                parentId: project.id,
+                metadata: { kind: 'section', label: 'Goals' },
+            });
+            await store.write('Ship v1', { parentId: section.id });
+            await store.write('Add tests', { parentId: section.id });
+            const result = await store.loadProject('P0099');
+            (0, vitest_1.expect)(result).not.toBeNull();
+            (0, vitest_1.expect)(result.project.metadata.kind).toBe('project');
+            (0, vitest_1.expect)(result.project.metadata.label).toBe('P0099');
+            (0, vitest_1.expect)(result.children.length).toBe(3);
+            (0, vitest_1.expect)(result.truncated).toBe(false);
+        });
+        (0, vitest_1.it)('load_project respects depth limit', async () => {
+            const project = await store.createProject('P0100');
+            const child = await store.write('Level 1', { parentId: project.id });
+            await store.write('Level 2', { parentId: child.id });
+            await store.write('Level 3', { parentId: child.id });
+            const shallow = await store.loadProject('P0100', { depth: 1 });
+            (0, vitest_1.expect)(shallow.children.length).toBe(1);
+            (0, vitest_1.expect)(shallow.children[0].title).toBe('Level 1');
+            const deeper = await store.loadProject('P0100', { depth: 2 });
+            (0, vitest_1.expect)(deeper.children.length).toBe(3);
+        });
+        (0, vitest_1.it)('load_project respects budget', async () => {
+            const project = await store.createProject('P0101');
+            for (let i = 0; i < 5; i++) {
+                await store.write(`Child ${i}`, { parentId: project.id });
+            }
+            const result = await store.loadProject('P0101', { budget: 3 });
+            (0, vitest_1.expect)(result.children.length).toBe(3);
+            (0, vitest_1.expect)(result.truncated).toBe(true);
+        });
+    });
+    // ─── Tasks ────────────────────────────────────────────
+    (0, vitest_1.describe)('getTasks', () => {
+        async function seedTaskProject(label, title, taskContent, taskMeta) {
+            const project = await store.createProject(label, { content: title });
+            const section = await store.write('Next Steps', {
+                parentId: project.id,
+                metadata: { kind: 'section', label: 'Next Steps' },
+            });
+            const task = await store.write(taskContent, {
+                parentId: section.id,
+                metadata: { task: true, ...taskMeta },
+            });
+            return { project, section, task };
+        }
+        (0, vitest_1.it)('returns empty array when no tasks exist', async () => {
+            await store.createProject('P0200', { content: 'Empty Project' });
+            const tasks = await store.getTasks();
+            (0, vitest_1.expect)(tasks).toEqual([]);
+        });
+        (0, vitest_1.it)('returns tasks filtered by status', async () => {
+            await seedTaskProject('P0201', 'Alpha', 'Todo task', { status: 'todo' });
+            await seedTaskProject('P0202', 'Beta', 'Done task', { status: 'done' });
+            const todoTasks = await store.getTasks({ status: 'todo' });
+            (0, vitest_1.expect)(todoTasks).toHaveLength(1);
+            (0, vitest_1.expect)(todoTasks[0].title).toBe('Todo task');
+            const doneTasks = await store.getTasks({ status: 'done' });
+            (0, vitest_1.expect)(doneTasks).toHaveLength(1);
+            (0, vitest_1.expect)(doneTasks[0].title).toBe('Done task');
+        });
+        (0, vitest_1.it)('returns tasks sorted by priority then due date', async () => {
+            const project = await store.createProject('P0203', { content: 'Sort Test' });
+            const section = await store.write('Next Steps', {
+                parentId: project.id,
+                metadata: { kind: 'section' },
+            });
+            await store.write('Low later', {
+                parentId: section.id,
+                metadata: { task: true, status: 'todo', priority: 'low', due: '2026-06-10' },
+            });
+            await store.write('High soon', {
+                parentId: section.id,
+                metadata: { task: true, status: 'todo', priority: 'high', due: '2026-06-01' },
+            });
+            await store.write('High later', {
+                parentId: section.id,
+                metadata: { task: true, status: 'todo', priority: 'high', due: '2026-06-05' },
+            });
+            await store.write('In progress', {
+                parentId: section.id,
+                metadata: { task: true, status: 'in_progress', priority: 'low', due: '2026-06-15' },
+            });
+            const tasks = await store.getTasks();
+            (0, vitest_1.expect)(tasks.map(t => t.title)).toEqual([
+                'In progress',
+                'High soon',
+                'High later',
+                'Low later',
+            ]);
+        });
+        (0, vitest_1.it)('returns project_label correctly', async () => {
+            await seedTaskProject('P0204', 'TIM', 'Build tim_tasks', {
+                status: 'todo',
+                priority: 'high',
+            });
+            const tasks = await store.getTasks();
+            (0, vitest_1.expect)(tasks).toHaveLength(1);
+            (0, vitest_1.expect)(tasks[0].project_label).toBe('P0204');
+        });
+        (0, vitest_1.it)('excludes irrelevant and tombstoned tasks', async () => {
+            const { task } = await seedTaskProject('P0205', 'Filter', 'Active task', {
+                status: 'todo',
+            });
+            await seedTaskProject('P0206', 'Other', 'Irrelevant task', { status: 'todo' });
+            await seedTaskProject('P0207', 'Other2', 'Tombstoned task', { status: 'todo' });
+            const allBefore = await store.getTasks();
+            const irrelevant = allBefore.find(t => t.title === 'Irrelevant task');
+            const tombstoned = allBefore.find(t => t.title === 'Tombstoned task');
+            await store.delete(irrelevant.id);
+            await store.delete(tombstoned.id, true);
+            const tasks = await store.getTasks();
+            (0, vitest_1.expect)(tasks).toHaveLength(1);
+            (0, vitest_1.expect)(tasks[0].id).toBe(task.id);
+        });
+    });
+    // ─── Title field ──────────────────────────────────────
+    (0, vitest_1.describe)('title field', () => {
+        (0, vitest_1.it)('writes with explicit title', async () => {
+            const entry = await store.write('Body text', { title: 'My Title' });
+            (0, vitest_1.expect)(entry.title).toBe('My Title');
+            (0, vitest_1.expect)(entry.content).toBe('Body text');
+        });
+        (0, vitest_1.it)('splits first line into title when no explicit title', async () => {
+            const entry = await store.write('Title line\nBody line');
+            (0, vitest_1.expect)(entry.title).toBe('Title line');
+            (0, vitest_1.expect)(entry.content).toBe('Body line');
+        });
+        (0, vitest_1.it)('updates title without touching body when only title provided', async () => {
+            const entry = await store.write('Body', { title: 'Old' });
+            const updated = await store.update(entry.id, { title: 'New Title' });
+            (0, vitest_1.expect)(updated.title).toBe('New Title');
+            (0, vitest_1.expect)(updated.content).toBe('Body');
+        });
+        (0, vitest_1.it)('updates content without overwriting existing title', async () => {
+            const entry = await store.write('Body', { title: 'Keep Me' });
+            const updated = await store.update(entry.id, { content: 'New body' });
+            (0, vitest_1.expect)(updated.title).toBe('Keep Me');
+            (0, vitest_1.expect)(updated.content).toBe('New body');
+        });
+        (0, vitest_1.it)('migrates legacy single-line content into title column', async () => {
+            store.getDb().prepare(`
+        INSERT INTO entries (id, parent_id, title, content, content_type, depth, confidence,
+          created_at, accessed_at, decay_rate, visibility, tags, irrelevant, favorite,
+          tombstoned_at, metadata)
+        VALUES ('legacy1', NULL, '', 'Legacy Title\nLegacy body', 'text', 1, 1.0,
+          '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', 0, 1, '[]', 0, 0, NULL, '{}')
+      `).run();
+            store.getDb().prepare(`
+        UPDATE entries SET
+          title = trim(substr(content, 1, instr(content, char(10)) - 1)),
+          content = trim(substr(content, instr(content, char(10)) + 1))
+        WHERE id = 'legacy1'
+      `).run();
+            const read = await store.read('legacy1');
+            (0, vitest_1.expect)(read.title).toBe('Legacy Title');
+            (0, vitest_1.expect)(read.content).toBe('Legacy body');
+        });
+    });
+    // ─── Node reordering ──────────────────────────────────
+    (0, vitest_1.describe)('node reordering', () => {
+        (0, vitest_1.it)('loadProject returns children sorted by metadata.order', async () => {
+            const project = await store.createProject('P0300');
+            await store.write('Third', { parentId: project.id, metadata: { order: 2 } });
+            await store.write('First', { parentId: project.id, metadata: { order: 0 } });
+            await store.write('Second', { parentId: project.id, metadata: { order: 1 } });
+            const result = await store.loadProject('P0300', { depth: 1 });
+            const direct = result.children.filter(c => c.parentId === project.id);
+            (0, vitest_1.expect)(direct.map(c => c.title)).toEqual(['First', 'Second', 'Third']);
+        });
+        (0, vitest_1.it)('write auto-assigns metadata.order under parent', async () => {
+            const project = await store.createProject('P0301');
+            const a = await store.write('A', { parentId: project.id });
+            const b = await store.write('B', { parentId: project.id });
+            const c = await store.write('C', { parentId: project.id, metadata: { order: 99 } });
+            (0, vitest_1.expect)(a.metadata.order).toBe(0);
+            (0, vitest_1.expect)(b.metadata.order).toBe(1);
+            (0, vitest_1.expect)(c.metadata.order).toBe(99);
+        });
+        (0, vitest_1.it)('moveEntry with order shifts siblings and places entry', async () => {
+            const project = await store.createProject('P0302');
+            const a = await store.write('A', { parentId: project.id, metadata: { order: 0 } });
+            const b = await store.write('B', { parentId: project.id, metadata: { order: 1 } });
+            const c = await store.write('C', { parentId: project.id, metadata: { order: 2 } });
+            store.curate().moveEntry(c.id, project.id, 0);
+            const children = await store.getChildren(project.id);
+            (0, vitest_1.expect)(children.map(child => child.title)).toEqual(['C', 'A', 'B']);
+            (0, vitest_1.expect)(children[0].metadata.order).toBe(0);
+            (0, vitest_1.expect)(children[1].metadata.order).toBe(1);
+            (0, vitest_1.expect)(children[2].metadata.order).toBe(2);
+        });
+        (0, vitest_1.it)('moveEntry without order puts entry at end', async () => {
+            const project = await store.createProject('P0303');
+            const section = await store.write('Section', {
+                parentId: project.id,
+                metadata: { order: 0 },
+            });
+            const child = await store.write('Child', { parentId: section.id, metadata: { order: 0 } });
+            store.curate().moveEntry(child.id, project.id);
+            const moved = await store.read(child.id);
+            (0, vitest_1.expect)(moved.parentId).toBe(project.id);
+            (0, vitest_1.expect)(moved.metadata.order).toBe(1);
+        });
+    });
+    // ─── render_override ──────────────────────────────────
+    (0, vitest_1.describe)('render_override', () => {
+        (0, vitest_1.it)('formatProjectOutput uses metadata.render_depth override', async () => {
+            const project = await store.createProject('P0400', { content: 'Demo | Active' });
+            const section = await store.write('Some rules here', {
+                parentId: project.id,
+                title: 'Rules',
+                metadata: { order: 0, render_depth: 0 },
+            });
+            await store.write('Hidden child', { parentId: section.id });
+            const loaded = await store.loadProject('P0400', { depth: 3 });
+            const output = (0, project_output_js_1.formatProjectOutput)(loaded, 50, {
+                sections: [{ name: 'Rules', render_depth: 2 }],
+            });
+            (0, vitest_1.expect)(output).toContain('Rules');
+            (0, vitest_1.expect)(output).toContain('[1 subnode]');
+            (0, vitest_1.expect)(output).not.toContain('Hidden child');
+        });
+        (0, vitest_1.it)('formatProjectOutput shows empty nodes with — marker when render_depth is 0', async () => {
+            const project = await store.createProject('P0401');
+            await store.write('', {
+                parentId: project.id,
+                title: 'Empty Section',
+                metadata: { order: 0, render_depth: 0 },
+            });
+            await store.write('Has body', {
+                parentId: project.id,
+                title: 'Visible Section',
+                metadata: { order: 1 },
+            });
+            const loaded = await store.loadProject('P0401', { depth: 2 });
+            const output = (0, project_output_js_1.formatProjectOutput)(loaded, 50);
+            (0, vitest_1.expect)(output).toContain('Empty Section');
+            (0, vitest_1.expect)(output).toContain('—');
+            (0, vitest_1.expect)(output).toContain('Visible Section');
+        });
+    });
+    (0, vitest_1.describe)('getChildByKind / getChildrenBySeq', () => {
+        (0, vitest_1.it)('returns only children matching a metadata.kind', async () => {
+            const parent = await store.write('parent', {});
+            await store.write('a', { parentId: parent.id, metadata: { kind: 'apple' } });
+            await store.write('b', { parentId: parent.id, metadata: { kind: 'banana' } });
+            await store.write('c', { parentId: parent.id, metadata: { kind: 'apple' } });
+            const apples = await store.getChildByKind(parent.id, 'apple');
+            (0, vitest_1.expect)(apples.map(e => e.title)).toEqual(['a', 'c']);
+        });
+        (0, vitest_1.it)('orders children by metadata.seq ascending', async () => {
+            const parent = await store.write('p', {});
+            await store.write('third', { parentId: parent.id, metadata: { seq: 3 } });
+            await store.write('first', { parentId: parent.id, metadata: { seq: 1 } });
+            await store.write('second', { parentId: parent.id, metadata: { seq: 2 } });
+            const ordered = await store.getChildrenBySeq(parent.id);
+            (0, vitest_1.expect)(ordered.map(e => e.title)).toEqual(['first', 'second', 'third']);
         });
     });
     // ─── Suppression ──────────────────────────────────────

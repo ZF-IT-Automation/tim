@@ -1,5 +1,6 @@
 import type { Entry } from 'tim-core';
 import type { TimStore } from './store.js';
+import * as os from 'os';
 import {
   DEFAULT_BATCH_SIZE,
   deriveCounters,
@@ -131,6 +132,7 @@ export class SessionManager {
         summarizer: params.summarizer ?? { cli: 'claude', model: 'haiku' },
         exchange_count: 0,
         batches_summarized: 0,
+        device: os.hostname(),
         ...(tool && { tool }),
         ...(model && { model }),
         ...(taskSummary && { task_summary: taskSummary }),

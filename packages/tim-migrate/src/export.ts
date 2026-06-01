@@ -171,12 +171,15 @@ function renderMarkdownTree(
   const tagSuffix = entry.tags.length
     ? ' ' + entry.tags.filter(t => t.startsWith('#')).join(' ')
     : '';
-  lines.push(`${heading} ${entry.content.split('\n')[0]}${tagSuffix}`);
+  const firstLine = entry.title || entry.content.split('\n')[0];
+  lines.push(`${heading} ${firstLine}${tagSuffix}`);
 
-  const bodyLines = entry.content.split('\n');
-  if (bodyLines.length > 1) {
+  const bodyLines = entry.title
+    ? entry.content.split('\n')
+    : entry.content.split('\n').slice(1);
+  if (bodyLines.length > 0 && bodyLines.some(l => l.trim())) {
     lines.push('');
-    lines.push(bodyLines.slice(1).join('\n'));
+    lines.push(bodyLines.join('\n'));
   }
 
   const children = childrenByParent.get(entry.id) ?? [];
@@ -288,7 +291,7 @@ export function exportToHmem(
         label,
         prefix,
         seq,
-        root.content,
+        entry.title || root.content,
         root.created_at,
         root.accessed_at,
         0,
@@ -324,7 +327,7 @@ export function exportToHmem(
         parentUid,
         child.depth,
         seq,
-        child.content,
+        entry.title || child.content,
         JSON.stringify(entry.tags),
         child.created_at,
         child.accessed_at,

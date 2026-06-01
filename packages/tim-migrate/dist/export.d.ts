@@ -3,6 +3,7 @@ import type { TimStore } from 'tim-store';
 export interface TimRowEntry {
     id: string;
     parent_id: string | null;
+    title: string;
     content: string;
     content_type: string;
     depth: number;

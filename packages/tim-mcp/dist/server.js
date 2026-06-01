@@ -42,7 +42,9 @@ const types_js_1 = require("@modelcontextprotocol/sdk/types.js");
 const zod_1 = require("zod");
 const tim_store_1 = require("tim-store");
 const tim_core_1 = require("tim-core");
+const tim_hooks_1 = require("tim-hooks");
 const tim_migrate_1 = require("tim-migrate");
+const tim_sync_client_1 = require("tim-sync-client");
 const fs = __importStar(require("fs"));
 const os = __importStar(require("os"));
 const path = __importStar(require("path"));
@@ -54,8 +56,11 @@ const TimReadSchema = zod_1.z.object({
     showIrrelevant: zod_1.z.boolean().optional().default(false),
 });
 const TimWriteSchema = zod_1.z.object({
-    content: zod_1.z.string().describe('Entry content'),
+    content: zod_1.z.string().describe('Entry body content'),
+    title: zod_1.z.string().optional(),
     parentId: zod_1.z.string().optional(),
+    parentTitle: zod_1.z.string().optional().describe('Resolve parent by title within a project'),
+    projectId: zod_1.z.string().optional().describe('Project label for parentTitle resolution, e.g. P0062'),
     contentType: zod_1.z.enum(['text', 'json', 'blob']).optional().default('text'),
     confidence: zod_1.z.number().min(0).max(1).optional().default(1.0),
     tags: zod_1.z.array(zod_1.z.string()).optional().default([]),
@@ -84,6 +89,7 @@ const TimTraceSchema = zod_1.z.object({
 });
 const TimUpdateSchema = zod_1.z.object({
     id: zod_1.z.string(),
+    title: zod_1.z.string().optional(),
     content: zod_1.z.string().optional(),
     confidence: zod_1.z.number().min(0).max(1).optional(),
     tags: zod_1.z.array(zod_1.z.string()).optional(),
@@ -130,9 +136,17 @@ const TimImportSchema = zod_1.z.object({
 const TimDoctorSchema = zod_1.z.object({});
 const TimSessionStartSchema = zod_1.z.object({
     sessionId: zod_1.z.string(),
+    projectId: zod_1.z.string().optional().describe('Project label, e.g. P0062 — enables nested session tree'),
     agentName: zod_1.z.string().optional().default('default'),
     cwd: zod_1.z.string().optional(),
     harness: zod_1.z.string().optional().default('mcp'),
+    batchSize: zod_1.z.number().min(1).max(50).optional(),
+    tool: zod_1.z.string().optional().describe('CLI tool used, e.g. claude, cursor, codex'),
+    model: zod_1.z.string().optional().describe('Model name, e.g. opus, composer-2.5'),
+    taskSummary: zod_1.z.string().optional().describe('One-line description of what was delegated'),
+});
+const TimShowUnsummarizedSchema = zod_1.z.object({
+    sessionId: zod_1.z.string(),
 });
 const TimSessionLogSchema = zod_1.z.object({
     sessionId: zod_1.z.string(),
@@ -151,6 +165,7 @@ const TimRenameEntrySchema = zod_1.z.object({
 const TimMoveEntrySchema = zod_1.z.object({
     id: zod_1.z.string(),
     newParentId: zod_1.z.string().nullable().optional().default(null),
+    order: zod_1.z.number().optional(),
 });
 const TimUpdateManySchema = zod_1.z.object({
     ids: zod_1.z.array(zod_1.z.string()).min(1),
@@ -169,6 +184,187 @@ const TimTagRenameSchema = zod_1.z.object({
     oldTag: zod_1.z.string(),
     newTag: zod_1.z.string(),
 });
+const TimCreateProjectSchema = zod_1.z.object({
+    label: zod_1.z.string().describe('Project label, e.g. P0062'),
+    metadata: zod_1.z.record(zod_1.z.unknown()).optional().default({}),
+    content: zod_1.z.string().optional(),
+});
+const TimLoadProjectSchema = zod_1.z.object({
+    label: zod_1.z.string().describe('Project label, e.g. P0062'),
+    depth: zod_1.z.number().min(1).max(5).optional().default(3),
+    budget: zod_1.z.number().min(1).max(1000).optional().default(200),
+    sections: zod_1.z.array(zod_1.z.string()).nullable().optional().default(null),
+});
+const TimTasksSchema = zod_1.z.object({
+    status: zod_1.z.enum(['todo', 'in_progress', 'done', 'cancelled']).optional(),
+});
+// ─── Project output formatting ──────────────────────────
+function loadProjectSchema() {
+    const schemaPath = path.join(process.cwd(), 'docs/project-schema.json');
+    try {
+        if (fs.existsSync(schemaPath)) {
+            return JSON.parse(fs.readFileSync(schemaPath, 'utf8'));
+        }
+    }
+    catch {
+        // schema optional
+    }
+    return undefined;
+}
+function truncText(s, max) {
+    const t = s.replace(/\s+/g, ' ').trim();
+    if (t.length <= max)
+        return t;
+    return t.slice(0, max - 3) + '...';
+}
+function parseProjectContent(entry) {
+    const combined = entry.content ? `${entry.title}\n${entry.content}` : entry.title;
+    const parts = combined.split('|').map(p => p.trim());
+    const title = parts[0] || entry.title || combined;
+    const status = parts[1] || 'Unknown';
+    const rest = parts.length > 3 ? parts.slice(3).join(' | ') : parts.slice(1).join(' | ');
+    const packagesMatch = combined.match(/(\d+)[-\s]Package/i);
+    const testsMatch = combined.match(/\((\d+)\s+tests?\)/i) ?? combined.match(/\b(\d+)\s+tests?\b/i);
+    return {
+        title,
+        status,
+        description: truncText(rest || combined, 150),
+        packages: packagesMatch ? parseInt(packagesMatch[1], 10) : undefined,
+        tests: testsMatch ? parseInt(testsMatch[1], 10) : undefined,
+    };
+}
+const TASK_STATUS_ORDER = {
+    in_progress: 0,
+    todo: 1,
+};
+const TASK_PRIORITY_ORDER = {
+    high: 0,
+    medium: 1,
+    low: 2,
+};
+function sortTaskRecords(tasks) {
+    return [...tasks].sort((a, b) => {
+        const statusA = TASK_STATUS_ORDER[a.status ?? ''] ?? 2;
+        const statusB = TASK_STATUS_ORDER[b.status ?? ''] ?? 2;
+        if (statusA !== statusB)
+            return statusA - statusB;
+        const priorityA = TASK_PRIORITY_ORDER[a.priority ?? ''] ?? 3;
+        const priorityB = TASK_PRIORITY_ORDER[b.priority ?? ''] ?? 3;
+        if (priorityA !== priorityB)
+            return priorityA - priorityB;
+        if (!a.due && !b.due)
+            return 0;
+        if (!a.due)
+            return 1;
+        if (!b.due)
+            return -1;
+        return a.due.localeCompare(b.due);
+    });
+}
+function taskStatusIcon(status) {
+    switch (status) {
+        case 'in_progress': return '[!]';
+        case 'done': return '[x]';
+        case 'cancelled': return '[-]';
+        default: return '[ ]';
+    }
+}
+function taskPriorityLabel(priority) {
+    switch (priority) {
+        case 'high': return 'HIGH';
+        case 'medium': return 'MED';
+        case 'low': return 'LOW';
+        default: return '';
+    }
+}
+function isTaskOverdue(due, status) {
+    if (!due || status === 'done' || status === 'cancelled')
+        return false;
+    const today = new Date().toISOString().slice(0, 10);
+    return due < today;
+}
+function formatTaskLine(task) {
+    const icon = taskStatusIcon(task.status);
+    const priority = taskPriorityLabel(task.priority);
+    const priorityPart = priority ? `[${priority}]` : '';
+    const duePart = task.due ? `[due: ${task.due}]` : '';
+    const overdue = isTaskOverdue(task.due, task.status) ? '[OVERDUE] ' : '';
+    const statusSuffix = task.status ? ` (${task.status})` : '';
+    const meta = [icon, priorityPart, duePart].filter(Boolean).join(' ');
+    return `  ${overdue}${meta} ${task.title}${statusSuffix}`;
+}
+async function formatTasksOutput(store, tasks) {
+    const grouped = new Map();
+    for (const task of tasks) {
+        const key = task.project_label ?? '(no project)';
+        const list = grouped.get(key) ?? [];
+        list.push(task);
+        grouped.set(key, list);
+    }
+    const projectLabels = [...grouped.keys()].sort((a, b) => a.localeCompare(b));
+    const projectCount = projectLabels.filter(l => l !== '(no project)').length;
+    const lines = [
+        `=== TASKS (${tasks.length} open across ${projectCount} projects) ===`,
+        '',
+    ];
+    for (const label of projectLabels) {
+        const groupTasks = sortTaskRecords(grouped.get(label));
+        let header = label;
+        if (label !== '(no project)') {
+            const project = await store.read(label);
+            if (project) {
+                const parsed = parseProjectContent(project);
+                header = `${label} — ${parsed.title}`;
+            }
+        }
+        lines.push(header);
+        for (const task of groupTasks) {
+            lines.push(formatTaskLine(task));
+        }
+        lines.push('');
+    }
+    lines.push('Status legend: [!] = in_progress, [ ] = todo, [x] = done, [-] = cancelled');
+    return lines.join('\n').trimEnd();
+}
+function resolveProjectRef(session) {
+    const uid = session.metadata.project_uid ?? session.metadata.projectUid;
+    if (typeof uid === 'string' && uid)
+        return uid;
+    const label = session.metadata.projectLabel ?? session.metadata.project_label;
+    if (typeof label === 'string' && label)
+        return label;
+    return (0, tim_hooks_1.getActiveProjectLabel)();
+}
+async function buildCortexReadyBlock(store, session) {
+    const ref = resolveProjectRef(session);
+    if (!ref)
+        return null;
+    const projectEntry = await store.read(ref);
+    if (!projectEntry || projectEntry.metadata.kind !== 'project')
+        return null;
+    const label = String(projectEntry.metadata.label ?? ref);
+    const parsed = parseProjectContent(projectEntry);
+    const stats = await store.stats();
+    const loadResult = await store.loadProject(label, { depth: 3, budget: 150 });
+    const sessionSummaries = (loadResult?.children ?? []).filter(c => c.tags.includes('#session-summary'));
+    const weekAgo = new Date();
+    weekAgo.setDate(weekAgo.getDate() - 7);
+    const weekIso = weekAgo.toISOString();
+    const sessionsThisWeek = sessionSummaries.filter(s => s.createdAt >= weekIso).length;
+    const lastDate = sessionSummaries[0]?.createdAt.slice(0, 10) ?? projectEntry.createdAt.slice(0, 10);
+    const shortName = parsed.title.split('—')[0]?.trim() || parsed.title;
+    const entriesStr = stats.totalEntries.toLocaleString('en-US');
+    const metaBits = [parsed.status];
+    if (parsed.tests != null)
+        metaBits.push(`${parsed.tests} tests`);
+    metaBits.push(`${entriesStr} entries`);
+    return [
+        '[CORTEX READY]',
+        `Project: ${shortName} (${label}) — ${metaBits.join(' · ')}`,
+        `Last: ${lastDate} · ${sessionsThisWeek} sessions this week`,
+        '[/CORTEX READY]',
+    ].join('\n');
+}
 // ─── MCP Server Setup ───────────────────────────────────
 const DB_PATH = process.env.TIM_DB_PATH || (0, tim_core_1.loadConfig)().dbPath || process.env.HOME + '/.tim/tim.db';
 let store;
@@ -184,6 +380,26 @@ function getSessions() {
         sessions = new tim_store_1.SessionManager(getStore());
     }
     return sessions;
+}
+const WRITE_TOOLS = new Set([
+    'tim_write', 'tim_update', 'tim_delete', 'tim_link',
+    'tim_session_start', 'tim_session_log', 'tim_checkpoint',
+    'tim_rename_entry', 'tim_move_entry', 'tim_update_many',
+    'tim_tag_add', 'tim_tag_remove', 'tim_tag_rename', 'tim_import',
+    'tim_create_project',
+]);
+const READ_TOOLS = new Set([
+    'tim_read', 'tim_search', 'tim_trace', 'tim_health', 'tim_stats',
+    'tim_export', 'tim_doctor', 'tim_sync', 'tim_load_project', 'tim_tasks',
+    'tim_show_unsummarized',
+]);
+function scheduleAutoSync(toolName, s) {
+    if (WRITE_TOOLS.has(toolName)) {
+        void (0, tim_sync_client_1.autoPush)(s);
+    }
+    else if (READ_TOOLS.has(toolName)) {
+        void (0, tim_sync_client_1.autoPull)(s);
+    }
 }
 async function startServer() {
     const server = new index_js_1.Server({
@@ -213,12 +429,14 @@ async function startServer() {
             },
             {
                 name: 'tim_write',
-                description: 'Write a new entry to TIM with optional tags, confidence, and visibility.',
+                description: 'Write a new entry to TIM. parentId direct, or parentTitle+projectId to resolve a project section by title (section title under project root metadata.label).',
                 inputSchema: {
                     type: 'object',
                     properties: {
                         content: { type: 'string' },
                         parentId: { type: 'string' },
+                        parentTitle: { type: 'string', description: 'Section title; requires projectId' },
+                        projectId: { type: 'string', description: 'Project label, e.g. P0062' },
                         contentType: { type: 'string', enum: ['text', 'json', 'blob'], default: 'text' },
                         confidence: { type: 'number', minimum: 0, maximum: 1, default: 1.0 },
                         tags: { type: 'array', items: { type: 'string' }, default: [] },
@@ -377,14 +595,16 @@ async function startServer() {
             },
             {
                 name: 'tim_session_start',
-                description: 'Start a TIM session (idempotent). Creates a session root entry.',
+                description: 'Start a TIM session (idempotent). With projectId (or default P0000 Inbox), creates nested Sessions/Summary/Exchanges tree.',
                 inputSchema: {
                     type: 'object',
                     properties: {
                         sessionId: { type: 'string' },
+                        projectId: { type: 'string', description: 'Project label, e.g. P0062' },
                         agentName: { type: 'string', default: 'default' },
                         cwd: { type: 'string' },
                         harness: { type: 'string', default: 'mcp' },
+                        batchSize: { type: 'number', minimum: 1, maximum: 50 },
                     },
                     required: ['sessionId'],
                 },
@@ -409,6 +629,15 @@ async function startServer() {
                         },
                     },
                     required: ['sessionId', 'entries'],
+                },
+            },
+            {
+                name: 'tim_show_unsummarized',
+                description: 'Return the next unsummarized batch of exchanges for a session (UUIDs + user/agent bodies). Summarizer reads this, writes a Batch node under Summary.',
+                inputSchema: {
+                    type: 'object',
+                    properties: { sessionId: { type: 'string' } },
+                    required: ['sessionId'],
                 },
             },
             {
@@ -495,12 +724,59 @@ async function startServer() {
                     required: ['oldTag', 'newTag'],
                 },
             },
+            {
+                name: 'tim_create_project',
+                description: 'Register a project entry so load_project can find it later.',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        label: { type: 'string', description: 'Project label, e.g. P0062' },
+                        metadata: { type: 'object', default: {} },
+                        content: { type: 'string' },
+                    },
+                    required: ['label'],
+                },
+            },
+            {
+                name: 'tim_load_project',
+                description: 'Load a project by label and return it with its child tree.',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        label: { type: 'string', description: 'Project label, e.g. P0062' },
+                        depth: { type: 'number', default: 3, description: 'How many child levels to load (1-5)' },
+                        budget: { type: 'number', default: 200, description: 'Max child entries to return' },
+                        sections: {
+                            type: ['array', 'null'],
+                            items: { type: 'string' },
+                            default: null,
+                            description: 'Optional section IDs/labels to filter direct children',
+                        },
+                    },
+                    required: ['label'],
+                },
+            },
+            {
+                name: 'tim_tasks',
+                description: 'List open tasks across all projects, grouped by project and sorted by status, priority, and due date.',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        status: {
+                            type: 'string',
+                            enum: ['todo', 'in_progress', 'done', 'cancelled'],
+                            description: 'Filter by task status. Default: todo + in_progress.',
+                        },
+                    },
+                },
+            },
         ],
     }));
     // ─── Tool Handler ────────────────────────────────────
     server.setRequestHandler(types_js_1.CallToolRequestSchema, async (request) => {
         const s = getStore();
         const { name, arguments: args } = request.params;
+        scheduleAutoSync(name, s);
         try {
             switch (name) {
                 case 'tim_read': {
@@ -515,7 +791,32 @@ async function startServer() {
                 }
                 case 'tim_write': {
                     const opts = TimWriteSchema.parse(args);
-                    const entry = await s.write(opts.content, opts);
+                    const { parentTitle, projectId, ...writeOpts } = opts;
+                    if (!writeOpts.parentId && parentTitle) {
+                        if (!projectId) {
+                            return {
+                                content: [{ type: 'text', text: 'projectId required when using parentTitle' }],
+                                isError: true,
+                            };
+                        }
+                        const row = s.getDb().prepare(`
+              SELECT e.id FROM entries e
+              JOIN entries p ON e.parent_id = p.id
+              WHERE json_extract(p.metadata, '$.label') = ?
+                AND e.title = ?
+            `).get(projectId, parentTitle);
+                        if (!row) {
+                            return {
+                                content: [{
+                                        type: 'text',
+                                        text: `Parent section '${parentTitle}' not found in project '${projectId}'`,
+                                    }],
+                                isError: true,
+                            };
+                        }
+                        writeOpts.parentId = row.id;
+                    }
+                    const entry = await s.write(opts.content, writeOpts);
                     return {
                         content: [{ type: 'text', text: JSON.stringify(entry, null, 2) }],
                     };
@@ -662,22 +963,48 @@ async function startServer() {
                     return { content: [{ type: 'text', text }] };
                 }
                 case 'tim_session_start': {
-                    const { sessionId, agentName, cwd, harness } = TimSessionStartSchema.parse(args);
-                    const entry = await getSessions().sessionStart({
+                    const { sessionId, projectId, agentName, cwd, harness, batchSize, tool, model, taskSummary } = TimSessionStartSchema.parse(args);
+                    const cwdResolved = cwd ?? process.cwd();
+                    let boundProjectId = projectId ?? (0, tim_hooks_1.getActiveProjectLabel)() ?? undefined;
+                    if (!boundProjectId) {
+                        await (0, tim_store_1.ensureInboxProject)(s);
+                        boundProjectId = tim_store_1.INBOX_PROJECT_LABEL;
+                    }
+                    const entry = await getSessions().startProjectSession({
                         sessionId,
+                        projectId: boundProjectId,
                         agentName,
-                        cwd: cwd ?? process.cwd(),
+                        cwd: cwdResolved,
                         harness,
+                        batchSize,
+                        tool,
+                        model,
+                        taskSummary,
                     });
+                    const cortex = await buildCortexReadyBlock(s, entry);
+                    const text = cortex
+                        ? `${cortex}\n\n${JSON.stringify(entry, null, 2)}`
+                        : JSON.stringify(entry, null, 2);
                     return {
-                        content: [{ type: 'text', text: JSON.stringify(entry, null, 2) }],
+                        content: [{ type: 'text', text }],
                     };
                 }
                 case 'tim_session_log': {
                     const { sessionId, entries } = TimSessionLogSchema.parse(args);
-                    const written = await getSessions().sessionLog(sessionId, entries);
+                    const sessionEntry = await s.read(sessionId);
+                    const isProjectBound = !!(sessionEntry && (await s.getChildByKind(sessionId, 'exchanges-root')).length > 0);
+                    const written = isProjectBound
+                        ? await getSessions().logExchange(sessionId, entries)
+                        : await getSessions().sessionLog(sessionId, entries);
                     return {
                         content: [{ type: 'text', text: JSON.stringify(written, null, 2) }],
+                    };
+                }
+                case 'tim_show_unsummarized': {
+                    const { sessionId } = TimShowUnsummarizedSchema.parse(args);
+                    const batch = await getSessions().showUnsummarized(sessionId);
+                    return {
+                        content: [{ type: 'text', text: JSON.stringify(batch, null, 2) }],
                     };
                 }
                 case 'tim_checkpoint': {
@@ -695,8 +1022,8 @@ async function startServer() {
                     };
                 }
                 case 'tim_move_entry': {
-                    const { id, newParentId } = TimMoveEntrySchema.parse(args);
-                    const entry = s.curate().moveEntry(id, newParentId);
+                    const { id, newParentId, order } = TimMoveEntrySchema.parse(args);
+                    const entry = s.curate().moveEntry(id, newParentId, order);
                     return {
                         content: [{ type: 'text', text: JSON.stringify(entry, null, 2) }],
                     };
@@ -727,6 +1054,38 @@ async function startServer() {
                     const count = s.curate().tagRename(oldTag, newTag);
                     return {
                         content: [{ type: 'text', text: JSON.stringify({ oldTag, newTag, updatedCount: count }, null, 2) }],
+                    };
+                }
+                case 'tim_create_project': {
+                    const { label, metadata, content } = TimCreateProjectSchema.parse(args);
+                    const entry = await s.createProject(label, { metadata, content });
+                    return {
+                        content: [{ type: 'text', text: JSON.stringify(entry, null, 2) }],
+                    };
+                }
+                case 'tim_load_project': {
+                    const { label, depth, budget, sections } = TimLoadProjectSchema.parse(args);
+                    const result = await s.loadProject(label, { depth, budget, sections });
+                    if (!result) {
+                        return { content: [{ type: 'text', text: `Project not found: ${label}` }] };
+                    }
+                    const formatted = (0, tim_store_1.formatProjectOutput)(result, budget, loadProjectSchema());
+                    return {
+                        content: [{
+                                type: 'text',
+                                text: JSON.stringify({ ...result, formatted }, null, 2),
+                            }],
+                    };
+                }
+                case 'tim_tasks': {
+                    const { status } = TimTasksSchema.parse(args);
+                    let tasks = await s.getTasks(status ? { status } : undefined);
+                    if (!status) {
+                        tasks = tasks.filter(t => t.status === 'todo' || t.status === 'in_progress' || t.status == null);
+                    }
+                    const formatted = await formatTasksOutput(s, tasks);
+                    return {
+                        content: [{ type: 'text', text: formatted }],
                     };
                 }
                 default:
