@@ -152,6 +152,11 @@ class SessionManager {
         }
         return written;
     }
+    /** Fire-and-forget: spawn external summarizer for a full batch. Placeholder until summarizer-agent is built. */
+    async summarizeBatch(_sessionId, _batchId) {
+        // TODO: spawn detached summarizer process via onSessionStop hook
+        // The summarizer calls showUnsummarized → gets exchanges + context → writes Batch Summary
+    }
     async logExchange(sessionId, entries) {
         const session = await this.store.read(sessionId);
         if (!session || session.metadata.kind !== session_tree_js_1.KIND_SESSION) {
@@ -175,6 +180,7 @@ class SessionManager {
         for (const e of entries) {
             if (e.role === 'user') {
                 if (usersInBatch.length >= batchSize) {
+                    const fullBatchId = batchNode.id;
                     const nextIndex = (typeof batchNode.metadata.batch_index === 'number'
                         ? batchNode.metadata.batch_index
                         : exchangeBatches.length) + 1;
@@ -183,6 +189,8 @@ class SessionManager {
                         metadata: { kind: session_tree_js_1.KIND_EXCHANGE_BATCH, batch_index: nextIndex, order: nextIndex },
                     });
                     usersInBatch = [];
+                    // Fire-and-forget: previous batch is full → spawn summarizer
+                    this.summarizeBatch(sessionId, fullBatchId).catch(() => { });
                 }
                 seq += 1;
                 currentUser = await this.store.write(e.content, {
@@ -242,6 +250,21 @@ class SessionManager {
             }
         }
         const hasMore = exchangeBatches.some(b => b.metadata.batch_index === batchIndex + 1);
+        const previousSummaries = [];
+        if (summaryNode) {
+            const summaries = await this.store.getChildren(summaryNode.id);
+            for (const s of summaries) {
+                if (s.tags?.includes(session_tree_js_1.SESSION_SUMMARY_TAG)) {
+                    previousSummaries.push(s.title || s.content || '');
+                }
+            }
+        }
+        const sessionMeta = {
+            project: typeof session.metadata.project_ref === 'string' ? session.metadata.project_ref : undefined,
+            tool: typeof session.metadata.tool === 'string' ? session.metadata.tool : undefined,
+            model: typeof session.metadata.model === 'string' ? session.metadata.model : undefined,
+            task_summary: typeof session.metadata.task_summary === 'string' ? session.metadata.task_summary : undefined,
+        };
         return {
             sessionId,
             summaryNodeId: summaryNode.id,
@@ -250,6 +273,8 @@ class SessionManager {
             batchSize,
             exchanges,
             hasMore,
+            previousSummaries,
+            sessionMeta,
         };
     }
     async writeBatchSummary(sessionId, batchIndex, summaryText, range) {

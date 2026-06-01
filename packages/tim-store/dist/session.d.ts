@@ -38,6 +38,13 @@ export interface UnsummarizedBatch {
     batchSize: number;
     exchanges: UnsummarizedExchange[];
     hasMore: boolean;
+    previousSummaries: string[];
+    sessionMeta: {
+        project?: string;
+        tool?: string;
+        model?: string;
+        task_summary?: string;
+    };
 }
 export declare class SessionManager {
     private store;
@@ -45,6 +52,8 @@ export declare class SessionManager {
     sessionStart(params: SessionStartParams): Promise<Entry>;
     startProjectSession(params: ProjectSessionParams): Promise<Entry>;
     sessionLog(sessionId: string, entries: Exchange[]): Promise<Entry[]>;
+    /** Fire-and-forget: spawn external summarizer for a full batch. Placeholder until summarizer-agent is built. */
+    private summarizeBatch;
     logExchange(sessionId: string, entries: Exchange[]): Promise<Entry[]>;
     showUnsummarized(sessionId: string): Promise<UnsummarizedBatch>;
     writeBatchSummary(sessionId: string, batchIndex: number, summaryText: string, range: {
