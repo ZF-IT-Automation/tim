@@ -63,10 +63,12 @@ async function tryCli(
   }
 }
 
+export const FALLBACK_MARKER = 'TIM_SUMMARIZER_FALLBACK_NEEDED';
+
 export async function generateSummary(batch: UnsummarizedBatch): Promise<string> {
   const config = loadConfig();
   const chain = config.summarizer?.chain;
-  if (!chain || chain.length === 0) return generateSummaryHeuristic(batch);
+  if (!chain || chain.length === 0) return FALLBACK_MARKER;
 
   const prompt = buildPrompt(batch);
   const timeoutSec = config.summarizer?.timeout_sec ?? 600;
@@ -84,9 +86,9 @@ export async function generateSummary(batch: UnsummarizedBatch): Promise<string>
     }
   }
 
-  // All CLIs failed, fall back to heuristic
+  // All CLIs failed — signal main agent to handle this batch
   if (process.env.TIM_SUMMARIZER_VERBOSE) {
-    console.error('tim-summarizer: all CLIs failed, using heuristic');
+    console.error('tim-summarizer: all CLIs failed, signaling main agent');
   }
-  return generateSummaryHeuristic(batch);
+  return FALLBACK_MARKER;
 }

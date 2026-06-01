@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { connectTimMcp, callTimTool, type UnsummarizedBatch } from './mcp-client.js';
-import { generateSummary } from './generate-summary.js';
+import { generateSummary, FALLBACK_MARKER } from './generate-summary.js';
 
 function seqRange(batch: UnsummarizedBatch): { seqFrom: number; seqTo: number } {
   const seqs = batch.exchanges.map(e => e.seq);
@@ -18,7 +18,9 @@ export async function runSummarizerLoop(sessionId: string): Promise<number> {
       await callTimTool(client, 'tim_write_batch_summary', {
         sessionId,
         batchIndex: batch.batchIndex,
-        summary,
+        summary: summary === FALLBACK_MARKER
+          ? `[ALL SUMMARIZER CLIs FAILED — main agent please resummarize batch ${batch.batchIndex}]\n${batch.exchanges.map(e => `Q: ${e.userContent.trim().slice(0, 200)}`).join('\n')}`
+          : summary,
         seqFrom,
         seqTo,
       });

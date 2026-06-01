@@ -1,14 +1,19 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as mcpClient from '../mcp-client.js';
-import { generateSummaryHeuristic } from '../generate-summary.js';
 import { runSummarizerLoop } from '../summarize.js';
+import { loadConfig } from 'tim-core';
 
 describe('runSummarizerLoop', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    vi.spyOn({ loadConfig }, 'loadConfig').mockReturnValue({
+      dbPath: ':memory:',
+      deviceId: 'test',
+      summarizer: { chain: [], timeout_sec: 5 },
+    });
   });
 
-  it('writes one batch summary then stops when hasMore is false', async () => {
+  it('writes fallback when chain is empty', async () => {
     const batch = {
       sessionId: 'loop',
       summaryNodeId: 's',
@@ -37,7 +42,7 @@ describe('runSummarizerLoop', () => {
       expect.objectContaining({
         sessionId: 'loop',
         batchIndex: 1,
-        summary: generateSummaryHeuristic(batch),
+        summary: `[ALL SUMMARIZER CLIs FAILED — main agent please resummarize batch 1]\nQ: Q`,
         seqFrom: 1,
         seqTo: 1,
       }),
