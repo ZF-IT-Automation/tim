@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.INBOX_PROJECT_LABEL = exports.MARKER_LOCK = exports.MARKER_FILENAME = exports.SESSION_ROLLUP_THRESHOLD = exports.DEFAULT_BATCH_SIZE = exports.SESSION_SUMMARY_TAG = exports.KIND_EXCHANGE = exports.KIND_EXCHANGE_BATCH = exports.KIND_EXCHANGES_ROOT = exports.KIND_BATCH = exports.KIND_SUMMARY_ROOT = exports.KIND_SESSION = exports.KIND_SESSIONS_ROOT = exports.SESSIONS_SECTION_ORDER = exports.EXCHANGES_NODE_TITLE = exports.SUMMARY_NODE_TITLE = exports.SESSIONS_SECTION_TITLE = void 0;
+exports.getCurrentBatch = getCurrentBatch;
 exports.findChildByKind = findChildByKind;
 exports.deriveCounters = deriveCounters;
 exports.ensureInboxProject = ensureInboxProject;
@@ -21,6 +22,20 @@ exports.SESSION_ROLLUP_THRESHOLD = 3;
 exports.MARKER_FILENAME = '.tim-project';
 exports.MARKER_LOCK = '.tim-project.lock';
 exports.INBOX_PROJECT_LABEL = 'P0000';
+/** Latest exchange-batch under Exchanges; creates Batch 1 if missing. */
+async function getCurrentBatch(store, exchangesNodeId) {
+    const allBatches = await store.getChildByKind(exchangesNodeId, exports.KIND_EXCHANGE_BATCH);
+    let batchNode = allBatches[allBatches.length - 1] ?? null;
+    if (!batchNode) {
+        batchNode = await store.write('Batch 1', {
+            parentId: exchangesNodeId,
+            metadata: { kind: exports.KIND_EXCHANGE_BATCH, batch_index: 1, order: 1 },
+        });
+        allBatches.push(batchNode);
+    }
+    const usersInBatch = (await store.getChildrenBySeq(batchNode.id)).filter(u => u.metadata.role === 'user');
+    return { batchNode, usersInBatch, allBatches };
+}
 /** Locate the single child of `parentId` with the given metadata.kind, or null. */
 async function findChildByKind(store, parentId, kind) {
     const kids = await store.getChildByKind(parentId, kind);

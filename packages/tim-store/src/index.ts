@@ -28,8 +28,10 @@ export {
 export {
   deriveCounters,
   findChildByKind,
+  getCurrentBatch,
   ensureInboxProject,
   type DerivedCounters,
+  type CurrentBatch,
   SESSIONS_SECTION_TITLE,
   SUMMARY_NODE_TITLE,
   EXCHANGES_NODE_TITLE,

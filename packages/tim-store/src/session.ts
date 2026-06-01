@@ -6,6 +6,7 @@ import {
   deriveCounters,
   EXCHANGES_NODE_TITLE,
   findChildByKind,
+  getCurrentBatch,
   KIND_BATCH,
   KIND_EXCHANGE,
   KIND_EXCHANGE_BATCH,
@@ -201,17 +202,9 @@ export class SessionManager {
         ? session.metadata.batch_size
         : DEFAULT_BATCH_SIZE;
 
-    const exchangeBatches = await this.store.getChildByKind(exNode.id, KIND_EXCHANGE_BATCH);
-    let batchNode = exchangeBatches[exchangeBatches.length - 1] ?? null;
-    if (!batchNode) {
-      batchNode = await this.store.write('Batch 1', {
-        parentId: exNode.id,
-        metadata: { kind: KIND_EXCHANGE_BATCH, batch_index: 1, order: 1 },
-      });
-    }
-
-    let usersInBatch = (await this.store.getChildrenBySeq(batchNode.id)).filter(
-      u => u.metadata.role === 'user',
+    let { batchNode, usersInBatch, allBatches: exchangeBatches } = await getCurrentBatch(
+      this.store,
+      exNode.id,
     );
 
     const allUserNodes: Entry[] = [];

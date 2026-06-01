@@ -169,3 +169,44 @@ npx vitest run packages/tim-store/src/__tests__/session.test.ts packages/tim-sto
 ### Plan reference
 
 Full spec: `docs/session-system-plan.md`
+
+---
+
+# JOURNAL — Exchange batch grouping under Exchanges
+
+## Done
+
+1. **`KIND_EXCHANGE_BATCH`** — `'exchange-batch'` kind under `exchanges-root`
+2. **`getCurrentBatch()`** — latest batch via `getChildByKind` order; auto-creates Batch 1 if missing; children via `getChildrenBySeq`
+3. **`startProjectSession`** — writes Batch 1 under Exchanges on create
+4. **`logExchange`** — uses `getCurrentBatch`; new batch when `usersInBatch.length >= batch_size`; exchanges parent = batch node
+5. **`showUnsummarized`** — `batch_index = batchesSummarized + 1`; returns batch children directly (no seq math)
+6. **`deriveCounters`** — walks exchange-batch nodes; counts user nodes per batch; skips empty trailing batch
+7. **Tests** — batch on start, split on full, showUnsummarized skip, deriveCounters batch grouping
+
+## Decisions
+
+1. **Two batch kinds** — `exchange-batch` (raw under Exchanges) vs `batch-summary` (summaries under Summary)
+2. **Batch order** — `metadata.order` + `batch_index`; `getChildByKind` sorts by order
+3. **User seq global** — monotonic across all batches (not per-batch)
+4. **New batch trigger** — only on incoming **user** msg when current batch full (not after agent)
+5. **`getCurrentBatch` shared** — logExchange + legacy sessions missing batch node both use same helper
+
+## Edge Cases
+
+| Case | Behavior |
+|------|----------|
+| Session start | empty Batch 1 pre-created; `exchange_count=0` |
+| Empty trailing batch | `deriveCounters` skips last batch if zero users |
+| No batch node (legacy) | `getCurrentBatch` creates Batch 1 on first log |
+| Agent before user | agent under batch node directly; not in exchange_count |
+| All batches summarized | `showUnsummarized` returns empty exchanges, batchIndex = N+1 |
+
+## Verify
+
+```bash
+cd ~/projects/tim && npx tsc -b
+npx vitest run packages/tim-store/src/__tests__/session.test.ts
+```
+
+**2026-06-01:** tsc clean, 23/23 session tests pass.

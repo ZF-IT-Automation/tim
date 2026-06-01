@@ -27,6 +27,32 @@ export interface DerivedCounters {
   batchesSummarized: number;
 }
 
+export interface CurrentBatch {
+  batchNode: Entry;
+  usersInBatch: Entry[];
+  allBatches: Entry[];
+}
+
+/** Latest exchange-batch under Exchanges; creates Batch 1 if missing. */
+export async function getCurrentBatch(
+  store: TimStore,
+  exchangesNodeId: string,
+): Promise<CurrentBatch> {
+  const allBatches = await store.getChildByKind(exchangesNodeId, KIND_EXCHANGE_BATCH);
+  let batchNode = allBatches[allBatches.length - 1] ?? null;
+  if (!batchNode) {
+    batchNode = await store.write('Batch 1', {
+      parentId: exchangesNodeId,
+      metadata: { kind: KIND_EXCHANGE_BATCH, batch_index: 1, order: 1 },
+    });
+    allBatches.push(batchNode);
+  }
+  const usersInBatch = (await store.getChildrenBySeq(batchNode.id)).filter(
+    u => u.metadata.role === 'user',
+  );
+  return { batchNode, usersInBatch, allBatches };
+}
+
 /** Locate the single child of `parentId` with the given metadata.kind, or null. */
 export async function findChildByKind(
   store: TimStore,

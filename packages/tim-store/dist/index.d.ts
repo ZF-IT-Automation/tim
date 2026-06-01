@@ -2,7 +2,7 @@ export { TimStore, type TimStoreOptions, type CreateProjectOptions, type LoadPro
 export { formatProjectOutput, type ProjectSchema, type ProjectSchemaSection, } from './project-output.js';
 export { runMigrations, getCurrentVersion, MIGRATIONS } from './schema.js';
 export { SessionManager, type Exchange, type ExchangeRole, type SessionStartParams, type ProjectSessionParams, type Summarizer, type UnsummarizedBatch, type UnsummarizedExchange, } from './session.js';
-export { deriveCounters, findChildByKind, ensureInboxProject, type DerivedCounters, SESSIONS_SECTION_TITLE, SUMMARY_NODE_TITLE, EXCHANGES_NODE_TITLE, KIND_SESSIONS_ROOT, KIND_SESSION, KIND_SUMMARY_ROOT, KIND_BATCH, KIND_EXCHANGES_ROOT, KIND_EXCHANGE_BATCH, KIND_EXCHANGE, SESSION_SUMMARY_TAG, DEFAULT_BATCH_SIZE, SESSION_ROLLUP_THRESHOLD, MARKER_FILENAME, MARKER_LOCK, INBOX_PROJECT_LABEL, } from './session-tree.js';
+export { deriveCounters, findChildByKind, getCurrentBatch, ensureInboxProject, type DerivedCounters, type CurrentBatch, SESSIONS_SECTION_TITLE, SUMMARY_NODE_TITLE, EXCHANGES_NODE_TITLE, KIND_SESSIONS_ROOT, KIND_SESSION, KIND_SUMMARY_ROOT, KIND_BATCH, KIND_EXCHANGES_ROOT, KIND_EXCHANGE_BATCH, KIND_EXCHANGE, SESSION_SUMMARY_TAG, DEFAULT_BATCH_SIZE, SESSION_ROLLUP_THRESHOLD, MARKER_FILENAME, MARKER_LOCK, INBOX_PROJECT_LABEL, } from './session-tree.js';
 export { CurateManager, type UpdateManyFlags } from './curate.js';
 export { ackStaging, applyRemoteEntry, applyRemoteEdge, getUnackedStaging, type StagingRow, } from './sync-methods.js';
 //# sourceMappingURL=index.d.ts.map

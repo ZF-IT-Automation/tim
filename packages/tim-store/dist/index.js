@@ -1,7 +1,7 @@
 "use strict";
 // TIM Store — package exports
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getUnackedStaging = exports.applyRemoteEdge = exports.applyRemoteEntry = exports.ackStaging = exports.CurateManager = exports.INBOX_PROJECT_LABEL = exports.MARKER_LOCK = exports.MARKER_FILENAME = exports.SESSION_ROLLUP_THRESHOLD = exports.DEFAULT_BATCH_SIZE = exports.SESSION_SUMMARY_TAG = exports.KIND_EXCHANGE = exports.KIND_EXCHANGE_BATCH = exports.KIND_EXCHANGES_ROOT = exports.KIND_BATCH = exports.KIND_SUMMARY_ROOT = exports.KIND_SESSION = exports.KIND_SESSIONS_ROOT = exports.EXCHANGES_NODE_TITLE = exports.SUMMARY_NODE_TITLE = exports.SESSIONS_SECTION_TITLE = exports.ensureInboxProject = exports.findChildByKind = exports.deriveCounters = exports.SessionManager = exports.MIGRATIONS = exports.getCurrentVersion = exports.runMigrations = exports.formatProjectOutput = exports.TimStore = void 0;
+exports.getUnackedStaging = exports.applyRemoteEdge = exports.applyRemoteEntry = exports.ackStaging = exports.CurateManager = exports.INBOX_PROJECT_LABEL = exports.MARKER_LOCK = exports.MARKER_FILENAME = exports.SESSION_ROLLUP_THRESHOLD = exports.DEFAULT_BATCH_SIZE = exports.SESSION_SUMMARY_TAG = exports.KIND_EXCHANGE = exports.KIND_EXCHANGE_BATCH = exports.KIND_EXCHANGES_ROOT = exports.KIND_BATCH = exports.KIND_SUMMARY_ROOT = exports.KIND_SESSION = exports.KIND_SESSIONS_ROOT = exports.EXCHANGES_NODE_TITLE = exports.SUMMARY_NODE_TITLE = exports.SESSIONS_SECTION_TITLE = exports.ensureInboxProject = exports.getCurrentBatch = exports.findChildByKind = exports.deriveCounters = exports.SessionManager = exports.MIGRATIONS = exports.getCurrentVersion = exports.runMigrations = exports.formatProjectOutput = exports.TimStore = void 0;
 var store_js_1 = require("./store.js");
 Object.defineProperty(exports, "TimStore", { enumerable: true, get: function () { return store_js_1.TimStore; } });
 var project_output_js_1 = require("./project-output.js");
@@ -15,6 +15,7 @@ Object.defineProperty(exports, "SessionManager", { enumerable: true, get: functi
 var session_tree_js_1 = require("./session-tree.js");
 Object.defineProperty(exports, "deriveCounters", { enumerable: true, get: function () { return session_tree_js_1.deriveCounters; } });
 Object.defineProperty(exports, "findChildByKind", { enumerable: true, get: function () { return session_tree_js_1.findChildByKind; } });
+Object.defineProperty(exports, "getCurrentBatch", { enumerable: true, get: function () { return session_tree_js_1.getCurrentBatch; } });
 Object.defineProperty(exports, "ensureInboxProject", { enumerable: true, get: function () { return session_tree_js_1.ensureInboxProject; } });
 Object.defineProperty(exports, "SESSIONS_SECTION_TITLE", { enumerable: true, get: function () { return session_tree_js_1.SESSIONS_SECTION_TITLE; } });
 Object.defineProperty(exports, "SUMMARY_NODE_TITLE", { enumerable: true, get: function () { return session_tree_js_1.SUMMARY_NODE_TITLE; } });

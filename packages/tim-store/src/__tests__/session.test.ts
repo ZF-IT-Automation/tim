@@ -235,6 +235,48 @@ describe('SessionManager', () => {
       const c = await deriveCounters(store, s.id);
       expect(c).toEqual({ exchangeCount: 0, batchesSummarized: 0 });
     });
+
+    it('counts user exchanges per batch, skips empty trailing batch', async () => {
+      await store.createProject('P0093');
+      await sessions.startProjectSession({
+        sessionId: 'dc',
+        projectId: 'P0093',
+        agentName: 'a',
+        cwd: '/',
+        harness: 't',
+        batchSize: 2,
+      });
+
+      expect(await deriveCounters(store, 'dc')).toEqual({
+        exchangeCount: 0,
+        batchesSummarized: 0,
+      });
+
+      await sessions.logExchange('dc', [{ role: 'user', content: 'Q1' }]);
+      expect(await deriveCounters(store, 'dc')).toEqual({
+        exchangeCount: 1,
+        batchesSummarized: 0,
+      });
+
+      await sessions.logExchange('dc', [
+        { role: 'user', content: 'Q2' },
+        { role: 'user', content: 'Q3' },
+      ]);
+      expect(await deriveCounters(store, 'dc')).toEqual({
+        exchangeCount: 3,
+        batchesSummarized: 0,
+      });
+
+      const summaryNode = (await store.getChildByKind('dc', 'session-summary-root'))[0];
+      await store.write('Batch 1', {
+        parentId: summaryNode.id,
+        metadata: { kind: 'batch-summary', batch_index: 1, seq_from: 1, seq_to: 2 },
+      });
+      expect(await deriveCounters(store, 'dc')).toEqual({
+        exchangeCount: 3,
+        batchesSummarized: 1,
+      });
+    });
   });
 
   describe('ensureInboxProject', () => {

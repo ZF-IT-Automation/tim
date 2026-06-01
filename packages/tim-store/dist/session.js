@@ -163,15 +163,7 @@ class SessionManager {
         const batchSize = typeof session.metadata.batch_size === 'number'
             ? session.metadata.batch_size
             : session_tree_js_1.DEFAULT_BATCH_SIZE;
-        const exchangeBatches = await this.store.getChildByKind(exNode.id, session_tree_js_1.KIND_EXCHANGE_BATCH);
-        let batchNode = exchangeBatches[exchangeBatches.length - 1] ?? null;
-        if (!batchNode) {
-            batchNode = await this.store.write('Batch 1', {
-                parentId: exNode.id,
-                metadata: { kind: session_tree_js_1.KIND_EXCHANGE_BATCH, batch_index: 1, order: 1 },
-            });
-        }
-        let usersInBatch = (await this.store.getChildrenBySeq(batchNode.id)).filter(u => u.metadata.role === 'user');
+        let { batchNode, usersInBatch, allBatches: exchangeBatches } = await (0, session_tree_js_1.getCurrentBatch)(this.store, exNode.id);
         const allUserNodes = [];
         for (const b of exchangeBatches) {
             const users = (await this.store.getChildrenBySeq(b.id)).filter(u => u.metadata.role === 'user');
