@@ -1,1 +1,4 @@
-node_modules/\ndist/\n*.db\n.tim/
+dist/
+node_modules/
+*.tsbuildinfo
+.tim/
