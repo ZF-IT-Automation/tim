@@ -1,1 +1,1 @@
-{"root":["./src/checkpoint.ts","./src/hooks.ts","./src/index.ts","./src/marker.ts","./src/session-hooks.ts","./src/__tests__/hooks.test.ts","./src/__tests__/marker.test.ts","./src/__tests__/session-hooks.test.ts"],"version":"5.9.3"}
+{"root":["./src/checkpoint.ts","./src/hooks.ts","./src/index.ts","./src/marker.ts","./src/rebalance.ts","./src/session-hooks.ts","./src/__tests__/hooks.test.ts","./src/__tests__/marker.test.ts","./src/__tests__/rebalance.test.ts","./src/__tests__/session-hooks.test.ts"],"version":"5.9.3"}

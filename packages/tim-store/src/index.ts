@@ -63,6 +63,7 @@ export {
   COMMIT_TAG,
 } from './commit-tree.js';
 export { CurateManager, type UpdateManyFlags } from './curate.js';
+export { formatEntryId, sessionShortFromMetadata } from './entry-id.js';
 export {
   ackStaging,
   applyRemoteEntry,

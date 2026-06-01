@@ -22,6 +22,8 @@ export declare function detectProject(cwd: string): ProjectMarker | null;
 export declare function reconcileMarker(store: TimStore, cwd: string): Promise<ProjectMarker>;
 export declare const LOCK_TTL_MS: number;
 export declare function acquireLock(cwd: string): boolean;
+/** True when an active (non-stale) summarizer/session lock is held. */
+export declare function isSessionLocked(cwd: string): boolean;
 export declare function releaseLock(cwd: string): void;
 export interface MarkerLocation {
     marker: ProjectMarker;

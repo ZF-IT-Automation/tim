@@ -30,10 +30,17 @@ export {
   MARKER_FILENAME,
   MARKER_LOCK,
   LOCK_TTL_MS,
+  isSessionLocked,
   type ProjectMarker,
   type MarkerLocation,
   type SummarizerConfig,
 } from './marker.js';
+
+export {
+  rebalanceBatch,
+  type RebalanceResult,
+  type RebalanceSkip,
+} from './rebalance.js';
 
 export {
   onSessionStop,

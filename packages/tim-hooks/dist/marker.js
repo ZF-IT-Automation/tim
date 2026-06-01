@@ -40,6 +40,7 @@ exports.writeMarker = writeMarker;
 exports.detectProject = detectProject;
 exports.reconcileMarker = reconcileMarker;
 exports.acquireLock = acquireLock;
+exports.isSessionLocked = isSessionLocked;
 exports.releaseLock = releaseLock;
 exports.findMarker = findMarker;
 exports.buildLoadDirective = buildLoadDirective;
@@ -102,6 +103,19 @@ function acquireLock(cwd) {
             /* unreadable lock → treat as held */
         }
         return false;
+    }
+}
+/** True when an active (non-stale) summarizer/session lock is held. */
+function isSessionLocked(cwd) {
+    const lock = path.join(cwd, exports.MARKER_LOCK);
+    if (!fs.existsSync(lock))
+        return false;
+    try {
+        const raw = JSON.parse(fs.readFileSync(lock, 'utf8'));
+        return Date.now() - raw.ts <= exports.LOCK_TTL_MS;
+    }
+    catch {
+        return true;
     }
 }
 function releaseLock(cwd) {

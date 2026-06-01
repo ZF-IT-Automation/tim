@@ -1,39 +1,6 @@
 "use strict";
 // TIM Store — v0.1.0-alpha
 // SQLite-backed MemoryInterface implementation.
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
@@ -41,7 +8,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.TimStore = void 0;
 const better_sqlite3_1 = __importDefault(require("better-sqlite3"));
 const ulid_1 = require("ulid");
-const os = __importStar(require("os"));
+const entry_id_js_1 = require("./entry-id.js");
 const schema_js_1 = require("./schema.js");
 const curate_js_1 = require("./curate.js");
 class TimStore {
@@ -255,7 +222,7 @@ class TimStore {
     }
     async write(content, options = {}) {
         const now = new Date().toISOString();
-        const id = options.id ?? `${os.hostname().slice(0, 4)}-${now.slice(5, 7)}${now.slice(8, 10)}-${(0, ulid_1.ulid)()}`;
+        const id = options.id ?? (0, entry_id_js_1.formatEntryId)({ metadata: options.metadata, now: new Date(now) });
         const timestamp = Date.now();
         const { title, body } = splitTitleBody(content, options.title);
         // Calculate depth

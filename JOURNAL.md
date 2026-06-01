@@ -213,6 +213,40 @@ npx vitest run packages/tim-store/src/__tests__/session.test.ts
 
 ---
 
+# JOURNAL — Entry ID session prefix + batch rebalance
+
+## Done
+
+1. **Task 2** — `entry-id.ts`: `formatEntryId` → `{device}-{MMDD}-{session_short}-{ulid}`; `session_short` from `metadata.sessionId` / `session_id`, else `ns`; wired in `TimStore.write()`
+2. **Task 3** — `tim-hooks/rebalance.ts`: `rebalanceBatch(store, sessionId)` boundary keyword overlap → move user+agent; guards single-exchange batch + `isSessionLocked`
+3. **CLI** — `tim rebalance --session <id> [--cwd]`
+4. **Tests** — `entry-id.test.ts`, `rebalance.test.ts` (4), store id format assertion
+
+## Decisions
+
+1. **Keywords from exchange text** — title+body tokenize (≥4 chars, stopwords); batch-summary nodes not required at boundary
+2. **Lock = read-only** — `isSessionLocked` checks marker lock; rebalance does not acquire lock
+3. **Move via curate** — `moveEntry` reparents user + agent into previous `exchange-batch`
+
+## Edge Cases
+
+| Case | Behavior |
+|------|----------|
+| No session in metadata | `ns` segment |
+| Batch N has 1 user | skip (`single-exchange-batch`) |
+| Active `.tim-project.lock` | `{ moved: 0, reason: locked }` |
+| Unrelated boundary | skip (`unrelated`) |
+
+## Verify
+
+```bash
+cd ~/projects/tim && npx tsc -b
+npm test
+npx vitest run packages/tim-store/src/__tests__/entry-id.test.ts packages/tim-hooks/src/__tests__/rebalance.test.ts
+```
+
+---
+
 # JOURNAL — Commit-Subnode auto-fill (4 tasks)
 
 ## Done

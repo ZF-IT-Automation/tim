@@ -1,7 +1,7 @@
 "use strict";
 // TIM Store — package exports
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getUnackedStaging = exports.applyRemoteEdge = exports.applyRemoteEntry = exports.ackStaging = exports.CurateManager = exports.COMMIT_TAG = exports.KIND_COMMIT = exports.KIND_COMMITS_ROOT = exports.COMMITS_SECTION_ORDER = exports.COMMITS_SECTION_TITLE = exports.CommitManager = exports.INBOX_PROJECT_LABEL = exports.MARKER_LOCK = exports.MARKER_FILENAME = exports.SESSION_ROLLUP_THRESHOLD = exports.DEFAULT_BATCH_SIZE = exports.SESSION_SUMMARY_TAG = exports.KIND_EXCHANGE = exports.KIND_EXCHANGE_BATCH = exports.KIND_EXCHANGES_ROOT = exports.KIND_BATCH = exports.KIND_SUMMARY_ROOT = exports.KIND_SESSION = exports.KIND_SESSIONS_ROOT = exports.EXCHANGES_NODE_TITLE = exports.SUMMARY_NODE_TITLE = exports.SESSIONS_SECTION_TITLE = exports.ensureInboxProject = exports.getCurrentBatch = exports.findChildByKind = exports.deriveCounters = exports.SessionManager = exports.MIGRATIONS = exports.getCurrentVersion = exports.runMigrations = exports.formatProjectOutput = exports.TimStore = void 0;
+exports.getUnackedStaging = exports.applyRemoteEdge = exports.applyRemoteEntry = exports.ackStaging = exports.sessionShortFromMetadata = exports.formatEntryId = exports.CurateManager = exports.COMMIT_TAG = exports.KIND_COMMIT = exports.KIND_COMMITS_ROOT = exports.COMMITS_SECTION_ORDER = exports.COMMITS_SECTION_TITLE = exports.CommitManager = exports.INBOX_PROJECT_LABEL = exports.MARKER_LOCK = exports.MARKER_FILENAME = exports.SESSION_ROLLUP_THRESHOLD = exports.DEFAULT_BATCH_SIZE = exports.SESSION_SUMMARY_TAG = exports.KIND_EXCHANGE = exports.KIND_EXCHANGE_BATCH = exports.KIND_EXCHANGES_ROOT = exports.KIND_BATCH = exports.KIND_SUMMARY_ROOT = exports.KIND_SESSION = exports.KIND_SESSIONS_ROOT = exports.EXCHANGES_NODE_TITLE = exports.SUMMARY_NODE_TITLE = exports.SESSIONS_SECTION_TITLE = exports.ensureInboxProject = exports.getCurrentBatch = exports.findChildByKind = exports.deriveCounters = exports.SessionManager = exports.MIGRATIONS = exports.getCurrentVersion = exports.runMigrations = exports.formatProjectOutput = exports.TimStore = void 0;
 var store_js_1 = require("./store.js");
 Object.defineProperty(exports, "TimStore", { enumerable: true, get: function () { return store_js_1.TimStore; } });
 var project_output_js_1 = require("./project-output.js");
@@ -43,6 +43,9 @@ Object.defineProperty(exports, "KIND_COMMIT", { enumerable: true, get: function 
 Object.defineProperty(exports, "COMMIT_TAG", { enumerable: true, get: function () { return commit_tree_js_1.COMMIT_TAG; } });
 var curate_js_1 = require("./curate.js");
 Object.defineProperty(exports, "CurateManager", { enumerable: true, get: function () { return curate_js_1.CurateManager; } });
+var entry_id_js_1 = require("./entry-id.js");
+Object.defineProperty(exports, "formatEntryId", { enumerable: true, get: function () { return entry_id_js_1.formatEntryId; } });
+Object.defineProperty(exports, "sessionShortFromMetadata", { enumerable: true, get: function () { return entry_id_js_1.sessionShortFromMetadata; } });
 var sync_methods_js_1 = require("./sync-methods.js");
 Object.defineProperty(exports, "ackStaging", { enumerable: true, get: function () { return sync_methods_js_1.ackStaging; } });
 Object.defineProperty(exports, "applyRemoteEntry", { enumerable: true, get: function () { return sync_methods_js_1.applyRemoteEntry; } });

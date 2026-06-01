@@ -14,9 +14,16 @@ let store;
 (0, vitest_1.describe)('TimStore', () => {
     // ─── Basic CRUD ──────────────────────────────────────
     (0, vitest_1.describe)('write and read', () => {
+        (0, vitest_1.it)('should assign id with session_short when metadata.sessionId set', async () => {
+            const entry = await store.write('Hello World', {
+                metadata: { sessionId: 'abc123-full-session' },
+            });
+            (0, vitest_1.expect)(entry.id).toMatch(/^[a-z0-9]{4}-\d{4}-abc123-[0-9A-Z]{26}$/);
+        });
         (0, vitest_1.it)('should write and read an entry', async () => {
             const entry = await store.write('Hello World');
             (0, vitest_1.expect)(entry.id).toBeTruthy();
+            (0, vitest_1.expect)(entry.id).toMatch(/^[a-z0-9]{4}-\d{4}-ns-[0-9A-Z]{26}$/);
             (0, vitest_1.expect)(entry.title).toBe('Hello World');
             (0, vitest_1.expect)(entry.content).toBe('');
             (0, vitest_1.expect)(entry.depth).toBe(1);

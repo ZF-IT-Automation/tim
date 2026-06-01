@@ -78,6 +78,18 @@ export function acquireLock(cwd: string): boolean {
   }
 }
 
+/** True when an active (non-stale) summarizer/session lock is held. */
+export function isSessionLocked(cwd: string): boolean {
+  const lock = path.join(cwd, MARKER_LOCK);
+  if (!fs.existsSync(lock)) return false;
+  try {
+    const raw = JSON.parse(fs.readFileSync(lock, 'utf8')) as { ts: number };
+    return Date.now() - raw.ts <= LOCK_TTL_MS;
+  } catch {
+    return true;
+  }
+}
+
 export function releaseLock(cwd: string): void {
   try {
     fs.rmSync(path.join(cwd, MARKER_LOCK), { force: true });

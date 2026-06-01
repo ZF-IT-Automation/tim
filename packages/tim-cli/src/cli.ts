@@ -11,6 +11,7 @@ import {
   buildLoadDirective,
   readMarker,
   writeMarker,
+  rebalanceBatch,
   type ProjectMarker,
 } from 'tim-hooks';
 import { tim_export, tim_import, exportToMarkdown } from 'tim-migrate';
@@ -271,6 +272,28 @@ async function cmdHook(args: string[]) {
   }
 }
 
+async function cmdRebalance(args: string[]) {
+  const flags = parseArgs(args);
+  const sessionId = flags.session;
+
+  if (!sessionId) {
+    console.error('Usage: tim rebalance --session <id>');
+    process.exit(1);
+  }
+
+  const config = loadConfig();
+  const store = new TimStore(getDbPath(config));
+
+  try {
+    const result = await rebalanceBatch(store, sessionId, {
+      cwd: flags.cwd || process.cwd(),
+    });
+    console.log(JSON.stringify(result, null, 2));
+  } finally {
+    store.close();
+  }
+}
+
 async function cmdCheckpoint(args: string[]) {
   const flags = parseArgs(args);
   const sessionId = flags.session;
@@ -372,6 +395,9 @@ async function main() {
     case 'checkpoint':
       await cmdCheckpoint(rest);
       break;
+    case 'rebalance':
+      await cmdRebalance(rest);
+      break;
     case 'export':
       await cmdExport(rest);
       break;
@@ -403,6 +429,7 @@ Commands:
   hook session-start    Start a session (--session, --agent, --cwd, --harness)
   hook session-end      End a session and run checkpoint (--session)
   checkpoint            Manual checkpoint for a session (--session)
+  rebalance             Rebalance exchange batches at boundaries (--session, --cwd)
   export [path]           Export to .hmem or markdown (--format hmem|text)
   import <path>           Import from .hmem (--dry-run, --deduplicate)
   sync connect            Connect to o9k-sync server

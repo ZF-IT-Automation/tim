@@ -19,9 +19,17 @@ describe('TimStore', () => {
   // ─── Basic CRUD ──────────────────────────────────────
 
   describe('write and read', () => {
+    it('should assign id with session_short when metadata.sessionId set', async () => {
+      const entry = await store.write('Hello World', {
+        metadata: { sessionId: 'abc123-full-session' },
+      });
+      expect(entry.id).toMatch(/^[a-z0-9]{4}-\d{4}-abc123-[0-9A-Z]{26}$/);
+    });
+
     it('should write and read an entry', async () => {
       const entry = await store.write('Hello World');
       expect(entry.id).toBeTruthy();
+      expect(entry.id).toMatch(/^[a-z0-9]{4}-\d{4}-ns-[0-9A-Z]{26}$/);
       expect(entry.title).toBe('Hello World');
       expect(entry.content).toBe('');
       expect(entry.depth).toBe(1);

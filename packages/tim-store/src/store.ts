@@ -3,7 +3,7 @@
 
 import Database from 'better-sqlite3';
 import { ulid } from 'ulid';
-import * as os from 'os';
+import { formatEntryId } from './entry-id.js';
 import type {
   Entry, Edge, EdgeType, ReadOptions, WriteOptions, DecayOptions,
   SearchOptions, MemoryInterface, HealthReport, MemoryStats,
@@ -301,7 +301,7 @@ export class TimStore implements MemoryInterface {
 
   async write(content: string, options: WriteOptions = {}): Promise<Entry> {
     const now = new Date().toISOString();
-    const id = options.id ?? `${os.hostname().slice(0, 4)}-${now.slice(5, 7)}${now.slice(8, 10)}-${ulid()}`;
+    const id = options.id ?? formatEntryId({ metadata: options.metadata, now: new Date(now) });
     const timestamp = Date.now();
     const { title, body } = splitTitleBody(content, options.title);
 
