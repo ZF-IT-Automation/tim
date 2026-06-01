@@ -1,16 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as mcpClient from '../mcp-client.js';
 import { runSummarizerLoop } from '../summarize.js';
-import { loadConfig } from 'tim-core';
+
+vi.mock('tim-core', () => ({
+  loadConfig: vi.fn(() => ({
+    dbPath: ':memory:',
+    deviceId: 'test',
+    summarizer: { chain: [], timeout_sec: 5 },
+  })),
+}));
 
 describe('runSummarizerLoop', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
-    vi.spyOn({ loadConfig }, 'loadConfig').mockReturnValue({
-      dbPath: ':memory:',
-      deviceId: 'test',
-      summarizer: { chain: [], timeout_sec: 5 },
-    });
   });
 
   it('writes fallback when chain is empty', async () => {

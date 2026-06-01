@@ -1,9 +1,7 @@
 import type { UnsummarizedBatch } from './mcp-client.js';
-import { execFile } from 'child_process';
+import { exec } from 'child_process';
 import { promisify } from 'util';
 import { loadConfig } from 'tim-core';
-
-const execFileAsync = promisify(execFile);
 
 /** Compact thematic summary for a batch (no external API required). */
 export function generateSummaryHeuristic(batch: UnsummarizedBatch): string {
@@ -48,15 +46,35 @@ async function tryCli(
   prompt: string,
   timeoutSec: number,
 ): Promise<string | null> {
-  const args = ['--model', model, '--prompt', prompt];
-  if (provider) args.unshift('--provider', provider);
+  const q = (s: string) => JSON.stringify(s);
+  let cmd: string;
+  if (cli === 'codex') {
+    cmd = `echo ${q(prompt)} | codex exec --model ${q(model)} --skip-git-repo-check`;
+  } else if (cli === 'opencode') {
+    const fullModel = provider ? `${provider}/${model}` : model;
+    cmd = `opencode run -m ${q(fullModel)} ${q(prompt)}`;
+  } else {
+    cmd = `${q(cli)} --model ${q(model)} --prompt ${q(prompt)}`;
+    if (provider) cmd = `${q(cli)} --provider ${q(provider)} --model ${q(model)} --prompt ${q(prompt)}`;
+  }
 
   try {
-    const { stdout } = await execFileAsync(cli, args, {
+    const { stdout } = await promisify(exec)(cmd, {
       timeout: timeoutSec * 1000,
       maxBuffer: 64 * 1024,
     });
-    const text = stdout.trim();
+    let text = stdout.trim();
+    if (cli === 'codex') {
+      // Parse: ...\ncodex\n<response>\ntokens used\n...
+      const codexMarker = '\ncodex\n';
+      const idx = text.lastIndexOf(codexMarker);
+      if (idx >= 0) {
+        text = text.slice(idx + codexMarker.length);
+        const tokenIdx = text.indexOf('\ntokens used\n');
+        if (tokenIdx >= 0) text = text.slice(0, tokenIdx);
+        text = text.trim();
+      }
+    }
     return text.length > 0 ? text : null;
   } catch {
     return null;
