@@ -40,6 +40,7 @@ const tim_core_1 = require("tim-core");
 const tim_hooks_1 = require("tim-hooks");
 const tim_migrate_1 = require("tim-migrate");
 const sync_cli_js_1 = require("./sync-cli.js");
+const git_commit_js_1 = require("./git-commit.js");
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
 const os = __importStar(require("os"));
@@ -167,6 +168,57 @@ async function cmdBindProject(args) {
     };
     (0, tim_hooks_1.writeMarker)(cwd, marker);
     console.log(`Wrote .tim-project → ${label} at ${cwd}`);
+}
+async function cmdRecordCommit(args) {
+    const flags = parseArgs(args);
+    const cwd = flags.cwd ?? process.cwd();
+    const located = (0, tim_hooks_1.findMarker)(cwd);
+    const projectId = flags.project ?? located?.marker.project;
+    if (!projectId)
+        return; // no marker → silent skip (hook path)
+    const sessionId = flags.session ?? located?.marker.session ?? undefined;
+    let hash = flags.hash;
+    let message = flags.message;
+    let diffSummary = flags.diff;
+    let author = flags.author;
+    let date = flags.date;
+    let branch = flags.branch;
+    if (!hash || !message) {
+        if (!(0, git_commit_js_1.isGitRepo)(cwd)) {
+            console.error('Not a git repository and --hash/--message not provided');
+            process.exit(1);
+        }
+        const info = (0, git_commit_js_1.readGitCommit)(cwd, hash);
+        hash = hash ?? info.hash;
+        message = message ?? info.message;
+        diffSummary = diffSummary ?? info.diffSummary;
+        author = author ?? info.author;
+        date = date ?? info.date;
+        branch = branch ?? info.branch;
+    }
+    if (!hash || !message) {
+        console.error('Usage: tim record-commit [--cwd DIR] [--project LABEL] [--session ID] [--hash SHA] [--message TEXT] [--diff STAT]');
+        process.exit(1);
+    }
+    const config = (0, tim_core_1.loadConfig)();
+    const store = new tim_store_1.TimStore(getDbPath(config));
+    try {
+        const mgr = new tim_store_1.CommitManager(store);
+        const entry = await mgr.recordCommit({
+            projectId,
+            hash,
+            message,
+            diffSummary,
+            sessionId: sessionId || undefined,
+            author,
+            date,
+            branch,
+        });
+        console.log(JSON.stringify(entry, null, 2));
+    }
+    finally {
+        store.close();
+    }
 }
 async function cmdHook(args) {
     const sub = args[0];
@@ -298,6 +350,9 @@ async function main() {
         case 'bind-project':
             await cmdBindProject(rest);
             break;
+        case 'record-commit':
+            await cmdRecordCommit(rest);
+            break;
         case 'hook':
             await cmdHook(rest);
             break;
@@ -331,6 +386,7 @@ Commands:
   stats                 Show memory statistics
   resolve-project       Print bound project from nearest .tim-project (--cwd, --format label|json|directive)
   bind-project          Write/refresh .tim-project for a project (--label, --cwd, --session)
+  record-commit         Record git commit to project Commits section (--cwd, --hash, --message, --diff)
   hook session-start    Start a session (--session, --agent, --cwd, --harness)
   hook session-end      End a session and run checkpoint (--session)
   checkpoint            Manual checkpoint for a session (--session)

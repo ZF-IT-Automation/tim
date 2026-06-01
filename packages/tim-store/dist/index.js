@@ -1,7 +1,7 @@
 "use strict";
 // TIM Store — package exports
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getUnackedStaging = exports.applyRemoteEdge = exports.applyRemoteEntry = exports.ackStaging = exports.CurateManager = exports.INBOX_PROJECT_LABEL = exports.MARKER_LOCK = exports.MARKER_FILENAME = exports.SESSION_ROLLUP_THRESHOLD = exports.DEFAULT_BATCH_SIZE = exports.SESSION_SUMMARY_TAG = exports.KIND_EXCHANGE = exports.KIND_EXCHANGE_BATCH = exports.KIND_EXCHANGES_ROOT = exports.KIND_BATCH = exports.KIND_SUMMARY_ROOT = exports.KIND_SESSION = exports.KIND_SESSIONS_ROOT = exports.EXCHANGES_NODE_TITLE = exports.SUMMARY_NODE_TITLE = exports.SESSIONS_SECTION_TITLE = exports.ensureInboxProject = exports.getCurrentBatch = exports.findChildByKind = exports.deriveCounters = exports.SessionManager = exports.MIGRATIONS = exports.getCurrentVersion = exports.runMigrations = exports.formatProjectOutput = exports.TimStore = void 0;
+exports.getUnackedStaging = exports.applyRemoteEdge = exports.applyRemoteEntry = exports.ackStaging = exports.CurateManager = exports.COMMIT_TAG = exports.KIND_COMMIT = exports.KIND_COMMITS_ROOT = exports.COMMITS_SECTION_ORDER = exports.COMMITS_SECTION_TITLE = exports.CommitManager = exports.INBOX_PROJECT_LABEL = exports.MARKER_LOCK = exports.MARKER_FILENAME = exports.SESSION_ROLLUP_THRESHOLD = exports.DEFAULT_BATCH_SIZE = exports.SESSION_SUMMARY_TAG = exports.KIND_EXCHANGE = exports.KIND_EXCHANGE_BATCH = exports.KIND_EXCHANGES_ROOT = exports.KIND_BATCH = exports.KIND_SUMMARY_ROOT = exports.KIND_SESSION = exports.KIND_SESSIONS_ROOT = exports.EXCHANGES_NODE_TITLE = exports.SUMMARY_NODE_TITLE = exports.SESSIONS_SECTION_TITLE = exports.ensureInboxProject = exports.getCurrentBatch = exports.findChildByKind = exports.deriveCounters = exports.SessionManager = exports.MIGRATIONS = exports.getCurrentVersion = exports.runMigrations = exports.formatProjectOutput = exports.TimStore = void 0;
 var store_js_1 = require("./store.js");
 Object.defineProperty(exports, "TimStore", { enumerable: true, get: function () { return store_js_1.TimStore; } });
 var project_output_js_1 = require("./project-output.js");
@@ -33,6 +33,14 @@ Object.defineProperty(exports, "SESSION_ROLLUP_THRESHOLD", { enumerable: true, g
 Object.defineProperty(exports, "MARKER_FILENAME", { enumerable: true, get: function () { return session_tree_js_1.MARKER_FILENAME; } });
 Object.defineProperty(exports, "MARKER_LOCK", { enumerable: true, get: function () { return session_tree_js_1.MARKER_LOCK; } });
 Object.defineProperty(exports, "INBOX_PROJECT_LABEL", { enumerable: true, get: function () { return session_tree_js_1.INBOX_PROJECT_LABEL; } });
+var commit_js_1 = require("./commit.js");
+Object.defineProperty(exports, "CommitManager", { enumerable: true, get: function () { return commit_js_1.CommitManager; } });
+var commit_tree_js_1 = require("./commit-tree.js");
+Object.defineProperty(exports, "COMMITS_SECTION_TITLE", { enumerable: true, get: function () { return commit_tree_js_1.COMMITS_SECTION_TITLE; } });
+Object.defineProperty(exports, "COMMITS_SECTION_ORDER", { enumerable: true, get: function () { return commit_tree_js_1.COMMITS_SECTION_ORDER; } });
+Object.defineProperty(exports, "KIND_COMMITS_ROOT", { enumerable: true, get: function () { return commit_tree_js_1.KIND_COMMITS_ROOT; } });
+Object.defineProperty(exports, "KIND_COMMIT", { enumerable: true, get: function () { return commit_tree_js_1.KIND_COMMIT; } });
+Object.defineProperty(exports, "COMMIT_TAG", { enumerable: true, get: function () { return commit_tree_js_1.COMMIT_TAG; } });
 var curate_js_1 = require("./curate.js");
 Object.defineProperty(exports, "CurateManager", { enumerable: true, get: function () { return curate_js_1.CurateManager; } });
 var sync_methods_js_1 = require("./sync-methods.js");

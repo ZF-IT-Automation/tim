@@ -11,6 +11,7 @@ import { z } from 'zod';
 import {
   TimStore,
   SessionManager,
+  CommitManager,
   formatProjectOutput,
   ensureInboxProject,
   INBOX_PROJECT_LABEL,
@@ -147,6 +148,17 @@ const TimWriteBatchSummarySchema = z.object({
   summary: z.string(),
   seqFrom: z.number().int().nonnegative(),
   seqTo: z.number().int().nonnegative(),
+});
+
+const TimRecordCommitSchema = z.object({
+  projectId: z.string().describe('Project label, e.g. P0063'),
+  hash: z.string().describe('Full git commit SHA'),
+  message: z.string().describe('Commit message body'),
+  diffSummary: z.string().optional().describe('git show --stat output'),
+  sessionId: z.string().optional().describe('Session that produced this commit'),
+  branch: z.string().optional(),
+  author: z.string().optional(),
+  date: z.string().optional().describe('ISO 8601 commit date'),
 });
 
 const TimSessionLogSchema = z.object({
@@ -399,12 +411,20 @@ const DB_PATH = process.env.TIM_DB_PATH || loadConfig().dbPath || process.env.HO
 
 let store: TimStore;
 let sessions: SessionManager;
+let commitMgr: CommitManager;
 
 function getStore(): TimStore {
   if (!store) {
     store = new TimStore(DB_PATH);
   }
   return store;
+}
+
+function getCommitManager(): CommitManager {
+  if (!commitMgr) {
+    commitMgr = new CommitManager(getStore());
+  }
+  return commitMgr;
 }
 
 function getSessions(): SessionManager {
@@ -426,6 +446,7 @@ function getSessions(): SessionManager {
 const WRITE_TOOLS = new Set([
   'tim_write', 'tim_update', 'tim_delete', 'tim_link',
   'tim_session_start', 'tim_session_log', 'tim_checkpoint', 'tim_write_batch_summary',
+  'tim_record_commit',
   'tim_rename_entry', 'tim_move_entry', 'tim_update_many',
   'tim_tag_add', 'tim_tag_remove', 'tim_tag_rename', 'tim_import',
   'tim_create_project',
@@ -713,6 +734,25 @@ export async function startServer(): Promise<void> {
             seqTo: { type: 'number', minimum: 0 },
           },
           required: ['sessionId', 'batchIndex', 'summary', 'seqFrom', 'seqTo'],
+        },
+      },
+      {
+        name: 'tim_record_commit',
+        description:
+          'Record a git commit under the project Commits section. Idempotent by hash. Links to session via relates/implements when sessionId given.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            projectId: { type: 'string', description: 'Project label, e.g. P0063' },
+            hash: { type: 'string', description: 'Full git commit SHA' },
+            message: { type: 'string', description: 'Commit message' },
+            diffSummary: { type: 'string', description: 'git show --stat output' },
+            sessionId: { type: 'string', description: 'Session that produced this commit' },
+            branch: { type: 'string' },
+            author: { type: 'string' },
+            date: { type: 'string', description: 'ISO 8601 commit date' },
+          },
+          required: ['projectId', 'hash', 'message'],
         },
       },
       {
@@ -1122,6 +1162,14 @@ export async function startServer(): Promise<void> {
           });
           return {
             content: [{ type: 'text', text: JSON.stringify(node, null, 2) }],
+          };
+        }
+
+        case 'tim_record_commit': {
+          const parsed = TimRecordCommitSchema.parse(args);
+          const entry = await getCommitManager().recordCommit(parsed);
+          return {
+            content: [{ type: 'text', text: JSON.stringify(entry, null, 2) }],
           };
         }
 

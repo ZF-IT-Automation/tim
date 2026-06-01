@@ -213,6 +213,43 @@ npx vitest run packages/tim-store/src/__tests__/session.test.ts
 
 ---
 
+# JOURNAL — Commit-Subnode auto-fill (4 tasks)
+
+## Done
+
+1. **Task 1 — Store** — `commit-tree.ts` constants + `CommitManager.recordCommit()` in `commit.ts`; ensures Commits section (order 1100); idempotent by `commit_hash`; session links via `relates` / `implements`
+2. **Task 2 — CLI** — `tim record-commit` + `git-commit.ts` (reads HEAD via git when flags omitted); silent skip when no `.tim-project`
+3. **Task 3 — MCP** — `tim_record_commit` tool
+4. **Task 4 — Hook** — `packages/tim-hooks/scripts/tim-post-commit.sh`; template `scripts/git-hooks/post-commit`; installed at `~/projects/tim/.git/hooks/post-commit`
+
+## Decisions
+
+1. **Title = full hash, body = message + `--stat`** — matches `project-schema.json` Commits section
+2. **Hook silent skip** — no marker → exit 0 (same as session-start)
+3. **Session from marker** — `.tim-project.session` auto-linked when present
+4. **Idempotent** — re-commit / amend re-run returns existing node
+
+## Edge Cases
+
+| Case | Behavior |
+|------|----------|
+| No `.tim-project` | CLI/hook exit 0, no write |
+| Duplicate hash | return existing commit node |
+| sessionId invalid/missing | commit written, no edges |
+| Not a git repo + no `--hash` | CLI error exit 1 |
+| Detached HEAD | branch metadata = `HEAD` |
+
+## Verify
+
+```bash
+cd ~/projects/tim && npx tsc -b
+npx vitest run packages/tim-store/src/__tests__/commit.test.ts packages/tim-cli/src/__tests__/record-commit.test.ts
+node packages/tim-cli/dist/cli.js record-commit --cwd ~/projects/tim --hash test --message "dry"  # needs marker + project in DB
+```
+
+Schema ref: `docs/project-schema.json` Commits section
+
+
 # JOURNAL — Summarizer-Agent completion (3 gaps)
 
 ## Done

@@ -51,6 +51,17 @@ export {
   MARKER_LOCK,
   INBOX_PROJECT_LABEL,
 } from './session-tree.js';
+export {
+  CommitManager,
+  type RecordCommitParams,
+} from './commit.js';
+export {
+  COMMITS_SECTION_TITLE,
+  COMMITS_SECTION_ORDER,
+  KIND_COMMITS_ROOT,
+  KIND_COMMIT,
+  COMMIT_TAG,
+} from './commit-tree.js';
 export { CurateManager, type UpdateManyFlags } from './curate.js';
 export {
   ackStaging,

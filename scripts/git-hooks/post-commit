@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Git hook template — delegates to tim-post-commit.sh in the TIM repo.
+set -euo pipefail
+exec /home/bbbee/projects/tim/packages/tim-hooks/scripts/tim-post-commit.sh
