@@ -92,6 +92,7 @@ function sectionContentSuffix(section) {
 }
 const MAX_CHILDREN_PER_LEVEL = 3;
 const PROJECT_SUMMARY_MARKER = '## Project Summary';
+const RECENT_SESSIONS_COUNT = 5; // TODO: read from config
 function normalizeRenderDepth(value) {
     if (value === 'full')
         return 'full';
@@ -246,10 +247,14 @@ function formatProjectOutput(result, budget, schema) {
         }
     }
     if (sessions.length > 0) {
-        lines.push('', `── Sessions (${sessions.length}) ──`, '');
-        for (const session of sessions) {
+        const recent = sessions.slice(0, RECENT_SESSIONS_COUNT);
+        lines.push('', `── Recent Sessions (${recent.length}/${sessions.length}) ──`, '');
+        for (const session of recent) {
             const { exchanges, summary, date } = parseSessionEntry(session);
             lines.push(`  ${exchanges} exchanges · ${date}  "${summary}"`);
+        }
+        if (sessions.length > RECENT_SESSIONS_COUNT) {
+            lines.push(`  … ${sessions.length - RECENT_SESSIONS_COUNT} older sessions`);
         }
     }
     lines.push('', FORMAT_SEP);

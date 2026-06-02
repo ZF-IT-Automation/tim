@@ -42,3 +42,17 @@ Gotchas:
 - Tests: block renders + description preserved + heading absent; omitted when no summary.
 
 Verify: tsc clean. project-output 6/6. Full suite 175 passed / 4 failed (baseline 4).
+
+## Task 3 — Recent Sessions block ✓
+
+Decisions:
+- `RECENT_SESSIONS_COUNT = 5` const (plan TODO: read from config — renderer has no config arg, left const).
+- sessions already sorted descending by createdAt (newest first) → `slice(0, 5)` = recent.
+- Header `── Recent Sessions (recent.length/total) ──`. Used `recent.length` directly (= min(5,total)); dropped plan's redundant `Math.min(recent.length, sessions.length)`.
+- `… N older sessions` line only when total > 5.
+
+Gotchas:
+- BREAKING: carried baseline test asserted `── Sessions (1) ──` — updated to `── Recent Sessions (1/1) ──`. Old regex would not match new format.
+- Tests: 8 sessions → shows newest 5 (06-08..06-04), hides 06-03, `… 3 older sessions`; ≤5 → no older line.
+
+Verify: tsc clean. project-output 8/8. Full suite 177 passed / 4 failed (baseline 4).

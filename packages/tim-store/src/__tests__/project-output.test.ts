@@ -37,8 +37,49 @@ describe('formatProjectOutput sessions rollup', () => {
 
     const out = formatProjectOutput({ project, children: [sessionsRoot, summary], truncated: false }, 200);
     // Sessions section (kind=sessions-root) should only appear in the dedicated rollup block, not as a regular section
-    expect(out).toMatch(/── Sessions \(1\) ──/);
+    expect(out).toMatch(/── Recent Sessions \(1\/1\) ──/);
     expect(out).not.toMatch(/^ {2}Sessions /m);
+  });
+});
+
+describe('formatProjectOutput recent sessions', () => {
+  const project = {
+    id: 'P1',
+    metadata: { label: 'P1', kind: 'project' },
+    title: 'P1 — x',
+    content: '',
+    tags: [],
+    createdAt: '2026-06-01T00:00:00Z',
+  } as any;
+
+  const sessions = Array.from({ length: 8 }, (_, i) => ({
+    id: `sess-${i + 1}`,
+    parentId: 'sess-root',
+    title: `Session ${i + 1} — ${i + 1} exchanges`,
+    metadata: { kind: 'session-summary-root' },
+    tags: ['#session-summary'],
+    content: '',
+    // createdAt ascending → session 8 newest
+    createdAt: `2026-06-0${i + 1}T00:00:00Z`,
+  })) as any[];
+
+  it('shows only the last 5 newest sessions with older count', () => {
+    const out = formatProjectOutput({ project, children: sessions, truncated: false }, 500);
+    expect(out).toMatch(/── Recent Sessions \(5\/8\) ──/);
+    // newest is session 8 (2026-06-08), oldest shown is session 4 (2026-06-04)
+    expect(out).toMatch(/2026-06-08/);
+    expect(out).toMatch(/2026-06-04/);
+    expect(out).not.toMatch(/2026-06-03/);
+    expect(out).toMatch(/… 3 older sessions/);
+  });
+
+  it('no older line when sessions <= 5', () => {
+    const out = formatProjectOutput(
+      { project, children: sessions.slice(0, 3), truncated: false },
+      500,
+    );
+    expect(out).toMatch(/── Recent Sessions \(3\/3\) ──/);
+    expect(out).not.toMatch(/older sessions/);
   });
 });
 

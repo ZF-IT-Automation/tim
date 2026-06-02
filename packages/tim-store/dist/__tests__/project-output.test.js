@@ -37,8 +37,42 @@ const project_output_js_1 = require("../project-output.js");
         };
         const out = (0, project_output_js_1.formatProjectOutput)({ project, children: [sessionsRoot, summary], truncated: false }, 200);
         // Sessions section (kind=sessions-root) should only appear in the dedicated rollup block, not as a regular section
-        (0, vitest_1.expect)(out).toMatch(/── Sessions \(1\) ──/);
+        (0, vitest_1.expect)(out).toMatch(/── Recent Sessions \(1\/1\) ──/);
         (0, vitest_1.expect)(out).not.toMatch(/^ {2}Sessions /m);
+    });
+});
+(0, vitest_1.describe)('formatProjectOutput recent sessions', () => {
+    const project = {
+        id: 'P1',
+        metadata: { label: 'P1', kind: 'project' },
+        title: 'P1 — x',
+        content: '',
+        tags: [],
+        createdAt: '2026-06-01T00:00:00Z',
+    };
+    const sessions = Array.from({ length: 8 }, (_, i) => ({
+        id: `sess-${i + 1}`,
+        parentId: 'sess-root',
+        title: `Session ${i + 1} — ${i + 1} exchanges`,
+        metadata: { kind: 'session-summary-root' },
+        tags: ['#session-summary'],
+        content: '',
+        // createdAt ascending → session 8 newest
+        createdAt: `2026-06-0${i + 1}T00:00:00Z`,
+    }));
+    (0, vitest_1.it)('shows only the last 5 newest sessions with older count', () => {
+        const out = (0, project_output_js_1.formatProjectOutput)({ project, children: sessions, truncated: false }, 500);
+        (0, vitest_1.expect)(out).toMatch(/── Recent Sessions \(5\/8\) ──/);
+        // newest is session 8 (2026-06-08), oldest shown is session 4 (2026-06-04)
+        (0, vitest_1.expect)(out).toMatch(/2026-06-08/);
+        (0, vitest_1.expect)(out).toMatch(/2026-06-04/);
+        (0, vitest_1.expect)(out).not.toMatch(/2026-06-03/);
+        (0, vitest_1.expect)(out).toMatch(/… 3 older sessions/);
+    });
+    (0, vitest_1.it)('no older line when sessions <= 5', () => {
+        const out = (0, project_output_js_1.formatProjectOutput)({ project, children: sessions.slice(0, 3), truncated: false }, 500);
+        (0, vitest_1.expect)(out).toMatch(/── Recent Sessions \(3\/3\) ──/);
+        (0, vitest_1.expect)(out).not.toMatch(/older sessions/);
     });
 });
 (0, vitest_1.describe)('formatProjectOutput render_tail', () => {
