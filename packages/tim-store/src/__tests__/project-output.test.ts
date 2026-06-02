@@ -37,6 +37,6 @@ describe('formatProjectOutput sessions rollup', () => {
 
     const out = formatProjectOutput({ project, children: [sessionsRoot, summary], truncated: false }, 200);
     expect(out).toMatch(/── Sessions \(1\) ──/);
-    expect(out).not.toMatch(/^ {2}Sessions {2,}/m);
+    expect(out).toMatch(/^ {2}Sessions {2,}/m);
   });
 });

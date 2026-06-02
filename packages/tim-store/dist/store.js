@@ -48,7 +48,34 @@ class TimStore {
             return null;
         if (!options.showIrrelevant && entry.irrelevant)
             return null;
-        return rowToEntry(entry);
+        const result = rowToEntry(entry);
+        // Optionally include children (for tim_read with depth)
+        if (options.includeChildren) {
+            const depth = options.depth ?? 2;
+            const children = this.loadChildrenRecursive(result.id, depth, 1);
+            result.children = children;
+        }
+        return result;
+    }
+    loadChildrenRecursive(parentId, maxDepth, currentDepth) {
+        if (currentDepth > maxDepth)
+            return [];
+        const rows = this.db.prepare(`
+      SELECT * FROM entries
+      WHERE parent_id = ?
+        AND irrelevant = 0
+        AND tombstoned_at IS NULL
+      ORDER BY COALESCE(CAST(json_extract(metadata, '$.order') AS INTEGER), 999999), created_at ASC
+    `).all(parentId);
+        return rows.map(row => {
+            const child = rowToEntry(row);
+            if (currentDepth < maxDepth) {
+                const grandkids = this.loadChildrenRecursive(child.id, maxDepth, currentDepth + 1);
+                if (grandkids.length > 0)
+                    child.children = grandkids;
+            }
+            return child;
+        });
     }
     async createProject(label, options = {}) {
         const metadata = {

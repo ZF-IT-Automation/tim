@@ -39,6 +39,7 @@ export declare class TimStore implements MemoryInterface {
     constructor(dbPath: string, options?: TimStoreOptions);
     private emit;
     read(id: string, options?: ReadOptions): Promise<Entry | null>;
+    private loadChildrenRecursive;
     createProject(label: string, options?: CreateProjectOptions): Promise<Entry>;
     loadProject(label: string, options?: LoadProjectOptions): Promise<LoadProjectResult | null>;
     getChildren(parentId: string, filter?: {

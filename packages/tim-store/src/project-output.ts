@@ -248,8 +248,7 @@ export function formatProjectOutput(
   const sections = children
     .filter(c =>
       c.parentId === project.id &&
-      !c.tags.includes('#session-summary') &&
-      c.metadata.kind !== 'sessions-root',
+      !c.tags.includes('#session-summary'),
     )
     .sort(compareEntryOrder);
 

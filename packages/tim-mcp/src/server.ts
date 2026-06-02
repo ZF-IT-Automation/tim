@@ -32,6 +32,7 @@ const TimReadSchema = z.object({
   id: z.string().describe('Entry ID (ULID)'),
   depth: z.number().min(1).max(5).optional().default(2),
   includeEdges: z.boolean().optional().default(false),
+  includeChildren: z.boolean().optional().default(false),
   showIrrelevant: z.boolean().optional().default(false),
 });
 
@@ -898,8 +899,8 @@ export async function startServer(): Promise<void> {
     try {
       switch (name) {
         case 'tim_read': {
-          const { id, depth, includeEdges, showIrrelevant } = TimReadSchema.parse(args);
-          const entry = await s.read(id, { depth, includeEdges, showIrrelevant });
+          const { id, depth, includeEdges, includeChildren, showIrrelevant } = TimReadSchema.parse(args);
+          const entry = await s.read(id, { depth, includeEdges, includeChildren, showIrrelevant });
           if (!entry) return { content: [{ type: 'text', text: 'Entry not found' }] };
           const edges = includeEdges ? await s.getEdges(id, 'both') : [];
           return {
@@ -1243,6 +1244,24 @@ export async function startServer(): Promise<void> {
           if (!result) {
             return { content: [{ type: 'text', text: `Project not found: ${label}` }] };
           }
+
+          // Auto-update route_exchanges_to in global ~/.tim-project
+          try {
+            const fs = await import('fs');
+            const os = await import('os');
+            const path = await import('path');
+            const globalMarker = path.join(os.homedir(), '.tim-project');
+            let marker: Record<string, unknown> = {};
+            if (fs.existsSync(globalMarker)) {
+              marker = JSON.parse(fs.readFileSync(globalMarker, 'utf8'));
+            }
+            marker.route_exchanges_to = label;
+            marker.project = marker.project || label;
+            fs.writeFileSync(globalMarker, JSON.stringify(marker, null, 2) + '\n');
+          } catch {
+            // Non-critical — don't fail the request
+          }
+
           const formatted = formatProjectOutput(result, budget, loadProjectSchema());
           return {
             content: [{

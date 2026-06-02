@@ -193,8 +193,7 @@ function formatProjectOutput(result, budget, schema) {
     }
     const sections = children
         .filter(c => c.parentId === project.id &&
-        !c.tags.includes('#session-summary') &&
-        c.metadata.kind !== 'sessions-root')
+        !c.tags.includes('#session-summary'))
         .sort(compareEntryOrder);
     const sessions = children
         .filter(c => c.tags.includes('#session-summary'))

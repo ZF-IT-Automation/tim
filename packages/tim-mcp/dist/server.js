@@ -53,6 +53,7 @@ const TimReadSchema = zod_1.z.object({
     id: zod_1.z.string().describe('Entry ID (ULID)'),
     depth: zod_1.z.number().min(1).max(5).optional().default(2),
     includeEdges: zod_1.z.boolean().optional().default(false),
+    includeChildren: zod_1.z.boolean().optional().default(false),
     showIrrelevant: zod_1.z.boolean().optional().default(false),
 });
 const TimWriteSchema = zod_1.z.object({
@@ -856,8 +857,8 @@ async function startServer() {
         try {
             switch (name) {
                 case 'tim_read': {
-                    const { id, depth, includeEdges, showIrrelevant } = TimReadSchema.parse(args);
-                    const entry = await s.read(id, { depth, includeEdges, showIrrelevant });
+                    const { id, depth, includeEdges, includeChildren, showIrrelevant } = TimReadSchema.parse(args);
+                    const entry = await s.read(id, { depth, includeEdges, includeChildren, showIrrelevant });
                     if (!entry)
                         return { content: [{ type: 'text', text: 'Entry not found' }] };
                     const edges = includeEdges ? await s.getEdges(id, 'both') : [];
@@ -1167,6 +1168,23 @@ async function startServer() {
                     const result = await s.loadProject(label, { depth, budget, sections });
                     if (!result) {
                         return { content: [{ type: 'text', text: `Project not found: ${label}` }] };
+                    }
+                    // Auto-update route_exchanges_to in global ~/.tim-project
+                    try {
+                        const fs = await import('fs');
+                        const os = await import('os');
+                        const path = await import('path');
+                        const globalMarker = path.join(os.homedir(), '.tim-project');
+                        let marker = {};
+                        if (fs.existsSync(globalMarker)) {
+                            marker = JSON.parse(fs.readFileSync(globalMarker, 'utf8'));
+                        }
+                        marker.route_exchanges_to = label;
+                        marker.project = marker.project || label;
+                        fs.writeFileSync(globalMarker, JSON.stringify(marker, null, 2) + '\n');
+                    }
+                    catch {
+                        // Non-critical — don't fail the request
                     }
                     const formatted = (0, tim_store_1.formatProjectOutput)(result, budget, loadProjectSchema());
                     return {
