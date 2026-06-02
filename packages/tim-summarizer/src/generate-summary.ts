@@ -81,6 +81,50 @@ async function tryCli(
   }
 }
 
+function buildProjectSummaryPrompt(sessionSummaries: string[]): string {
+  const joined = sessionSummaries.join('\n\n---\n\n');
+  return (
+    `You are summarizing a project's progress across multiple sessions.\n` +
+    `Below are summaries of the last N sessions. Produce a concise project-level summary.\n\n` +
+    `Focus on:\n` +
+    `- Overall progress toward project goals\n` +
+    `- Key decisions made\n` +
+    `- Recurring patterns or themes\n` +
+    `- Current blockers or open items\n` +
+    `- What changed since the last project summary\n\n` +
+    `Format: 3-5 bullet points, 200 words max. Output ONLY the bullets, no preamble.\n\n` +
+    `Session summaries:\n${joined}`
+  );
+}
+
+/**
+ * Aggregate session summaries into a project-level summary via the CLI chain.
+ * Returns null on total failure (no chain, no input, or every CLI failed) —
+ * caller must then write NOTHING, never a fallback marker into project content.
+ */
+export async function generateProjectSummary(
+  sessionSummaries: string[],
+): Promise<string | null> {
+  const config = loadConfig();
+  const chain = config.summarizer?.chain;
+  if (!chain || chain.length === 0) return null;
+  if (sessionSummaries.length === 0) return null;
+
+  const prompt = buildProjectSummaryPrompt(sessionSummaries);
+  const timeoutSec = config.summarizer?.timeout_sec ?? 600;
+
+  for (const entry of chain) {
+    const result = await tryCli(entry.cli, entry.model, entry.provider, prompt, timeoutSec);
+    if (result) {
+      if (process.env.TIM_SUMMARIZER_VERBOSE) {
+        console.error(`tim-summarizer: project summary via ${entry.label || entry.cli}/${entry.model}`);
+      }
+      return result;
+    }
+  }
+  return null;
+}
+
 export const FALLBACK_MARKER = 'TIM_SUMMARIZER_FALLBACK_NEEDED';
 
 export async function generateSummary(batch: UnsummarizedBatch): Promise<string> {

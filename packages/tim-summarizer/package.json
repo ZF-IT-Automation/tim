@@ -8,6 +8,7 @@
   "scripts": { "build": "tsc", "test": "vitest run" },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",
-    "tim-core": "*"
+    "tim-core": "*",
+    "tim-store": "*"
   }
 }
