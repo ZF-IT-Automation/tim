@@ -1,4 +1,4 @@
-# TIM — Theoretically Infinite Memory
+# TIM - Theoretically Infinite Memory
 ## Architecture & Feature Plan v1.0
 
 > **Status**: Design Phase — 2026-05-29
