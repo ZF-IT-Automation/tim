@@ -113,6 +113,18 @@ function resolveRenderDepth(entry, schemaDefault) {
         return schemaDefault;
     return 1;
 }
+function resolveRenderTail(entry, schemaDefault) {
+    const override = entry.metadata.render_tail;
+    if (typeof override === 'boolean')
+        return override;
+    if (override === 'true')
+        return true;
+    if (override === 'false')
+        return false;
+    if (schemaDefault !== undefined)
+        return schemaDefault;
+    return false;
+}
 function findSchemaSection(sections, name) {
     if (!sections?.length)
         return undefined;
@@ -133,14 +145,18 @@ function maxChildDepth(depth) {
         return Number.MAX_SAFE_INTEGER;
     return Math.max(0, depth);
 }
-function formatChildrenTree(children, childMap, depth, budget, schema) {
+function formatChildrenTree(children, childMap, depth, budget, schema, renderTail) {
     if (children.length === 0 || budget.remaining <= 0)
         return [];
     const lines = [];
     const indent = ' '.repeat(4 + depth * 2);
     const maxShow = Math.min(MAX_CHILDREN_PER_LEVEL, children.length);
+    // renderTail → show the LAST maxShow children (still in ascending order)
+    const indices = renderTail
+        ? Array.from({ length: maxShow }, (_, i) => children.length - maxShow + i)
+        : Array.from({ length: maxShow }, (_, i) => i);
     let shown = 0;
-    for (let i = 0; i < maxShow; i++) {
+    for (const i of indices) {
         if (budget.remaining <= 0)
             break;
         const child = children[i];
@@ -161,7 +177,7 @@ function formatChildrenTree(children, childMap, depth, budget, schema) {
     }
     const hidden = children.length - shown;
     if (hidden > 0 && budget.remaining > 0) {
-        lines.push(`${indent}… ${hidden} more`);
+        lines.push(`${indent}… ${hidden} more${renderTail ? ' (older)' : ''}`);
         budget.remaining -= 1;
     }
     return lines;
@@ -208,13 +224,14 @@ function formatProjectOutput(result, budget, schema) {
             const renderDepth = resolveRenderDepth(section, schemaSection?.render_depth);
             // Empty sections stay visible so agents know they exist
             // render_depth controls ONLY whether children render, not section visibility
+            const useTail = resolveRenderTail(section, schemaSection?.render_tail);
             const subkids = childMap.get(section.id) ?? [];
             const suffix = formatSectionLineSuffix(section, subkids, renderDepth);
             lines.push(`  ${name.padEnd(28)} ${suffix}`.trimEnd());
             if (subkids.length > 0 && shouldRenderChildren(renderDepth)) {
                 const nextDepth = maxChildDepth(renderDepth);
                 if (nextDepth > 0) {
-                    lines.push(...formatChildrenTree(subkids, childMap, 0, budgetState, schema));
+                    lines.push(...formatChildrenTree(subkids, childMap, 0, budgetState, schema, useTail));
                 }
             }
         }

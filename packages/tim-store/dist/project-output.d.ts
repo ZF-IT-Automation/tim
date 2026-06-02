@@ -3,6 +3,7 @@ export interface ProjectSchemaSection {
     name: string;
     description?: string;
     render_depth?: number | 'full';
+    render_tail?: boolean;
     children?: ProjectSchemaSection[];
 }
 export interface ProjectSchema {
