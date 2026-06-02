@@ -177,6 +177,9 @@ export interface TimConfig {
             label?: string;
         }>;
     };
+    projectSummary?: {
+        sessions_threshold?: number;
+    };
     batch_size?: number;
 }
 export { InProcessEventBus } from './event-bus.js';

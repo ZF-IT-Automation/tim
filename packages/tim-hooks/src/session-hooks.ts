@@ -140,3 +140,68 @@ export async function onSessionStop(
 ): Promise<SessionStopResult> {
   return maybeSpawnSummarizer(store, cwd, opts);
 }
+
+export const DEFAULT_PROJECT_SUMMARY_THRESHOLD = 5;
+
+/** Shell snippet: run tim-summarizer in --project-summary mode for a label. */
+export function buildProjectSummaryCommand(
+  label: string,
+  logPath: string,
+  timeoutSec: number = DEFAULT_SUMMARIZER_TIMEOUT_SEC,
+): string {
+  const q = (s: string) => JSON.stringify(s);
+  const cmd = 'node ' + JSON.stringify(path.resolve(__dirname, '..', '..', '..', 'tim-summarizer', 'dist', 'summarize.js'));
+  return `timeout ${timeoutSec} ${cmd} --project-summary ${q(label)} >>${q(logPath)} 2>&1`;
+}
+
+export type ProjectSummaryReason =
+  | 'spawned'
+  | 'no-label'
+  | 'no-sessions'
+  | 'below-threshold'
+  | 'spawn-failed';
+
+export interface ProjectSummaryResult {
+  spawned: boolean;
+  reason: ProjectSummaryReason;
+  count?: number;
+}
+
+export interface MaybeSpawnProjectSummaryOptions {
+  spawn?: Spawner;
+  threshold?: number;
+  timeoutSec?: number;
+}
+
+/**
+ * Gate + detached spawn for periodic project-summary generation.
+ * Fires only when sessions-so-far is a positive multiple of the threshold.
+ * Fire-and-forget — never throws.
+ */
+export async function maybeSpawnProjectSummary(
+  store: TimStore,
+  cwd: string,
+  label: string | null,
+  opts: MaybeSpawnProjectSummaryOptions = {},
+): Promise<ProjectSummaryResult> {
+  if (!label) return { spawned: false, reason: 'no-label' };
+
+  const count = await store.countSessionSummaries(label);
+  if (count <= 0) return { spawned: false, reason: 'no-sessions', count };
+
+  const threshold = opts.threshold ?? DEFAULT_PROJECT_SUMMARY_THRESHOLD;
+  if (threshold <= 0 || count % threshold !== 0) {
+    return { spawned: false, reason: 'below-threshold', count };
+  }
+
+  const spawn = opts.spawn ?? spawnSummarizer;
+  const logPath = summarizerLogPath(cwd);
+  const timeoutSec = opts.timeoutSec ?? DEFAULT_SUMMARIZER_TIMEOUT_SEC;
+
+  try {
+    spawn(buildProjectSummaryCommand(label, logPath, timeoutSec), { sessionId: label, cwd });
+    return { spawned: true, reason: 'spawned', count };
+  } catch {
+    return { spawned: false, reason: 'spawn-failed', count };
+  }
+}

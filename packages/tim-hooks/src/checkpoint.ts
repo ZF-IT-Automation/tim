@@ -1,6 +1,6 @@
 import type { Entry } from 'tim-core';
 import type { HooksConfig } from 'tim-core';
-import { getTimDir } from 'tim-core';
+import { getTimDir, loadConfig } from 'tim-core';
 import * as fs from 'fs';
 import * as path from 'path';
 import {
@@ -12,7 +12,11 @@ import {
 } from 'tim-store';
 import { runConfiguredHooks, type HookEnv } from './hooks.js';
 import { findMarker, writeMarker } from './marker.js';
-import { onSessionStop } from './session-hooks.js';
+import {
+  onSessionStop,
+  maybeSpawnProjectSummary,
+  DEFAULT_PROJECT_SUMMARY_THRESHOLD,
+} from './session-hooks.js';
 
 export interface SessionEndOptions {
   summarize?: Summarizer;
@@ -132,6 +136,18 @@ export async function runSessionEnd(
   await runConfiguredHooks('sessionEnd', opts.hooksConfig, env);
 
   await onSessionStop(store, cwd);
+
+  // Periodically regenerate the project-level summary (every Nth session).
+  // Fire-and-forget — must never block or fail the session-end hook.
+  try {
+    const config = loadConfig();
+    const threshold = config.projectSummary?.sessions_threshold ?? DEFAULT_PROJECT_SUMMARY_THRESHOLD;
+    const located = findMarker(cwd);
+    const label = located?.marker.project ?? getActiveProjectLabel();
+    await maybeSpawnProjectSummary(store, cwd, label, { threshold });
+  } catch {
+    /* non-critical */
+  }
 
   return runCheckpoint(store, sessionId, {
     summarize: opts.summarize,

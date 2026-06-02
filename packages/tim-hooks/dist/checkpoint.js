@@ -118,6 +118,18 @@ async function runSessionEnd(store, sessionId, opts = {}) {
     };
     await (0, hooks_js_1.runConfiguredHooks)('sessionEnd', opts.hooksConfig, env);
     await (0, session_hooks_js_1.onSessionStop)(store, cwd);
+    // Periodically regenerate the project-level summary (every Nth session).
+    // Fire-and-forget — must never block or fail the session-end hook.
+    try {
+        const config = (0, tim_core_1.loadConfig)();
+        const threshold = config.projectSummary?.sessions_threshold ?? session_hooks_js_1.DEFAULT_PROJECT_SUMMARY_THRESHOLD;
+        const located = (0, marker_js_1.findMarker)(cwd);
+        const label = located?.marker.project ?? getActiveProjectLabel();
+        await (0, session_hooks_js_1.maybeSpawnProjectSummary)(store, cwd, label, { threshold });
+    }
+    catch {
+        /* non-critical */
+    }
     return runCheckpoint(store, sessionId, {
         summarize: opts.summarize,
     });

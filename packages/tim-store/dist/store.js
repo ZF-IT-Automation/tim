@@ -126,6 +126,33 @@ class TimStore {
         loadChildren(project.id, 1, true);
         return { project, children, truncated };
     }
+    /**
+     * Count sessions recorded under a project (by label or id). One session
+     * entry (kind=session) is created per session start, so this is the
+     * "sessions so far" count used to gate periodic project-summary generation.
+     * Kinds are literals to avoid a session-tree → store import cycle.
+     */
+    async countSessionSummaries(projectLabel) {
+        const project = await this.read(projectLabel);
+        if (!project)
+            return 0;
+        const sessionsRoot = this.db.prepare(`
+      SELECT id FROM entries
+      WHERE parent_id = ?
+        AND json_extract(metadata, '$.kind') = 'sessions-root'
+        AND tombstoned_at IS NULL
+    `).get(project.id);
+        if (!sessionsRoot)
+            return 0;
+        const row = this.db.prepare(`
+      SELECT COUNT(*) AS n FROM entries
+      WHERE parent_id = ?
+        AND json_extract(metadata, '$.kind') = 'session'
+        AND irrelevant = 0
+        AND tombstoned_at IS NULL
+    `).get(sessionsRoot.id);
+        return row.n;
+    }
     async getChildren(parentId, filter) {
         let sql = `
       SELECT * FROM entries

@@ -1,7 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
-import { onSessionStop, buildSummarizerCommand, maybeSpawnSummarizer } from '../session-hooks.js';
+import {
+  onSessionStop,
+  buildSummarizerCommand,
+  maybeSpawnSummarizer,
+  maybeSpawnProjectSummary,
+  buildProjectSummaryCommand,
+} from '../session-hooks.js';
 import { writeMarker } from '../marker.js';
 import { TimStore, SessionManager } from 'tim-store';
 
@@ -103,5 +109,89 @@ describe('onSessionStop', () => {
     const res = await onSessionStop(store, dir, { spawn });
     expect(res.spawned).toBe(false);
     expect(res.reason).toBe('no-marker');
+  });
+});
+
+describe('maybeSpawnProjectSummary', () => {
+  let dir: string;
+  let store: TimStore;
+  let sessions: SessionManager;
+
+  async function startSessions(projectId: string, n: number): Promise<void> {
+    for (let i = 0; i < n; i++) {
+      await sessions.startProjectSession({
+        sessionId: `${projectId}-s${i}`,
+        projectId,
+        agentName: 'a',
+        cwd: dir,
+        harness: 't',
+        batchSize: 2,
+      });
+    }
+  }
+
+  beforeEach(async () => {
+    fs.mkdirSync(TEST_ROOT, { recursive: true });
+    dir = fs.mkdtempSync(path.join(TEST_ROOT, 'psum-'));
+    store = new TimStore(':memory:');
+    sessions = new SessionManager(store);
+  });
+
+  afterEach(() => {
+    store.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('countSessionSummaries counts sessions under the project', async () => {
+    await store.createProject('P0010');
+    await startSessions('P0010', 3);
+    expect(await store.countSessionSummaries('P0010')).toBe(3);
+  });
+
+  it('spawns project summarizer when count is a multiple of threshold', async () => {
+    await store.createProject('P0011');
+    await startSessions('P0011', 5);
+    const spawn = vi.fn();
+    const res = await maybeSpawnProjectSummary(store, dir, 'P0011', { spawn, threshold: 5 });
+    expect(res.spawned).toBe(true);
+    expect(res.count).toBe(5);
+    expect(spawn).toHaveBeenCalledOnce();
+    const [cmd] = spawn.mock.calls[0];
+    expect(cmd).toContain('--project-summary');
+    expect(cmd).toContain('P0011');
+  });
+
+  it('does not spawn below threshold multiple', async () => {
+    await store.createProject('P0012');
+    await startSessions('P0012', 3);
+    const spawn = vi.fn();
+    const res = await maybeSpawnProjectSummary(store, dir, 'P0012', { spawn, threshold: 5 });
+    expect(res.spawned).toBe(false);
+    expect(res.reason).toBe('below-threshold');
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it('skips when no sessions exist', async () => {
+    await store.createProject('P0013');
+    const spawn = vi.fn();
+    const res = await maybeSpawnProjectSummary(store, dir, 'P0013', { spawn, threshold: 5 });
+    expect(res.spawned).toBe(false);
+    expect(res.reason).toBe('no-sessions');
+  });
+
+  it('skips when label is null', async () => {
+    const spawn = vi.fn();
+    const res = await maybeSpawnProjectSummary(store, dir, null, { spawn, threshold: 5 });
+    expect(res.spawned).toBe(false);
+    expect(res.reason).toBe('no-label');
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it('buildProjectSummaryCommand targets the summarizer in project-summary mode', () => {
+    const cmd = buildProjectSummaryCommand('P0014', '/tmp/log', 120);
+    expect(cmd).toContain('--project-summary');
+    expect(cmd).toContain('P0014');
+    expect(cmd).toContain('timeout 120');
+    expect(cmd).toContain('tim-summarizer');
   });
 });

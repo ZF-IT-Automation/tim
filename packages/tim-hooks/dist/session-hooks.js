@@ -33,11 +33,13 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.detachedSpawner = exports.spawnSummarizer = exports.DEFAULT_SUMMARIZER_TIMEOUT_SEC = void 0;
+exports.DEFAULT_PROJECT_SUMMARY_THRESHOLD = exports.detachedSpawner = exports.spawnSummarizer = exports.DEFAULT_SUMMARIZER_TIMEOUT_SEC = void 0;
 exports.summarizerLogPath = summarizerLogPath;
 exports.buildSummarizerCommand = buildSummarizerCommand;
 exports.maybeSpawnSummarizer = maybeSpawnSummarizer;
 exports.onSessionStop = onSessionStop;
+exports.buildProjectSummaryCommand = buildProjectSummaryCommand;
+exports.maybeSpawnProjectSummary = maybeSpawnProjectSummary;
 const child_process_1 = require("child_process");
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
@@ -126,5 +128,38 @@ async function maybeSpawnSummarizer(store, cwd, opts = {}) {
 }
 async function onSessionStop(store, cwd, opts = {}) {
     return maybeSpawnSummarizer(store, cwd, opts);
+}
+exports.DEFAULT_PROJECT_SUMMARY_THRESHOLD = 5;
+/** Shell snippet: run tim-summarizer in --project-summary mode for a label. */
+function buildProjectSummaryCommand(label, logPath, timeoutSec = exports.DEFAULT_SUMMARIZER_TIMEOUT_SEC) {
+    const q = (s) => JSON.stringify(s);
+    const cmd = 'node ' + JSON.stringify(path.resolve(__dirname, '..', '..', '..', 'tim-summarizer', 'dist', 'summarize.js'));
+    return `timeout ${timeoutSec} ${cmd} --project-summary ${q(label)} >>${q(logPath)} 2>&1`;
+}
+/**
+ * Gate + detached spawn for periodic project-summary generation.
+ * Fires only when sessions-so-far is a positive multiple of the threshold.
+ * Fire-and-forget — never throws.
+ */
+async function maybeSpawnProjectSummary(store, cwd, label, opts = {}) {
+    if (!label)
+        return { spawned: false, reason: 'no-label' };
+    const count = await store.countSessionSummaries(label);
+    if (count <= 0)
+        return { spawned: false, reason: 'no-sessions', count };
+    const threshold = opts.threshold ?? exports.DEFAULT_PROJECT_SUMMARY_THRESHOLD;
+    if (threshold <= 0 || count % threshold !== 0) {
+        return { spawned: false, reason: 'below-threshold', count };
+    }
+    const spawn = opts.spawn ?? exports.spawnSummarizer;
+    const logPath = summarizerLogPath(cwd);
+    const timeoutSec = opts.timeoutSec ?? exports.DEFAULT_SUMMARIZER_TIMEOUT_SEC;
+    try {
+        spawn(buildProjectSummaryCommand(label, logPath, timeoutSec), { sessionId: label, cwd });
+        return { spawned: true, reason: 'spawned', count };
+    }
+    catch {
+        return { spawned: false, reason: 'spawn-failed', count };
+    }
 }
 //# sourceMappingURL=session-hooks.js.map

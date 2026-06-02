@@ -30,4 +30,24 @@ export declare function onSessionStop(store: TimStore, cwd: string, opts?: {
     spawn?: Spawner;
     timeoutSec?: number;
 }): Promise<SessionStopResult>;
+export declare const DEFAULT_PROJECT_SUMMARY_THRESHOLD = 5;
+/** Shell snippet: run tim-summarizer in --project-summary mode for a label. */
+export declare function buildProjectSummaryCommand(label: string, logPath: string, timeoutSec?: number): string;
+export type ProjectSummaryReason = 'spawned' | 'no-label' | 'no-sessions' | 'below-threshold' | 'spawn-failed';
+export interface ProjectSummaryResult {
+    spawned: boolean;
+    reason: ProjectSummaryReason;
+    count?: number;
+}
+export interface MaybeSpawnProjectSummaryOptions {
+    spawn?: Spawner;
+    threshold?: number;
+    timeoutSec?: number;
+}
+/**
+ * Gate + detached spawn for periodic project-summary generation.
+ * Fires only when sessions-so-far is a positive multiple of the threshold.
+ * Fire-and-forget — never throws.
+ */
+export declare function maybeSpawnProjectSummary(store: TimStore, cwd: string, label: string | null, opts?: MaybeSpawnProjectSummaryOptions): Promise<ProjectSummaryResult>;
 //# sourceMappingURL=session-hooks.d.ts.map

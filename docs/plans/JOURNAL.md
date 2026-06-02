@@ -76,3 +76,23 @@ GOTCHAS (critical):
 - Sync durability: direct `new TimStore()` has no emitter, but constructor runs `createTriggers` → staging populated by DB triggers, not emitter. MCP-spawned server store also has no emitter → no regression.
 
 Verify: tsc clean. summarizer 6/6 (incl 4 idempotency). CLI smoke: `--project-summary ZZ9999` → "Project not found" (arg parse + store open OK). Live LLM run NOT executed (cost/time; advisor: merge test is the gate). Full suite 181 passed / 4 failed (baseline 4).
+
+## Task 5 — Trigger project summary on session end ✓
+
+KEY INSIGHT (resolves the timing worry):
+- session-summary-root (and the session entry kind=session) are created at session START, not by the detached summarizer. So "sessions so far" count is ACCURATE synchronously at session-end — no race with the async batch summarizer.
+
+Hierarchy: project → sessions-root(kind=sessions-root) → session(kind=session) → summary-root(kind=session-summary-root).
+
+Implementation:
+- tim-core: added `projectSummary?.sessions_threshold?` to TimConfig type (JSON default = Task 6).
+- tim-store: `countSessionSummaries(label)` — resolves project, finds its sessions-root, counts kind=session children. Literal kinds (no session-tree import → avoid cycle).
+- tim-hooks/session-hooks.ts: `buildProjectSummaryCommand(label,…)` (runs summarize.js --project-summary), `maybeSpawnProjectSummary(store,cwd,label,{threshold,spawn})` — gate: spawn only when count>0 && count%threshold===0. Reuses `spawnSummarizer` (detached). Never throws.
+- tim-hooks/checkpoint.ts: in runSessionEnd after onSessionStop — loadConfig threshold (default 5), label from marker.project ?? getActiveProjectLabel(), fire-and-forget in try/catch.
+
+Decisions/gotchas:
+- NOTE: plan referenced `store.countSessionSummaries` which did NOT exist — created it. Counts kind=session (not raw `#session-summary` tag, which is on BOTH summary-roots AND batch-summaries → would overcount).
+- threshold<=0 guard → never spawn (avoids %0).
+- Spawn gate + command live in session-hooks (where all spawning lives); checkpoint.ts only wires config+label. Matches plan intent.
+
+Verify: tsc clean. session-hooks 11/11 (count, threshold-hit, below, no-sessions, no-label, command). Full suite 187 passed / 4 failed (baseline 4).

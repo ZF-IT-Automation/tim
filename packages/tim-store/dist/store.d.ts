@@ -42,6 +42,13 @@ export declare class TimStore implements MemoryInterface {
     private loadChildrenRecursive;
     createProject(label: string, options?: CreateProjectOptions): Promise<Entry>;
     loadProject(label: string, options?: LoadProjectOptions): Promise<LoadProjectResult | null>;
+    /**
+     * Count sessions recorded under a project (by label or id). One session
+     * entry (kind=session) is created per session start, so this is the
+     * "sessions so far" count used to gate periodic project-summary generation.
+     * Kinds are literals to avoid a session-tree → store import cycle.
+     */
+    countSessionSummaries(projectLabel: string): Promise<number>;
     getChildren(parentId: string, filter?: {
         metadataKind?: string;
     }): Promise<Entry[]>;

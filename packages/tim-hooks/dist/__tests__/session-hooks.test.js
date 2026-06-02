@@ -130,4 +130,78 @@ const TEST_ROOT = path.join('/home/bbbee', '.tim-test-runs');
         (0, vitest_1.expect)(res.reason).toBe('no-marker');
     });
 });
+(0, vitest_1.describe)('maybeSpawnProjectSummary', () => {
+    let dir;
+    let store;
+    let sessions;
+    async function startSessions(projectId, n) {
+        for (let i = 0; i < n; i++) {
+            await sessions.startProjectSession({
+                sessionId: `${projectId}-s${i}`,
+                projectId,
+                agentName: 'a',
+                cwd: dir,
+                harness: 't',
+                batchSize: 2,
+            });
+        }
+    }
+    (0, vitest_1.beforeEach)(async () => {
+        fs.mkdirSync(TEST_ROOT, { recursive: true });
+        dir = fs.mkdtempSync(path.join(TEST_ROOT, 'psum-'));
+        store = new tim_store_1.TimStore(':memory:');
+        sessions = new tim_store_1.SessionManager(store);
+    });
+    (0, vitest_1.afterEach)(() => {
+        store.close();
+        fs.rmSync(dir, { recursive: true, force: true });
+    });
+    (0, vitest_1.it)('countSessionSummaries counts sessions under the project', async () => {
+        await store.createProject('P0010');
+        await startSessions('P0010', 3);
+        (0, vitest_1.expect)(await store.countSessionSummaries('P0010')).toBe(3);
+    });
+    (0, vitest_1.it)('spawns project summarizer when count is a multiple of threshold', async () => {
+        await store.createProject('P0011');
+        await startSessions('P0011', 5);
+        const spawn = vitest_1.vi.fn();
+        const res = await (0, session_hooks_js_1.maybeSpawnProjectSummary)(store, dir, 'P0011', { spawn, threshold: 5 });
+        (0, vitest_1.expect)(res.spawned).toBe(true);
+        (0, vitest_1.expect)(res.count).toBe(5);
+        (0, vitest_1.expect)(spawn).toHaveBeenCalledOnce();
+        const [cmd] = spawn.mock.calls[0];
+        (0, vitest_1.expect)(cmd).toContain('--project-summary');
+        (0, vitest_1.expect)(cmd).toContain('P0011');
+    });
+    (0, vitest_1.it)('does not spawn below threshold multiple', async () => {
+        await store.createProject('P0012');
+        await startSessions('P0012', 3);
+        const spawn = vitest_1.vi.fn();
+        const res = await (0, session_hooks_js_1.maybeSpawnProjectSummary)(store, dir, 'P0012', { spawn, threshold: 5 });
+        (0, vitest_1.expect)(res.spawned).toBe(false);
+        (0, vitest_1.expect)(res.reason).toBe('below-threshold');
+        (0, vitest_1.expect)(spawn).not.toHaveBeenCalled();
+    });
+    (0, vitest_1.it)('skips when no sessions exist', async () => {
+        await store.createProject('P0013');
+        const spawn = vitest_1.vi.fn();
+        const res = await (0, session_hooks_js_1.maybeSpawnProjectSummary)(store, dir, 'P0013', { spawn, threshold: 5 });
+        (0, vitest_1.expect)(res.spawned).toBe(false);
+        (0, vitest_1.expect)(res.reason).toBe('no-sessions');
+    });
+    (0, vitest_1.it)('skips when label is null', async () => {
+        const spawn = vitest_1.vi.fn();
+        const res = await (0, session_hooks_js_1.maybeSpawnProjectSummary)(store, dir, null, { spawn, threshold: 5 });
+        (0, vitest_1.expect)(res.spawned).toBe(false);
+        (0, vitest_1.expect)(res.reason).toBe('no-label');
+        (0, vitest_1.expect)(spawn).not.toHaveBeenCalled();
+    });
+    (0, vitest_1.it)('buildProjectSummaryCommand targets the summarizer in project-summary mode', () => {
+        const cmd = (0, session_hooks_js_1.buildProjectSummaryCommand)('P0014', '/tmp/log', 120);
+        (0, vitest_1.expect)(cmd).toContain('--project-summary');
+        (0, vitest_1.expect)(cmd).toContain('P0014');
+        (0, vitest_1.expect)(cmd).toContain('timeout 120');
+        (0, vitest_1.expect)(cmd).toContain('tim-summarizer');
+    });
+});
 //# sourceMappingURL=session-hooks.test.js.map
