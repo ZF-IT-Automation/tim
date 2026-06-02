@@ -17,7 +17,7 @@ export interface ProjectSchema {
 function truncText(s: string, max: number): string {
   const t = s.replace(/\s+/g, ' ').trim();
   if (t.length <= max) return t;
-  return t.slice(0, max - 3) + '...';
+  return t.slice(0, max) + '…';
 }
 
 interface ParsedProjectHeader {
@@ -248,7 +248,9 @@ export function formatProjectOutput(
   const sections = children
     .filter(c =>
       c.parentId === project.id &&
-      !c.tags.includes('#session-summary'),
+      !c.tags.includes('#session-summary') &&
+      c.metadata.kind !== 'commits-root' &&
+      c.metadata.kind !== 'sessions-root',
     )
     .sort(compareEntryOrder);
 

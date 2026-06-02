@@ -1190,7 +1190,7 @@ async function startServer() {
                     return {
                         content: [{
                                 type: 'text',
-                                text: JSON.stringify({ ...result, formatted }, null, 2),
+                                text: formatted,
                             }],
                     };
                 }

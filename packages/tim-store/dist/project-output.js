@@ -6,7 +6,7 @@ function truncText(s, max) {
     const t = s.replace(/\s+/g, ' ').trim();
     if (t.length <= max)
         return t;
-    return t.slice(0, max - 3) + '...';
+    return t.slice(0, max) + '…';
 }
 function parseProjectContent(title, content) {
     const combined = content ? `${title}\n${content}` : title;
@@ -193,7 +193,9 @@ function formatProjectOutput(result, budget, schema) {
     }
     const sections = children
         .filter(c => c.parentId === project.id &&
-        !c.tags.includes('#session-summary'))
+        !c.tags.includes('#session-summary') &&
+        c.metadata.kind !== 'commits-root' &&
+        c.metadata.kind !== 'sessions-root')
         .sort(compareEntryOrder);
     const sessions = children
         .filter(c => c.tags.includes('#session-summary'))

@@ -36,8 +36,9 @@ const project_output_js_1 = require("../project-output.js");
             createdAt: '2026-06-01T00:00:00Z',
         };
         const out = (0, project_output_js_1.formatProjectOutput)({ project, children: [sessionsRoot, summary], truncated: false }, 200);
+        // Sessions section (kind=sessions-root) should only appear in the dedicated rollup block, not as a regular section
         (0, vitest_1.expect)(out).toMatch(/── Sessions \(1\) ──/);
-        (0, vitest_1.expect)(out).toMatch(/^ {2}Sessions {2,}/m);
+        (0, vitest_1.expect)(out).not.toMatch(/^ {2}Sessions /m);
     });
 });
 //# sourceMappingURL=project-output.test.js.map

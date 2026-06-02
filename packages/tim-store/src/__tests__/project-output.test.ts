@@ -36,7 +36,8 @@ describe('formatProjectOutput sessions rollup', () => {
     } as any;
 
     const out = formatProjectOutput({ project, children: [sessionsRoot, summary], truncated: false }, 200);
+    // Sessions section (kind=sessions-root) should only appear in the dedicated rollup block, not as a regular section
     expect(out).toMatch(/── Sessions \(1\) ──/);
-    expect(out).toMatch(/^ {2}Sessions {2,}/m);
+    expect(out).not.toMatch(/^ {2}Sessions /m);
   });
 });

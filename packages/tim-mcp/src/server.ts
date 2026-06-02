@@ -1266,7 +1266,7 @@ export async function startServer(): Promise<void> {
           return {
             content: [{
               type: 'text',
-              text: JSON.stringify({ ...result, formatted }, null, 2),
+              text: formatted,
             }],
           };
         }
