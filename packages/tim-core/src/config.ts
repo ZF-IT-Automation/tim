@@ -22,6 +22,9 @@ const DEFAULT_CONFIG: TimConfigFile = {
     timeoutMs: 30_000,
   },
   batch_size: 5,
+  projectSummary: {
+    sessions_threshold: 5,
+  },
 };
 
 export function getTimDir(): string {

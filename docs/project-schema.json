@@ -2,6 +2,7 @@
   "version": 1,
   "description": "Standard project schema for TIM. Defines section ordering, nesting, and default render depth per node. Per-node override: set metadata.render_depth on any entry to override the schema default for that node.",
   "render_override": "Nodes with metadata.render_depth override the schema default render_depth for that section/subnode.",
+  "render_tail": "When true on a section (or via metadata.render_tail on a node), the renderer shows the LAST N children instead of the first N — for chronological sections (Log, Sessions, Commits) where recent entries matter most. Per-node metadata.render_tail overrides the schema default.",
   "render_depth_legend": {
     "full": "Node body + ALL children recursively with full bodies",
     "0": "Node body only, no children rendered",
@@ -53,6 +54,7 @@
       "name": "Log",
       "description": "Chronologie: Entscheidungen, Meilensteine, Richtungswechsel. Einträge als Datumszeilen.",
       "render_depth": 1,
+      "render_tail": true,
       "children": []
     },
     {
@@ -115,12 +117,14 @@
       "name": "Sessions",
       "description": "Agent session logs. Summary nodes roll up here; raw exchanges stay under per-session Exchanges (render_depth 0). P0000 Inbox uses render_depth 1 at project level to show summaries only.",
       "render_depth": 1,
+      "render_tail": true,
       "children": []
     },
     {
       "name": "Commits",
       "description": "Git commits made in this project. Each entry: commit hash (title), message + diff summary (body). Linked via 'relates' edge to the session that produced it. Session links back via 'implements' edge. n:m relationship — one session can have multiple commits, one commit can span sessions.",
       "render_depth": 1,
+      "render_tail": true,
       "children": []
     }
   ]

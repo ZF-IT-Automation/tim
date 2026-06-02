@@ -50,6 +50,9 @@ const DEFAULT_CONFIG = {
         timeoutMs: 30_000,
     },
     batch_size: 5,
+    projectSummary: {
+        sessions_threshold: 5,
+    },
 };
 function getTimDir() {
     return path.join(os.homedir(), '.tim');

@@ -96,3 +96,28 @@ Decisions/gotchas:
 - Spawn gate + command live in session-hooks (where all spawning lives); checkpoint.ts only wires config+label. Matches plan intent.
 
 Verify: tsc clean. session-hooks 11/11 (count, threshold-hit, below, no-sessions, no-label, command). Full suite 187 passed / 4 failed (baseline 4).
+
+## Task 6 — Config + schema updates ✓
+
+Schema (docs/project-schema.json):
+- `render_tail: true` on Log, Sessions, Commits sections (chronological → recent matters most).
+- Added `render_tail` doc note in header (alongside render_override).
+- Schema loaded by MCP via `loadProjectSchema()` = `cwd/docs/project-schema.json` → render_tail applies on load_project.
+
+Config:
+- DEFAULT_CONFIG (config.ts, committed): `projectSummary.sessions_threshold = 5` → fresh installs.
+- Live `~/.tim/config.json` (runtime, NOT in repo): added same block. Harmless = matches code fallback default.
+
+Gotchas:
+- Both JSON files validated parseable.
+- render_tail field flows through because ProjectSchemaSection type (Task 1) already declares it.
+
+Verify: tsc clean. schema+config JSON valid. Full suite 187 passed / 4 failed (baseline 4).
+
+---
+
+## FINAL STATE
+
+All 6 tasks done. Build clean. Tests: 187 passed / 4 failed — the 4 are pre-existing global-marker failures (`.tim-project` at /home/bbbee leaks into test env), present at baseline, NOT introduced here.
+
+Note for reviewer: branch's FIRST commit carries pre-existing in-flight work (sessions-root filter + mcp formatted output) that was uncommitted in the working tree at start — not authored in this branch.
