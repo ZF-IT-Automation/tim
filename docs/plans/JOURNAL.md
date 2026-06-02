@@ -27,3 +27,18 @@ Gotchas:
 - Tests: head shows Entry1-3 + `… 2 more`; tail shows Entry3-5 + `… 2 more (older)`; per-entry override works without schema.
 
 Verify: tsc clean. project-output.test 4/4 pass. Full suite 173 passed / 4 failed (baseline 4).
+
+## Task 2 — Parse `## Project Summary` ✓
+
+Decisions:
+- Const `PROJECT_SUMMARY_MARKER = '## Project Summary'`.
+- Extract summary via regex `/## Project Summary\s*\n([\s\S]*?)(?=\n## |\n── |$)/` — capture group = body after heading.
+- CRITICAL (advisor): strip marker BEFORE parseProjectContent. `contentForParse = content.split(MARKER)[0].trimEnd()` → fed to parseProjectContent so summary doesn't pollute description (split on `|`, 150-char trunc) or packages/tests counts.
+- Render as labeled block `── Project Summary ──` after description, before Sections — consistent with `── Sections ──`/`── Sessions ──` format. (Plan sketched bare text; chose labeled block for discoverability.)
+- Round-trip: summarizer (Task 4) writes `## Project Summary\n<text>` into content; renderer extracts `<text>`. Heading itself never appears in output.
+
+Gotchas:
+- regex stops at next `\n## ` or `\n── ` or EOF — summary can't bleed into following markdown sections.
+- Tests: block renders + description preserved + heading absent; omitted when no summary.
+
+Verify: tsc clean. project-output 6/6. Full suite 175 passed / 4 failed (baseline 4).

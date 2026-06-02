@@ -119,6 +119,7 @@ interface FormatBudget {
 }
 
 const MAX_CHILDREN_PER_LEVEL = 3;
+const PROJECT_SUMMARY_MARKER = '## Project Summary';
 
 function normalizeRenderDepth(value: unknown): number | 'full' | undefined {
   if (value === 'full') return 'full';
@@ -240,7 +241,14 @@ export function formatProjectOutput(
 ): string {
   const { project, children, truncated } = result;
   const label = String(project.metadata.label ?? project.id);
-  const parsed = parseProjectContent(project.title, project.content);
+  // Strip the auto-generated Project Summary out before parsing the header,
+  // so it never leaks into the description / packages / tests counts.
+  const summaryMatch = project.content.match(
+    /## Project Summary\s*\n([\s\S]*?)(?=\n## |\n── |$)/,
+  );
+  const projectSummary = summaryMatch ? summaryMatch[1].trim() : '';
+  const contentForParse = project.content.split(PROJECT_SUMMARY_MARKER)[0].trimEnd();
+  const parsed = parseProjectContent(project.title, contentForParse);
   const lines: string[] = [];
   const childMap = buildChildMap(children);
   const budgetState: FormatBudget = { remaining: budget };
@@ -258,6 +266,10 @@ export function formatProjectOutput(
 
   if (parsed.description) {
     lines.push('', parsed.description);
+  }
+
+  if (projectSummary) {
+    lines.push('', '── Project Summary ──', '', projectSummary);
   }
 
   const sections = children

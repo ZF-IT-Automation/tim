@@ -107,3 +107,36 @@ describe('formatProjectOutput render_tail', () => {
     expect(out).toMatch(/… 2 more \(older\)$/m);
   });
 });
+
+describe('formatProjectOutput project summary', () => {
+  it('renders Project Summary block and keeps it out of the description', () => {
+    const project = {
+      id: 'P1',
+      metadata: { label: 'P1', kind: 'project' },
+      title: 'P1 — Cool Thing | Active | the real description here',
+      content: '## Project Summary\n- did A\n- did B\n- blocker: C',
+      tags: [],
+      createdAt: '2026-06-01T00:00:00Z',
+    } as any;
+    const out = formatProjectOutput({ project, children: [], truncated: false }, 200);
+    expect(out).toMatch(/── Project Summary ──/);
+    expect(out).toMatch(/did A/);
+    expect(out).toMatch(/blocker: C/);
+    expect(out).toMatch(/the real description here/);
+    // marker heading itself must not leak into output
+    expect(out).not.toMatch(/## Project Summary/);
+  });
+
+  it('omits the block when no summary present', () => {
+    const project = {
+      id: 'P1',
+      metadata: { label: 'P1', kind: 'project' },
+      title: 'P1 — x',
+      content: 'plain description',
+      tags: [],
+      createdAt: '2026-06-01T00:00:00Z',
+    } as any;
+    const out = formatProjectOutput({ project, children: [], truncated: false }, 200);
+    expect(out).not.toMatch(/── Project Summary ──/);
+  });
+});

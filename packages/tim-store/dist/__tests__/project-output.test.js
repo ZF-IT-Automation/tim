@@ -91,4 +91,35 @@ const project_output_js_1 = require("../project-output.js");
         (0, vitest_1.expect)(out).toMatch(/… 2 more \(older\)$/m);
     });
 });
+(0, vitest_1.describe)('formatProjectOutput project summary', () => {
+    (0, vitest_1.it)('renders Project Summary block and keeps it out of the description', () => {
+        const project = {
+            id: 'P1',
+            metadata: { label: 'P1', kind: 'project' },
+            title: 'P1 — Cool Thing | Active | the real description here',
+            content: '## Project Summary\n- did A\n- did B\n- blocker: C',
+            tags: [],
+            createdAt: '2026-06-01T00:00:00Z',
+        };
+        const out = (0, project_output_js_1.formatProjectOutput)({ project, children: [], truncated: false }, 200);
+        (0, vitest_1.expect)(out).toMatch(/── Project Summary ──/);
+        (0, vitest_1.expect)(out).toMatch(/did A/);
+        (0, vitest_1.expect)(out).toMatch(/blocker: C/);
+        (0, vitest_1.expect)(out).toMatch(/the real description here/);
+        // marker heading itself must not leak into output
+        (0, vitest_1.expect)(out).not.toMatch(/## Project Summary/);
+    });
+    (0, vitest_1.it)('omits the block when no summary present', () => {
+        const project = {
+            id: 'P1',
+            metadata: { label: 'P1', kind: 'project' },
+            title: 'P1 — x',
+            content: 'plain description',
+            tags: [],
+            createdAt: '2026-06-01T00:00:00Z',
+        };
+        const out = (0, project_output_js_1.formatProjectOutput)({ project, children: [], truncated: false }, 200);
+        (0, vitest_1.expect)(out).not.toMatch(/── Project Summary ──/);
+    });
+});
 //# sourceMappingURL=project-output.test.js.map
