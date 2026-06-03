@@ -357,6 +357,32 @@ export class TimStore implements MemoryInterface {
     return rows.map(rowToEntry);
   }
 
+  /**
+   * Query root-level entries (parent_id IS NULL) that are not projects.
+   * Optionally filter by tag (exact match within JSON tags array).
+   */
+  getRootLevelEntries(tag?: string): Entry[] {
+    let sql = `
+      SELECT * FROM entries
+      WHERE parent_id IS NULL
+        AND (json_extract(metadata, '$.kind') != 'project' OR json_extract(metadata, '$.kind') IS NULL)
+        AND irrelevant = 0
+        AND tombstoned_at IS NULL
+    `;
+    const params: unknown[] = [];
+
+    if (tag) {
+      sql += ` AND tags LIKE ?`;
+      // Match the tag within JSON array: e.g., '%"#rule"%'
+      params.push(`%"${tag}"%`);
+    }
+
+    sql += ` ORDER BY created_at ASC`;
+
+    const rows = this.db.prepare(sql).all(...params) as RowEntry[];
+    return rows.map(rowToEntry);
+  }
+
   async getTasks(opts?: GetTasksOptions): Promise<TaskRecord[]> {
     let sql = `
       SELECT e.* FROM entries e

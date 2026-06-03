@@ -59,6 +59,29 @@ if [[ -n "$local_marker" ]]; then
   fi
 fi
 
+# ── Root-level entries: #rule + #human ──
+root_context=""
+rules_text=$(node "$TIM_CLI" root-entries --tag '#rule' --format content 2>/dev/null || true)
+human_text=$(node "$TIM_CLI" root-entries --tag '#human' --format content 2>/dev/null || true)
+
+if [[ -n "$rules_text" ]]; then
+  root_context+="
+─── TIM Root Rules (#rule) ───
+$rules_text"
+fi
+
+if [[ -n "$human_text" ]]; then
+  root_context+="
+─── TIM Human Context (#human) ───
+$human_text"
+fi
+
+# Merge root context with project directive
+if [[ -n "$root_context" ]]; then
+  directive="${directive}
+${root_context}"
+fi
+
 # Start / refresh TIM session subtree
 if [[ -n "$session_key" ]]; then
   node "$TIM_CLI" hook session-start \
