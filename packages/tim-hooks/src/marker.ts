@@ -1,4 +1,5 @@
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import type { TimStore } from 'tim-store';
 import { deriveCounters } from 'tim-store';
@@ -138,28 +139,39 @@ export function findMarkerOptionsFromEnv(): FindMarkerOptions | undefined {
   return maxRoot ? { maxRoot } : undefined;
 }
 
+function pickMarkerLocation(candidates: MarkerLocation[]): MarkerLocation {
+  const homeDir = path.resolve(os.homedir());
+  const nonHome = candidates.filter((loc) => path.resolve(loc.dir) !== homeDir);
+  const pool = nonHome.length > 0 ? nonHome : candidates;
+  return pool.reduce((best, cur) =>
+    path.resolve(cur.dir).length > path.resolve(best.dir).length ? cur : best,
+  );
+}
+
 /**
- * Walk up from `startCwd` to the filesystem root and return the NEAREST
- * `.tim-project` (closest ancestor wins). Pure FS — no store, no network —
- * so it is safe to call from a hook under a tight timeout.
+ * Walk up from `startCwd` and return the deepest `.tim-project` on that chain.
+ * When both a repo marker and `~/.tim-project` exist, the home marker is skipped.
+ * Pure FS — no store, no network — safe for hooks under a tight timeout.
  *
- * If the nearest marker FILE exists but is unparseable, we STOP and return
- * null rather than silently binding an ancestor's project.
+ * If a marker FILE exists but is unparseable, we STOP and return null rather than
+ * silently binding an ancestor's project.
  */
 export function findMarker(startCwd: string, options?: FindMarkerOptions): MarkerLocation | null {
   const maxRoot = options?.maxRoot ? path.resolve(options.maxRoot) : null;
   let dir = path.resolve(startCwd);
+  const found: MarkerLocation[] = [];
   for (let i = 0; i < 256; i++) {
     if (fs.existsSync(markerPath(dir))) {
       const marker = readMarker(dir); // null when corrupt
-      return marker ? { marker, dir } : null;
+      if (!marker) return null;
+      found.push({ marker, dir });
     }
     const parent = path.dirname(dir);
     if (parent === dir) break; // reached the filesystem root
     if (maxRoot && isInsideRoot(dir, maxRoot) && !isInsideRoot(parent, maxRoot)) break;
     dir = parent;
   }
-  return null;
+  return found.length > 0 ? pickMarkerLocation(found) : null;
 }
 
 /**
@@ -167,12 +179,17 @@ export function findMarker(startCwd: string, options?: FindMarkerOptions): Marke
  * Claude Code, Cursor) emits exactly this so wording stays DRY. The TIM
  * marker is authoritative for project binding this turn (see plan §end-state).
  */
-export function buildLoadDirective(label: string, markerDir: string): string {
+export function buildLoadDirective(
+  projectLabel: string,
+  markerDir: string,
+  bindingLabel?: string,
+): string {
+  const display = bindingLabel?.trim() || projectLabel;
   return [
     `📍 TIM project marker detected (.tim-project in ${markerDir}).`,
-    `This session is bound to TIM project ${label}.`,
+    `This session is bound to TIM project ${display}.`,
     ``,
-    `ACTION: call tim_load_project(label="${label}") now to load the project ` +
+    `ACTION: call tim_load_project(label="${projectLabel}") now to load the project ` +
       `brief from the TIM store, then run the o9k-session-start skill. STEP 1 ` +
       `(project binding) is already decided by this marker — do NOT ask which ` +
       `project, and do NOT run any hmem/active-project cwd→project resolution. ` +
@@ -181,12 +198,17 @@ export function buildLoadDirective(label: string, markerDir: string): string {
 }
 
 /** Directive when project comes from TIM session metadata (no local .tim-project). */
-export function buildSessionDirective(label: string, cwd: string): string {
+export function buildSessionDirective(
+  projectLabel: string,
+  cwd: string,
+  bindingLabel?: string,
+): string {
+  const display = bindingLabel?.trim() || projectLabel;
   return [
-    `📍 TIM session bound to project ${label} (TIM store, cwd ${cwd}).`,
-    `This session is bound to TIM project ${label}.`,
+    `📍 TIM session bound to project ${display} (TIM store, cwd ${cwd}).`,
+    `This session is bound to TIM project ${display}.`,
     ``,
-    `ACTION: call tim_load_project(label="${label}") now to load the project ` +
+    `ACTION: call tim_load_project(label="${projectLabel}") now to load the project ` +
       `brief from the TIM store, then run the o9k-session-start skill. STEP 1 ` +
       `is already decided by this TIM session — do NOT ask which project, and do NOT ` +
       `run any hmem/active-project cwd→project resolution. The TIM binding is authoritative ` +

@@ -43,12 +43,12 @@ export interface FindMarkerOptions {
 /** Test helper: TIM_MARKER_MAX_ROOT limits walk-up scope for spawned CLI. */
 export declare function findMarkerOptionsFromEnv(): FindMarkerOptions | undefined;
 /**
- * Walk up from `startCwd` to the filesystem root and return the NEAREST
- * `.tim-project` (closest ancestor wins). Pure FS — no store, no network —
- * so it is safe to call from a hook under a tight timeout.
+ * Walk up from `startCwd` and return the deepest `.tim-project` on that chain.
+ * When both a repo marker and `~/.tim-project` exist, the home marker is skipped.
+ * Pure FS — no store, no network — safe for hooks under a tight timeout.
  *
- * If the nearest marker FILE exists but is unparseable, we STOP and return
- * null rather than silently binding an ancestor's project.
+ * If a marker FILE exists but is unparseable, we STOP and return null rather than
+ * silently binding an ancestor's project.
  */
 export declare function findMarker(startCwd: string, options?: FindMarkerOptions): MarkerLocation | null;
 /**
@@ -56,7 +56,7 @@ export declare function findMarker(startCwd: string, options?: FindMarkerOptions
  * Claude Code, Cursor) emits exactly this so wording stays DRY. The TIM
  * marker is authoritative for project binding this turn (see plan §end-state).
  */
-export declare function buildLoadDirective(label: string, markerDir: string): string;
+export declare function buildLoadDirective(projectLabel: string, markerDir: string, bindingLabel?: string): string;
 /** Directive when project comes from TIM session metadata (no local .tim-project). */
-export declare function buildSessionDirective(label: string, cwd: string): string;
+export declare function buildSessionDirective(projectLabel: string, cwd: string, bindingLabel?: string): string;
 //# sourceMappingURL=marker.d.ts.map

@@ -155,12 +155,21 @@ async function cmdResolveProject(args) {
     const { marker, dir } = located;
     if (format === 'json') {
         console.log(JSON.stringify({ ...marker, dir }));
+        return;
     }
-    else if (format === 'directive') {
-        process.stdout.write((0, tim_hooks_1.buildLoadDirective)(marker.project, dir));
+    const config = (0, tim_core_1.loadConfig)();
+    const store = new tim_store_1.TimStore(getDbPath(config));
+    try {
+        if (format === 'directive') {
+            const binding = await (0, tim_store_1.resolveProjectBindingLabel)(store, marker.project);
+            process.stdout.write((0, tim_hooks_1.buildLoadDirective)(marker.project, dir, binding));
+        }
+        else {
+            process.stdout.write(marker.project);
+        }
     }
-    else {
-        process.stdout.write(marker.project);
+    finally {
+        store.close();
     }
 }
 async function cmdResolveSession(args) {
@@ -185,7 +194,8 @@ async function cmdResolveSession(args) {
             console.log(JSON.stringify({ sessionId, project: projectRef, cwd }));
         }
         else if (format === 'directive') {
-            process.stdout.write((0, tim_hooks_1.buildSessionDirective)(projectRef, cwd));
+            const binding = await (0, tim_store_1.resolveProjectBindingLabel)(store, projectRef);
+            process.stdout.write((0, tim_hooks_1.buildSessionDirective)(projectRef, cwd, binding));
         }
         else {
             process.stdout.write(projectRef);

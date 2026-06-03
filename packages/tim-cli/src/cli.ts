@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // TIM CLI — v0.1.0-alpha
 
-import { TimStore, SessionManager } from 'tim-store';
+import { TimStore, SessionManager, resolveProjectBindingLabel } from 'tim-store';
 import { loadConfig, getTimDir, type TimConfigFile } from 'tim-core';
 import {
   runCheckpoint,
@@ -150,10 +150,20 @@ async function cmdResolveProject(args: string[]) {
   const { marker, dir } = located;
   if (format === 'json') {
     console.log(JSON.stringify({ ...marker, dir }));
-  } else if (format === 'directive') {
-    process.stdout.write(buildLoadDirective(marker.project, dir));
-  } else {
-    process.stdout.write(marker.project);
+    return;
+  }
+
+  const config = loadConfig();
+  const store = new TimStore(getDbPath(config));
+  try {
+    if (format === 'directive') {
+      const binding = await resolveProjectBindingLabel(store, marker.project);
+      process.stdout.write(buildLoadDirective(marker.project, dir, binding));
+    } else {
+      process.stdout.write(marker.project);
+    }
+  } finally {
+    store.close();
   }
 }
 
@@ -179,7 +189,8 @@ async function cmdResolveSession(args: string[]) {
     if (format === 'json') {
       console.log(JSON.stringify({ sessionId, project: projectRef, cwd }));
     } else if (format === 'directive') {
-      process.stdout.write(buildSessionDirective(projectRef, cwd));
+      const binding = await resolveProjectBindingLabel(store, projectRef);
+      process.stdout.write(buildSessionDirective(projectRef, cwd, binding));
     } else {
       process.stdout.write(projectRef);
     }

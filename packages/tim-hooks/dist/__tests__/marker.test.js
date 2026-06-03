@@ -125,6 +125,29 @@ const TEST_ROOT = '/tmp/tim-test-runs';
         (0, marker_js_1.writeMarker)(sub, { project: 'CHILD', session: 's', exchanges: 0, batch_size: 5, batches_summarized: 0 });
         (0, vitest_1.expect)((0, marker_js_1.findMarker)(sub, { maxRoot: dir })?.marker.project).toBe('CHILD');
     });
+    (0, vitest_1.it)('findMarker: repo marker wins over ~/.tim-project on the same walk chain', () => {
+        const fakeHome = path.join(dir, 'fake-home');
+        const repo = path.join(fakeHome, 'projects', 'tim');
+        const sub = path.join(repo, 'packages');
+        fs.mkdirSync(sub, { recursive: true });
+        (0, marker_js_1.writeMarker)(fakeHome, {
+            project: 'HOME',
+            session: 's',
+            exchanges: 0,
+            batch_size: 5,
+            batches_summarized: 0,
+        });
+        (0, marker_js_1.writeMarker)(repo, {
+            project: 'REPO',
+            session: 's',
+            exchanges: 0,
+            batch_size: 5,
+            batches_summarized: 0,
+        });
+        const found = (0, marker_js_1.findMarker)(sub, { maxRoot: fakeHome });
+        (0, vitest_1.expect)(found?.marker.project).toBe('REPO');
+        (0, vitest_1.expect)(found?.dir).toBe(fs.realpathSync(repo));
+    });
     (0, vitest_1.it)('findMarker returns null when no marker exists up to root (no infinite loop)', () => {
         const sub = path.join(dir, 'x', 'y');
         fs.mkdirSync(sub, { recursive: true });
@@ -142,6 +165,11 @@ const TEST_ROOT = '/tmp/tim-test-runs';
         (0, vitest_1.expect)(d).toContain('P0063');
         (0, vitest_1.expect)(d).toContain('tim_load_project(label="P0063")');
         (0, vitest_1.expect)(d).toContain('.tim-project');
+    });
+    (0, vitest_1.it)('buildLoadDirective shows binding label but keeps tool arg as project id', () => {
+        const d = (0, marker_js_1.buildLoadDirective)('P0062', '/repo', 'P0062 — bbbee PM Workflow');
+        (0, vitest_1.expect)(d).toContain('TIM project P0062 — bbbee PM Workflow');
+        (0, vitest_1.expect)(d).toContain('tim_load_project(label="P0062")');
     });
     (0, vitest_1.it)('syncNearestProjectMarker overwrites project on nearest marker', () => {
         (0, marker_js_1.writeMarker)(dir, {

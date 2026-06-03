@@ -1,19 +1,16 @@
-# JOURNAL — P0063 bugs (2026-06-03)
+# JOURNAL — marker + directive fixes (2026-06-03)
 
 ## Decisions
-- FIX 1: merge label/alias into `search()` via `resolveProjectLabel`, not FTS migration (comment in store.ts for future).
-- FIX 2: throw on duplicate label; tombstoned/irrelevant rows excluded from guard.
-- FIX 3: `requireProject()` centralizes validation; session + commit use it.
-- FIX 0 deploy: `tim-mcp` `bin` → workspace `dist/server.js`; `~/.tim/mcp.json` points at repo `.bin` (npx 404 on npm registry).
-- Live dedupe: tombstone stub `ubun-0603-ns-01KT6DRBQF...`; curate `irrelevant:false` on canonical `01KSTQ4AB1...` (was hidden).
+- findMarker: collect chain, skip `~/.tim-project` when deeper marker exists, else deepest wins.
+- Directive display: `resolveProjectBindingLabel` (uncropped); `tim_load_project(label=)` stays bare P-label.
+- tim-session-start.sh: project label from `tim resolve-project`, not first marker file on walk.
 
 ## Edge cases
-- `store.update({ irrelevant: false })` broken: `patch.irrelevant ? 1 : existing` treats false as unset — use `curate().updateMany` or fix update separately.
-- Canonical P0063 had `irrelevant=1` (hmem import?) — not just duplicate stub.
-- `search("P0063")` with broken resolve still returns FTS noise from content mentioning P0063.
-- `topK` enforced via `.slice(0, topK)` after label prepend.
+- Cwd with only home marker (no repo `.tim-project`) still binds home — walk cannot see repo.
+- Corrupt nearest marker still returns null (no ancestor fallback).
+- DB miss → binding falls back to label only.
 
 ## Gotchas
-- Restart MCP host after mcp.json change (path was `npx tim-mcp` → E404).
-- Sync may re-push stub/tombstone; check other devices.
-- Live verify script uses built `tim-store/dist`, not MCP process until restart.
+- Rebuild `tim-cli` / `tim-hooks` dist before hook picks up changes (`TIM_CLI` path).
+- MCP still writes `~/.tim-project` on load — repo marker + findMarker skip is the real fix.
+- Tests: use `TIM_MARKER_MAX_ROOT` — real `~/.tim-project` leaks without it.

@@ -114,6 +114,30 @@ describe('marker', () => {
     expect(findMarker(sub, { maxRoot: dir })?.marker.project).toBe('CHILD');
   });
 
+  it('findMarker: repo marker wins over ~/.tim-project on the same walk chain', () => {
+    const fakeHome = path.join(dir, 'fake-home');
+    const repo = path.join(fakeHome, 'projects', 'tim');
+    const sub = path.join(repo, 'packages');
+    fs.mkdirSync(sub, { recursive: true });
+    writeMarker(fakeHome, {
+      project: 'HOME',
+      session: 's',
+      exchanges: 0,
+      batch_size: 5,
+      batches_summarized: 0,
+    });
+    writeMarker(repo, {
+      project: 'REPO',
+      session: 's',
+      exchanges: 0,
+      batch_size: 5,
+      batches_summarized: 0,
+    });
+    const found = findMarker(sub, { maxRoot: fakeHome });
+    expect(found?.marker.project).toBe('REPO');
+    expect(found?.dir).toBe(fs.realpathSync(repo));
+  });
+
   it('findMarker returns null when no marker exists up to root (no infinite loop)', () => {
     const sub = path.join(dir, 'x', 'y');
     fs.mkdirSync(sub, { recursive: true });
@@ -133,6 +157,12 @@ describe('marker', () => {
     expect(d).toContain('P0063');
     expect(d).toContain('tim_load_project(label="P0063")');
     expect(d).toContain('.tim-project');
+  });
+
+  it('buildLoadDirective shows binding label but keeps tool arg as project id', () => {
+    const d = buildLoadDirective('P0062', '/repo', 'P0062 — bbbee PM Workflow');
+    expect(d).toContain('TIM project P0062 — bbbee PM Workflow');
+    expect(d).toContain('tim_load_project(label="P0062")');
   });
 
   it('syncNearestProjectMarker overwrites project on nearest marker', () => {

@@ -36,8 +36,7 @@ local_marker=$(node -e "
 " 2>/dev/null || true)
 
 if [[ -n "$local_marker" ]]; then
-  marker_json=$(cat "$local_marker")
-  project=$(echo "$marker_json" | jq -r '.project // empty')
+  project=$(node "$TIM_CLI" resolve-project --cwd "$cwd" --format label 2>/dev/null || true)
   directive=$(node "$TIM_CLI" resolve-project --cwd "$cwd" --format directive 2>/dev/null || true)
 fi
 
