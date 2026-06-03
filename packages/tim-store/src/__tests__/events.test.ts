@@ -101,12 +101,12 @@ describe('TimStore runDecay', () => {
   });
 
   it('marks entries before cutoff as irrelevant excluding listed ids', async () => {
-    const old = await store.write('old');
+    const old = await store.write('old', { metadata: { kind: 'exchange' } });
     await new Promise(r => setTimeout(r, 5));
-    const keep = await store.write('keep');
+    const keep = await store.write('keep', { metadata: { kind: 'exchange' } });
     const cutoff = new Date().toISOString();
     await new Promise(r => setTimeout(r, 5));
-    const recent = await store.write('recent');
+    const recent = await store.write('recent', { metadata: { kind: 'exchange' } });
 
     const count = await store.runDecay({
       before: cutoff,

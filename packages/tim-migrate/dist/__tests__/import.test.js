@@ -178,5 +178,35 @@ function createOldFixture(filePath) {
         const imported = store.getDb().prepare("SELECT id FROM entries WHERE json_extract(metadata, '$.label') = 'P0001'").get();
         (0, vitest_1.expect)(imported.id).not.toBe(rootUid);
     });
+    (0, vitest_1.it)('re-import skips already-migrated entries by hmemUid', async () => {
+        const filePath = path.join(tmpDir, 'idempotent.hmem');
+        createV2Fixture(filePath);
+        // First import
+        const first = (0, import_js_1.tim_import)(store, filePath);
+        (0, vitest_1.expect)(first.entriesImported).toBe(2);
+        (0, vitest_1.expect)(first.nodesImported).toBe(1);
+        // Second import — should skip ALL because hmemUid already exists
+        const second = (0, import_js_1.tim_import)(store, filePath);
+        (0, vitest_1.expect)(second.entriesImported).toBe(0);
+        (0, vitest_1.expect)(second.nodesImported).toBe(0);
+        (0, vitest_1.expect)(second.skipped).toBe(3); // 2 entries + 1 node
+        (0, vitest_1.expect)(second.conflicts.every(c => c.action === 'merged')).toBe(true);
+        // No duplicates in store
+        const rows = store.getDb().prepare("SELECT id FROM entries WHERE json_extract(metadata, '$.label') = 'P0001'").all();
+        (0, vitest_1.expect)(rows).toHaveLength(1);
+    });
+    (0, vitest_1.it)('force option bypasses idempotency guard', async () => {
+        const filePath = path.join(tmpDir, 'force.hmem');
+        createV2Fixture(filePath);
+        // First import
+        const first = (0, import_js_1.tim_import)(store, filePath);
+        (0, vitest_1.expect)(first.entriesImported).toBe(2);
+        const countBefore = store.getDb().prepare('SELECT COUNT(*) as c FROM entries').get().c;
+        // Second import with force=true
+        const second = (0, import_js_1.tim_import)(store, filePath, { force: true });
+        (0, vitest_1.expect)(second.entriesImported).toBeGreaterThan(0);
+        const countAfter = store.getDb().prepare('SELECT COUNT(*) as c FROM entries').get().c;
+        (0, vitest_1.expect)(countAfter).toBeGreaterThan(countBefore);
+    });
 });
 //# sourceMappingURL=import.test.js.map

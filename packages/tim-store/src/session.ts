@@ -580,7 +580,7 @@ export class SessionManager {
       throw new Error('Checkpoint verification failed: summary not durable');
     }
 
-    if (opts.runDecay !== false) {
+    if (opts.runDecay === true) {
       await this.store.runDecay({
         before: session.createdAt,
         exclude: [sessionId, summary.id],

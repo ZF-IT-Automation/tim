@@ -1391,7 +1391,7 @@ export async function startServer(): Promise<void> {
             // Non-critical — don't fail the request
           }
 
-          const formatted = formatProjectOutput(result, budget, loadProjectSchema());
+          const formatted = formatProjectOutput(result, budget, loadProjectSchema(), 'load');
           return {
             content: [{
               type: 'text',
@@ -1420,7 +1420,7 @@ export async function startServer(): Promise<void> {
             return { content: [{ type: 'text', text: `Project not found: ${label}` }] };
           }
 
-          const formatted = formatProjectOutput(result, budget, loadProjectSchema());
+          const formatted = formatProjectOutput(result, budget, loadProjectSchema(), 'read');
           return {
             content: [{
               type: 'text',

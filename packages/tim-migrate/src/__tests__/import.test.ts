@@ -188,4 +188,45 @@ describe('tim_import', () => {
     ).get() as { id: string };
     expect(imported.id).not.toBe(rootUid);
   });
+
+  it('re-import skips already-migrated entries by hmemUid', async () => {
+    const filePath = path.join(tmpDir, 'idempotent.hmem');
+    createV2Fixture(filePath);
+
+    // First import
+    const first = tim_import(store, filePath);
+    expect(first.entriesImported).toBe(2);
+    expect(first.nodesImported).toBe(1);
+
+    // Second import — should skip ALL because hmemUid already exists
+    const second = tim_import(store, filePath);
+    expect(second.entriesImported).toBe(0);
+    expect(second.nodesImported).toBe(0);
+    expect(second.skipped).toBe(3); // 2 entries + 1 node
+    expect(second.conflicts.every(c => c.action === 'merged')).toBe(true);
+
+    // No duplicates in store
+    const rows = store.getDb().prepare(
+      "SELECT id FROM entries WHERE json_extract(metadata, '$.label') = 'P0001'",
+    ).all() as { id: string }[];
+    expect(rows).toHaveLength(1);
+  });
+
+  it('force option bypasses idempotency guard', async () => {
+    const filePath = path.join(tmpDir, 'force.hmem');
+    createV2Fixture(filePath);
+
+    // First import
+    const first = tim_import(store, filePath);
+    expect(first.entriesImported).toBe(2);
+
+    const countBefore = (store.getDb().prepare('SELECT COUNT(*) as c FROM entries').get() as { c: number }).c;
+
+    // Second import with force=true
+    const second = tim_import(store, filePath, { force: true });
+    expect(second.entriesImported).toBeGreaterThan(0);
+
+    const countAfter = (store.getDb().prepare('SELECT COUNT(*) as c FROM entries').get() as { c: number }).c;
+    expect(countAfter).toBeGreaterThan(countBefore);
+  });
 });

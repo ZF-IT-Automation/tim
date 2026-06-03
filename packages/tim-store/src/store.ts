@@ -936,6 +936,7 @@ export class TimStore implements MemoryInterface {
       WHERE created_at < ?
         AND irrelevant = 0
         AND tombstoned_at IS NULL
+        AND json_extract(metadata, '$.kind') = 'exchange'
     `).all(options.before) as { id: string }[];
 
     let count = 0;

@@ -21,6 +21,9 @@ function contentChanged(store, id, content) {
     const row = store.getDb().prepare('SELECT content FROM entries WHERE id = ?').get(id);
     return !!row && row.content !== content;
 }
+function hmemUidExists(store, hmemUid) {
+    return store.getDb().prepare("SELECT id FROM entries WHERE json_extract(metadata, '$.hmemUid') = ? AND tombstoned_at IS NULL").get(hmemUid);
+}
 function insertEntryDirect(db, params) {
     db.prepare(`
     INSERT INTO entries (
@@ -66,6 +69,14 @@ function importV2(source, store, options) {
     const mergedRoots = new Set();
     const planRoots = () => {
         for (const e of hmemEntries) {
+            // Idempotency guard: if entry was already imported (same hmemUid), skip unless forced
+            const alreadyImported = hmemUidExists(store, e.uid);
+            if (alreadyImported && !options.force) {
+                idMap.set(e.uid, alreadyImported.id);
+                skipped++;
+                conflicts.push({ label: e.label, action: 'merged', detail: alreadyImported.id });
+                continue;
+            }
             const existingLabel = findByLabel(store, e.label);
             const tags = e.tags ? JSON.parse(e.tags) : [];
             if (existingLabel && options.deduplicate) {
@@ -121,6 +132,14 @@ function importV2(source, store, options) {
     };
     const planNodes = () => {
         for (const n of hmemNodes) {
+            // Idempotency guard: if node was already imported (same hmemUid), skip unless forced
+            const alreadyImported = hmemUidExists(store, n.uid);
+            if (alreadyImported && !options.force) {
+                idMap.set(n.uid, alreadyImported.id);
+                skipped++;
+                conflicts.push({ label: n.uid, action: 'merged', detail: alreadyImported.id });
+                continue;
+            }
             const rootTimId = idMap.get(n.root_uid);
             if (!rootTimId) {
                 warnings.push(`Skipped node ${n.uid}: root ${n.root_uid} not mapped`);
@@ -232,6 +251,14 @@ function importOld(source, store, options) {
     const idMap = new Map();
     const run = () => {
         for (const hmem of hmemEntries) {
+            // Idempotency guard: if entry was already imported (same hmemUid), skip unless forced
+            const alreadyImported = hmemUidExists(store, hmem.id);
+            if (alreadyImported && !options.force) {
+                idMap.set(hmem.id, alreadyImported.id);
+                skipped++;
+                conflicts.push({ label: hmem.id, action: 'merged', detail: alreadyImported.id });
+                continue;
+            }
             const label = hmem.id;
             const existingLabel = findByLabel(store, label);
             if (existingLabel && options.deduplicate) {

@@ -111,7 +111,7 @@ describe('SessionManager', () => {
 
     it('runs decay only after summary is durable', async () => {
       const old = await store.write('old entry', {
-        metadata: { kind: 'note' },
+        metadata: { kind: 'exchange' },
       });
       await new Promise(r => setTimeout(r, 5));
 
@@ -125,7 +125,7 @@ describe('SessionManager', () => {
         { role: 'user', content: 'msg' },
       ]);
 
-      const summary = await sessions.checkpoint('sess-decay');
+      const summary = await sessions.checkpoint('sess-decay', { runDecay: true });
 
       const oldRead = await store.read(old.id, { showIrrelevant: true });
       expect(oldRead?.irrelevant).toBe(true);
@@ -197,7 +197,7 @@ describe('SessionManager', () => {
       const eventStore = new TimStore(':memory:', { emitter: bus });
       const eventSessions = new SessionManager(eventStore);
 
-      const old = await eventStore.write('stale data');
+      const old = await eventStore.write('stale data', { metadata: { kind: 'exchange' } });
       await new Promise(r => setTimeout(r, 5));
 
       await eventSessions.sessionStart({
@@ -212,7 +212,7 @@ describe('SessionManager', () => {
         { role: 'user', content: 'Q2' },
       ]);
 
-      const summary = await eventSessions.checkpoint('lifecycle');
+      const summary = await eventSessions.checkpoint('lifecycle', { runDecay: true });
 
       expect(events.filter(e => e === 'memory:written').length).toBeGreaterThanOrEqual(5);
       expect(events).toContain('edge:created');

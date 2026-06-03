@@ -2,6 +2,8 @@ import type { TimStore } from 'tim-store';
 export interface ImportOptions {
     dryRun?: boolean;
     deduplicate?: boolean;
+    /** If true, bypass idempotency guard and force re-import of already-migrated entries. */
+    force?: boolean;
 }
 export interface ImportConflict {
     label: string;
