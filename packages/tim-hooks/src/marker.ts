@@ -33,8 +33,14 @@ export function readMarker(cwd: string): ProjectMarker | null {
   }
 }
 
+/** Write a project marker file, merging with existing fields to preserve
+ *  global-only state (sessions map, route_exchanges_to) that callers
+ *  like runSessionStart don't carry. */
 export function writeMarker(cwd: string, marker: ProjectMarker): void {
-  fs.writeFileSync(markerPath(cwd), JSON.stringify(marker, null, 2));
+  const p = markerPath(cwd);
+  const existing = readMarker(cwd);
+  const merged: ProjectMarker = existing ? { ...existing, ...marker } : marker;
+  fs.writeFileSync(p, JSON.stringify(merged, null, 2));
 }
 
 /**

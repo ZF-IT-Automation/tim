@@ -82,14 +82,21 @@ if [[ -n "$root_context" ]]; then
 ${root_context}"
 fi
 
-# Start / refresh TIM session subtree
+# Start / refresh TIM session subtree.
+# When the project was resolved from a local .tim-project marker (walk-up),
+# do NOT pass --project — let runSessionStart re-derive it from the marker
+# so the hook does not force a project override for every session start.
 if [[ -n "$session_key" ]]; then
-  node "$TIM_CLI" hook session-start \
-    --session "$session_key" \
-    --cwd "$cwd" \
-    --project "$project" \
-    --tool "$tool" \
-    --model "$model" 2>/dev/null || true
+  args=(
+    --session "$session_key"
+    --cwd "$cwd"
+    --tool "$tool"
+    --model "$model"
+  )
+  if [[ -z "$local_marker" && -n "$project" ]]; then
+    args+=(--project "$project")
+  fi
+  node "$TIM_CLI" hook session-start "${args[@]}" 2>/dev/null || true
 fi
 
 jq -n --arg ctx "$directive" '{context: $ctx}'
