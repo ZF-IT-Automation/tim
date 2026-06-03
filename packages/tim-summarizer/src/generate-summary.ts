@@ -288,9 +288,11 @@ export async function generateSummary(batch: UnsummarizedBatch): Promise<string>
     }
   }
 
-  // All CLIs failed — signal main agent to handle this batch
+  // All CLIs failed — fall back to heuristic summary
   if (process.env.TIM_SUMMARIZER_VERBOSE) {
-    console.error('tim-summarizer: all CLIs failed, signaling main agent');
+    console.error('tim-summarizer: all CLIs failed, using heuristic fallback');
   }
-  return FALLBACK_MARKER;
+  const heuristic = generateSummaryHeuristic(batch);
+  appendSummarizerLog(`HEURISTIC batch ${batch.batchIndex}: ${heuristic.slice(0, 200)}`);
+  return heuristic;
 }
