@@ -493,3 +493,54 @@ npx vitest run packages/tim-cli packages/tim-hooks
 printf '{"cwd":"%s","session_id":"KNOWN_ID","extra":{"is_first_turn":true}}' "$HOME" \
   | bash packages/tim-hooks/scripts/tim-session-start.sh
 ```
+
+---
+
+# JOURNAL — E2E Pipeline Test (session_log → summarizer → Summary tree → load_project)
+
+Plan written to `docs/e2e-test-plan.md`. This is PLAN ONLY; implementer writes the test.
+
+## Baseline (verified, commit cc40624)
+- `npx tsc -b` → exit 0, clean.
+- `npx vitest run` → **30 files, 222 tests, all pass** (~3s). Brief said "101 tests" — STALE. Anchor to 222.
+
+## Decisions
+- **In-process integration, NOT real subprocess.** `codex`/`opencode` absent in env; real spawn = non-deterministic + env-coupled. Mock the CLI leaf; exercise real store + SessionManager + runSummarizerLoop orchestration + project-output rendering.
+- **No production code changes needed** — all DI seams already exist: `SessionManager.setOnBatchFull`, `maybeSpawnSummarizer(store,cwd,{spawn})`, public `showUnsummarized`/`writeBatchSummary`, `runSummarizerLoop` + `vi.mock('../mcp-client.js')`, `vi.mock('tim-core')` for chain control, env hooks (`TIM_DB_PATH`/`TIM_SESSION_ID`/`TIM_MCP_PATH`/`TIM_MARKER_MAX_ROOT`).
+- New file: `packages/tim-summarizer/src/__tests__/pipeline-e2e.test.ts`. Genuinely new — no existing test crosses store+summarizer+output.
+
+## Gotchas (the load-bearing ones — do NOT skip)
+1. **Default load_project depth = 3 (TimLoadProjectSchema, server.ts:223). Batch-summary nodes live at depth 4 → INVISIBLE at default depth.** Walk: sessions-root(1) → session(2) → Summary/Exchanges(3) → Batch nodes(4). To assert the batch summary text landed, RE-LOAD at `depth: 4`. At depth 3 you only see the Summary node.
+2. **`rollUpSession` (session.ts:412) has NO production caller.** The summarizer loop writes batch-summary KIND_BATCH nodes but never rolls them into the Summary node's `content`. So at default depth the Summary node a /new session sees is EMPTY (`content === ''`). Assert this explicitly + comment WHY. This is a real pipeline gap — flag it, don't mask it.
+3. **`#session-summary` tag is on BOTH the per-session Summary node (session.ts:177) AND each batch-summary node (session.ts:399).** The project-output "Recent Sessions" filter (project-output.ts:286) only catches the Summary node at depth 3 (batch nodes too deep), so no double-count at default depth — but it WOULD double-count if loaded at depth >=4 and filtered naively. Keep assertions depth-aware. The rendered row (project-output.ts:316-317) is `${exchanges} exchanges · ${date}  "${summary}"` from `parseSessionEntry` — NOT the session title — and `summary` is the Summary node's `metadata.summary` (empty per Finding B). Assert the row's summary is `""`.
+4. **The ONLY mechanism that surfaces aggregated summary TEXT to a /new default-depth session is the project-level `## Project Summary` block** in `project.content` (mergeProjectSummary summarize.ts:20 → renders as `── Project Summary ──` project-output.ts:273). This is a SEPARATE path: `runProjectSummary` gated by `maybeSpawnProjectSummary` (threshold 5 sessions, session-hooks.ts:181). Include an assertion for it.
+5. **Batch rolls on the NEXT user, not the 5th.** logExchange (session.ts:256-273): batch fills when `usersInBatch.length >= batchSize` AND a new user arrives. So batch_size=5 needs a 6th user to roll Batch 1 and fire onBatchFull. batch_size=1 with N users → N-1 *roll/onBatchFull* events, last batch open.
+5b. **CRITICAL off-by-one in summary COUNT (separate from roll count). `showUnsummarized` (session.ts:302) has NO fullness guard** — it returns the open trailing batch too, and `runSummarizerLoop` summarizes ANY batch with ≥1 user. So 6 users @ bs=5 → loop writes **2** summaries (Batch1 1–5, Batch2 6–6), `batchesSummarized===2`. 3 users @ bs=1 → loop writes **3** (not 2), even though Batch3 never fired onBatchFull. Invariant: summaries == # exchange-batch nodes with ≥1 user. DO NOT assert 1. Either test trigger+content separately (one iteration → assert Batch1 1–5, count 1) OR loop to completion (assert 2 / 3). Decide per test.
+6. **`:memory:` DB is per-connection** but fine here because `maybeSpawnSummarizer(store,...)` takes the SAME store instance — no cross-connection read. Only a real-transport test (mcp-client spawns server.js) would need a temp-FILE db via TIM_DB_PATH.
+7. **Marker isolation:** set `TIM_MARKER_MAX_ROOT` to the temp dir so findMarker walk-up doesn't grab the repo's own `~/projects/tim/.tim-project` or `~/.tim-project`. Use `vi.stubEnv`.
+8. **`writeBatchSummary` is idempotent** (session.ts:383) — returns existing node on repeat batchIndex. Good positive assertion.
+9. **FALLBACK string format** (summarize.ts:86): `[ALL SUMMARIZER CLIs FAILED — main agent please resummarize batch N]\nQ: <first 200 chars>` — em-dash, exact. Match `summarize-loop.test.ts:47`.
+
+## Verify before/after
+```bash
+cd ~/projects/tim && npx tsc -b           # expect exit 0
+npx vitest run                            # expect 222 (baseline), then 222+new, zero regressions
+npx vitest run packages/tim-summarizer    # focused run of new file
+```
+
+---
+
+# JOURNAL — E2E pipeline test (implemented)
+
+## Done
+- `packages/tim-summarizer/src/__tests__/pipeline-e2e.test.ts` — 10 tests: happy path (batch-full, spawn gate, one write, depth 3/4, idempotency, formatProjectOutput, runSummarizerLoop, mergeProjectSummary) + 7 edge cases
+- `tim-hooks` added to `tim-summarizer` devDependencies (import `maybeSpawnSummarizer` / marker helpers)
+
+## Decisions
+- Happy path: one `writeBatchSummary` iteration only (not loop-to-completion) — trigger proves batch 1 roll; depth 4 proves write
+- Recent Sessions row asserts `0 exchanges … "Summary"` (parseSessionEntry uses title, not empty `metadata.summary`) + explicit `metadata.summary === ''`
+
+## Gotchas confirmed in tests
+- 6 users @ bs=5 → onBatchFull×1 (batch 1), not 2 summaries unless loop runs to completion
+- `vi.spyOn(child_process.spawn)` fails ESM — use real ENOENT binary via `loadConfig` chain instead
+- Verify: `tsc -b` clean; `vitest run` → **232** tests (222+10)

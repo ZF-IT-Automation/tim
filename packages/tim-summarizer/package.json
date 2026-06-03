@@ -10,5 +10,8 @@
     "@modelcontextprotocol/sdk": "^1.12.0",
     "tim-core": "*",
     "tim-store": "*"
+  },
+  "devDependencies": {
+    "tim-hooks": "*"
   }
 }
