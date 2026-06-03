@@ -51,6 +51,15 @@ fi
 
 [[ -z "$project" ]] && { printf '{}\n'; exit 0; }
 
+# End previous session if .tim-project marker has a different session ID
+# Fire-and-forget: must never block the new session-start
+if [[ -n "$local_marker" ]]; then
+  old_session=$(jq -r '.session // empty' "$local_marker" 2>/dev/null || true)
+  if [[ -n "$old_session" && "$old_session" != "$session_key" ]]; then
+    node "$TIM_CLI" hook session-end --session "$old_session" 2>/dev/null &
+  fi
+fi
+
 # Start / refresh TIM session subtree
 if [[ -n "$session_key" ]]; then
   node "$TIM_CLI" hook session-start \
