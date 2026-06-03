@@ -130,6 +130,12 @@ describe('session-end checkpoint orchestration', () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tim-proj-'));
     const originalHome = process.env.HOME;
 
+    // Guard against a stale /tmp/.tim-project marker that would be
+    // picked up by findMarker() before getActiveProjectLabel() runs.
+    const tmpMarker = '/tmp/.tim-project';
+    const markerBackup = fs.existsSync(tmpMarker) ? fs.readFileSync(tmpMarker) : null;
+    if (markerBackup) fs.unlinkSync(tmpMarker);
+
     try {
       process.env.HOME = tmp;
       fs.mkdirSync(path.join(tmp, '.tim'), { recursive: true });
@@ -151,6 +157,7 @@ describe('session-end checkpoint orchestration', () => {
       expect(result.project?.metadata.label).toBe('P0099');
     } finally {
       process.env.HOME = originalHome;
+      if (markerBackup) fs.writeFileSync(tmpMarker, markerBackup);
       fs.rmSync(tmp, { recursive: true, force: true });
       store.close();
     }
