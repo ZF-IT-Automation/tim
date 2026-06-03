@@ -612,6 +612,28 @@ bash packages/tim-hooks/scripts/post-commit.sh
 
 ---
 
+# JOURNAL — Impl: load_project gate + tim_read_project (2026-06-03)
+
+## Done
+- `tim-core/load-gate.ts` — `evaluateLoadGate(ref, label)` pure helper; 6 unit tests
+- `tim_load_project` — gate before side effects; `switch:true` escape hatch; reject = plain text, names `tim_read_project`
+- `tim_read_project` — `loadProject` + `formatProjectOutput`, no bind/marker/session; in READ_TOOLS
+- `o9k-activate` skill — `switch:true` on mid-session load
+
+## Decisions
+- Gate in MCP handler only — `session.ts` reparent tests untouched
+- P0000 = unbound → first real load OK; same label = refresh OK
+- Reject before `loadProject`/markers — zero side effects on cross-project accident
+
+## Verify
+```bash
+npx tsc -b && npx vitest run   # 240 pass (234+6)
+```
+
+Plan: `docs/load-project-gate-plan.md`
+
+---
+
 # JOURNAL — Session reparent on project switch (DONE)
 
 Plan: `docs/exchange-reparent-plan.md`

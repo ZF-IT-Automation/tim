@@ -276,3 +276,4 @@ export {
   timSessionCachePath,
   type TimSessionCache,
 } from './session-cache.js';
+export { evaluateLoadGate } from './load-gate.js';

@@ -18,7 +18,7 @@ import {
   type TaskRecord,
   type ProjectSchema,
 } from 'tim-store';
-import { loadConfig, resolveActiveSessionId, type EdgeType, type Entry } from 'tim-core';
+import { loadConfig, resolveActiveSessionId, evaluateLoadGate, type EdgeType, type Entry } from 'tim-core';
 import {
   findMarker,
   getActiveProjectLabel,
@@ -224,6 +224,14 @@ const TimLoadProjectSchema = z.object({
   budget: z.number().min(1).max(1000).optional().default(200),
   sections: z.array(z.string()).nullable().optional().default(null),
   sessionId: z.string().optional().describe('Harness session id; rebinds TIM session project_ref on load'),
+  switch: z.boolean().optional().default(false).describe('Allow switching to a different project mid-session'),
+});
+
+const TimReadProjectSchema = z.object({
+  label: z.string().describe('Project label, e.g. P0062'),
+  depth: z.number().min(1).max(5).optional().default(3),
+  budget: z.number().min(1).max(1000).optional().default(200),
+  sections: z.array(z.string()).nullable().optional().default(null),
 });
 
 const TimTasksSchema = z.object({
@@ -462,7 +470,7 @@ const WRITE_TOOLS = new Set([
 
 const READ_TOOLS = new Set([
   'tim_read', 'tim_search', 'tim_trace', 'tim_health', 'tim_stats',
-  'tim_export', 'tim_doctor', 'tim_sync', 'tim_load_project', 'tim_tasks',
+  'tim_export', 'tim_doctor', 'tim_sync', 'tim_load_project', 'tim_read_project', 'tim_tasks',
   'tim_show_unsummarized', 'tim_show_all_unsummarized',
 ]);
 
@@ -867,7 +875,32 @@ export async function startServer(): Promise<void> {
       },
       {
         name: 'tim_load_project',
-        description: 'Load a project by label or alias and return it with its child tree.',
+        description: 'Load a project by label or alias and bind the session to it.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            label: { type: 'string', description: 'Project label, e.g. P0062' },
+            depth: { type: 'number', default: 3, description: 'How many child levels to load (1-5)' },
+            budget: { type: 'number', default: 200, description: 'Max child entries to return' },
+            sections: {
+              type: ['array', 'null'],
+              items: { type: 'string' },
+              default: null,
+              description: 'Optional section IDs/labels to filter direct children',
+            },
+            switch: {
+              type: 'boolean',
+              default: false,
+              description: 'Allow switching to a different project mid-session',
+            },
+          },
+          required: ['label'],
+        },
+      },
+      {
+        name: 'tim_read_project',
+        description:
+          'Read a project brief + tree WITHOUT binding the session (cross-project lookup). Use tim_load_project to start working on a project.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -1251,7 +1284,7 @@ export async function startServer(): Promise<void> {
         }
 
         case 'tim_load_project': {
-          const { label, depth, budget, sections, sessionId: sessionIdArg } =
+          const { label, depth, budget, sections, sessionId: sessionIdArg, switch: switchRequested } =
             TimLoadProjectSchema.parse(args);
           const resolved = await s.resolveProjectLabel(label);
           if (resolved.status === 'ambiguous') {
@@ -1267,16 +1300,36 @@ export async function startServer(): Promise<void> {
           }
 
           const projectLabel = resolved.label;
-          const result = await s.loadProject(projectLabel, { depth, budget, sections });
-          if (!result) {
-            return { content: [{ type: 'text', text: `Project not found: ${label}` }] };
-          }
-
           const cwd = process.cwd();
           const sessionId = resolveActiveSessionId({
             sessionIdArg: sessionIdArg,
             markerSession: findMarker(cwd)?.marker.session,
           });
+
+          if (sessionId && !switchRequested) {
+            const existing = await s.read(sessionId);
+            if (existing?.metadata.kind === 'session') {
+              const existingRef =
+                typeof existing.metadata.project_ref === 'string'
+                  ? existing.metadata.project_ref
+                  : undefined;
+              if (evaluateLoadGate(existingRef, projectLabel) === 'reject') {
+                return {
+                  content: [{
+                    type: 'text',
+                    text:
+                      `Session already bound to ${existingRef}. One tim_load_project per session. ` +
+                      'Use tim_read_project for cross-project lookups, or pass switch:true to switch this session.',
+                  }],
+                };
+              }
+            }
+          }
+
+          const result = await s.loadProject(projectLabel, { depth, budget, sections });
+          if (!result) {
+            return { content: [{ type: 'text', text: `Project not found: ${label}` }] };
+          }
 
           if (sessionId) {
             try {
@@ -1318,6 +1371,35 @@ export async function startServer(): Promise<void> {
             fs.writeFileSync(globalMarker, JSON.stringify(marker, null, 2) + '\n');
           } catch {
             // Non-critical — don't fail the request
+          }
+
+          const formatted = formatProjectOutput(result, budget, loadProjectSchema());
+          return {
+            content: [{
+              type: 'text',
+              text: formatted,
+            }],
+          };
+        }
+
+        case 'tim_read_project': {
+          const { label, depth, budget, sections } = TimReadProjectSchema.parse(args);
+          const resolved = await s.resolveProjectLabel(label);
+          if (resolved.status === 'ambiguous') {
+            return {
+              content: [{
+                type: 'text',
+                text: `Ambiguous alias: matches ${resolved.labels.join(', ')}. Use label.`,
+              }],
+            };
+          }
+          if (resolved.status === 'not_found') {
+            return { content: [{ type: 'text', text: `Project not found: ${label}` }] };
+          }
+
+          const result = await s.loadProject(resolved.label, { depth, budget, sections });
+          if (!result) {
+            return { content: [{ type: 'text', text: `Project not found: ${label}` }] };
           }
 
           const formatted = formatProjectOutput(result, budget, loadProjectSchema());
