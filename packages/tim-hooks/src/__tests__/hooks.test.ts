@@ -101,6 +101,7 @@ describe('session-end checkpoint orchestration', () => {
 
   it('session-start runs configured hook', async () => {
     const store = new TimStore(':memory:');
+    await store.createProject('P0099', { content: 'hook test' });
     fs.mkdirSync('/home/bbbee/.tim-test-runs', { recursive: true });
     const tmpDir = fs.mkdtempSync(path.join('/home/bbbee/.tim-test-runs', 'tim-start-'));
     const marker = path.join(tmpDir, 'started.txt');
@@ -111,6 +112,7 @@ describe('session-end checkpoint orchestration', () => {
       agentName: 'agent',
       cwd: tmpDir,
       harness: 'test',
+      projectId: 'P0099',
       hooksConfig: {
         sessionStart: script,
         enabled: true,

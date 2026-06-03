@@ -356,6 +356,26 @@ describe('SessionManager', () => {
       expect(sessionNodes.map(s => s.id).sort()).toEqual(['s1', 's2']);
     });
 
+    it('updates project_ref when rebinding an existing session to another project', async () => {
+      await store.createProject('P0096');
+      await store.createProject('P0095');
+      await sessions.startProjectSession({
+        sessionId: 'rebind-s',
+        projectId: 'P0096',
+        agentName: 'a',
+        cwd: '/',
+        harness: 't',
+      });
+      const rebound = await sessions.startProjectSession({
+        sessionId: 'rebind-s',
+        projectId: 'P0095',
+        agentName: 'a',
+        cwd: '/',
+        harness: 't',
+      });
+      expect(rebound.metadata.project_ref).toBe('P0095');
+    });
+
     it('binds unbound sessions to P0000 Inbox when using inbox helper', async () => {
       await ensureInboxProject(store);
       const session = await sessions.startProjectSession({

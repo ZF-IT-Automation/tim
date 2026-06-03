@@ -112,6 +112,7 @@ const index_js_1 = require("../index.js");
     });
     (0, vitest_1.it)('session-start runs configured hook', async () => {
         const store = new tim_store_1.TimStore(':memory:');
+        await store.createProject('P0099', { content: 'hook test' });
         fs.mkdirSync('/home/bbbee/.tim-test-runs', { recursive: true });
         const tmpDir = fs.mkdtempSync(path.join('/home/bbbee/.tim-test-runs', 'tim-start-'));
         const marker = path.join(tmpDir, 'started.txt');
@@ -121,6 +122,7 @@ const index_js_1 = require("../index.js");
             agentName: 'agent',
             cwd: tmpDir,
             harness: 'test',
+            projectId: 'P0099',
             hooksConfig: {
                 sessionStart: script,
                 enabled: true,

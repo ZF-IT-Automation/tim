@@ -302,6 +302,25 @@ const index_js_1 = require("../index.js");
             const sessionNodes = await store.getChildByKind(sections[0].id, 'session');
             (0, vitest_1.expect)(sessionNodes.map(s => s.id).sort()).toEqual(['s1', 's2']);
         });
+        (0, vitest_1.it)('updates project_ref when rebinding an existing session to another project', async () => {
+            await store.createProject('P0096');
+            await store.createProject('P0095');
+            await sessions.startProjectSession({
+                sessionId: 'rebind-s',
+                projectId: 'P0096',
+                agentName: 'a',
+                cwd: '/',
+                harness: 't',
+            });
+            const rebound = await sessions.startProjectSession({
+                sessionId: 'rebind-s',
+                projectId: 'P0095',
+                agentName: 'a',
+                cwd: '/',
+                harness: 't',
+            });
+            (0, vitest_1.expect)(rebound.metadata.project_ref).toBe('P0095');
+        });
         (0, vitest_1.it)('binds unbound sessions to P0000 Inbox when using inbox helper', async () => {
             await (0, index_js_1.ensureInboxProject)(store);
             const session = await sessions.startProjectSession({

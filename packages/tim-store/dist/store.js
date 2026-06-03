@@ -78,15 +78,58 @@ class TimStore {
         });
     }
     async createProject(label, options = {}) {
+        const aliases = normalizeProjectAliases(options.aliases);
         const metadata = {
             ...(options.metadata ?? {}),
             kind: 'project',
             label,
+            ...(aliases.length > 0 ? { aliases } : {}),
         };
         return this.write(options.content ?? label, { metadata });
     }
+    /**
+     * Resolve a project label or alias to a canonical P-label.
+     * Direct label/id lookup first, then metadata.aliases scan.
+     */
+    async resolveProjectLabel(query) {
+        const q = query.trim();
+        if (!q)
+            return { status: 'not_found', query: q };
+        const direct = await this.read(q);
+        if (direct?.metadata.kind === 'project') {
+            const label = typeof direct.metadata.label === 'string' ? direct.metadata.label : q;
+            return { status: 'found', label };
+        }
+        const needle = q.toLowerCase();
+        const rows = this.db.prepare(`
+      SELECT metadata FROM entries
+      WHERE json_extract(metadata, '$.kind') = 'project'
+        AND irrelevant = 0
+        AND tombstoned_at IS NULL
+    `).all();
+        const matches = [];
+        for (const row of rows) {
+            const meta = JSON.parse(row.metadata);
+            const label = typeof meta.label === 'string' ? meta.label : '';
+            if (!label)
+                continue;
+            const aliases = Array.isArray(meta.aliases) ? meta.aliases : [];
+            if (aliases.some(a => String(a).toLowerCase() === needle)) {
+                if (!matches.includes(label))
+                    matches.push(label);
+            }
+        }
+        if (matches.length === 0)
+            return { status: 'not_found', query: q };
+        if (matches.length === 1)
+            return { status: 'found', label: matches[0] };
+        return { status: 'ambiguous', query: q, labels: matches.sort() };
+    }
     async loadProject(label, options = {}) {
-        const project = await this.read(label);
+        const resolved = await this.resolveProjectLabel(label);
+        if (resolved.status !== 'found')
+            return null;
+        const project = await this.read(resolved.label);
         if (!project)
             return null;
         const depth = options.depth ?? 3;
@@ -243,14 +286,14 @@ class TimStore {
                 title: row.title,
                 content: row.content,
                 parent_id: row.parent_id,
-                project_label: this.resolveProjectLabel(row.parent_id),
+                project_label: this.findProjectLabelForParent(row.parent_id),
                 status: meta.status ?? null,
                 priority: meta.priority ?? null,
                 due: meta.due ?? null,
             };
         });
     }
-    resolveProjectLabel(startParentId) {
+    findProjectLabelForParent(startParentId) {
         let currentId = startParentId;
         while (currentId) {
             const row = this.db.prepare('SELECT parent_id, metadata FROM entries WHERE id = ?').get(currentId);
@@ -683,6 +726,18 @@ class TimStore {
 }
 exports.TimStore = TimStore;
 // ─── Row → Domain Mappers ───────────────────────────────
+function normalizeProjectAliases(aliases) {
+    if (!aliases?.length)
+        return [];
+    const out = [];
+    for (const raw of aliases) {
+        const a = raw.trim().toLowerCase();
+        if (!a || out.includes(a))
+            continue;
+        out.push(a);
+    }
+    return out;
+}
 function splitTitleBody(content, explicitTitle) {
     if (explicitTitle !== undefined) {
         return { title: explicitTitle.trim(), body: content };

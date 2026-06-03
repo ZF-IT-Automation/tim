@@ -9,11 +9,17 @@ export {
   type TaskRecord,
   type GetTasksOptions,
 } from './store.js';
+export type { ResolveProjectResult } from 'tim-core';
 export {
   formatProjectOutput,
   type ProjectSchema,
   type ProjectSchemaSection,
 } from './project-output.js';
+export {
+  cropDisplayName,
+  projectDisplayNameFromEntry,
+  resolveProjectDisplayName,
+} from './project-display.js';
 export { runMigrations, getCurrentVersion, MIGRATIONS } from './schema.js';
 export {
   SessionManager,

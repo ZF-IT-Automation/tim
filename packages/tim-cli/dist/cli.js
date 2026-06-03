@@ -41,6 +41,8 @@ const tim_hooks_1 = require("tim-hooks");
 const tim_migrate_1 = require("tim-migrate");
 const sync_cli_js_1 = require("./sync-cli.js");
 const git_commit_js_1 = require("./git-commit.js");
+const statusline_js_1 = require("./statusline.js");
+const hermes_statusline_install_js_1 = require("./hermes-statusline-install.js");
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
 const os = __importStar(require("os"));
@@ -122,6 +124,18 @@ async function cmdDoctor() {
         health.issues.forEach(i => console.log(`  - ${i}`));
     }
     console.log(`\nTop tags: ${stats.topTags.slice(0, 5).map(t => `${t.tag}(${t.count})`).join(', ') || 'none'}`);
+    const hermesDir = path.join(os.homedir(), '.hermes');
+    if (fs.existsSync(hermesDir)) {
+        const { installed, issues } = (0, hermes_statusline_install_js_1.auditHermesStatusline)();
+        if (installed) {
+            console.log('\nHermes statusline: ✓ installed');
+        }
+        else {
+            console.log('\nHermes statusline: ✗ not fully installed');
+            issues.forEach(i => console.log(`  - ${i}`));
+            console.log('  Fix: tim setup-hermes-statusline');
+        }
+    }
     store.close();
 }
 async function cmdStats() {
@@ -135,7 +149,7 @@ async function cmdResolveProject(args) {
     const flags = parseArgs(args);
     const cwd = flags.cwd ?? process.cwd();
     const format = flags.format ?? 'label';
-    const located = (0, tim_hooks_1.findMarker)(cwd);
+    const located = (0, tim_hooks_1.findMarker)(cwd, (0, tim_hooks_1.findMarkerOptionsFromEnv)());
     if (!located)
         return; // no marker (or corrupt nearest) → silent skip, exit 0
     const { marker, dir } = located;
@@ -147,6 +161,38 @@ async function cmdResolveProject(args) {
     }
     else {
         process.stdout.write(marker.project);
+    }
+}
+async function cmdResolveSession(args) {
+    const flags = parseArgs(args);
+    const sessionId = flags.session?.trim();
+    if (!sessionId) {
+        console.error('Usage: tim resolve-session --session <id> [--cwd <dir>] [--format label|directive|json]');
+        process.exit(1);
+    }
+    const cwd = flags.cwd ?? process.cwd();
+    const format = flags.format ?? 'label';
+    const config = (0, tim_core_1.loadConfig)();
+    const store = new tim_store_1.TimStore(getDbPath(config));
+    try {
+        const entry = await store.read(sessionId);
+        if (!entry || entry.metadata.kind !== 'session')
+            return;
+        const projectRef = typeof entry.metadata.project_ref === 'string' ? entry.metadata.project_ref.trim() : '';
+        if (!projectRef)
+            return;
+        if (format === 'json') {
+            console.log(JSON.stringify({ sessionId, project: projectRef, cwd }));
+        }
+        else if (format === 'directive') {
+            process.stdout.write((0, tim_hooks_1.buildSessionDirective)(projectRef, cwd));
+        }
+        else {
+            process.stdout.write(projectRef);
+        }
+    }
+    finally {
+        store.close();
     }
 }
 async function cmdBindProject(args) {
@@ -171,7 +217,7 @@ async function cmdBindProject(args) {
 async function cmdRecordCommit(args) {
     const flags = parseArgs(args);
     const cwd = flags.cwd ?? process.cwd();
-    const located = (0, tim_hooks_1.findMarker)(cwd);
+    const located = (0, tim_hooks_1.findMarker)(cwd, (0, tim_hooks_1.findMarkerOptionsFromEnv)());
     const projectId = flags.project ?? located?.marker.project;
     if (!projectId)
         return; // no marker → silent skip (hook path)
@@ -389,6 +435,9 @@ async function main() {
         case 'resolve-project':
             await cmdResolveProject(rest);
             break;
+        case 'resolve-session':
+            await cmdResolveSession(rest);
+            break;
         case 'bind-project':
             await cmdBindProject(rest);
             break;
@@ -403,6 +452,18 @@ async function main() {
             break;
         case 'rebalance':
             await cmdRebalance(rest);
+            break;
+        case 'statusline': {
+            const flags = parseArgs(rest);
+            await (0, statusline_js_1.runStatusline)({
+                cwd: flags.cwd,
+                sessionId: flags.session,
+                format: flags.format === 'hermes' ? 'hermes' : 'text',
+            });
+            break;
+        }
+        case 'setup-hermes-statusline':
+            await (0, hermes_statusline_install_js_1.cmdSetupHermesStatusline)(rest);
             break;
         case 'export':
             await cmdExport(rest);
@@ -430,12 +491,15 @@ Commands:
   doctor                Run diagnostics
   stats                 Show memory statistics
   resolve-project       Print bound project from nearest .tim-project (--cwd, --format label|json|directive)
+  resolve-session       Print project_ref for a TIM session (--session, --format label|directive|json)
   bind-project          Write/refresh .tim-project for a project (--label, --cwd, --session)
   record-commit         Record git commit to project Commits section (--cwd, --hash, --message, --diff)
   hook session-start    Start a session (--session, --agent, --cwd, --harness)
   hook session-end      End a session and run checkpoint (--session)
   checkpoint            Manual checkpoint for a session (--session)
   rebalance             Rebalance exchange batches at boundaries (--session, --cwd)
+  statusline            Status text or Hermes JSON (--cwd, --session, --format text|hermes)
+  setup-hermes-statusline  Install Hermes TUI status bar (symlinks, config, cli patch) [--dry-run] [--skip-build]
   export [path]           Export to .hmem or markdown (--format hmem|text)
   import <path>           Import from .hmem (--dry-run, --deduplicate)
   sync connect            Connect to o9k-sync server

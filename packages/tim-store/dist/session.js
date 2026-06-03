@@ -76,8 +76,14 @@ class SessionManager {
     async startProjectSession(params) {
         const { sessionId, projectId, agentName, cwd, harness, tool, model, taskSummary } = params;
         const existing = await this.store.read(sessionId);
-        if (existing?.metadata.kind === session_tree_js_1.KIND_SESSION)
-            return existing;
+        if (existing?.metadata.kind === session_tree_js_1.KIND_SESSION) {
+            if (existing.metadata.project_ref !== projectId) {
+                await this.store.update(sessionId, {
+                    metadata: { ...existing.metadata, project_ref: projectId },
+                });
+            }
+            return (await this.store.read(sessionId));
+        }
         const project = await this.store.read(projectId);
         if (!project || project.metadata.kind !== 'project') {
             throw new Error(`Project not found: ${projectId}`);

@@ -6,6 +6,7 @@ import {
   writeMarker,
   detectProject,
   findMarker,
+  syncNearestProjectMarker,
   buildLoadDirective,
   reconcileMarker,
   acquireLock,
@@ -13,7 +14,8 @@ import {
 } from '../marker.js';
 import { TimStore, SessionManager } from 'tim-store';
 
-const TEST_ROOT = path.join('/home/bbbee', '.tim-test-runs');
+/** Outside ~ so findMarker walk-up does not hit real ~/.tim-project */
+const TEST_ROOT = '/tmp/tim-test-runs';
 
 describe('marker', () => {
   let dir: string;
@@ -92,7 +94,7 @@ describe('marker', () => {
 
   it('findMarker returns the marker in the cwd itself', () => {
     writeMarker(dir, { project: 'P1', session: 's', exchanges: 0, batch_size: 5, batches_summarized: 0 });
-    const found = findMarker(dir);
+    const found = findMarker(dir, { maxRoot: dir });
     expect(found?.marker.project).toBe('P1');
     expect(found?.dir).toBe(fs.realpathSync(dir));
   });
@@ -101,7 +103,7 @@ describe('marker', () => {
     writeMarker(dir, { project: 'PARENT', session: 's', exchanges: 0, batch_size: 5, batches_summarized: 0 });
     const sub = path.join(dir, 'a', 'b', 'c');
     fs.mkdirSync(sub, { recursive: true });
-    expect(findMarker(sub)?.marker.project).toBe('PARENT');
+    expect(findMarker(sub, { maxRoot: dir })?.marker.project).toBe('PARENT');
   });
 
   it('findMarker: nearest marker wins over an ancestor', () => {
@@ -109,13 +111,13 @@ describe('marker', () => {
     const sub = path.join(dir, 'child');
     fs.mkdirSync(sub, { recursive: true });
     writeMarker(sub, { project: 'CHILD', session: 's', exchanges: 0, batch_size: 5, batches_summarized: 0 });
-    expect(findMarker(sub)?.marker.project).toBe('CHILD');
+    expect(findMarker(sub, { maxRoot: dir })?.marker.project).toBe('CHILD');
   });
 
   it('findMarker returns null when no marker exists up to root (no infinite loop)', () => {
     const sub = path.join(dir, 'x', 'y');
     fs.mkdirSync(sub, { recursive: true });
-    expect(findMarker(sub)).toBeNull();
+    expect(findMarker(sub, { maxRoot: dir })).toBeNull();
   });
 
   it('findMarker stops at a corrupt nearest marker (does not silently use an ancestor)', () => {
@@ -123,7 +125,7 @@ describe('marker', () => {
     const sub = path.join(dir, 'child');
     fs.mkdirSync(sub, { recursive: true });
     fs.writeFileSync(path.join(sub, '.tim-project'), '{ not valid json');
-    expect(findMarker(sub)).toBeNull();
+    expect(findMarker(sub, { maxRoot: dir })).toBeNull();
   });
 
   it('buildLoadDirective embeds the label and the load instruction', () => {
@@ -131,5 +133,34 @@ describe('marker', () => {
     expect(d).toContain('P0063');
     expect(d).toContain('tim_load_project(label="P0063")');
     expect(d).toContain('.tim-project');
+  });
+
+  it('syncNearestProjectMarker overwrites project on nearest marker', () => {
+    writeMarker(dir, {
+      project: 'P0062',
+      session: 'bg_old',
+      exchanges: 0,
+      batch_size: 5,
+      batches_summarized: 0,
+    });
+    const sub = path.join(dir, 'repo');
+    fs.mkdirSync(sub, { recursive: true });
+    writeMarker(sub, {
+      project: 'P0062',
+      session: 'bg_old',
+      exchanges: 0,
+      batch_size: 5,
+      batches_summarized: 0,
+    });
+
+    expect(
+      syncNearestProjectMarker(sub, 'P0063', {
+        sessionId: '20260602_155620_ee0929',
+        findOptions: { maxRoot: dir },
+      }),
+    ).toBe(true);
+    expect(readMarker(sub)?.project).toBe('P0063');
+    expect(readMarker(sub)?.session).toBe('20260602_155620_ee0929');
+    expect(readMarker(dir)?.project).toBe('P0062');
   });
 });

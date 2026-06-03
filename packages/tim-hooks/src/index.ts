@@ -22,8 +22,11 @@ export {
   writeMarker,
   detectProject,
   findMarker,
+  findMarkerOptionsFromEnv,
   buildLoadDirective,
+  buildSessionDirective,
   reconcileMarker,
+  syncNearestProjectMarker,
   acquireLock,
   releaseLock,
   markerPath,
@@ -33,6 +36,7 @@ export {
   isSessionLocked,
   type ProjectMarker,
   type MarkerLocation,
+  type FindMarkerOptions,
 } from './marker.js';
 
 export {

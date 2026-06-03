@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.DEFAULT_SUMMARIZER_TIMEOUT_SEC = exports.summarizerLogPath = exports.detachedSpawner = exports.spawnSummarizer = exports.buildSummarizerCommand = exports.maybeSpawnSummarizer = exports.onSessionStop = exports.rebalanceBatch = exports.isSessionLocked = exports.LOCK_TTL_MS = exports.MARKER_LOCK = exports.MARKER_FILENAME = exports.markerPath = exports.releaseLock = exports.acquireLock = exports.reconcileMarker = exports.buildLoadDirective = exports.findMarker = exports.detectProject = exports.writeMarker = exports.readMarker = exports.getActiveProjectLabel = exports.loadProjectContext = exports.runSessionEnd = exports.runSessionStart = exports.runCheckpoint = exports.runConfiguredHooks = exports.runHooks = exports.runHookScript = void 0;
+exports.DEFAULT_SUMMARIZER_TIMEOUT_SEC = exports.summarizerLogPath = exports.detachedSpawner = exports.spawnSummarizer = exports.buildSummarizerCommand = exports.maybeSpawnSummarizer = exports.onSessionStop = exports.rebalanceBatch = exports.isSessionLocked = exports.LOCK_TTL_MS = exports.MARKER_LOCK = exports.MARKER_FILENAME = exports.markerPath = exports.releaseLock = exports.acquireLock = exports.syncNearestProjectMarker = exports.reconcileMarker = exports.buildSessionDirective = exports.buildLoadDirective = exports.findMarkerOptionsFromEnv = exports.findMarker = exports.detectProject = exports.writeMarker = exports.readMarker = exports.getActiveProjectLabel = exports.loadProjectContext = exports.runSessionEnd = exports.runSessionStart = exports.runCheckpoint = exports.runConfiguredHooks = exports.runHooks = exports.runHookScript = void 0;
 var hooks_js_1 = require("./hooks.js");
 Object.defineProperty(exports, "runHookScript", { enumerable: true, get: function () { return hooks_js_1.runHookScript; } });
 Object.defineProperty(exports, "runHooks", { enumerable: true, get: function () { return hooks_js_1.runHooks; } });
@@ -16,8 +16,11 @@ Object.defineProperty(exports, "readMarker", { enumerable: true, get: function (
 Object.defineProperty(exports, "writeMarker", { enumerable: true, get: function () { return marker_js_1.writeMarker; } });
 Object.defineProperty(exports, "detectProject", { enumerable: true, get: function () { return marker_js_1.detectProject; } });
 Object.defineProperty(exports, "findMarker", { enumerable: true, get: function () { return marker_js_1.findMarker; } });
+Object.defineProperty(exports, "findMarkerOptionsFromEnv", { enumerable: true, get: function () { return marker_js_1.findMarkerOptionsFromEnv; } });
 Object.defineProperty(exports, "buildLoadDirective", { enumerable: true, get: function () { return marker_js_1.buildLoadDirective; } });
+Object.defineProperty(exports, "buildSessionDirective", { enumerable: true, get: function () { return marker_js_1.buildSessionDirective; } });
 Object.defineProperty(exports, "reconcileMarker", { enumerable: true, get: function () { return marker_js_1.reconcileMarker; } });
+Object.defineProperty(exports, "syncNearestProjectMarker", { enumerable: true, get: function () { return marker_js_1.syncNearestProjectMarker; } });
 Object.defineProperty(exports, "acquireLock", { enumerable: true, get: function () { return marker_js_1.acquireLock; } });
 Object.defineProperty(exports, "releaseLock", { enumerable: true, get: function () { return marker_js_1.releaseLock; } });
 Object.defineProperty(exports, "markerPath", { enumerable: true, get: function () { return marker_js_1.markerPath; } });

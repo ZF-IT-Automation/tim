@@ -37,13 +37,16 @@ exports.LOCK_TTL_MS = exports.MARKER_LOCK = exports.MARKER_FILENAME = void 0;
 exports.markerPath = markerPath;
 exports.readMarker = readMarker;
 exports.writeMarker = writeMarker;
+exports.syncNearestProjectMarker = syncNearestProjectMarker;
 exports.detectProject = detectProject;
 exports.reconcileMarker = reconcileMarker;
 exports.acquireLock = acquireLock;
 exports.isSessionLocked = isSessionLocked;
 exports.releaseLock = releaseLock;
+exports.findMarkerOptionsFromEnv = findMarkerOptionsFromEnv;
 exports.findMarker = findMarker;
 exports.buildLoadDirective = buildLoadDirective;
+exports.buildSessionDirective = buildSessionDirective;
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
 const tim_store_1 = require("tim-store");
@@ -65,6 +68,22 @@ function readMarker(cwd) {
 }
 function writeMarker(cwd, marker) {
     fs.writeFileSync(markerPath(cwd), JSON.stringify(marker, null, 2));
+}
+/**
+ * Update the nearest `.tim-project` (walk-up from cwd) after tim_load_project.
+ * Statusline and hooks read this marker — must match the loaded project label.
+ */
+function syncNearestProjectMarker(startCwd, projectLabel, options) {
+    const located = findMarker(startCwd, options?.findOptions);
+    if (!located)
+        return false;
+    const sessionId = options?.sessionId?.trim();
+    writeMarker(located.dir, {
+        ...located.marker,
+        project: projectLabel,
+        ...(sessionId ? { session: sessionId } : {}),
+    });
+    return true;
 }
 /** Project detection — v1: .tim-project marker only. */
 function detectProject(cwd) {
@@ -126,6 +145,16 @@ function releaseLock(cwd) {
         /* ignore */
     }
 }
+function isInsideRoot(dir, root) {
+    const d = path.resolve(dir);
+    const r = path.resolve(root);
+    return d === r || d.startsWith(r + path.sep);
+}
+/** Test helper: TIM_MARKER_MAX_ROOT limits walk-up scope for spawned CLI. */
+function findMarkerOptionsFromEnv() {
+    const maxRoot = process.env.TIM_MARKER_MAX_ROOT?.trim();
+    return maxRoot ? { maxRoot } : undefined;
+}
 /**
  * Walk up from `startCwd` to the filesystem root and return the NEAREST
  * `.tim-project` (closest ancestor wins). Pure FS — no store, no network —
@@ -134,7 +163,8 @@ function releaseLock(cwd) {
  * If the nearest marker FILE exists but is unparseable, we STOP and return
  * null rather than silently binding an ancestor's project.
  */
-function findMarker(startCwd) {
+function findMarker(startCwd, options) {
+    const maxRoot = options?.maxRoot ? path.resolve(options.maxRoot) : null;
     let dir = path.resolve(startCwd);
     for (let i = 0; i < 256; i++) {
         if (fs.existsSync(markerPath(dir))) {
@@ -144,6 +174,8 @@ function findMarker(startCwd) {
         const parent = path.dirname(dir);
         if (parent === dir)
             break; // reached the filesystem root
+        if (maxRoot && isInsideRoot(dir, maxRoot) && !isInsideRoot(parent, maxRoot))
+            break;
         dir = parent;
     }
     return null;
@@ -163,6 +195,19 @@ function buildLoadDirective(label, markerDir) {
             `(project binding) is already decided by this marker — do NOT ask which ` +
             `project, and do NOT run any hmem/active-project cwd→project resolution. ` +
             `The TIM marker is authoritative for this turn.`,
+    ].join('\n');
+}
+/** Directive when project comes from TIM session metadata (no local .tim-project). */
+function buildSessionDirective(label, cwd) {
+    return [
+        `📍 TIM session bound to project ${label} (TIM store, cwd ${cwd}).`,
+        `This session is bound to TIM project ${label}.`,
+        ``,
+        `ACTION: call tim_load_project(label="${label}") now to load the project ` +
+            `brief from the TIM store, then run the o9k-session-start skill. STEP 1 ` +
+            `is already decided by this TIM session — do NOT ask which project, and do NOT ` +
+            `run any hmem/active-project cwd→project resolution. The TIM binding is authoritative ` +
+            `for this turn.`,
     ].join('\n');
 }
 //# sourceMappingURL=marker.js.map

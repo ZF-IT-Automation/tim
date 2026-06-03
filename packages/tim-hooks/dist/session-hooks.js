@@ -51,7 +51,7 @@ function summarizerLogPath(cwd) {
 /** Shell snippet: trap lock release, timeout, run tim-summarizer CLI with log append. */
 function buildSummarizerCommand(sessionId, lockPath, logPath, timeoutSec = exports.DEFAULT_SUMMARIZER_TIMEOUT_SEC) {
     const q = (s) => JSON.stringify(s);
-    const cmd = 'node ' + JSON.stringify(path.resolve(__dirname, '..', '..', '..', 'tim-summarizer', 'dist', 'summarize.js'));
+    const cmd = 'node ' + JSON.stringify(path.resolve(__dirname, '..', '..', 'tim-summarizer', 'dist', 'summarize.js'));
     return (`{ trap ${q(`rm -f ${lockPath}`)} EXIT; ` +
         `timeout ${timeoutSec} env TIM_SESSION_ID=${q(sessionId)} ${cmd} >>${q(logPath)} 2>&1; }`);
 }
@@ -133,7 +133,7 @@ exports.DEFAULT_PROJECT_SUMMARY_THRESHOLD = 5;
 /** Shell snippet: run tim-summarizer in --project-summary mode for a label. */
 function buildProjectSummaryCommand(label, logPath, timeoutSec = exports.DEFAULT_SUMMARIZER_TIMEOUT_SEC) {
     const q = (s) => JSON.stringify(s);
-    const cmd = 'node ' + JSON.stringify(path.resolve(__dirname, '..', '..', '..', 'tim-summarizer', 'dist', 'summarize.js'));
+    const cmd = 'node ' + JSON.stringify(path.resolve(__dirname, '..', '..', 'tim-summarizer', 'dist', 'summarize.js'));
     return `timeout ${timeoutSec} ${cmd} --project-summary ${q(label)} >>${q(logPath)} 2>&1`;
 }
 /**

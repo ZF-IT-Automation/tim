@@ -255,6 +255,10 @@ export interface TimConfig {
   batch_size?: number;
 }
 
+export {
+  type ProjectMetadata,
+  type ResolveProjectResult,
+} from './project.js';
 export { InProcessEventBus } from './event-bus.js';
 export {
   loadConfig,
@@ -266,3 +270,9 @@ export {
   type HooksConfig,
   type TimConfigFile,
 } from './config.js';
+export {
+  readTimSessionCache,
+  resolveActiveSessionId,
+  timSessionCachePath,
+  type TimSessionCache,
+} from './session-cache.js';

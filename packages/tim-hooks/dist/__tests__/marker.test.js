@@ -38,7 +38,8 @@ const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
 const marker_js_1 = require("../marker.js");
 const tim_store_1 = require("tim-store");
-const TEST_ROOT = path.join('/home/bbbee', '.tim-test-runs');
+/** Outside ~ so findMarker walk-up does not hit real ~/.tim-project */
+const TEST_ROOT = '/tmp/tim-test-runs';
 (0, vitest_1.describe)('marker', () => {
     let dir;
     (0, vitest_1.beforeEach)(() => {
@@ -107,7 +108,7 @@ const TEST_ROOT = path.join('/home/bbbee', '.tim-test-runs');
     });
     (0, vitest_1.it)('findMarker returns the marker in the cwd itself', () => {
         (0, marker_js_1.writeMarker)(dir, { project: 'P1', session: 's', exchanges: 0, batch_size: 5, batches_summarized: 0 });
-        const found = (0, marker_js_1.findMarker)(dir);
+        const found = (0, marker_js_1.findMarker)(dir, { maxRoot: dir });
         (0, vitest_1.expect)(found?.marker.project).toBe('P1');
         (0, vitest_1.expect)(found?.dir).toBe(fs.realpathSync(dir));
     });
@@ -115,32 +116,57 @@ const TEST_ROOT = path.join('/home/bbbee', '.tim-test-runs');
         (0, marker_js_1.writeMarker)(dir, { project: 'PARENT', session: 's', exchanges: 0, batch_size: 5, batches_summarized: 0 });
         const sub = path.join(dir, 'a', 'b', 'c');
         fs.mkdirSync(sub, { recursive: true });
-        (0, vitest_1.expect)((0, marker_js_1.findMarker)(sub)?.marker.project).toBe('PARENT');
+        (0, vitest_1.expect)((0, marker_js_1.findMarker)(sub, { maxRoot: dir })?.marker.project).toBe('PARENT');
     });
     (0, vitest_1.it)('findMarker: nearest marker wins over an ancestor', () => {
         (0, marker_js_1.writeMarker)(dir, { project: 'PARENT', session: 's', exchanges: 0, batch_size: 5, batches_summarized: 0 });
         const sub = path.join(dir, 'child');
         fs.mkdirSync(sub, { recursive: true });
         (0, marker_js_1.writeMarker)(sub, { project: 'CHILD', session: 's', exchanges: 0, batch_size: 5, batches_summarized: 0 });
-        (0, vitest_1.expect)((0, marker_js_1.findMarker)(sub)?.marker.project).toBe('CHILD');
+        (0, vitest_1.expect)((0, marker_js_1.findMarker)(sub, { maxRoot: dir })?.marker.project).toBe('CHILD');
     });
     (0, vitest_1.it)('findMarker returns null when no marker exists up to root (no infinite loop)', () => {
         const sub = path.join(dir, 'x', 'y');
         fs.mkdirSync(sub, { recursive: true });
-        (0, vitest_1.expect)((0, marker_js_1.findMarker)(sub)).toBeNull();
+        (0, vitest_1.expect)((0, marker_js_1.findMarker)(sub, { maxRoot: dir })).toBeNull();
     });
     (0, vitest_1.it)('findMarker stops at a corrupt nearest marker (does not silently use an ancestor)', () => {
         (0, marker_js_1.writeMarker)(dir, { project: 'PARENT', session: 's', exchanges: 0, batch_size: 5, batches_summarized: 0 });
         const sub = path.join(dir, 'child');
         fs.mkdirSync(sub, { recursive: true });
         fs.writeFileSync(path.join(sub, '.tim-project'), '{ not valid json');
-        (0, vitest_1.expect)((0, marker_js_1.findMarker)(sub)).toBeNull();
+        (0, vitest_1.expect)((0, marker_js_1.findMarker)(sub, { maxRoot: dir })).toBeNull();
     });
     (0, vitest_1.it)('buildLoadDirective embeds the label and the load instruction', () => {
         const d = (0, marker_js_1.buildLoadDirective)('P0063', '/home/bbbee/projects/tim');
         (0, vitest_1.expect)(d).toContain('P0063');
         (0, vitest_1.expect)(d).toContain('tim_load_project(label="P0063")');
         (0, vitest_1.expect)(d).toContain('.tim-project');
+    });
+    (0, vitest_1.it)('syncNearestProjectMarker overwrites project on nearest marker', () => {
+        (0, marker_js_1.writeMarker)(dir, {
+            project: 'P0062',
+            session: 'bg_old',
+            exchanges: 0,
+            batch_size: 5,
+            batches_summarized: 0,
+        });
+        const sub = path.join(dir, 'repo');
+        fs.mkdirSync(sub, { recursive: true });
+        (0, marker_js_1.writeMarker)(sub, {
+            project: 'P0062',
+            session: 'bg_old',
+            exchanges: 0,
+            batch_size: 5,
+            batches_summarized: 0,
+        });
+        (0, vitest_1.expect)((0, marker_js_1.syncNearestProjectMarker)(sub, 'P0063', {
+            sessionId: '20260602_155620_ee0929',
+            findOptions: { maxRoot: dir },
+        })).toBe(true);
+        (0, vitest_1.expect)((0, marker_js_1.readMarker)(sub)?.project).toBe('P0063');
+        (0, vitest_1.expect)((0, marker_js_1.readMarker)(sub)?.session).toBe('20260602_155620_ee0929');
+        (0, vitest_1.expect)((0, marker_js_1.readMarker)(dir)?.project).toBe('P0062');
     });
 });
 //# sourceMappingURL=marker.test.js.map

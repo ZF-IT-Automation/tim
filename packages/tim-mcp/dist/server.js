@@ -206,12 +206,14 @@ const TimCreateProjectSchema = zod_1.z.object({
     label: zod_1.z.string().describe('Project label, e.g. P0062'),
     metadata: zod_1.z.record(zod_1.z.unknown()).optional().default({}),
     content: zod_1.z.string().optional(),
+    aliases: zod_1.z.array(zod_1.z.string()).optional().describe('Short names for tim_load_project, e.g. ["o9k", "hmem"]'),
 });
 const TimLoadProjectSchema = zod_1.z.object({
     label: zod_1.z.string().describe('Project label, e.g. P0062'),
     depth: zod_1.z.number().min(1).max(5).optional().default(3),
     budget: zod_1.z.number().min(1).max(1000).optional().default(200),
     sections: zod_1.z.array(zod_1.z.string()).nullable().optional().default(null),
+    sessionId: zod_1.z.string().optional().describe('Harness session id; rebinds TIM session project_ref on load'),
 });
 const TimTasksSchema = zod_1.z.object({
     status: zod_1.z.enum(['todo', 'in_progress', 'done', 'cancelled']).optional(),
@@ -810,13 +812,18 @@ async function startServer() {
                         label: { type: 'string', description: 'Project label, e.g. P0062' },
                         metadata: { type: 'object', default: {} },
                         content: { type: 'string' },
+                        aliases: {
+                            type: 'array',
+                            items: { type: 'string' },
+                            description: 'Short names for tim_load_project, e.g. ["o9k", "hmem"]',
+                        },
                     },
                     required: ['label'],
                 },
             },
             {
                 name: 'tim_load_project',
-                description: 'Load a project by label and return it with its child tree.',
+                description: 'Load a project by label or alias and return it with its child tree.',
                 inputSchema: {
                     type: 'object',
                     properties: {
@@ -1157,30 +1164,72 @@ async function startServer() {
                     };
                 }
                 case 'tim_create_project': {
-                    const { label, metadata, content } = TimCreateProjectSchema.parse(args);
-                    const entry = await s.createProject(label, { metadata, content });
+                    const { label, metadata, content, aliases } = TimCreateProjectSchema.parse(args);
+                    const entry = await s.createProject(label, { metadata, content, aliases });
                     return {
                         content: [{ type: 'text', text: JSON.stringify(entry, null, 2) }],
                     };
                 }
                 case 'tim_load_project': {
-                    const { label, depth, budget, sections } = TimLoadProjectSchema.parse(args);
-                    const result = await s.loadProject(label, { depth, budget, sections });
+                    const { label, depth, budget, sections, sessionId: sessionIdArg } = TimLoadProjectSchema.parse(args);
+                    const resolved = await s.resolveProjectLabel(label);
+                    if (resolved.status === 'ambiguous') {
+                        return {
+                            content: [{
+                                    type: 'text',
+                                    text: `Ambiguous alias: matches ${resolved.labels.join(', ')}. Use label.`,
+                                }],
+                        };
+                    }
+                    if (resolved.status === 'not_found') {
+                        return { content: [{ type: 'text', text: `Project not found: ${label}` }] };
+                    }
+                    const projectLabel = resolved.label;
+                    const result = await s.loadProject(projectLabel, { depth, budget, sections });
                     if (!result) {
                         return { content: [{ type: 'text', text: `Project not found: ${label}` }] };
                     }
-                    // Auto-update route_exchanges_to in global ~/.tim-project
+                    const cwd = process.cwd();
+                    const sessionId = (0, tim_core_1.resolveActiveSessionId)({
+                        sessionIdArg: sessionIdArg,
+                        markerSession: (0, tim_hooks_1.findMarker)(cwd)?.marker.session,
+                    });
+                    if (sessionId) {
+                        try {
+                            await getSessions().startProjectSession({
+                                sessionId,
+                                projectId: projectLabel,
+                                agentName: 'mcp',
+                                cwd,
+                                harness: 'mcp',
+                            });
+                        }
+                        catch {
+                            // Non-critical — project brief still returned
+                        }
+                    }
                     try {
-                        const fs = await import('fs');
-                        const os = await import('os');
-                        const path = await import('path');
+                        (0, tim_hooks_1.syncNearestProjectMarker)(cwd, projectLabel, { sessionId });
+                    }
+                    catch {
+                        // Non-critical — brief still returned
+                    }
+                    // Backward-compat: global marker for tim-session-start directive injection
+                    try {
                         const globalMarker = path.join(os.homedir(), '.tim-project');
                         let marker = {};
                         if (fs.existsSync(globalMarker)) {
                             marker = JSON.parse(fs.readFileSync(globalMarker, 'utf8'));
                         }
-                        marker.route_exchanges_to = label;
-                        marker.project = marker.project || label;
+                        marker.route_exchanges_to = projectLabel;
+                        marker.project = projectLabel;
+                        if (sessionId) {
+                            const sessions = typeof marker.sessions === 'object' && marker.sessions !== null
+                                ? { ...marker.sessions }
+                                : {};
+                            sessions[projectLabel] = sessionId;
+                            marker.sessions = sessions;
+                        }
                         fs.writeFileSync(globalMarker, JSON.stringify(marker, null, 2) + '\n');
                     }
                     catch {

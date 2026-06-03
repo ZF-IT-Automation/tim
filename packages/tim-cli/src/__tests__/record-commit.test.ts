@@ -69,7 +69,9 @@ describe('tim record-commit', () => {
   it('exits 0 silently when no marker', () => {
     const bare = fs.mkdtempSync(path.join(TEST_ROOT, 'bare-'));
     try {
-      expect(run(['record-commit', '--cwd', bare], { TIM_DB_PATH: dbPath }).trim()).toBe('');
+      expect(
+        run(['record-commit', '--cwd', bare], { TIM_DB_PATH: dbPath, TIM_MARKER_MAX_ROOT: bare }).trim(),
+      ).toBe('');
     } finally {
       fs.rmSync(bare, { recursive: true, force: true });
     }

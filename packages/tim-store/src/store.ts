@@ -9,6 +9,7 @@ import type {
   SearchOptions, MemoryInterface, HealthReport, MemoryStats,
   AgentIdentity, StagingRecord, ContentType,
   SyncEntity, SyncOperation, EventBus, EventType,
+  ResolveProjectResult,
 } from 'tim-core';
 import { runMigrations, createTriggers, getCurrentVersion } from './schema.js';
 import { CurateManager } from './curate.js';
@@ -21,6 +22,8 @@ export interface TimStoreOptions {
 export interface CreateProjectOptions {
   content?: string;
   metadata?: Record<string, unknown>;
+  /** Short names for tim_load_project (e.g. ["o9k", "hmem"]). Stored lowercase. */
+  aliases?: string[];
 }
 
 export interface LoadProjectOptions {
@@ -132,20 +135,63 @@ export class TimStore implements MemoryInterface {
     label: string,
     options: CreateProjectOptions = {},
   ): Promise<Entry> {
+    const aliases = normalizeProjectAliases(options.aliases);
     const metadata = {
       ...(options.metadata ?? {}),
       kind: 'project',
       label,
+      ...(aliases.length > 0 ? { aliases } : {}),
     };
 
     return this.write(options.content ?? label, { metadata });
+  }
+
+  /**
+   * Resolve a project label or alias to a canonical P-label.
+   * Direct label/id lookup first, then metadata.aliases scan.
+   */
+  async resolveProjectLabel(query: string): Promise<ResolveProjectResult> {
+    const q = query.trim();
+    if (!q) return { status: 'not_found', query: q };
+
+    const direct = await this.read(q);
+    if (direct?.metadata.kind === 'project') {
+      const label = typeof direct.metadata.label === 'string' ? direct.metadata.label : q;
+      return { status: 'found', label };
+    }
+
+    const needle = q.toLowerCase();
+    const rows = this.db.prepare(`
+      SELECT metadata FROM entries
+      WHERE json_extract(metadata, '$.kind') = 'project'
+        AND irrelevant = 0
+        AND tombstoned_at IS NULL
+    `).all() as { metadata: string }[];
+
+    const matches: string[] = [];
+    for (const row of rows) {
+      const meta = JSON.parse(row.metadata) as Record<string, unknown>;
+      const label = typeof meta.label === 'string' ? meta.label : '';
+      if (!label) continue;
+      const aliases = Array.isArray(meta.aliases) ? meta.aliases : [];
+      if (aliases.some(a => String(a).toLowerCase() === needle)) {
+        if (!matches.includes(label)) matches.push(label);
+      }
+    }
+
+    if (matches.length === 0) return { status: 'not_found', query: q };
+    if (matches.length === 1) return { status: 'found', label: matches[0]! };
+    return { status: 'ambiguous', query: q, labels: matches.sort() };
   }
 
   async loadProject(
     label: string,
     options: LoadProjectOptions = {},
   ): Promise<LoadProjectResult | null> {
-    const project = await this.read(label);
+    const resolved = await this.resolveProjectLabel(label);
+    if (resolved.status !== 'found') return null;
+
+    const project = await this.read(resolved.label);
     if (!project) return null;
 
     const depth = options.depth ?? 3;
@@ -321,7 +367,7 @@ export class TimStore implements MemoryInterface {
         title: row.title,
         content: row.content,
         parent_id: row.parent_id,
-        project_label: this.resolveProjectLabel(row.parent_id),
+        project_label: this.findProjectLabelForParent(row.parent_id),
         status: (meta.status as string | undefined) ?? null,
         priority: (meta.priority as string | undefined) ?? null,
         due: (meta.due as string | undefined) ?? null,
@@ -329,7 +375,7 @@ export class TimStore implements MemoryInterface {
     });
   }
 
-  private resolveProjectLabel(startParentId: string | null): string | null {
+  private findProjectLabelForParent(startParentId: string | null): string | null {
     let currentId = startParentId;
     while (currentId) {
       const row = this.db.prepare(
@@ -913,6 +959,17 @@ interface RowStaging {
 }
 
 // ─── Row → Domain Mappers ───────────────────────────────
+
+function normalizeProjectAliases(aliases?: string[]): string[] {
+  if (!aliases?.length) return [];
+  const out: string[] = [];
+  for (const raw of aliases) {
+    const a = raw.trim().toLowerCase();
+    if (!a || out.includes(a)) continue;
+    out.push(a);
+  }
+  return out;
+}
 
 function splitTitleBody(content: string, explicitTitle?: string): { title: string; body: string } {
   if (explicitTitle !== undefined) {

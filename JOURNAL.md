@@ -312,3 +312,184 @@ cd ~/projects/tim && npm install && npx tsc -b
 npm test
 npx vitest run packages/tim-store/src/__tests__/session.test.ts packages/tim-hooks/src/__tests__/session-hooks.test.ts packages/tim-summarizer/src/__tests__
 ```
+
+
+# JOURNAL — Design: .tim-project multi-session routing fix (2026-06-02, DESIGN ONLY)
+
+## Root cause
+Post-hook `o9k-log-exchange.sh` ignores the `.session_id` already in its own stdin payload and instead routes via the **global** `~/.tim-project` `route_exchanges_to` — a singleton, last-write-wins. Two parallel sessions binding different projects clobber it → exchanges misroute or drop (`sessions[route]` empty → exit 0). Key fact: the Hermes `session_id` (e.g. `20260602_155620_ee0929`) is in **both** hook payloads (`shell_hooks.py:478`) and is adopted *verbatim* as the TIM session id (`cli.ts:226`). So the live session is already uniquely identified at log time.
+
+## Chosen fix — route by the id the hook already holds
+In `o9k-log-exchange.sh` (Hermes hook, `~/projects/hmem/hermes-hooks/`): read `.session_id`; precedence (1) local `.tim-project` cwd-walk for in-project sessions, (2) use `.session_id` directly as the TIM session id. Remove `route_exchanges_to` from the logging path. Keep existing "no session → exit 0" guard.
+
+## Why this beats all three proposed alternatives
+- Logging hot path no longer reads/writes the shared global map → **no lost-update race, no lock, no per-session files, no contention** under the 30s hook timeout.
+- session→project array / multi-entry sessions map / `.tim-project.<id>` files all solve a routing problem that evaporates once the hook uses its own payload id; they'd add the very RMW/lock/cleanup complexity we can avoid.
+- Backward-compat: `sessions` map + `route_exchanges_to` stay (used by `tim-session-start.sh` for out-of-cwd binding injection) but are no longer authoritative for logging.
+
+## Scope & caveats
+- ~5-line change to one shell hook. **No TIM TS change, no harness plumbing** (id already passed). Optional honesty fix: add `sessions?`/`route_exchanges_to?` to `ProjectMarker` (`marker.ts`).
+- Verify in impl: `tim-session-start.sh` starts/refreshes the TIM session for the live `session_id` before the first post-hook (`is_first_turn` gate); keep graceful no-op if the id has no project-bound TIM session.
+- File distinction: race is on **global** `~/.tim-project`; project-scoped `.tim-project` (cwd) is untouched and remains the in-project routing source.
+
+
+# JOURNAL — Impl: .tim-project multi-session routing fix (2026-06-03)
+
+## Done
+
+1. **`o9k-log-exchange.sh`** — resolve session: (1) cwd-walk `.tim-project.session`, (2) payload `.session_id`. Dropped `route_exchanges_to` / `sessions[]` lookup on log path.
+2. **`tim_load_project`** — after `loadProject`, `startProjectSession` rebinds `project_ref` when `sessionId` known (`sessionId` arg → `TIM_SESSION_ID` → local marker `.session`). Global `~/.tim-project` still gets `route_exchanges_to` + `sessions[label]` for `tim-session-start.sh` directive only.
+3. **`startProjectSession`** — existing session: update `project_ref` if label changed (no tree move).
+4. **`ProjectMarker`** — optional `route_exchanges_to`, `sessions` for global marker typing.
+
+## Decisions
+
+- Log path **never** reads global singleton for routing — hook payload id is authoritative for out-of-cwd Hermes (~).
+- `tim_load_project` rebind needs session id from env/marker/arg; MCP stdio has no Hermes session in request — `TIM_SESSION_ID` or first-turn marker fill gap.
+- Physical session node stays under original project's `Sessions` section on mid-switch; `project_ref` metadata drives summarizer/checkpoint context. Tree move deferred (high blast radius).
+
+## Edge cases
+
+- `tim hook log` with unknown session id → CLI/store error swallowed in hook (`|| true`) — same as before when `sessions[route]` empty.
+- Parallel sessions same project label → both log to distinct session ids; `sessions[P0062]` in global marker is last `tim_load_project` only (directive hint, not log route).
+- Local `.tim-project.session` overrides payload id — intentional for in-repo dev sessions with explicit marker session field.
+- `startProjectSession` rebind without `sessionId` in `tim_load_project` → brief only, no DB rebind (agent must have run session-start first or pass id).
+
+## Gotchas
+
+- Hermes hook lives in **`~/projects/hmem/hermes-hooks/`** — symlink to `~/.hermes/agent-hooks/` if deploy uses copy.
+- Rebuild `tim-mcp` / `tim-store` before MCP picks up `tim_load_project` rebind.
+- `tim-session-start.sh` unchanged — first turn still starts TIM session + updates global `sessions` map; logging no longer depends on it.
+
+## Verify
+
+```bash
+cd ~/projects/tim && npx tsc -b
+npx vitest run packages/tim-mcp packages/tim-hooks packages/tim-store/src/__tests__/session.test.ts
+```
+Manual: two Hermes sessions in `~`, bind P0062 vs MAIMO, exchange each — check TIM DB session ids get correct `project_ref` and exchanges under right session nodes.
+
+
+# JOURNAL — Impl: tim statusline + marker test isolation (2026-06-03)
+
+## Done
+
+1. **`tim statusline`** — `packages/tim-cli/src/statusline.ts` + CLI case. Stdin JSON → `cwd` / `workspace.current_dir` → `findMarker` → one line: `P00XX · n/BATCH exchanges · summary in K`.
+2. **`~/.claude/settings.json`** — `statusLine.command` → TIM CLI; `timeout: 3`.
+3. **Marker test isolation** — `findMarker(cwd, { maxRoot })` stops walk before `/tmp/.tim-project` or `~/.tim-project`. Tests use `/tmp/tim-test-runs` + `maxRoot: dir`. CLI tests set `TIM_MARKER_MAX_ROOT`.
+
+## Decisions
+
+- **K (summary in)** — `batch_size - (exchanges % batch_size)`; at boundary (`exchanges > 0`, mod 0) → `summary in 0`; at zero exchanges → `summary in batch_size`.
+- **Display n** — `exchangesInCurrentBatch` (mod; full batch shows `B/B` at boundary).
+- **No marker** — plain `no project` (no ANSI; hmem used colors — TIM kept minimal for 3s timeout).
+- **maxRoot** — production unset; test-only via arg or `TIM_MARKER_MAX_ROOT` env (not documented in user help — test harness).
+
+## Edge cases
+
+- Corrupt nearest marker → `no project` (findMarker returns null).
+- `batch_size` missing/0 in marker → treat as 5 in formatter.
+- Cwd-less stdin → `process.cwd()` for marker walk.
+- `/tmp/.tim-project` on machine pollutes any cwd under `/tmp` without maxRoot — real footgun for ad-hoc /tmp workdirs.
+
+## Gotchas
+
+- Rebuild `packages/tim-cli/dist` after pull; Claude settings point at dist path.
+- Statusline reads **marker cache** (`exchanges` field), not live DB — stale until reconcile/checkpoint updates marker.
+- `detectProject` only reads exact cwd file (no walk) — unaffected by global markers.
+
+## Verify
+
+```bash
+cd ~/projects/tim && npx tsc -b && npx vitest run packages/tim-cli packages/tim-hooks/src/__tests__/marker.test.ts
+node packages/tim-cli/dist/cli.js statusline <<< '{"cwd":"/path/with/.tim-project"}'
+```
+
+
+# JOURNAL — Impl: statusLine fix + project aliases (2026-06-03)
+
+## Bug 1 — Claude statusLine
+
+**Root cause:** `timeout: 3` on `statusLine` is invalid — Claude docs use `refreshInterval` (seconds), not `timeout` (hooks-only). Bad field likely dropped whole statusLine config.
+
+**Fix:**
+- Removed `timeout` from `~/.claude/settings.json`
+- Wrapper `tim-hooks/scripts/tim-statusline.sh` (bash + stderr silenced) like hmem
+- `readStatuslineInputSync()` via `fs.readFileSync(0)` — async stdin missed short pipes
+- Trailing newline on stdout
+
+## Feature 2 — Project aliases
+
+- `tim-core/project.ts` — `ProjectMetadata.aliases`, `ResolveProjectResult`
+- `TimStore.resolveProjectLabel()` — direct label → alias scan
+- `tim_load_project` — ambiguous / not-found messages per spec
+- `tim_create_project` — `aliases: string[]` (stored lowercase)
+
+## Verify
+
+```bash
+npx tsc -b && npx vitest run packages/tim-store packages/tim-cli packages/tim-hooks
+printf '{"workspace":{"current_dir":"~/projects/tim"}}' | bash packages/tim-hooks/scripts/tim-statusline.sh
+```
+
+Claude: restart / new message after settings change — statusLine reloads on next interaction.
+
+
+# JOURNAL — Hermes status bar (TIM package) (2026-06-03)
+
+## Correction
+
+Statusline target is **Hermes TUI**, not Claude `statusLine`. Hermes has no settings.json statusLine hook.
+
+## Mechanism (matches hmem)
+
+1. **`tim-hermes-session-cache.sh`** — `pre_llm_call`, writes `~/.tim/.session-cache`, returns `{}`
+2. **`tim-hermes-statusline.sh`** — Hermes patched `cli.py` calls via subprocess → JSON stdout
+3. **`hermes-cli-tim-statusline.patch`** — `_get_tim_status()` in Hermes CLI
+4. **`tim statusline --format hermes`** — `--cwd`, `--session` for marker or TIM DB fallback
+
+`pre_llm_call` `{context:...}` = prompt injection only (`tim-session-start.sh`), not status bar.
+
+## Install
+
+See `packages/tim-hooks/scripts/README-hermes-statusline.md`. Reverted `~/.claude/settings.json` statusLine to hmem.
+
+## Gotchas
+
+- Hermes CLI patch required — stock Hermes has no status script hook
+- If hmem patch already applied: point script to `tim-hermes-statusline.sh` or merge patches
+- Cache TTL 1h in statusline script; cache hook runs every turn
+
+## Setup command
+
+`tim setup-hermes-statusline` — idempotent install (symlinks, config.yaml, programmatic cli.py patch, optional tsc). **Gotcha:** inject before `@staticmethod\n    def _status_bar_display_width` — inserting only at `def _status_bar_display_width` steals `@staticmethod` onto `_get_tim_status` and breaks Hermes TUI (`_status_bar_display_width() takes 1 positional argument but 2 were given`). `isHermesCliBroken()` + repair path in patcher.
+
+
+# JOURNAL — Impl: tim-session-start race fix (2026-06-03)
+
+## Done
+
+1. **`tim resolve-session`** — `--session <id>` reads TIM DB → `metadata.project_ref`; formats `label|directive|json`. Directive via `buildSessionDirective` (TIM store, not `.tim-project` path).
+2. **`tim-session-start.sh`** — resolve order: (1) cwd-walk `.tim-project`, (2) `resolve-session` from payload `session_id`. Removed `route_exchanges_to` read + global `~/.tim-project` sessions-map writes.
+3. **`o9k-session-start` SKILL** — STEP 1 covers `📍 TIM session bound` directive.
+
+## Decisions
+
+- Session-start matches logging: per-session id authoritative; no global singleton reads.
+- `hook session-start` still runs with resolved label (creates/refreshes subtree).
+- Dropped global marker RMW on first turn — was last-write-wins; `tim_load_project` may still write `route_exchanges_to` for legacy tools (not used by this hook).
+
+## Edge cases
+
+- No local marker + session never in TIM → `{}` (no directive).
+- Session in TIM without `project_ref` → skip TIM fallback.
+- Local marker wins over TIM when both exist (in-repo dev).
+
+## Verify
+
+```bash
+cd ~/projects/tim && npx tsc -b
+npx vitest run packages/tim-cli packages/tim-hooks
+printf '{"cwd":"%s","session_id":"KNOWN_ID","extra":{"is_first_turn":true}}' "$HOME" \
+  | bash packages/tim-hooks/scripts/tim-session-start.sh
+```

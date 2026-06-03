@@ -1,7 +1,8 @@
 import type { UnsummarizedBatch } from './mcp-client.js';
-import { exec } from 'child_process';
-import { promisify } from 'util';
-import { loadConfig } from 'tim-core';
+import { spawn } from 'child_process';
+import * as fs from 'fs';
+import * as path from 'path';
+import { getTimDir, loadConfig } from 'tim-core';
 
 /** Compact thematic summary for a batch (no external API required). */
 export function generateSummaryHeuristic(batch: UnsummarizedBatch): string {
@@ -39,6 +40,56 @@ function buildPrompt(batch: UnsummarizedBatch): string {
   );
 }
 
+function appendSummarizerLog(line: string): void {
+  try {
+    const logPath = path.join(getTimDir(), 'summarizer.log');
+    fs.appendFileSync(logPath, `${new Date().toISOString()} ${line}\n`);
+  } catch {
+    // ignore log write failures
+  }
+}
+
+function runCliProcess(
+  command: string,
+  args: string[],
+  prompt: string | null,
+  timeoutSec: number,
+): Promise<{ stdout: string; stderr: string; code: number | null; signal: NodeJS.Signals | null; timedOut: boolean }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { stdio: ['pipe', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    let timedOut = false;
+
+    child.stdout.on('data', (chunk: Buffer) => {
+      stdout += chunk.toString();
+    });
+    child.stderr.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
+
+    if (prompt !== null) {
+      child.stdin.write(prompt);
+    }
+    child.stdin.end();
+
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill('SIGTERM');
+    }, timeoutSec * 1000);
+
+    child.on('error', err => {
+      clearTimeout(timer);
+      reject(err);
+    });
+
+    child.on('close', (code, signal) => {
+      clearTimeout(timer);
+      resolve({ stdout, stderr, code, signal, timedOut });
+    });
+  });
+}
+
 async function tryCli(
   cli: string,
   model: string,
@@ -46,23 +97,53 @@ async function tryCli(
   prompt: string,
   timeoutSec: number,
 ): Promise<string | null> {
-  const q = (s: string) => JSON.stringify(s);
-  let cmd: string;
+  const label = provider ? `${cli}/${provider}/${model}` : `${cli}/${model}`;
+  let command: string;
+  let args: string[];
+  let stdinPrompt: string | null;
+
   if (cli === 'codex') {
-    cmd = `echo ${q(prompt)} | codex exec --model ${q(model)} --skip-git-repo-check`;
+    command = 'codex';
+    args = ['exec', '--model', model, '--skip-git-repo-check'];
+    stdinPrompt = prompt;
   } else if (cli === 'opencode') {
     const fullModel = provider ? `${provider}/${model}` : model;
-    cmd = `opencode run -m ${q(fullModel)} ${q(prompt)}`;
+    // No non-agentic opencode subcommand; pass prompt via stdin (no shell).
+    command = 'opencode';
+    args = ['run', '-m', fullModel, '--print-logs'];
+    stdinPrompt = prompt;
   } else {
-    cmd = `${q(cli)} --model ${q(model)} --prompt ${q(prompt)}`;
-    if (provider) cmd = `${q(cli)} --provider ${q(provider)} --model ${q(model)} --prompt ${q(prompt)}`;
+    command = cli;
+    args = provider
+      ? ['--provider', provider, '--model', model, '--prompt', prompt]
+      : ['--model', model, '--prompt', prompt];
+    stdinPrompt = null;
   }
 
   try {
-    const { stdout } = await promisify(exec)(cmd, {
-      timeout: timeoutSec * 1000,
-      maxBuffer: 64 * 1024,
-    });
+    const { stdout, stderr, code, signal, timedOut } = await runCliProcess(
+      command,
+      args,
+      stdinPrompt,
+      timeoutSec,
+    );
+    if (timedOut || code !== 0 || signal) {
+      const detail = [
+        timedOut ? `timeout=${timeoutSec}s` : null,
+        `exit=${code ?? 'null'}`,
+        signal ? `signal=${signal}` : null,
+        stderr.trim() ? `stderr=${stderr.trim().slice(0, 4000)}` : null,
+        stdout.trim() ? `stdout=${stdout.trim().slice(0, 1000)}` : null,
+      ]
+        .filter(Boolean)
+        .join(' ');
+      appendSummarizerLog(`FAIL ${label}: ${detail}`);
+      if (process.env.TIM_SUMMARIZER_VERBOSE) {
+        console.error(`tim-summarizer: ${label} failed (${detail})`);
+      }
+      return null;
+    }
+
     let text = stdout.trim();
     if (cli === 'codex') {
       // Parse: ...\ncodex\n<response>\ntokens used\n...
@@ -75,8 +156,23 @@ async function tryCli(
         text = text.trim();
       }
     }
-    return text.length > 0 ? text : null;
-  } catch {
+    if (text.length === 0) {
+      const detail = stderr.trim()
+        ? `empty stdout; stderr=${stderr.trim().slice(0, 4000)}`
+        : 'empty stdout';
+      appendSummarizerLog(`FAIL ${label}: ${detail}`);
+      if (process.env.TIM_SUMMARIZER_VERBOSE) {
+        console.error(`tim-summarizer: ${label} ${detail}`);
+      }
+      return null;
+    }
+    return text;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    appendSummarizerLog(`FAIL ${label}: spawn error: ${msg}`);
+    if (process.env.TIM_SUMMARIZER_VERBOSE) {
+      console.error(`tim-summarizer: ${label} error: ${msg}`);
+    }
     return null;
   }
 }

@@ -44,7 +44,7 @@ export function buildSummarizerCommand(
   timeoutSec: number = DEFAULT_SUMMARIZER_TIMEOUT_SEC,
 ): string {
   const q = (s: string) => JSON.stringify(s);
-  const cmd = 'node ' + JSON.stringify(path.resolve(__dirname, '..', '..', '..', 'tim-summarizer', 'dist', 'summarize.js'));
+  const cmd = 'node ' + JSON.stringify(path.resolve(__dirname, '..', '..', 'tim-summarizer', 'dist', 'summarize.js'));
   return (
     `{ trap ${q(`rm -f ${lockPath}`)} EXIT; ` +
     `timeout ${timeoutSec} env TIM_SESSION_ID=${q(sessionId)} ${cmd} >>${q(logPath)} 2>&1; }`
@@ -150,7 +150,7 @@ export function buildProjectSummaryCommand(
   timeoutSec: number = DEFAULT_SUMMARIZER_TIMEOUT_SEC,
 ): string {
   const q = (s: string) => JSON.stringify(s);
-  const cmd = 'node ' + JSON.stringify(path.resolve(__dirname, '..', '..', '..', 'tim-summarizer', 'dist', 'summarize.js'));
+  const cmd = 'node ' + JSON.stringify(path.resolve(__dirname, '..', '..', 'tim-summarizer', 'dist', 'summarize.js'));
   return `timeout ${timeoutSec} ${cmd} --project-summary ${q(label)} >>${q(logPath)} 2>&1`;
 }
 

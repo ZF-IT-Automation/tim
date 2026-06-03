@@ -18,8 +18,13 @@ import {
   type TaskRecord,
   type ProjectSchema,
 } from 'tim-store';
-import { loadConfig, type EdgeType, type Entry } from 'tim-core';
-import { getActiveProjectLabel, maybeSpawnSummarizer } from 'tim-hooks';
+import { loadConfig, resolveActiveSessionId, type EdgeType, type Entry } from 'tim-core';
+import {
+  findMarker,
+  getActiveProjectLabel,
+  maybeSpawnSummarizer,
+  syncNearestProjectMarker,
+} from 'tim-hooks';
 import { tim_export, tim_import } from 'tim-migrate';
 import { autoPush, autoPull } from 'tim-sync-client';
 import * as fs from 'fs';
@@ -210,6 +215,7 @@ const TimCreateProjectSchema = z.object({
   label: z.string().describe('Project label, e.g. P0062'),
   metadata: z.record(z.unknown()).optional().default({}),
   content: z.string().optional(),
+  aliases: z.array(z.string()).optional().describe('Short names for tim_load_project, e.g. ["o9k", "hmem"]'),
 });
 
 const TimLoadProjectSchema = z.object({
@@ -217,6 +223,7 @@ const TimLoadProjectSchema = z.object({
   depth: z.number().min(1).max(5).optional().default(3),
   budget: z.number().min(1).max(1000).optional().default(200),
   sections: z.array(z.string()).nullable().optional().default(null),
+  sessionId: z.string().optional().describe('Harness session id; rebinds TIM session project_ref on load'),
 });
 
 const TimTasksSchema = z.object({
@@ -849,13 +856,18 @@ export async function startServer(): Promise<void> {
             label: { type: 'string', description: 'Project label, e.g. P0062' },
             metadata: { type: 'object', default: {} },
             content: { type: 'string' },
+            aliases: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'Short names for tim_load_project, e.g. ["o9k", "hmem"]',
+            },
           },
           required: ['label'],
         },
       },
       {
         name: 'tim_load_project',
-        description: 'Load a project by label and return it with its child tree.',
+        description: 'Load a project by label or alias and return it with its child tree.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -1231,32 +1243,78 @@ export async function startServer(): Promise<void> {
         }
 
         case 'tim_create_project': {
-          const { label, metadata, content } = TimCreateProjectSchema.parse(args);
-          const entry = await s.createProject(label, { metadata, content });
+          const { label, metadata, content, aliases } = TimCreateProjectSchema.parse(args);
+          const entry = await s.createProject(label, { metadata, content, aliases });
           return {
             content: [{ type: 'text', text: JSON.stringify(entry, null, 2) }],
           };
         }
 
         case 'tim_load_project': {
-          const { label, depth, budget, sections } = TimLoadProjectSchema.parse(args);
-          const result = await s.loadProject(label, { depth, budget, sections });
+          const { label, depth, budget, sections, sessionId: sessionIdArg } =
+            TimLoadProjectSchema.parse(args);
+          const resolved = await s.resolveProjectLabel(label);
+          if (resolved.status === 'ambiguous') {
+            return {
+              content: [{
+                type: 'text',
+                text: `Ambiguous alias: matches ${resolved.labels.join(', ')}. Use label.`,
+              }],
+            };
+          }
+          if (resolved.status === 'not_found') {
+            return { content: [{ type: 'text', text: `Project not found: ${label}` }] };
+          }
+
+          const projectLabel = resolved.label;
+          const result = await s.loadProject(projectLabel, { depth, budget, sections });
           if (!result) {
             return { content: [{ type: 'text', text: `Project not found: ${label}` }] };
           }
 
-          // Auto-update route_exchanges_to in global ~/.tim-project
+          const cwd = process.cwd();
+          const sessionId = resolveActiveSessionId({
+            sessionIdArg: sessionIdArg,
+            markerSession: findMarker(cwd)?.marker.session,
+          });
+
+          if (sessionId) {
+            try {
+              await getSessions().startProjectSession({
+                sessionId,
+                projectId: projectLabel,
+                agentName: 'mcp',
+                cwd,
+                harness: 'mcp',
+              });
+            } catch {
+              // Non-critical — project brief still returned
+            }
+          }
+
           try {
-            const fs = await import('fs');
-            const os = await import('os');
-            const path = await import('path');
+            syncNearestProjectMarker(cwd, projectLabel, { sessionId });
+          } catch {
+            // Non-critical — brief still returned
+          }
+
+          // Backward-compat: global marker for tim-session-start directive injection
+          try {
             const globalMarker = path.join(os.homedir(), '.tim-project');
             let marker: Record<string, unknown> = {};
             if (fs.existsSync(globalMarker)) {
               marker = JSON.parse(fs.readFileSync(globalMarker, 'utf8'));
             }
-            marker.route_exchanges_to = label;
-            marker.project = marker.project || label;
+            marker.route_exchanges_to = projectLabel;
+            marker.project = projectLabel;
+            if (sessionId) {
+              const sessions =
+                typeof marker.sessions === 'object' && marker.sessions !== null
+                  ? { ...(marker.sessions as Record<string, string>) }
+                  : {};
+              sessions[projectLabel] = sessionId;
+              marker.sessions = sessions;
+            }
             fs.writeFileSync(globalMarker, JSON.stringify(marker, null, 2) + '\n');
           } catch {
             // Non-critical — don't fail the request

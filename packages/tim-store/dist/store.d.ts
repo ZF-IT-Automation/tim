@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3';
-import type { Entry, Edge, EdgeType, ReadOptions, WriteOptions, DecayOptions, SearchOptions, MemoryInterface, HealthReport, MemoryStats, AgentIdentity, StagingRecord, EventBus } from 'tim-core';
+import type { Entry, Edge, EdgeType, ReadOptions, WriteOptions, DecayOptions, SearchOptions, MemoryInterface, HealthReport, MemoryStats, AgentIdentity, StagingRecord, EventBus, ResolveProjectResult } from 'tim-core';
 import { CurateManager } from './curate.js';
 export interface TimStoreOptions {
     emitter?: Pick<EventBus, 'emit'>;
@@ -8,6 +8,8 @@ export interface TimStoreOptions {
 export interface CreateProjectOptions {
     content?: string;
     metadata?: Record<string, unknown>;
+    /** Short names for tim_load_project (e.g. ["o9k", "hmem"]). Stored lowercase. */
+    aliases?: string[];
 }
 export interface LoadProjectOptions {
     depth?: number;
@@ -41,6 +43,11 @@ export declare class TimStore implements MemoryInterface {
     read(id: string, options?: ReadOptions): Promise<Entry | null>;
     private loadChildrenRecursive;
     createProject(label: string, options?: CreateProjectOptions): Promise<Entry>;
+    /**
+     * Resolve a project label or alias to a canonical P-label.
+     * Direct label/id lookup first, then metadata.aliases scan.
+     */
+    resolveProjectLabel(query: string): Promise<ResolveProjectResult>;
     loadProject(label: string, options?: LoadProjectOptions): Promise<LoadProjectResult | null>;
     /**
      * Count sessions recorded under a project (by label or id). One session
@@ -57,7 +64,7 @@ export declare class TimStore implements MemoryInterface {
     getChildByKind(parentId: string, kind: string): Promise<Entry[]>;
     getChildrenBySeq(parentId: string): Promise<Entry[]>;
     getTasks(opts?: GetTasksOptions): Promise<TaskRecord[]>;
-    private resolveProjectLabel;
+    private findProjectLabelForParent;
     close(): void;
     curate(): CurateManager;
     /** @internal Exposed for tests */
