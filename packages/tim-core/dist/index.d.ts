@@ -186,4 +186,5 @@ export { type ProjectMetadata, type ResolveProjectResult, } from './project.js';
 export { InProcessEventBus } from './event-bus.js';
 export { loadConfig, saveConfig, getConfigPath, getTimDir, normalizeHookScripts, hooksEnabled, type HooksConfig, type TimConfigFile, } from './config.js';
 export { readTimSessionCache, resolveActiveSessionId, timSessionCachePath, type TimSessionCache, } from './session-cache.js';
+export { evaluateLoadGate } from './load-gate.js';
 //# sourceMappingURL=index.d.ts.map

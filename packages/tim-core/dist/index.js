@@ -2,7 +2,7 @@
 // TIM Core Types — v0.1.0-alpha
 // These types define the contract that all modules must implement.
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.timSessionCachePath = exports.resolveActiveSessionId = exports.readTimSessionCache = exports.hooksEnabled = exports.normalizeHookScripts = exports.getTimDir = exports.getConfigPath = exports.saveConfig = exports.loadConfig = exports.InProcessEventBus = void 0;
+exports.evaluateLoadGate = exports.timSessionCachePath = exports.resolveActiveSessionId = exports.readTimSessionCache = exports.hooksEnabled = exports.normalizeHookScripts = exports.getTimDir = exports.getConfigPath = exports.saveConfig = exports.loadConfig = exports.InProcessEventBus = void 0;
 var event_bus_js_1 = require("./event-bus.js");
 Object.defineProperty(exports, "InProcessEventBus", { enumerable: true, get: function () { return event_bus_js_1.InProcessEventBus; } });
 var config_js_1 = require("./config.js");
@@ -16,4 +16,6 @@ var session_cache_js_1 = require("./session-cache.js");
 Object.defineProperty(exports, "readTimSessionCache", { enumerable: true, get: function () { return session_cache_js_1.readTimSessionCache; } });
 Object.defineProperty(exports, "resolveActiveSessionId", { enumerable: true, get: function () { return session_cache_js_1.resolveActiveSessionId; } });
 Object.defineProperty(exports, "timSessionCachePath", { enumerable: true, get: function () { return session_cache_js_1.timSessionCachePath; } });
+var load_gate_js_1 = require("./load-gate.js");
+Object.defineProperty(exports, "evaluateLoadGate", { enumerable: true, get: function () { return load_gate_js_1.evaluateLoadGate; } });
 //# sourceMappingURL=index.js.map

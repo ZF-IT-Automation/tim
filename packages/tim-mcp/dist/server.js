@@ -155,6 +155,7 @@ const TimWriteBatchSummarySchema = zod_1.z.object({
     summary: zod_1.z.string(),
     seqFrom: zod_1.z.number().int().nonnegative(),
     seqTo: zod_1.z.number().int().nonnegative(),
+    tags: zod_1.z.array(zod_1.z.string()).optional(),
 });
 const TimRecordCommitSchema = zod_1.z.object({
     projectId: zod_1.z.string().describe('Project label, e.g. P0063'),
@@ -214,6 +215,13 @@ const TimLoadProjectSchema = zod_1.z.object({
     budget: zod_1.z.number().min(1).max(1000).optional().default(200),
     sections: zod_1.z.array(zod_1.z.string()).nullable().optional().default(null),
     sessionId: zod_1.z.string().optional().describe('Harness session id; rebinds TIM session project_ref on load'),
+    switch: zod_1.z.boolean().optional().default(false).describe('Allow switching to a different project mid-session'),
+});
+const TimReadProjectSchema = zod_1.z.object({
+    label: zod_1.z.string().describe('Project label, e.g. P0062'),
+    depth: zod_1.z.number().min(1).max(5).optional().default(3),
+    budget: zod_1.z.number().min(1).max(1000).optional().default(200),
+    sections: zod_1.z.array(zod_1.z.string()).nullable().optional().default(null),
 });
 const TimTasksSchema = zod_1.z.object({
     status: zod_1.z.enum(['todo', 'in_progress', 'done', 'cancelled']).optional(),
@@ -428,8 +436,8 @@ const WRITE_TOOLS = new Set([
 ]);
 const READ_TOOLS = new Set([
     'tim_read', 'tim_search', 'tim_trace', 'tim_health', 'tim_stats',
-    'tim_export', 'tim_doctor', 'tim_sync', 'tim_load_project', 'tim_tasks',
-    'tim_show_unsummarized', 'tim_show_all_unsummarized',
+    'tim_export', 'tim_doctor', 'tim_sync', 'tim_load_project', 'tim_read_project', 'tim_tasks',
+    'tim_show_unsummarized', 'tim_show_all_unsummarized', 'tim_show_untagged',
 ]);
 function scheduleAutoSync(toolName, s) {
     if (WRITE_TOOLS.has(toolName)) {
@@ -687,6 +695,14 @@ async function startServer() {
                 },
             },
             {
+                name: 'tim_show_untagged',
+                description: 'Return batch-summary nodes that have only structural tags (#session-summary, #batch-summary) and no content hashtags. Use for re-tagging failed or legacy summaries.',
+                inputSchema: {
+                    type: 'object',
+                    properties: {},
+                },
+            },
+            {
                 name: 'tim_write_batch_summary',
                 description: 'Write an idempotent Batch summary node under the session Summary tree. Used by tim-summarizer CLI.',
                 inputSchema: {
@@ -697,6 +713,7 @@ async function startServer() {
                         summary: { type: 'string' },
                         seqFrom: { type: 'number', minimum: 0 },
                         seqTo: { type: 'number', minimum: 0 },
+                        tags: { type: 'array', items: { type: 'string' } },
                     },
                     required: ['sessionId', 'batchIndex', 'summary', 'seqFrom', 'seqTo'],
                 },
@@ -823,7 +840,31 @@ async function startServer() {
             },
             {
                 name: 'tim_load_project',
-                description: 'Load a project by label or alias and return it with its child tree.',
+                description: 'Load a project by label or alias and bind the session to it.',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        label: { type: 'string', description: 'Project label, e.g. P0062' },
+                        depth: { type: 'number', default: 3, description: 'How many child levels to load (1-5)' },
+                        budget: { type: 'number', default: 200, description: 'Max child entries to return' },
+                        sections: {
+                            type: ['array', 'null'],
+                            items: { type: 'string' },
+                            default: null,
+                            description: 'Optional section IDs/labels to filter direct children',
+                        },
+                        switch: {
+                            type: 'boolean',
+                            default: false,
+                            description: 'Allow switching to a different project mid-session',
+                        },
+                    },
+                    required: ['label'],
+                },
+            },
+            {
+                name: 'tim_read_project',
+                description: 'Read a project brief + tree WITHOUT binding the session (cross-project lookup). Use tim_load_project to start working on a project.',
                 inputSchema: {
                     type: 'object',
                     properties: {
@@ -1097,12 +1138,18 @@ async function startServer() {
                         content: [{ type: 'text', text: JSON.stringify(batches, null, 2) }],
                     };
                 }
+                case 'tim_show_untagged': {
+                    const untagged = await getSessions().showUntagged();
+                    return {
+                        content: [{ type: 'text', text: JSON.stringify(untagged, null, 2) }],
+                    };
+                }
                 case 'tim_write_batch_summary': {
-                    const { sessionId, batchIndex, summary, seqFrom, seqTo } = TimWriteBatchSummarySchema.parse(args);
+                    const { sessionId, batchIndex, summary, seqFrom, seqTo, tags } = TimWriteBatchSummarySchema.parse(args);
                     const node = await getSessions().writeBatchSummary(sessionId, batchIndex, summary, {
                         seqFrom,
                         seqTo,
-                    });
+                    }, tags);
                     return {
                         content: [{ type: 'text', text: JSON.stringify(node, null, 2) }],
                     };
@@ -1171,7 +1218,7 @@ async function startServer() {
                     };
                 }
                 case 'tim_load_project': {
-                    const { label, depth, budget, sections, sessionId: sessionIdArg } = TimLoadProjectSchema.parse(args);
+                    const { label, depth, budget, sections, sessionId: sessionIdArg, switch: switchRequested } = TimLoadProjectSchema.parse(args);
                     const resolved = await s.resolveProjectLabel(label);
                     if (resolved.status === 'ambiguous') {
                         return {
@@ -1185,15 +1232,32 @@ async function startServer() {
                         return { content: [{ type: 'text', text: `Project not found: ${label}` }] };
                     }
                     const projectLabel = resolved.label;
-                    const result = await s.loadProject(projectLabel, { depth, budget, sections });
-                    if (!result) {
-                        return { content: [{ type: 'text', text: `Project not found: ${label}` }] };
-                    }
                     const cwd = process.cwd();
                     const sessionId = (0, tim_core_1.resolveActiveSessionId)({
                         sessionIdArg: sessionIdArg,
                         markerSession: (0, tim_hooks_1.findMarker)(cwd)?.marker.session,
                     });
+                    if (sessionId && !switchRequested) {
+                        const existing = await s.read(sessionId);
+                        if (existing?.metadata.kind === 'session') {
+                            const existingRef = typeof existing.metadata.project_ref === 'string'
+                                ? existing.metadata.project_ref
+                                : undefined;
+                            if ((0, tim_core_1.evaluateLoadGate)(existingRef, projectLabel) === 'reject') {
+                                return {
+                                    content: [{
+                                            type: 'text',
+                                            text: `Session already bound to ${existingRef}. One tim_load_project per session. ` +
+                                                'Use tim_read_project for cross-project lookups, or pass switch:true to switch this session.',
+                                        }],
+                                };
+                            }
+                        }
+                    }
+                    const result = await s.loadProject(projectLabel, { depth, budget, sections });
+                    if (!result) {
+                        return { content: [{ type: 'text', text: `Project not found: ${label}` }] };
+                    }
                     if (sessionId) {
                         try {
                             await getSessions().startProjectSession({
@@ -1234,6 +1298,32 @@ async function startServer() {
                     }
                     catch {
                         // Non-critical — don't fail the request
+                    }
+                    const formatted = (0, tim_store_1.formatProjectOutput)(result, budget, loadProjectSchema());
+                    return {
+                        content: [{
+                                type: 'text',
+                                text: formatted,
+                            }],
+                    };
+                }
+                case 'tim_read_project': {
+                    const { label, depth, budget, sections } = TimReadProjectSchema.parse(args);
+                    const resolved = await s.resolveProjectLabel(label);
+                    if (resolved.status === 'ambiguous') {
+                        return {
+                            content: [{
+                                    type: 'text',
+                                    text: `Ambiguous alias: matches ${resolved.labels.join(', ')}. Use label.`,
+                                }],
+                        };
+                    }
+                    if (resolved.status === 'not_found') {
+                        return { content: [{ type: 'text', text: `Project not found: ${label}` }] };
+                    }
+                    const result = await s.loadProject(resolved.label, { depth, budget, sections });
+                    if (!result) {
+                        return { content: [{ type: 'text', text: `Project not found: ${label}` }] };
                     }
                     const formatted = (0, tim_store_1.formatProjectOutput)(result, budget, loadProjectSchema());
                     return {

@@ -7,6 +7,7 @@ import {
   cropDisplayName,
   projectDisplayNameFromEntry,
   resolveProjectDisplayName,
+  resolveProjectBindingLabel,
 } from '../project-display.js';
 
 describe('project-display', () => {
@@ -42,5 +43,14 @@ describe('project-display', () => {
     });
     expect(await resolveProjectDisplayName(store, 'o9k')).toBe('Its Over 9000 Memory');
     expect(await resolveProjectDisplayName(store, 'P0048', 10)).toBe('Its Over …');
+  });
+
+  it('resolveProjectBindingLabel returns label — title uncropped', async () => {
+    dbPath = path.join(os.tmpdir(), `tim-pd3-${Date.now()}.db`);
+    store = new TimStore(dbPath);
+    await store.createProject('P0062', {
+      content: 'bbbee PM Workflow | Active\nx',
+    });
+    expect(await resolveProjectBindingLabel(store, 'P0062')).toBe('P0062 — bbbee PM Workflow');
   });
 });

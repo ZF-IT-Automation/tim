@@ -12,6 +12,9 @@ export declare const KIND_EXCHANGES_ROOT = "exchanges-root";
 export declare const KIND_EXCHANGE_BATCH = "exchange-batch";
 export declare const KIND_EXCHANGE = "exchange";
 export declare const SESSION_SUMMARY_TAG = "#session-summary";
+export declare const BATCH_SUMMARY_TAG = "#batch-summary";
+/** Structural tags on batch-summary nodes — not content hashtags. */
+export declare const BATCH_STRUCTURAL_TAGS: Set<string>;
 export declare const DEFAULT_BATCH_SIZE = 5;
 export declare const SESSION_ROLLUP_THRESHOLD = 3;
 export declare const MARKER_FILENAME = ".tim-project";
