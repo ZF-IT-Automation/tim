@@ -52,6 +52,14 @@ export interface UnsummarizedBatch {
         task_summary?: string;
     };
 }
+export interface UntaggedBatch {
+    sessionId: string;
+    batchNodeId: string;
+    batchIndex: number;
+    title: string;
+    seqFrom: number;
+    seqTo: number;
+}
 export declare class SessionManager {
     private store;
     private onBatchFull?;
@@ -66,7 +74,11 @@ export declare class SessionManager {
     writeBatchSummary(sessionId: string, batchIndex: number, summaryText: string, range: {
         seqFrom: number;
         seqTo: number;
-    }): Promise<Entry>;
+    }, tags?: string[]): Promise<Entry>;
+    /** Recompute session-level content tags from batch summaries (freq >= 2). */
+    aggregateSessionTags(sessionId: string): Promise<Entry | null>;
+    /** Batch summary nodes with no content tags (only structural tags). */
+    showUntagged(): Promise<UntaggedBatch[]>;
     rollUpSession(sessionId: string, fold: (batches: Entry[]) => Promise<string>): Promise<Entry>;
     getSessionExchanges(sessionId: string): Promise<Entry[]>;
     /** Scan all project sessions and return their unsummarized batches (cleanup sweep). */

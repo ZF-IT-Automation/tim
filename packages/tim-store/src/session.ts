@@ -135,10 +135,7 @@ export class SessionManager {
     const existing = await this.store.read(sessionId);
     if (existing?.metadata.kind === KIND_SESSION) {
       if (existing.metadata.project_ref !== projectId) {
-        const newProject = await this.store.read(projectId);
-        if (!newProject || newProject.metadata.kind !== 'project') {
-          throw new Error(`Project not found: ${projectId}`);
-        }
+        const newProject = await this.store.requireProject(projectId);
 
         let newSessionsSection = await findChildByKind(
           this.store,
@@ -161,10 +158,7 @@ export class SessionManager {
       return (await this.store.read(sessionId))!;
     }
 
-    const project = await this.store.read(projectId);
-    if (!project || project.metadata.kind !== 'project') {
-      throw new Error(`Project not found: ${projectId}`);
-    }
+    const project = await this.store.requireProject(projectId);
 
     let sessionsSection = await findChildByKind(this.store, project.id, KIND_SESSIONS_ROOT);
     if (!sessionsSection) {

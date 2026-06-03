@@ -48,6 +48,8 @@ export declare class TimStore implements MemoryInterface {
      * Direct label/id lookup first, then metadata.aliases scan.
      */
     resolveProjectLabel(query: string): Promise<ResolveProjectResult>;
+    /** Resolve label/alias/id to a project entry; throws on missing or ambiguous. */
+    requireProject(projectId: string): Promise<Entry>;
     loadProject(label: string, options?: LoadProjectOptions): Promise<LoadProjectResult | null>;
     /**
      * Count sessions recorded under a project (by label or id). One session

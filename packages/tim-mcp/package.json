@@ -3,6 +3,9 @@
   "version": "0.1.0-alpha",
   "description": "TIM MCP server: stdio transport, tool registration for AI agents",
   "main": "dist/index.js",
+  "bin": {
+    "tim-mcp": "dist/server.js"
+  },
   "files": ["dist"],
   "scripts": { "build": "tsc", "test": "vitest run" },
   "dependencies": {

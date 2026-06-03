@@ -68,6 +68,27 @@ describe('CommitManager', () => {
     expect(all).toHaveLength(1);
   });
 
+  it('recordCommit accepts project alias', async () => {
+    await store.createProject('P0048', { content: 'o9k', aliases: ['o9k'] });
+    const entry = await commits.recordCommit({
+      projectId: 'o9k',
+      hash: 'aliashash',
+      message: 'via alias',
+    });
+    expect(entry.metadata.kind).toBe(KIND_COMMIT);
+    const project = await store.read('P0048');
+    const section = await store.getChildByKind(project!.id, KIND_COMMITS_ROOT);
+    expect(section).toHaveLength(1);
+  });
+
+  it('rejects nonexistent project', async () => {
+    await expect(commits.recordCommit({
+      projectId: 'P9999',
+      hash: 'nope',
+      message: 'x',
+    })).rejects.toThrow(/Project not found: P9999/);
+  });
+
   it('links commit and session via relates / implements', async () => {
     await store.createProject('P0002', { content: 'Test project' });
     const session = await store.write('Session test', {

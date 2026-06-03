@@ -325,6 +325,20 @@ describe('SessionManager', () => {
       expect(batches[0].metadata.batch_index).toBe(1);
     });
 
+    it('accepts project alias as projectId', async () => {
+      await store.createProject('P0048', { content: 'o9k', aliases: ['o9k'] });
+      const session = await sessions.startProjectSession({
+        sessionId: 'sess-alias',
+        projectId: 'o9k',
+        agentName: 'cursor',
+        cwd: '/p',
+        harness: 'cursor',
+      });
+      expect(session.metadata.project_ref).toBe('o9k');
+      const project = await store.requireProject('o9k');
+      expect(project.metadata.label).toBe('P0048');
+    });
+
     it('is idempotent and reuses the Sessions section across sessions', async () => {
       await store.createProject('P0098');
       await sessions.startProjectSession({

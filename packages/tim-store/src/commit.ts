@@ -24,10 +24,7 @@ export class CommitManager {
   constructor(private store: TimStore) {}
 
   async ensureCommitsSection(projectId: string): Promise<Entry> {
-    const project = await this.store.read(projectId);
-    if (!project || project.metadata.kind !== 'project') {
-      throw new Error(`Project not found: ${projectId}`);
-    }
+    const project = await this.store.requireProject(projectId);
 
     const existing = await findChildByKind(this.store, project.id, KIND_COMMITS_ROOT);
     if (existing) return existing;

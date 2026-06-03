@@ -50,4 +50,38 @@ describe('resolveProjectLabel', () => {
     const loaded = await store.loadProject('o9k');
     expect(loaded?.project.metadata.label).toBe('P0048');
   });
+
+  it('search returns project by label when label is not in FTS corpus', async () => {
+    await store.createProject('P0063', { content: 'body only, no P0063 in title' });
+    const results = await store.search({ query: 'P0063' });
+    expect(results).toHaveLength(1);
+    expect(results[0]!.metadata.label).toBe('P0063');
+  });
+
+  it('search returns project by alias', async () => {
+    await store.createProject('P0048', { content: 'body', aliases: ['o9k'] });
+    const results = await store.search({ query: 'o9k' });
+    expect(results.some(e => e.metadata.label === 'P0048')).toBe(true);
+  });
+
+  it('search still finds content hits and does not duplicate label match', async () => {
+    await store.createProject('P0063', { content: 'Infinite memory system' });
+    const results = await store.search({ query: 'Infinite' });
+    expect(results).toHaveLength(1);
+    expect(results.filter(e => e.metadata.label === 'P0063')).toHaveLength(1);
+  });
+
+  it('createProject rejects duplicate label', async () => {
+    await store.createProject('P0001', { content: 'first' });
+    await expect(store.createProject('P0001', { content: 'second' }))
+      .rejects.toThrow(/Project label already exists/);
+  });
+
+  it('createProject allows same label after tombstone', async () => {
+    const first = await store.createProject('P0001', { content: 'first' });
+    await store.delete(first.id, true);
+    const second = await store.createProject('P0001', { content: 'second' });
+    expect(second.id).not.toBe(first.id);
+    expect(second.metadata.label).toBe('P0001');
+  });
 });

@@ -78,6 +78,16 @@ class TimStore {
         });
     }
     async createProject(label, options = {}) {
+        const dup = this.db.prepare(`
+      SELECT id FROM entries
+      WHERE json_extract(metadata, '$.kind') = 'project'
+        AND json_extract(metadata, '$.label') = ?
+        AND irrelevant = 0
+        AND tombstoned_at IS NULL
+    `).get(label);
+        if (dup) {
+            throw new Error(`Project label already exists: ${label} (${dup.id})`);
+        }
         const aliases = normalizeProjectAliases(options.aliases);
         const metadata = {
             ...(options.metadata ?? {}),
@@ -124,6 +134,21 @@ class TimStore {
         if (matches.length === 1)
             return { status: 'found', label: matches[0] };
         return { status: 'ambiguous', query: q, labels: matches.sort() };
+    }
+    /** Resolve label/alias/id to a project entry; throws on missing or ambiguous. */
+    async requireProject(projectId) {
+        const resolved = await this.resolveProjectLabel(projectId);
+        if (resolved.status === 'ambiguous') {
+            throw new Error(`Ambiguous project identifier: ${projectId} (candidates: ${resolved.labels.join(', ')})`);
+        }
+        if (resolved.status !== 'found') {
+            throw new Error(`Project not found: ${projectId}`);
+        }
+        const project = await this.read(resolved.label);
+        if (!project || project.metadata.kind !== 'project') {
+            throw new Error(`Project not found: ${projectId}`);
+        }
+        return project;
     }
     async loadProject(label, options = {}) {
         const resolved = await this.resolveProjectLabel(label);
@@ -445,7 +470,18 @@ class TimStore {
     }
     // ─── Search ────────────────────────────────────────────
     async search(options) {
-        return this.searchFts(options.query, options.topK ?? 10);
+        const topK = options.topK ?? 10;
+        const fts = await this.searchFts(options.query, topK);
+        // Labels/aliases live in metadata, not the FTS corpus. Merge a direct project hit.
+        // Broader fix: index metadata.label + aliases in fts_entries (migration + triggers).
+        const resolved = await this.resolveProjectLabel(options.query);
+        if (resolved.status === 'found') {
+            const proj = await this.read(resolved.label);
+            if (proj && !fts.some(e => e.id === proj.id)) {
+                return [proj, ...fts].slice(0, topK);
+            }
+        }
+        return fts;
     }
     async searchFts(query, limit = 10) {
         // Sanitize FTS5 query

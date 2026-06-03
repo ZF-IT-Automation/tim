@@ -273,6 +273,19 @@ const index_js_1 = require("../index.js");
             (0, vitest_1.expect)(batches[0].title).toBe('Batch 1');
             (0, vitest_1.expect)(batches[0].metadata.batch_index).toBe(1);
         });
+        (0, vitest_1.it)('accepts project alias as projectId', async () => {
+            await store.createProject('P0048', { content: 'o9k', aliases: ['o9k'] });
+            const session = await sessions.startProjectSession({
+                sessionId: 'sess-alias',
+                projectId: 'o9k',
+                agentName: 'cursor',
+                cwd: '/p',
+                harness: 'cursor',
+            });
+            (0, vitest_1.expect)(session.metadata.project_ref).toBe('o9k');
+            const project = await store.requireProject('o9k');
+            (0, vitest_1.expect)(project.metadata.label).toBe('P0048');
+        });
         (0, vitest_1.it)('is idempotent and reuses the Sessions section across sessions', async () => {
             await store.createProject('P0098');
             await sessions.startProjectSession({
@@ -320,6 +333,66 @@ const index_js_1 = require("../index.js");
                 harness: 't',
             });
             (0, vitest_1.expect)(rebound.metadata.project_ref).toBe('P0095');
+            const back = await sessions.startProjectSession({
+                sessionId: 'rebind-s',
+                projectId: 'P0096',
+                agentName: 'a',
+                cwd: '/',
+                harness: 't',
+            });
+            (0, vitest_1.expect)(back.metadata.project_ref).toBe('P0096');
+            const p0096b = await store.read('P0096');
+            const sec96 = (await store.getChildByKind(p0096b.id, 'sessions-root'))[0];
+            (0, vitest_1.expect)(back.parentId).toBe(sec96.id);
+            const noop = await sessions.startProjectSession({
+                sessionId: 'rebind-s',
+                projectId: 'P0096',
+                agentName: 'a',
+                cwd: '/',
+                harness: 't',
+            });
+            (0, vitest_1.expect)(noop.parentId).toBe(sec96.id);
+        });
+        (0, vitest_1.it)('reparents the session node + its exchanges to the new project on switch', async () => {
+            await store.createProject('P0096');
+            await store.createProject('P0095');
+            await sessions.startProjectSession({
+                sessionId: 'switch-s',
+                projectId: 'P0096',
+                agentName: 'a',
+                cwd: '/',
+                harness: 't',
+            });
+            await sessions.logExchange('switch-s', [
+                { role: 'user', content: 'first question' },
+                { role: 'agent', content: 'first answer' },
+            ]);
+            const exBefore = await sessions.getSessionExchanges('switch-s');
+            const userExchangeId = exBefore.find(e => e.metadata.role === 'user').id;
+            const rebound = await sessions.startProjectSession({
+                sessionId: 'switch-s',
+                projectId: 'P0095',
+                agentName: 'a',
+                cwd: '/',
+                harness: 't',
+            });
+            (0, vitest_1.expect)(rebound.metadata.project_ref).toBe('P0095');
+            const p0095 = await store.read('P0095');
+            const newSection = (await store.getChildByKind(p0095.id, 'sessions-root'))[0];
+            (0, vitest_1.expect)(rebound.parentId).toBe(newSection.id);
+            const movedNodes = await store.getChildByKind(newSection.id, 'session');
+            (0, vitest_1.expect)(movedNodes.map(s => s.id)).toContain('switch-s');
+            const p0096 = await store.read('P0096');
+            const oldSections = await store.getChildByKind(p0096.id, 'sessions-root');
+            const oldSessionIds = oldSections.length
+                ? (await store.getChildByKind(oldSections[0].id, 'session')).map(s => s.id)
+                : [];
+            (0, vitest_1.expect)(oldSessionIds).not.toContain('switch-s');
+            const movedExchange = await store.read(userExchangeId);
+            (0, vitest_1.expect)(movedExchange.content || movedExchange.title).toContain('first question');
+            const kids = await store.getChildren(newSection.id);
+            const sessionChild = kids.find(k => k.id === 'switch-s');
+            (0, vitest_1.expect)(sessionChild.metadata.project_ref).toBe('P0095');
         });
         (0, vitest_1.it)('binds unbound sessions to P0000 Inbox when using inbox helper', async () => {
             await (0, index_js_1.ensureInboxProject)(store);
@@ -465,16 +538,42 @@ const index_js_1 = require("../index.js");
         });
         (0, vitest_1.it)('writes a Batch node under Summary and bumps derived batches_summarized', async () => {
             const batch = await sessions.showUnsummarized('sb');
-            const node = await sessions.writeBatchSummary('sb', batch.batchIndex, 'themes: greetings', {
-                seqFrom: 1,
-                seqTo: 2,
-            });
+            const node = await sessions.writeBatchSummary('sb', batch.batchIndex, 'themes: greetings', { seqFrom: 1, seqTo: 2 }, ['#greetings', '#onboarding']);
             (0, vitest_1.expect)(node.metadata.kind).toBe('batch-summary');
             (0, vitest_1.expect)(node.metadata.batch_index).toBe(1);
             (0, vitest_1.expect)(node.metadata.summarized_at).toBeTruthy();
             (0, vitest_1.expect)(node.tags).toContain('#session-summary');
+            (0, vitest_1.expect)(node.tags).toContain('#batch-summary');
+            (0, vitest_1.expect)(node.tags).toContain('#greetings');
             const { batchesSummarized } = await (0, index_js_1.deriveCounters)(store, 'sb');
             (0, vitest_1.expect)(batchesSummarized).toBe(1);
+        });
+        (0, vitest_1.it)('aggregateSessionTags promotes tags appearing in 2+ batches to Summary node', async () => {
+            await sessions.writeBatchSummary('sb', 1, 'batch one', { seqFrom: 1, seqTo: 1 }, ['#auth', '#ui']);
+            await sessions.logExchange('sb', [
+                { role: 'user', content: 'Q3' },
+                { role: 'agent', content: 'A3' },
+                { role: 'user', content: 'Q4' },
+                { role: 'agent', content: 'A4' },
+            ]);
+            await sessions.writeBatchSummary('sb', 2, 'batch two', { seqFrom: 3, seqTo: 4 }, ['#auth', '#db']);
+            const summaryNode = (await store.getChildByKind('sb', 'session-summary-root'))[0];
+            (0, vitest_1.expect)(summaryNode.tags).toContain('#auth');
+            (0, vitest_1.expect)(summaryNode.tags).not.toContain('#ui');
+            (0, vitest_1.expect)(summaryNode.tags).not.toContain('#db');
+        });
+        (0, vitest_1.it)('showUntagged lists batch nodes with only structural tags', async () => {
+            await sessions.writeBatchSummary('sb', 1, 'no tags here', { seqFrom: 1, seqTo: 2 });
+            await sessions.logExchange('sb', [
+                { role: 'user', content: 'Q3' },
+                { role: 'agent', content: 'A3' },
+                { role: 'user', content: 'Q4' },
+                { role: 'agent', content: 'A4' },
+            ]);
+            await sessions.writeBatchSummary('sb', 2, 'tagged batch', { seqFrom: 3, seqTo: 4 }, ['#feature-x']);
+            const untagged = await sessions.showUntagged();
+            (0, vitest_1.expect)(untagged.some(u => u.sessionId === 'sb' && u.batchIndex === 1)).toBe(true);
+            (0, vitest_1.expect)(untagged.some(u => u.sessionId === 'sb' && u.batchIndex === 2)).toBe(false);
         });
         (0, vitest_1.it)('is idempotent: re-writing the same batch_index does not duplicate', async () => {
             await sessions.writeBatchSummary('sb', 1, 'first', { seqFrom: 1, seqTo: 2 });
