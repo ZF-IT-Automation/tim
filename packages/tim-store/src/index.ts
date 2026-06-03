@@ -19,6 +19,7 @@ export {
   cropDisplayName,
   projectDisplayNameFromEntry,
   resolveProjectDisplayName,
+  resolveProjectBindingLabel,
 } from './project-display.js';
 export { runMigrations, getCurrentVersion, MIGRATIONS } from './schema.js';
 export {

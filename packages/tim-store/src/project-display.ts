@@ -35,6 +35,25 @@ export function cropDisplayName(text: string, maxLen = 20): string {
   return `${t.slice(0, maxLen - 1)}…`;
 }
 
+/** Full binding line for directives: `P0062 — bbbee PM Workflow` (uncropped). */
+export async function resolveProjectBindingLabel(
+  store: TimStore,
+  query: string,
+): Promise<string> {
+  const q = query.trim();
+  if (!q) return q;
+
+  const resolved = await store.resolveProjectLabel(q);
+  if (resolved.status !== 'found') return q;
+
+  const entry = await store.read(resolved.label);
+  if (!entry || entry.metadata.kind !== 'project') return resolved.label;
+
+  const name = projectDisplayNameFromEntry(entry);
+  const label = resolved.label;
+  return name && name !== label ? `${label} — ${name}` : label;
+}
+
 export async function resolveProjectDisplayName(
   store: TimStore,
   query: string,
