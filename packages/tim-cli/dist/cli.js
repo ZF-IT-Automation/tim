@@ -378,6 +378,32 @@ async function cmdImport(args) {
         store.close();
     }
 }
+async function cmdRootEntries(args) {
+    const flags = parseArgs(args);
+    const tag = flags.tag;
+    const config = (0, tim_core_1.loadConfig)();
+    const store = new tim_store_1.TimStore(getDbPath(config));
+    try {
+        const entries = store.getRootLevelEntries(tag);
+        if (flags.format === 'json') {
+            console.log(JSON.stringify(entries, null, 2));
+            return;
+        }
+        if (flags.format === 'content') {
+            for (const entry of entries) {
+                // Emit full content block for each entry (title + body)
+                const fullText = entry.content ? `${entry.title}\n${entry.content}` : entry.title;
+                process.stdout.write(fullText.trimEnd() + '\n\n');
+            }
+            return;
+        }
+        // Default: JSON
+        console.log(JSON.stringify(entries, null, 2));
+    }
+    finally {
+        store.close();
+    }
+}
 async function main() {
     const cmd = process.argv[2] || 'init';
     const rest = process.argv.slice(3);
@@ -435,6 +461,9 @@ async function main() {
             await (0, sync_cli_js_1.cmdSync)(sub, rest.slice(1));
             break;
         }
+        case 'root-entries':
+            await cmdRootEntries(rest);
+            break;
         case '--version':
         case '-v':
             console.log('tim v0.1.0-alpha');

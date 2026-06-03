@@ -4,6 +4,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { getTimDir, loadConfig } from 'tim-core';
 
+export type ErrorLogFn = (tool: string, error: string, stack?: string) => void;
+
 /** Compact thematic summary for a batch (no external API required). */
 export function generateSummaryHeuristic(batch: UnsummarizedBatch): string {
   const lines = batch.exchanges.map(e => {
@@ -142,6 +144,7 @@ async function tryCli(
   provider: string | undefined,
   prompt: string,
   timeoutSec: number,
+  onError?: ErrorLogFn,
 ): Promise<string | null> {
   const label = provider ? `${cli}/${provider}/${model}` : `${cli}/${model}`;
   let command: string;
@@ -184,6 +187,7 @@ async function tryCli(
         .filter(Boolean)
         .join(' ');
       appendSummarizerLog(`FAIL ${label}: ${detail}`);
+      onError?.(label, detail);
       if (process.env.TIM_SUMMARIZER_VERBOSE) {
         console.error(`tim-summarizer: ${label} failed (${detail})`);
       }
@@ -207,6 +211,7 @@ async function tryCli(
         ? `empty stdout; stderr=${stderr.trim().slice(0, 4000)}`
         : 'empty stdout';
       appendSummarizerLog(`FAIL ${label}: ${detail}`);
+      onError?.(label, detail);
       if (process.env.TIM_SUMMARIZER_VERBOSE) {
         console.error(`tim-summarizer: ${label} ${detail}`);
       }
@@ -216,6 +221,7 @@ async function tryCli(
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     appendSummarizerLog(`FAIL ${label}: spawn error: ${msg}`);
+    onError?.(label, `spawn error: ${msg}`, err instanceof Error ? err.stack : undefined);
     if (process.env.TIM_SUMMARIZER_VERBOSE) {
       console.error(`tim-summarizer: ${label} error: ${msg}`);
     }
@@ -246,6 +252,7 @@ function buildProjectSummaryPrompt(sessionSummaries: string[]): string {
  */
 export async function generateProjectSummary(
   sessionSummaries: string[],
+  onError?: ErrorLogFn,
 ): Promise<string | null> {
   const config = loadConfig();
   const chain = config.summarizer?.chain;
@@ -256,7 +263,7 @@ export async function generateProjectSummary(
   const timeoutSec = config.summarizer?.timeout_sec ?? 600;
 
   for (const entry of chain) {
-    const result = await tryCli(entry.cli, entry.model, entry.provider, prompt, timeoutSec);
+    const result = await tryCli(entry.cli, entry.model, entry.provider, prompt, timeoutSec, onError);
     if (result) {
       if (process.env.TIM_SUMMARIZER_VERBOSE) {
         console.error(`tim-summarizer: project summary via ${entry.label || entry.cli}/${entry.model}`);
@@ -267,7 +274,7 @@ export async function generateProjectSummary(
   return null;
 }
 
-export async function generateSummary(batch: UnsummarizedBatch): Promise<string> {
+export async function generateSummary(batch: UnsummarizedBatch, onError?: ErrorLogFn): Promise<string> {
   const config = loadConfig();
   const chain = config.summarizer?.chain;
   if (!chain || chain.length === 0) return FALLBACK_MARKER;
@@ -276,7 +283,7 @@ export async function generateSummary(batch: UnsummarizedBatch): Promise<string>
   const timeoutSec = config.summarizer?.timeout_sec ?? 600;
 
   for (const entry of chain) {
-    const result = await tryCli(entry.cli, entry.model, entry.provider, prompt, timeoutSec);
+    const result = await tryCli(entry.cli, entry.model, entry.provider, prompt, timeoutSec, onError);
     if (result) {
       if (process.env.TIM_SUMMARIZER_VERBOSE) {
         console.error(`tim-summarizer: used ${entry.label || entry.cli}/${entry.model}`);

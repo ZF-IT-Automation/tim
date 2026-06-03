@@ -117,6 +117,23 @@ exports.MIGRATIONS = [
       INSERT INTO fts_entries(rowid, title, content, tags)
       SELECT rowid, title, content, tags FROM entries;
     `
+    },
+    {
+        version: 5,
+        sql: `
+      CREATE TABLE IF NOT EXISTS error_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp TEXT NOT NULL,
+        tool TEXT NOT NULL,
+        args_json TEXT NOT NULL DEFAULT '{}',
+        error TEXT NOT NULL DEFAULT '',
+        stack TEXT,
+        session_id TEXT
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_error_log_timestamp ON error_log(timestamp);
+      CREATE INDEX IF NOT EXISTS idx_error_log_tool ON error_log(tool);
+    `
     }
 ];
 function getCurrentVersion() {

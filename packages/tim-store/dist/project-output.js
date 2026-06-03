@@ -107,10 +107,21 @@ function normalizeRenderDepth(value) {
     }
     return undefined;
 }
-function resolveRenderDepth(entry, schemaDefault) {
-    const override = normalizeRenderDepth(entry.metadata.render_depth);
-    if (override !== undefined)
-        return override;
+function resolveRenderDepth(entry, schemaDefault, renderMode) {
+    // Per-node metadata override (new camelCase fields first, then legacy render_depth)
+    if (renderMode === 'load') {
+        const loadOverride = normalizeRenderDepth(entry.metadata.renderDepthLoad);
+        if (loadOverride !== undefined)
+            return loadOverride;
+    }
+    else if (renderMode === 'read') {
+        const readOverride = normalizeRenderDepth(entry.metadata.renderDepthRead);
+        if (readOverride !== undefined)
+            return readOverride;
+    }
+    const legacyOverride = normalizeRenderDepth(entry.metadata.render_depth);
+    if (legacyOverride !== undefined)
+        return legacyOverride;
     if (schemaDefault !== undefined)
         return schemaDefault;
     return 1;
@@ -147,7 +158,7 @@ function maxChildDepth(depth) {
         return Number.MAX_SAFE_INTEGER;
     return Math.max(0, depth);
 }
-function formatChildrenTree(children, childMap, depth, budget, schema, renderTail) {
+function formatChildrenTree(children, childMap, depth, budget, schema, renderTail, renderMode) {
     if (children.length === 0 || budget.remaining <= 0)
         return [];
     const lines = [];
@@ -163,9 +174,11 @@ function formatChildrenTree(children, childMap, depth, budget, schema, renderTai
             break;
         const child = children[i];
         const childSchema = findSchemaSection(schema?.sections, entryTitle(child));
-        const childRenderDepth = resolveRenderDepth(child, childSchema?.render_depth);
-        // Always show the node title so agents know it exists
-        // render_depth controls ONLY whether children render deeper
+        const childRenderDepth = resolveRenderDepth(child, childSchema?.render_depth, renderMode);
+        // renderDepth=0 → skip node AND entire subtree entirely
+        if (childRenderDepth === 0) {
+            continue;
+        }
         lines.push(`${indent}${entryTitle(child)}`);
         budget.remaining -= 1;
         shown += 1;
@@ -173,7 +186,7 @@ function formatChildrenTree(children, childMap, depth, budget, schema, renderTai
         if (subkids.length > 0 && shouldRenderChildren(childRenderDepth)) {
             const nextDepth = maxChildDepth(childRenderDepth);
             if (nextDepth > 0) {
-                lines.push(...formatChildrenTree(subkids, childMap, depth + 1, budget, schema));
+                lines.push(...formatChildrenTree(subkids, childMap, depth + 1, budget, schema, undefined, renderMode));
             }
         }
     }
@@ -190,7 +203,7 @@ function formatSectionLineSuffix(section, subkids, renderDepth) {
     }
     return sectionContentSuffix(section);
 }
-function formatProjectOutput(result, budget, schema) {
+function formatProjectOutput(result, budget, schema, renderMode) {
     const { project, children, truncated } = result;
     const label = String(project.metadata.label ?? project.id);
     // Strip the auto-generated Project Summary out before parsing the header,
@@ -231,9 +244,11 @@ function formatProjectOutput(result, budget, schema) {
         for (const section of sections) {
             const name = entryTitle(section);
             const schemaSection = findSchemaSection(schema?.sections, name);
-            const renderDepth = resolveRenderDepth(section, schemaSection?.render_depth);
-            // Empty sections stay visible so agents know they exist
-            // render_depth controls ONLY whether children render, not section visibility
+            const renderDepth = resolveRenderDepth(section, schemaSection?.render_depth, renderMode);
+            // renderDepth=0 → skip entire section node + subtree
+            if (renderDepth === 0) {
+                continue;
+            }
             const useTail = resolveRenderTail(section, schemaSection?.render_tail);
             const subkids = childMap.get(section.id) ?? [];
             const suffix = formatSectionLineSuffix(section, subkids, renderDepth);
@@ -241,7 +256,7 @@ function formatProjectOutput(result, budget, schema) {
             if (subkids.length > 0 && shouldRenderChildren(renderDepth)) {
                 const nextDepth = maxChildDepth(renderDepth);
                 if (nextDepth > 0) {
-                    lines.push(...formatChildrenTree(subkids, childMap, 0, budgetState, schema, useTail));
+                    lines.push(...formatChildrenTree(subkids, childMap, 0, budgetState, schema, useTail, renderMode));
                 }
             }
         }

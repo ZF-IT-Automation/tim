@@ -90,13 +90,38 @@ export interface UntaggedBatch {
 }
 
 const DEFAULT_SUMMARIZER: Summarizer = async (exchanges) => {
-  const text = exchanges
+  if (exchanges.length === 0) return 'Empty session — no exchanges to checkpoint.';
+
+  const userMsgs = exchanges.filter(e => e.metadata.role === 'user');
+  const agentMsgs = exchanges.filter(e => e.metadata.role === 'agent');
+
+  const topics = userMsgs
+    .slice(0, 5)
     .map(e => {
-      const role = e.metadata.role ?? 'unknown';
-      return `${role}: ${e.content || e.title}`;
+      const text = (e.content || e.title || '').trim();
+      // Extract first sentence or first 120 chars as topic indicator
+      const firstSentence = text.split(/[.!?\n]/)[0]?.trim() ?? text;
+      return firstSentence.length > 120 ? firstSentence.slice(0, 117) + '…' : firstSentence;
     })
-    .join('\n');
-  return text.length > 2000 ? text.slice(0, 2000) + '…' : text;
+    .filter(Boolean);
+
+  const decisionHints = agentMsgs
+    .slice(0, 3)
+    .map(e => {
+      const text = (e.content || e.title || '').trim();
+      return text.length > 100 ? text.slice(0, 97) + '…' : text;
+    })
+    .filter(Boolean);
+
+  let summary = `Session checkpoint: ${exchanges.length} exchanges`;
+  if (topics.length) {
+    summary += `\nTopics: ${topics.map((t, i) => `${i + 1}. ${t}`).join('; ')}`;
+  }
+  if (decisionHints.length) {
+    summary += `\nAgent responses hint at: ${decisionHints.join(' | ')}`;
+  }
+
+  return summary.length > 2000 ? summary.slice(0, 1997) + '…' : summary;
 };
 
 export class SessionManager {
@@ -555,17 +580,29 @@ export class SessionManager {
       throw new Error(`Session not found: ${sessionId}`);
     }
 
+    // Find or create Summary node under session
+    let summaryNode = await findChildByKind(this.store, sessionId, KIND_SUMMARY_ROOT);
+    if (!summaryNode) {
+      const date = new Date().toISOString();
+      summaryNode = await this.store.write(SUMMARY_NODE_TITLE, {
+        parentId: sessionId,
+        metadata: { kind: KIND_SUMMARY_ROOT, exchanges: 0, date, summary: '' },
+        tags: [SESSION_SUMMARY_TAG],
+      });
+    }
+
     const exchanges = await this.getSessionExchanges(sessionId);
     const summarize = opts.summarize ?? DEFAULT_SUMMARIZER;
     const summaryText = await summarize(exchanges);
 
     const summary = await this.store.write(summaryText, {
+      parentId: summaryNode.id,
       metadata: {
         kind: 'checkpoint',
         sessionId,
         count: exchanges.length,
       },
-      tags: ['#checkpoint'],
+      tags: [SESSION_SUMMARY_TAG, BATCH_SUMMARY_TAG, '#checkpoint'],
     });
 
     await this.store.link(summary.id, sessionId, 'summarizes');

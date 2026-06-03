@@ -214,8 +214,7 @@ const TimLoadProjectSchema = zod_1.z.object({
     depth: zod_1.z.number().min(1).max(5).optional().default(3),
     budget: zod_1.z.number().min(1).max(1000).optional().default(200),
     sections: zod_1.z.array(zod_1.z.string()).nullable().optional().default(null),
-    sessionId: zod_1.z.string().optional().describe('Harness session id; rebinds TIM session project_ref on load'),
-    switch: zod_1.z.boolean().optional().default(false).describe('Allow switching to a different project mid-session'),
+    sessionId: zod_1.z.string().optional().describe('Harness session id; binds TIM session project_ref on first load only'),
 });
 const TimReadProjectSchema = zod_1.z.object({
     label: zod_1.z.string().describe('Project label, e.g. P0062'),
@@ -225,6 +224,17 @@ const TimReadProjectSchema = zod_1.z.object({
 });
 const TimTasksSchema = zod_1.z.object({
     status: zod_1.z.enum(['todo', 'in_progress', 'done', 'cancelled']).optional(),
+});
+const TimErrorStatsSchema = zod_1.z.object({
+    hours: zod_1.z.number().min(1).max(720).optional().default(24),
+    limit: zod_1.z.number().min(1).max(100).optional().default(10),
+});
+const TimErrorLogSchema = zod_1.z.object({
+    tool: zod_1.z.string(),
+    error: zod_1.z.string(),
+    stack: zod_1.z.string().optional(),
+    sessionId: zod_1.z.string().optional(),
+    args: zod_1.z.record(zod_1.z.unknown()).optional(),
 });
 // ─── Project output formatting ──────────────────────────
 function loadProjectSchema() {
@@ -398,11 +408,18 @@ const DB_PATH = process.env.TIM_DB_PATH || (0, tim_core_1.loadConfig)().dbPath |
 let store;
 let sessions;
 let commitMgr;
+let errorLogger;
 function getStore() {
     if (!store) {
         store = new tim_store_1.TimStore(DB_PATH);
     }
     return store;
+}
+function getErrorLogger() {
+    if (!errorLogger) {
+        errorLogger = new tim_store_1.ErrorLogger(getStore().getDb());
+    }
+    return errorLogger;
 }
 function getCommitManager() {
     if (!commitMgr) {
@@ -432,7 +449,7 @@ const WRITE_TOOLS = new Set([
     'tim_record_commit',
     'tim_rename_entry', 'tim_move_entry', 'tim_update_many',
     'tim_tag_add', 'tim_tag_remove', 'tim_tag_rename', 'tim_import',
-    'tim_create_project',
+    'tim_create_project', 'tim_error_log',
 ]);
 const READ_TOOLS = new Set([
     'tim_read', 'tim_search', 'tim_trace', 'tim_health', 'tim_stats',
@@ -840,7 +857,7 @@ async function startServer() {
             },
             {
                 name: 'tim_load_project',
-                description: 'Load a project by label or alias and bind the session to it.',
+                description: 'Load a project by label or alias and bind the session once. Rejects a different project if the session is already bound — use tim_read_project for cross-project lookups.',
                 inputSchema: {
                     type: 'object',
                     properties: {
@@ -852,11 +869,6 @@ async function startServer() {
                             items: { type: 'string' },
                             default: null,
                             description: 'Optional section IDs/labels to filter direct children',
-                        },
-                        switch: {
-                            type: 'boolean',
-                            default: false,
-                            description: 'Allow switching to a different project mid-session',
                         },
                     },
                     required: ['label'],
@@ -893,6 +905,32 @@ async function startServer() {
                             description: 'Filter by task status. Default: todo + in_progress.',
                         },
                     },
+                },
+            },
+            {
+                name: 'tim_error_stats',
+                description: 'Show error statistics: total errors, top errors, error rate, alert thresholds (>5 identical errors in 1h).',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        hours: { type: 'number', default: 24, description: 'Time window in hours (1-720)' },
+                        limit: { type: 'number', default: 10, description: 'Max top errors to return' },
+                    },
+                },
+            },
+            {
+                name: 'tim_error_log',
+                description: 'Log an error entry. Used by CLI tools and summarizer for structured error tracking.',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        tool: { type: 'string', description: 'Tool name, e.g. "summarizer/codex"' },
+                        error: { type: 'string', description: 'Error message' },
+                        stack: { type: 'string', description: 'Stack trace (optional)' },
+                        sessionId: { type: 'string', description: 'Associated session ID (optional)' },
+                        args: { type: 'object', description: 'Tool arguments (optional)' },
+                    },
+                    required: ['tool', 'error'],
                 },
             },
         ],
@@ -1076,15 +1114,17 @@ async function startServer() {
                     const report = await s.health();
                     const stats = await s.stats();
                     const agents = await s.getAgents();
+                    const errorStats = getErrorLogger().getStats({ hours: 24, limit: 5 });
                     const text = [
                         `TIM Doctor — ${DB_PATH}`,
                         `Entries: ${stats.totalEntries} | Edges: ${stats.totalEdges}`,
                         `Broken links: ${report.brokenLinks} | Orphans: ${report.orphanEntries}`,
                         `FTS5: ${report.ftsIntegrity ? 'OK' : 'BROKEN'}`,
                         `Agents registered: ${agents.length}`,
-                        `DB path: ${DB_PATH}`,
+                        `Errors (24h): ${errorStats.totalErrors} | Rate: ${errorStats.errorRate}/h`,
+                        errorStats.alerts.length > 0 ? `⚠ Alerts: ${errorStats.alerts.join('; ')}` : null,
                         ...report.issues.map(i => `⚠ ${i}`),
-                    ].join('\n');
+                    ].filter(Boolean).join('\n');
                     return { content: [{ type: 'text', text }] };
                 }
                 case 'tim_session_start': {
@@ -1218,7 +1258,7 @@ async function startServer() {
                     };
                 }
                 case 'tim_load_project': {
-                    const { label, depth, budget, sections, sessionId: sessionIdArg, switch: switchRequested } = TimLoadProjectSchema.parse(args);
+                    const { label, depth, budget, sections, sessionId: sessionIdArg } = TimLoadProjectSchema.parse(args);
                     const resolved = await s.resolveProjectLabel(label);
                     if (resolved.status === 'ambiguous') {
                         return {
@@ -1237,7 +1277,7 @@ async function startServer() {
                         sessionIdArg: sessionIdArg,
                         markerSession: (0, tim_hooks_1.findMarker)(cwd)?.marker.session,
                     });
-                    if (sessionId && !switchRequested) {
+                    if (sessionId) {
                         const existing = await s.read(sessionId);
                         if (existing?.metadata.kind === 'session') {
                             const existingRef = typeof existing.metadata.project_ref === 'string'
@@ -1247,8 +1287,8 @@ async function startServer() {
                                 return {
                                     content: [{
                                             type: 'text',
-                                            text: `Session already bound to ${existingRef}. One tim_load_project per session. ` +
-                                                'Use tim_read_project for cross-project lookups, or pass switch:true to switch this session.',
+                                            text: `Session already bound to ${existingRef}. tim_load_project binds once per session. ` +
+                                                'Use tim_read_project for cross-project access.',
                                         }],
                                 };
                             }
@@ -1299,7 +1339,7 @@ async function startServer() {
                     catch {
                         // Non-critical — don't fail the request
                     }
-                    const formatted = (0, tim_store_1.formatProjectOutput)(result, budget, loadProjectSchema());
+                    const formatted = (0, tim_store_1.formatProjectOutput)(result, budget, loadProjectSchema(), 'load');
                     return {
                         content: [{
                                 type: 'text',
@@ -1325,7 +1365,7 @@ async function startServer() {
                     if (!result) {
                         return { content: [{ type: 'text', text: `Project not found: ${label}` }] };
                     }
-                    const formatted = (0, tim_store_1.formatProjectOutput)(result, budget, loadProjectSchema());
+                    const formatted = (0, tim_store_1.formatProjectOutput)(result, budget, loadProjectSchema(), 'read');
                     return {
                         content: [{
                                 type: 'text',
@@ -1344,6 +1384,26 @@ async function startServer() {
                         content: [{ type: 'text', text: formatted }],
                     };
                 }
+                case 'tim_error_stats': {
+                    const { hours, limit } = TimErrorStatsSchema.parse(args);
+                    const stats = getErrorLogger().getStats({ hours, limit });
+                    const text = [
+                        `=== ERROR STATS (last ${hours}h) ===`,
+                        `Total errors: ${stats.totalErrors} | Error rate: ${stats.errorRate}/h`,
+                        `--- Top Errors ---`,
+                        ...stats.topErrors.map((e, i) => `  ${i + 1}. [${e.count}x] ${e.error} (last: ${e.lastSeen})`),
+                        `--- By Tool ---`,
+                        ...stats.byTool.map((t) => `  ${t.tool}: ${t.count}`),
+                        stats.alerts.length > 0 ? `--- ALERTS ---` : '',
+                        ...stats.alerts.map((a) => `  ${a}`),
+                    ].filter((l) => l !== '').join('\n');
+                    return { content: [{ type: 'text', text }] };
+                }
+                case 'tim_error_log': {
+                    const { tool, error, stack, sessionId, args: toolArgs } = TimErrorLogSchema.parse(args);
+                    getErrorLogger().logError({ tool, error, stack, sessionId, args: toolArgs });
+                    return { content: [{ type: 'text', text: JSON.stringify({ logged: true }) }] };
+                }
                 default:
                     return {
                         content: [{ type: 'text', text: `Unknown tool: ${name}` }],
@@ -1352,6 +1412,12 @@ async function startServer() {
             }
         }
         catch (error) {
+            getErrorLogger().logError({
+                tool: name,
+                args,
+                error: error.message ?? String(error),
+                stack: error.stack,
+            });
             return {
                 content: [{ type: 'text', text: `Error: ${error.message}` }],
                 isError: true,

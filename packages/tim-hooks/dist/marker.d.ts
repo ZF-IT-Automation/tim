@@ -14,6 +14,9 @@ export interface ProjectMarker {
 }
 export declare function markerPath(cwd: string): string;
 export declare function readMarker(cwd: string): ProjectMarker | null;
+/** Write a project marker file, merging with existing fields to preserve
+ *  global-only state (sessions map, route_exchanges_to) that callers
+ *  like runSessionStart don't carry. */
 export declare function writeMarker(cwd: string, marker: ProjectMarker): void;
 /**
  * Update the nearest `.tim-project` (walk-up from cwd) after tim_load_project.

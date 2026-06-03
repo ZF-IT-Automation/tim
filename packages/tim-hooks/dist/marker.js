@@ -67,8 +67,14 @@ function readMarker(cwd) {
         return null;
     }
 }
+/** Write a project marker file, merging with existing fields to preserve
+ *  global-only state (sessions map, route_exchanges_to) that callers
+ *  like runSessionStart don't carry. */
 function writeMarker(cwd, marker) {
-    fs.writeFileSync(markerPath(cwd), JSON.stringify(marker, null, 2));
+    const p = markerPath(cwd);
+    const existing = readMarker(cwd);
+    const merged = existing ? { ...existing, ...marker } : marker;
+    fs.writeFileSync(p, JSON.stringify(merged, null, 2));
 }
 /**
  * Update the nearest `.tim-project` (walk-up from cwd) after tim_load_project.

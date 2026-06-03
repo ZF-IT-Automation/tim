@@ -9,5 +9,5 @@ export interface ProjectSchemaSection {
 export interface ProjectSchema {
     sections: ProjectSchemaSection[];
 }
-export declare function formatProjectOutput(result: LoadProjectResult, budget: number, schema?: ProjectSchema): string;
+export declare function formatProjectOutput(result: LoadProjectResult, budget: number, schema?: ProjectSchema, renderMode?: 'load' | 'read'): string;
 //# sourceMappingURL=project-output.d.ts.map

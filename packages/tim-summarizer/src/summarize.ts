@@ -76,10 +76,19 @@ function seqRange(batch: UnsummarizedBatch): { seqFrom: number; seqTo: number } 
 export async function runSummarizerLoop(sessionId: string): Promise<number> {
   const client = await connectTimMcp();
   let written = 0;
+
+  const onMCPError = async (tool: string, error: string, stack?: string) => {
+    try {
+      await callTimTool(client, 'tim_error_log', { tool, error, stack, sessionId });
+    } catch {
+      // Non-critical — don't fail the summarizer if error logging fails
+    }
+  };
+
   try {
     let batch = await callTimTool<UnsummarizedBatch>(client, 'tim_show_unsummarized', { sessionId });
     while (batch.exchanges.length > 0) {
-      const raw = await generateSummary(batch);
+      const raw = await generateSummary(batch, onMCPError);
       const { seqFrom, seqTo } = seqRange(batch);
       let summary: string;
       let tags: string[] | undefined;

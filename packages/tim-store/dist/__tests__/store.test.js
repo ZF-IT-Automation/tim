@@ -513,19 +513,20 @@ let store;
                 metadata: { order: 0, render_depth: 0 },
             });
             await store.write('Hidden child', { parentId: section.id });
+            // render_depth=0 on the section → skip section entirely (new behavior)
             const loaded = await store.loadProject('P0400', { depth: 3 });
             const output = (0, project_output_js_1.formatProjectOutput)(loaded, 50, {
                 sections: [{ name: 'Rules', render_depth: 2 }],
             });
-            (0, vitest_1.expect)(output).toContain('Rules');
-            (0, vitest_1.expect)(output).toContain('[1 subnode]');
+            // Per-node render_depth:0 overrides schema render_depth:2 → section is fully skipped
+            (0, vitest_1.expect)(output).not.toContain('Rules');
             (0, vitest_1.expect)(output).not.toContain('Hidden child');
         });
-        (0, vitest_1.it)('formatProjectOutput shows empty nodes with — marker when render_depth is 0', async () => {
+        (0, vitest_1.it)('formatProjectOutput skips sections with render_depth=0 entirely', async () => {
             const project = await store.createProject('P0401');
             await store.write('', {
                 parentId: project.id,
-                title: 'Empty Section',
+                title: 'Hidden Section',
                 metadata: { order: 0, render_depth: 0 },
             });
             await store.write('Has body', {
@@ -535,8 +536,8 @@ let store;
             });
             const loaded = await store.loadProject('P0401', { depth: 2 });
             const output = (0, project_output_js_1.formatProjectOutput)(loaded, 50);
-            (0, vitest_1.expect)(output).toContain('Empty Section');
-            (0, vitest_1.expect)(output).toContain('—');
+            // render_depth=0 → section fully skipped, not shown at all
+            (0, vitest_1.expect)(output).not.toContain('Hidden Section');
             (0, vitest_1.expect)(output).toContain('Visible Section');
         });
     });

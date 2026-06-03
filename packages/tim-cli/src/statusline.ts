@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { loadConfig, readTimSessionCache, resolveActiveSessionId } from 'tim-core';
+import { loadConfig } from 'tim-core';
 import { TimStore, deriveCounters, resolveProjectDisplayName } from 'tim-store';
 import type { FindMarkerOptions, ProjectMarker } from 'tim-hooks';
 import { findMarker, findMarkerOptionsFromEnv } from 'tim-hooks';
@@ -49,29 +49,6 @@ export async function reconcileMarkerCounters(
     exchanges: exchangeCount,
     batches_summarized: batchesSummarized,
   };
-}
-
-async function markerFromTimSession(sessionId: string): Promise<ProjectMarker | null> {
-  const store = new TimStore(dbPath());
-  try {
-    const entry = await store.read(sessionId);
-    if (!entry || entry.metadata.kind !== 'session') return null;
-    const projectRef =
-      typeof entry.metadata.project_ref === 'string' ? entry.metadata.project_ref.trim() : '';
-    if (!projectRef) return null;
-    return {
-      project: projectRef,
-      session: sessionId,
-      exchanges: typeof entry.metadata.exchange_count === 'number' ? entry.metadata.exchange_count : 0,
-      batch_size: typeof entry.metadata.batch_size === 'number' ? entry.metadata.batch_size : 5,
-      batches_summarized:
-        typeof entry.metadata.batches_summarized === 'number'
-          ? entry.metadata.batches_summarized
-          : 0,
-    };
-  } finally {
-    store.close();
-  }
 }
 
 export interface StatusLineInput {
@@ -143,22 +120,13 @@ export function formatHermesStatus(
 
 async function resolveStatuslineMarker(
   cwd: string,
-  sessionIdArg: string | undefined,
+  _sessionIdArg: string | undefined,
   options: FindMarkerOptions | undefined,
   store: TimStore,
 ): Promise<ProjectMarker | null> {
   const located = findMarker(cwd, options);
-  const sessionId = resolveActiveSessionId({
-    sessionIdArg,
-    markerSession: located?.marker.session,
-  });
-
-  if (sessionId) {
-    const fromDb = await markerFromTimSession(sessionId);
-    if (fromDb) return reconcileMarkerCounters(store, fromDb);
-  }
-
   if (!located) return null;
+  // Project label comes from .tim-project only; DB may refresh exchange counters.
   return reconcileMarkerCounters(store, located.marker);
 }
 
@@ -214,11 +182,7 @@ export interface StatuslineCliOptions {
 
 export async function runStatusline(opts: StatuslineCliOptions = {}): Promise<void> {
   const input = readStatuslineInputSync();
-  const cache = readTimSessionCache();
-  const cwd =
-    opts.cwd?.trim() ||
-    cache?.cwd ||
-    resolveStatuslineCwd(input);
+  const cwd = opts.cwd?.trim() || resolveStatuslineCwd(input);
   const findOpts = findMarkerOptionsFromEnv();
   const store = new TimStore(dbPath());
   try {

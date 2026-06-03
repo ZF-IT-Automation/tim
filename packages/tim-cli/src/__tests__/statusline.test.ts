@@ -152,41 +152,35 @@ describe('statusline', () => {
     }
   });
 
-  it('prefers session-cache over stale bg marker session', async () => {
-    const db = path.join(TEST_ROOT, `sl-cache-${Date.now()}.db`);
+  it('uses marker project even when DB session has different project_ref', async () => {
+    const db = path.join(TEST_ROOT, `sl-marker-proj-${Date.now()}.db`);
     const prevDb = process.env.TIM_DB_PATH;
     process.env.TIM_DB_PATH = db;
     const store = new TimStore(db);
     const sessions = new SessionManager(store);
     try {
-      await store.createProject('P0101');
+      await store.createProject('P0101', { content: 'other' });
+      await store.createProject('P0102', { content: 'marker' });
       await sessions.startProjectSession({
-        sessionId: '20260602_155620_ee0929',
+        sessionId: 'marker-sess',
         projectId: 'P0101',
         agentName: 't',
         cwd: '/',
         harness: 'hermes',
       });
-      await sessions.logExchange('20260602_155620_ee0929', [
-        { role: 'user', content: 'a' },
-        { role: 'user', content: 'b' },
-      ]);
+      await sessions.logExchange('marker-sess', [{ role: 'user', content: 'one' }]);
 
-      const dir = fs.mkdtempSync(path.join(TEST_ROOT, 'sl-cache-m-'));
+      const dir = fs.mkdtempSync(path.join(TEST_ROOT, 'sl-marker-proj-'));
       writeMarker(dir, {
-        project: 'P0101',
-        session: 'bg_stale',
+        project: 'P0102',
+        session: 'marker-sess',
         exchanges: 0,
         batch_size: 5,
         batches_summarized: 0,
       });
-      fs.writeFileSync(
-        path.join(emptyCacheDir, '.session-cache'),
-        JSON.stringify({ session_id: '20260602_155620_ee0929', cwd: dir }),
-      );
 
       const line = await statuslineFromCwd(dir, { maxRoot: dir });
-      expect(line).toMatch(/ · 2\/5 exchanges · /);
+      expect(line).toMatch(/^marker · 1\/5 exchanges · /);
       fs.rmSync(dir, { recursive: true, force: true });
     } finally {
       store.close();

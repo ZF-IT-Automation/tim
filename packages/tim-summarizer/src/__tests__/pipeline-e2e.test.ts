@@ -304,7 +304,9 @@ describe('pipeline e2e — edge cases', () => {
     const count = await runSummarizerLoop(SESSION_ID);
     expect(count).toBe(1);
     const depth4 = (await store.loadProject(PROJECT_ID, { depth: 4 }))!;
-    expect(batchSummaryNodes(depth4)[0]!.content).toContain('[ALL SUMMARIZER CLIs FAILED');
+    const batchContent = batchSummaryNodes(depth4)[0]!.content;
+    // When all CLIs fail, heuristic produces Q&A-style summary (not old FALLBACK_MARKER)
+    expect(batchContent).toContain('Q1:');
   });
 
   it('empty batch → runSummarizerLoop writes 0 summaries', async () => {

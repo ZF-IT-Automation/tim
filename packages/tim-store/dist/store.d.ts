@@ -65,6 +65,11 @@ export declare class TimStore implements MemoryInterface {
     getByMetadataKind(kind: string, limit?: number): Promise<Entry[]>;
     getChildByKind(parentId: string, kind: string): Promise<Entry[]>;
     getChildrenBySeq(parentId: string): Promise<Entry[]>;
+    /**
+     * Query root-level entries (parent_id IS NULL) that are not projects.
+     * Optionally filter by tag (exact match within JSON tags array).
+     */
+    getRootLevelEntries(tag?: string): Entry[];
     getTasks(opts?: GetTasksOptions): Promise<TaskRecord[]>;
     private findProjectLabelForParent;
     close(): void;

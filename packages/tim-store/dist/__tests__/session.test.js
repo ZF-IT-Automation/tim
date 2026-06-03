@@ -97,7 +97,7 @@ const index_js_1 = require("../index.js");
         });
         (0, vitest_1.it)('runs decay only after summary is durable', async () => {
             const old = await store.write('old entry', {
-                metadata: { kind: 'note' },
+                metadata: { kind: 'exchange' },
             });
             await new Promise(r => setTimeout(r, 5));
             await sessions.sessionStart({
@@ -109,7 +109,7 @@ const index_js_1 = require("../index.js");
             await sessions.sessionLog('sess-decay', [
                 { role: 'user', content: 'msg' },
             ]);
-            const summary = await sessions.checkpoint('sess-decay');
+            const summary = await sessions.checkpoint('sess-decay', { runDecay: true });
             const oldRead = await store.read(old.id, { showIrrelevant: true });
             (0, vitest_1.expect)(oldRead?.irrelevant).toBe(true);
             const sessionRead = await store.read('sess-decay');
@@ -117,20 +117,27 @@ const index_js_1 = require("../index.js");
             (0, vitest_1.expect)(sessionRead).not.toBeNull();
             (0, vitest_1.expect)(summaryRead).not.toBeNull();
         });
-        (0, vitest_1.it)('uses default summarizer stub truncated to 2000 chars', async () => {
+        (0, vitest_1.it)('uses default summarizer producing thematic summary, truncated at 2000 chars', async () => {
             await sessions.sessionStart({
                 sessionId: 'sess-stub',
                 agentName: 'agent',
                 cwd: '/',
                 harness: 'test',
             });
+            // Large inputs to trigger 2000-char truncation in thematic summary
             await sessions.sessionLog('sess-stub', [
-                { role: 'user', content: 'x'.repeat(1500) },
-                { role: 'agent', content: 'y'.repeat(1500) },
+                { role: 'user', content: 'A'.repeat(800) },
+                { role: 'agent', content: 'B'.repeat(800) },
+                { role: 'user', content: 'C'.repeat(800) },
             ]);
             const summary = await sessions.checkpoint('sess-stub', { runDecay: false });
-            (0, vitest_1.expect)(summary.content.length).toBeLessThanOrEqual(2001);
-            (0, vitest_1.expect)(summary.content.endsWith('…')).toBe(true);
+            (0, vitest_1.expect)(summary.title).toContain('Session checkpoint');
+            (0, vitest_1.expect)(summary.content).toContain('Topics:');
+            // Must be thematic, not raw "user: ..." dump
+            (0, vitest_1.expect)(summary.content).not.toMatch(/^user:/m);
+            // Total length respects 2000 char bound
+            const full = (summary.title + '\n' + (summary.content || ''));
+            (0, vitest_1.expect)(full.length).toBeLessThanOrEqual(2001);
         });
         (0, vitest_1.it)('does not run decay if summary write fails', async () => {
             const old = await store.write('protected old');
@@ -165,7 +172,7 @@ const index_js_1 = require("../index.js");
             bus.on('edge:created', () => { events.push('edge:created'); });
             const eventStore = new index_js_1.TimStore(':memory:', { emitter: bus });
             const eventSessions = new index_js_1.SessionManager(eventStore);
-            const old = await eventStore.write('stale data');
+            const old = await eventStore.write('stale data', { metadata: { kind: 'exchange' } });
             await new Promise(r => setTimeout(r, 5));
             await eventSessions.sessionStart({
                 sessionId: 'lifecycle',
@@ -178,7 +185,7 @@ const index_js_1 = require("../index.js");
                 { role: 'agent', content: 'A1' },
                 { role: 'user', content: 'Q2' },
             ]);
-            const summary = await eventSessions.checkpoint('lifecycle');
+            const summary = await eventSessions.checkpoint('lifecycle', { runDecay: true });
             (0, vitest_1.expect)(events.filter(e => e === 'memory:written').length).toBeGreaterThanOrEqual(5);
             (0, vitest_1.expect)(events).toContain('edge:created');
             const exchanges = await eventSessions.getSessionExchanges('lifecycle');

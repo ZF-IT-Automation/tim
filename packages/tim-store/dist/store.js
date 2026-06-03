@@ -275,6 +275,28 @@ class TimStore {
     `).all(parentId);
         return rows.map(rowToEntry);
     }
+    /**
+     * Query root-level entries (parent_id IS NULL) that are not projects.
+     * Optionally filter by tag (exact match within JSON tags array).
+     */
+    getRootLevelEntries(tag) {
+        let sql = `
+      SELECT * FROM entries
+      WHERE parent_id IS NULL
+        AND (json_extract(metadata, '$.kind') != 'project' OR json_extract(metadata, '$.kind') IS NULL)
+        AND irrelevant = 0
+        AND tombstoned_at IS NULL
+    `;
+        const params = [];
+        if (tag) {
+            sql += ` AND tags LIKE ?`;
+            // Match the tag within JSON array: e.g., '%"#rule"%'
+            params.push(`%"${tag}"%`);
+        }
+        sql += ` ORDER BY created_at ASC`;
+        const rows = this.db.prepare(sql).all(...params);
+        return rows.map(rowToEntry);
+    }
     async getTasks(opts) {
         let sql = `
       SELECT e.* FROM entries e
@@ -749,6 +771,7 @@ class TimStore {
       WHERE created_at < ?
         AND irrelevant = 0
         AND tombstoned_at IS NULL
+        AND json_extract(metadata, '$.kind') = 'exchange'
     `).all(options.before);
         let count = 0;
         for (const row of rows) {

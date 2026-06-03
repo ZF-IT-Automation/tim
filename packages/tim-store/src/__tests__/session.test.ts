@@ -136,21 +136,28 @@ describe('SessionManager', () => {
       expect(summaryRead).not.toBeNull();
     });
 
-    it('uses default summarizer stub truncated to 2000 chars', async () => {
+    it('uses default summarizer producing thematic summary, truncated at 2000 chars', async () => {
       await sessions.sessionStart({
         sessionId: 'sess-stub',
         agentName: 'agent',
         cwd: '/',
         harness: 'test',
       });
+      // Large inputs to trigger 2000-char truncation in thematic summary
       await sessions.sessionLog('sess-stub', [
-        { role: 'user', content: 'x'.repeat(1500) },
-        { role: 'agent', content: 'y'.repeat(1500) },
+        { role: 'user', content: 'A'.repeat(800) },
+        { role: 'agent', content: 'B'.repeat(800) },
+        { role: 'user', content: 'C'.repeat(800) },
       ]);
 
       const summary = await sessions.checkpoint('sess-stub', { runDecay: false });
-      expect(summary.content.length).toBeLessThanOrEqual(2001);
-      expect(summary.content.endsWith('…')).toBe(true);
+      expect(summary.title).toContain('Session checkpoint');
+      expect(summary.content).toContain('Topics:');
+      // Must be thematic, not raw "user: ..." dump
+      expect(summary.content).not.toMatch(/^user:/m);
+      // Total length respects 2000 char bound
+      const full = (summary.title + '\n' + (summary.content || ''));
+      expect(full.length).toBeLessThanOrEqual(2001);
     });
 
     it('does not run decay if summary write fails', async () => {
