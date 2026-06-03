@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { generateSummaryHeuristic } from '../generate-summary.js';
+import {
+  generateSummaryHeuristic,
+  extractTags,
+  FALLBACK_MARKER,
+} from '../generate-summary.js';
 import type { UnsummarizedBatch } from '../mcp-client.js';
 
 const baseBatch: UnsummarizedBatch = {
@@ -24,5 +28,27 @@ describe('generateSummaryHeuristic', () => {
     expect(text).toContain('Hello');
     expect(text).toContain('Hi');
     expect(text).toContain('project=P0001');
+  });
+});
+
+describe('extractTags', () => {
+  it('parses TAGS line, normalizes, dedups, caps at 5', () => {
+    const text =
+      'Themes: auth work\n- decided JWT\n\nTAGS: #Auth #auth #session-start #FOO_BAR #one #two #three #four #five #six';
+    const { body, tags } = extractTags(text);
+    expect(body).toBe('Themes: auth work\n- decided JWT');
+    expect(tags).toEqual(['#auth', '#session-start', '#foo-bar', '#one', '#two']);
+  });
+
+  it('returns empty tags when TAGS line missing', () => {
+    const { body, tags } = extractTags('Summary only');
+    expect(body).toBe('Summary only');
+    expect(tags).toEqual([]);
+  });
+
+  it('returns empty tags for FALLBACK_MARKER', () => {
+    const { body, tags } = extractTags(FALLBACK_MARKER);
+    expect(body).toBe(FALLBACK_MARKER);
+    expect(tags).toEqual([]);
   });
 });

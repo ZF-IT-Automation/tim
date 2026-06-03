@@ -615,17 +615,53 @@ describe('SessionManager', () => {
 
     it('writes a Batch node under Summary and bumps derived batches_summarized', async () => {
       const batch = await sessions.showUnsummarized('sb');
-      const node = await sessions.writeBatchSummary('sb', batch.batchIndex, 'themes: greetings', {
-        seqFrom: 1,
-        seqTo: 2,
-      });
+      const node = await sessions.writeBatchSummary(
+        'sb',
+        batch.batchIndex,
+        'themes: greetings',
+        { seqFrom: 1, seqTo: 2 },
+        ['#greetings', '#onboarding'],
+      );
       expect(node.metadata.kind).toBe('batch-summary');
       expect(node.metadata.batch_index).toBe(1);
       expect(node.metadata.summarized_at).toBeTruthy();
       expect(node.tags).toContain('#session-summary');
+      expect(node.tags).toContain('#batch-summary');
+      expect(node.tags).toContain('#greetings');
 
       const { batchesSummarized } = await deriveCounters(store, 'sb');
       expect(batchesSummarized).toBe(1);
+    });
+
+    it('aggregateSessionTags promotes tags appearing in 2+ batches to Summary node', async () => {
+      await sessions.writeBatchSummary('sb', 1, 'batch one', { seqFrom: 1, seqTo: 1 }, ['#auth', '#ui']);
+      await sessions.logExchange('sb', [
+        { role: 'user', content: 'Q3' },
+        { role: 'agent', content: 'A3' },
+        { role: 'user', content: 'Q4' },
+        { role: 'agent', content: 'A4' },
+      ]);
+      await sessions.writeBatchSummary('sb', 2, 'batch two', { seqFrom: 3, seqTo: 4 }, ['#auth', '#db']);
+
+      const summaryNode = (await store.getChildByKind('sb', 'session-summary-root'))[0]!;
+      expect(summaryNode.tags).toContain('#auth');
+      expect(summaryNode.tags).not.toContain('#ui');
+      expect(summaryNode.tags).not.toContain('#db');
+    });
+
+    it('showUntagged lists batch nodes with only structural tags', async () => {
+      await sessions.writeBatchSummary('sb', 1, 'no tags here', { seqFrom: 1, seqTo: 2 });
+      await sessions.logExchange('sb', [
+        { role: 'user', content: 'Q3' },
+        { role: 'agent', content: 'A3' },
+        { role: 'user', content: 'Q4' },
+        { role: 'agent', content: 'A4' },
+      ]);
+      await sessions.writeBatchSummary('sb', 2, 'tagged batch', { seqFrom: 3, seqTo: 4 }, ['#feature-x']);
+
+      const untagged = await sessions.showUntagged();
+      expect(untagged.some(u => u.sessionId === 'sb' && u.batchIndex === 1)).toBe(true);
+      expect(untagged.some(u => u.sessionId === 'sb' && u.batchIndex === 2)).toBe(false);
     });
 
     it('is idempotent: re-writing the same batch_index does not duplicate', async () => {

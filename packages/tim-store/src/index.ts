@@ -30,6 +30,7 @@ export {
   type Summarizer,
   type UnsummarizedBatch,
   type UnsummarizedExchange,
+  type UntaggedBatch,
   type BatchFullInfo,
   type OnBatchFullHandler,
 } from './session.js';

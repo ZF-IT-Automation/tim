@@ -182,6 +182,7 @@ describe('pipeline e2e — happy path', () => {
           a.batchIndex as number,
           a.summary as string,
           { seqFrom: a.seqFrom as number, seqTo: a.seqTo as number },
+          a.tags as string[] | undefined,
         );
       }
       throw new Error(`unexpected tool: ${tool}`);
@@ -258,6 +259,7 @@ describe('pipeline e2e — edge cases', () => {
           a.batchIndex as number,
           a.summary as string,
           { seqFrom: a.seqFrom as number, seqTo: a.seqTo as number },
+          a.tags as string[] | undefined,
         );
       }
       throw new Error(`unexpected tool: ${tool}`);
