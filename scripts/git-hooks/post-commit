@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
-# Git hook template — delegates to tim-post-commit.sh in the TIM repo.
+# Git hook template — symlink into ~/.hermes/git-hooks/post-commit (see post-commit.sh header).
 set -euo pipefail
-exec /home/bbbee/projects/tim/packages/tim-hooks/scripts/tim-post-commit.sh
+TIM_REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+exec "$TIM_REPO/packages/tim-hooks/scripts/post-commit.sh"

@@ -40,8 +40,8 @@ const tim_core_1 = require("tim-core");
 const tim_hooks_1 = require("tim-hooks");
 const tim_migrate_1 = require("tim-migrate");
 const sync_cli_js_1 = require("./sync-cli.js");
-const git_commit_js_1 = require("./git-commit.js");
 const statusline_js_1 = require("./statusline.js");
+const record_commit_js_1 = require("./record-commit.js");
 const hermes_statusline_install_js_1 = require("./hermes-statusline-install.js");
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
@@ -213,57 +213,6 @@ async function cmdBindProject(args) {
     };
     (0, tim_hooks_1.writeMarker)(cwd, marker);
     console.log(`Wrote .tim-project → ${label} at ${cwd}`);
-}
-async function cmdRecordCommit(args) {
-    const flags = parseArgs(args);
-    const cwd = flags.cwd ?? process.cwd();
-    const located = (0, tim_hooks_1.findMarker)(cwd, (0, tim_hooks_1.findMarkerOptionsFromEnv)());
-    const projectId = flags.project ?? located?.marker.project;
-    if (!projectId)
-        return; // no marker → silent skip (hook path)
-    const sessionId = flags.session ?? located?.marker.session ?? undefined;
-    let hash = flags.hash;
-    let message = flags.message;
-    let diffSummary = flags.diff;
-    let author = flags.author;
-    let date = flags.date;
-    let branch = flags.branch;
-    if (!hash || !message) {
-        if (!(0, git_commit_js_1.isGitRepo)(cwd)) {
-            console.error('Not a git repository and --hash/--message not provided');
-            process.exit(1);
-        }
-        const info = (0, git_commit_js_1.readGitCommit)(cwd, hash);
-        hash = hash ?? info.hash;
-        message = message ?? info.message;
-        diffSummary = diffSummary ?? info.diffSummary;
-        author = author ?? info.author;
-        date = date ?? info.date;
-        branch = branch ?? info.branch;
-    }
-    if (!hash || !message) {
-        console.error('Usage: tim record-commit [--cwd DIR] [--project LABEL] [--session ID] [--hash SHA] [--message TEXT] [--diff STAT]');
-        process.exit(1);
-    }
-    const config = (0, tim_core_1.loadConfig)();
-    const store = new tim_store_1.TimStore(getDbPath(config));
-    try {
-        const mgr = new tim_store_1.CommitManager(store);
-        const entry = await mgr.recordCommit({
-            projectId,
-            hash,
-            message,
-            diffSummary,
-            sessionId: sessionId || undefined,
-            author,
-            date,
-            branch,
-        });
-        console.log(JSON.stringify(entry, null, 2));
-    }
-    finally {
-        store.close();
-    }
 }
 async function cmdHook(args) {
     const sub = args[0];
@@ -442,7 +391,7 @@ async function main() {
             await cmdBindProject(rest);
             break;
         case 'record-commit':
-            await cmdRecordCommit(rest);
+            await (0, record_commit_js_1.cmdRecordCommit)(rest);
             break;
         case 'hook':
             await cmdHook(rest);

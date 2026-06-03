@@ -405,6 +405,47 @@ cd ~/projects/tim && npx tsc -b && npx vitest run packages/tim-cli packages/tim-
 node packages/tim-cli/dist/cli.js statusline <<< '{"cwd":"/path/with/.tim-project"}'
 ```
 
+---
+
+# JOURNAL — Global post-commit hook (2026-06-03)
+
+## Done
+
+1. **`record-commit.ts`** — extracted from `cli.ts`; `cmdRecordCommit` unchanged behavior
+2. **`post-commit.sh`** — `resolve_tim_cli`: `TIM_CLI` → `tim` on PATH → `../../tim-cli/dist/cli.js`; errors swallowed
+3. **Global install** — `~/.hermes/git-hooks/post-commit` → script; `git config --global core.hooksPath`
+4. **`tim-post-commit.sh`** — thin exec wrapper (back-compat)
+5. **Test** — record-commit idempotent CLI test (+1 → 233 total)
+
+## Decisions
+
+- **Global hooksPath only** — repo `.git/hooks/post-commit` ignored when global set; one hook dir for all repos
+- **Hook never fails commit** — `|| true` + exit 0 always
+- **Dev fallback** — monorepo `dist/cli.js` when `tim` not on PATH
+
+## Edge cases
+
+| Case | Behavior |
+|------|----------|
+| No `.tim-project` | silent exit 0 |
+| Duplicate hash | idempotent, first message kept |
+| Not git repo | hook exit 0 (rev-parse fails) |
+| `tim`/`node` missing | resolve fails → exit 0 |
+
+## Gotchas
+
+- **Global hooksPath replaces all local hooks** — only `post-commit` in `~/.hermes/git-hooks` unless more symlinks added
+- Rebuild `tim-cli` after pull; hook uses `dist/cli.js` fallback
+- P0063 marker in tim repo — commits record to that project's Commits section
+
+## Verify
+
+```bash
+cd ~/projects/tim && npx tsc -b && npm test   # 233 pass
+bash packages/tim-hooks/scripts/post-commit.sh
+sqlite3 ~/.tim/tim.db "SELECT title FROM entries WHERE json_extract(metadata,'$.commit_hash')=substr('$(git rev-parse HEAD)',1,40)"
+```
+
 
 # JOURNAL — Impl: statusLine fix + project aliases (2026-06-03)
 
@@ -544,3 +585,27 @@ npx vitest run packages/tim-summarizer    # focused run of new file
 - 6 users @ bs=5 → onBatchFull×1 (batch 1), not 2 summaries unless loop runs to completion
 - `vi.spyOn(child_process.spawn)` fails ESM — use real ENOENT binary via `loadConfig` chain instead
 - Verify: `tsc -b` clean; `vitest run` → **232** tests (222+10)
+
+---
+
+# JOURNAL — Global post-commit hook (2026-06-03)
+
+## Done
+1. `record-commit.ts` extracted from `cli.ts`
+2. `post-commit.sh` — TIM_CLI → `tim` PATH → monorepo `dist/cli.js`; errors swallowed
+3. Global: `~/.hermes/git-hooks/post-commit` + `core.hooksPath`
+4. Idempotent CLI test (+1 → **233** tests)
+
+## Decisions
+- Global hooksPath = all repos; local `.git/hooks` ignored
+- Hook never fails commit (`|| true`, exit 0)
+
+## Gotchas
+- Only `post-commit` in global dir unless more hooks symlinked
+- Rebuild `tim-cli` after pull for dev fallback path
+
+## Verify
+```bash
+npx tsc -b && npm test
+bash packages/tim-hooks/scripts/post-commit.sh
+```

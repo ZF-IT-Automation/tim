@@ -66,6 +66,25 @@ describe('tim record-commit', () => {
     store.close();
   });
 
+  it('is idempotent for the same hash', async () => {
+    const env = { TIM_DB_PATH: dbPath };
+    run(
+      ['record-commit', '--cwd', dir, '--hash', 'duphash', '--message', 'first'],
+      env,
+    );
+    run(
+      ['record-commit', '--cwd', dir, '--hash', 'duphash', '--message', 'second'],
+      env,
+    );
+    const store = new TimStore(dbPath);
+    const mgr = new CommitManager(store);
+    const section = await mgr.ensureCommitsSection('P0002');
+    const commits = await store.getChildByKind(section.id, 'commit');
+    expect(commits).toHaveLength(1);
+    expect(commits[0]!.content).toContain('first');
+    store.close();
+  });
+
   it('exits 0 silently when no marker', () => {
     const bare = fs.mkdtempSync(path.join(TEST_ROOT, 'bare-'));
     try {
