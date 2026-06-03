@@ -609,3 +609,22 @@ npx vitest run packages/tim-summarizer    # focused run of new file
 npx tsc -b && npm test
 bash packages/tim-hooks/scripts/post-commit.sh
 ```
+
+---
+
+# JOURNAL — Session reparent on project switch (DONE)
+
+Plan: `docs/exchange-reparent-plan.md`
+
+## Done
+- `startProjectSession` rebind: validate target → ensure Sessions section → `update(project_ref)` then `curate().moveEntry(session, newSessionsRoot)`
+- Tests: `reparents the session node…` (exchange before switch, parentId + content); rebind test + back-and-forth + same-project no-op
+
+## Decisions
+- One session node per `sessionId` — move it, descendants follow; no per-exchange reparent
+- `project_label` = parent-walk at read — no exchange metadata writes
+
+## Edge / gotchas
+- **update before moveEntry** — reverse clobbers `order` from move
+- Missing project → throw; same `project_ref` → no-op; empty old Sessions section OK (hidden in UI)
+- 234 tests, `tsc -b` clean; change only `session.ts` + tests

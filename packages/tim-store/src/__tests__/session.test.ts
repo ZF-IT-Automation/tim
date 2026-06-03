@@ -374,6 +374,76 @@ describe('SessionManager', () => {
         harness: 't',
       });
       expect(rebound.metadata.project_ref).toBe('P0095');
+
+      const back = await sessions.startProjectSession({
+        sessionId: 'rebind-s',
+        projectId: 'P0096',
+        agentName: 'a',
+        cwd: '/',
+        harness: 't',
+      });
+      expect(back.metadata.project_ref).toBe('P0096');
+      const p0096b = await store.read('P0096');
+      const sec96 = (await store.getChildByKind(p0096b!.id, 'sessions-root'))[0];
+      expect(back.parentId).toBe(sec96.id);
+
+      const noop = await sessions.startProjectSession({
+        sessionId: 'rebind-s',
+        projectId: 'P0096',
+        agentName: 'a',
+        cwd: '/',
+        harness: 't',
+      });
+      expect(noop.parentId).toBe(sec96.id);
+    });
+
+    it('reparents the session node + its exchanges to the new project on switch', async () => {
+      await store.createProject('P0096');
+      await store.createProject('P0095');
+
+      await sessions.startProjectSession({
+        sessionId: 'switch-s',
+        projectId: 'P0096',
+        agentName: 'a',
+        cwd: '/',
+        harness: 't',
+      });
+      await sessions.logExchange('switch-s', [
+        { role: 'user', content: 'first question' },
+        { role: 'agent', content: 'first answer' },
+      ]);
+
+      const exBefore = await sessions.getSessionExchanges('switch-s');
+      const userExchangeId = exBefore.find(e => e.metadata.role === 'user')!.id;
+
+      const rebound = await sessions.startProjectSession({
+        sessionId: 'switch-s',
+        projectId: 'P0095',
+        agentName: 'a',
+        cwd: '/',
+        harness: 't',
+      });
+
+      expect(rebound.metadata.project_ref).toBe('P0095');
+
+      const p0095 = await store.read('P0095');
+      const newSection = (await store.getChildByKind(p0095!.id, 'sessions-root'))[0];
+      expect(rebound.parentId).toBe(newSection.id);
+      const movedNodes = await store.getChildByKind(newSection.id, 'session');
+      expect(movedNodes.map(s => s.id)).toContain('switch-s');
+
+      const p0096 = await store.read('P0096');
+      const oldSections = await store.getChildByKind(p0096!.id, 'sessions-root');
+      const oldSessionIds = oldSections.length
+        ? (await store.getChildByKind(oldSections[0].id, 'session')).map(s => s.id)
+        : [];
+      expect(oldSessionIds).not.toContain('switch-s');
+
+      const movedExchange = await store.read(userExchangeId);
+      expect(movedExchange!.content || movedExchange!.title).toContain('first question');
+      const kids = await store.getChildren(newSection.id);
+      const sessionChild = kids.find(k => k.id === 'switch-s');
+      expect(sessionChild!.metadata.project_ref).toBe('P0095');
     });
 
     it('binds unbound sessions to P0000 Inbox when using inbox helper', async () => {
