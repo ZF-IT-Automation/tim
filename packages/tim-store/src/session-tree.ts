@@ -15,6 +15,10 @@ export const KIND_EXCHANGE_BATCH = 'exchange-batch';
 export const KIND_EXCHANGE = 'exchange';
 
 export const SESSION_SUMMARY_TAG = '#session-summary';
+export const BATCH_SUMMARY_TAG = '#batch-summary';
+
+/** Structural tags on batch-summary nodes — not content hashtags. */
+export const BATCH_STRUCTURAL_TAGS = new Set([SESSION_SUMMARY_TAG, BATCH_SUMMARY_TAG]);
 export const DEFAULT_BATCH_SIZE = 5;
 export const SESSION_ROLLUP_THRESHOLD = 3;
 export const MARKER_FILENAME = '.tim-project';

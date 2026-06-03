@@ -15,6 +15,8 @@ import {
   KIND_SESSIONS_ROOT,
   KIND_SUMMARY_ROOT,
   SESSION_SUMMARY_TAG,
+  BATCH_SUMMARY_TAG,
+  BATCH_STRUCTURAL_TAGS,
   SESSIONS_SECTION_ORDER,
   SESSIONS_SECTION_TITLE,
   SUMMARY_NODE_TITLE,
@@ -76,6 +78,15 @@ export interface UnsummarizedBatch {
     model?: string;
     task_summary?: string;
   };
+}
+
+export interface UntaggedBatch {
+  sessionId: string;
+  batchNodeId: string;
+  batchIndex: number;
+  title: string;
+  seqFrom: number;
+  seqTo: number;
 }
 
 const DEFAULT_SUMMARIZER: Summarizer = async (exchanges) => {
@@ -395,6 +406,7 @@ export class SessionManager {
     batchIndex: number,
     summaryText: string,
     range: { seqFrom: number; seqTo: number },
+    tags?: string[],
   ): Promise<Entry> {
     const summaryNode = await findChildByKind(this.store, sessionId, KIND_SUMMARY_ROOT);
     if (!summaryNode) throw new Error(`Summary node missing for session: ${sessionId}`);
@@ -404,6 +416,7 @@ export class SessionManager {
     if (existing) return existing;
 
     const summarizedAt = new Date().toISOString();
+    const contentTags = tags ?? [];
     const node = await this.store.write(summaryText, {
       parentId: summaryNode.id,
       title: `Batch ${batchIndex}`,
@@ -415,7 +428,7 @@ export class SessionManager {
         sessionId,
         summarized_at: summarizedAt,
       },
-      tags: [SESSION_SUMMARY_TAG, '#batch-summary'],
+      tags: [SESSION_SUMMARY_TAG, BATCH_SUMMARY_TAG, ...contentTags],
     });
 
     const session = await this.store.read(sessionId);
@@ -425,7 +438,62 @@ export class SessionManager {
         metadata: { ...session.metadata, batches_summarized: batchesSummarized },
       });
     }
+    await this.aggregateSessionTags(sessionId);
     return node;
+  }
+
+  /** Recompute session-level content tags from batch summaries (freq >= 2). */
+  async aggregateSessionTags(sessionId: string): Promise<Entry | null> {
+    const summaryNode = await findChildByKind(this.store, sessionId, KIND_SUMMARY_ROOT);
+    if (!summaryNode) return null;
+
+    const batches = await this.store.getChildByKind(summaryNode.id, KIND_BATCH);
+    const freq = new Map<string, number>();
+    for (const batch of batches) {
+      const contentTags = (batch.tags ?? []).filter(t => !BATCH_STRUCTURAL_TAGS.has(t));
+      for (const tag of new Set(contentTags)) {
+        freq.set(tag, (freq.get(tag) ?? 0) + 1);
+      }
+    }
+
+    const aggregated = [...freq.entries()]
+      .filter(([, count]) => count >= 2)
+      .map(([tag]) => tag)
+      .sort();
+
+    await this.store.update(summaryNode.id, {
+      tags: [SESSION_SUMMARY_TAG, ...aggregated],
+    });
+    return (await this.store.read(summaryNode.id))!;
+  }
+
+  /** Batch summary nodes with no content tags (only structural tags). */
+  async showUntagged(): Promise<UntaggedBatch[]> {
+    const results: UntaggedBatch[] = [];
+    const sessions = await this.store.getByMetadataKind(KIND_SESSION, 100);
+    for (const session of sessions) {
+      try {
+        const summaryNode = await findChildByKind(this.store, session.id, KIND_SUMMARY_ROOT);
+        if (!summaryNode) continue;
+
+        const batches = await this.store.getChildByKind(summaryNode.id, KIND_BATCH);
+        for (const batch of batches) {
+          const contentTags = (batch.tags ?? []).filter(t => !BATCH_STRUCTURAL_TAGS.has(t));
+          if (contentTags.length > 0) continue;
+          results.push({
+            sessionId: session.id,
+            batchNodeId: batch.id,
+            batchIndex: Number(batch.metadata.batch_index),
+            title: batch.title,
+            seqFrom: Number(batch.metadata.seq_from),
+            seqTo: Number(batch.metadata.seq_to),
+          });
+        }
+      } catch {
+        // Skip sessions with incomplete subtrees
+      }
+    }
+    return results;
   }
 
   async rollUpSession(

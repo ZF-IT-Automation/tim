@@ -36,8 +36,54 @@ function buildPrompt(batch: UnsummarizedBatch): string {
       exchanges: batch.exchanges,
       previousSummaries: batch.previousSummaries,
       sessionMeta: batch.sessionMeta,
-    })}`
+    })}\n\n` +
+    `End your response with a line: TAGS: #tag1 #tag2 ... (3-5 content hashtags, lowercase kebab-case, # prefix).`
   );
+}
+
+export const FALLBACK_MARKER = 'TIM_SUMMARIZER_FALLBACK_NEEDED';
+
+function normalizeTag(raw: string): string | null {
+  let tag = raw.trim().toLowerCase();
+  if (!tag.startsWith('#')) tag = `#${tag}`;
+  const name = tag
+    .slice(1)
+    .replace(/[\s_]+/g, '-')
+    .replace(/[^a-z0-9-]/g, '');
+  if (!name) return null;
+  return `#${name}`;
+}
+
+/** Parse TAGS line from LLM output; strip it from body. */
+export function extractTags(text: string): { body: string; tags: string[] } {
+  if (text === FALLBACK_MARKER) return { body: text, tags: [] };
+
+  const lines = text.split('\n');
+  let tagLineIdx = -1;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (/^TAGS:\s*/i.test(lines[i]!.trim())) {
+      tagLineIdx = i;
+      break;
+    }
+  }
+  if (tagLineIdx < 0) return { body: text.trimEnd(), tags: [] };
+
+  const tagLine = lines[tagLineIdx]!.trim();
+  const tagPart = tagLine.replace(/^TAGS:\s*/i, '');
+  const rawTags = tagPart.match(/#\S+/g) ?? [];
+
+  const tags: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of rawTags) {
+    const normalized = normalizeTag(raw);
+    if (normalized && !seen.has(normalized)) {
+      seen.add(normalized);
+      tags.push(normalized);
+    }
+  }
+
+  const body = [...lines.slice(0, tagLineIdx), ...lines.slice(tagLineIdx + 1)].join('\n').trimEnd();
+  return { body, tags: tags.slice(0, 5) };
 }
 
 function appendSummarizerLog(line: string): void {
@@ -220,8 +266,6 @@ export async function generateProjectSummary(
   }
   return null;
 }
-
-export const FALLBACK_MARKER = 'TIM_SUMMARIZER_FALLBACK_NEEDED';
 
 export async function generateSummary(batch: UnsummarizedBatch): Promise<string> {
   const config = loadConfig();

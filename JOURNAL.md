@@ -650,3 +650,23 @@ Plan: `docs/exchange-reparent-plan.md`
 - **update before moveEntry** — reverse clobbers `order` from move
 - Missing project → throw; same `project_ref` → no-op; empty old Sessions section OK (hidden in UI)
 - 234 tests, `tsc -b` clean; change only `session.ts` + tests
+
+
+# JOURNAL — Hashtag generation + tim_show_untagged (2026-06-03)
+
+## Done
+- `generate-summary.ts`: `buildPrompt` asks `TAGS:` line; `extractTags()` strips+normalizes (dedup, cap 5); FALLBACK_MARKER → empty tags
+- `summarize.ts`: loop extracts tags, passes to `tim_write_batch_summary`
+- `session.ts`: `writeBatchSummary(..., tags?)` stores content tags; `aggregateSessionTags()` freq≥2 → Summary node; `showUntagged()` scans KIND_BATCH
+- `server.ts`: schema `tags?`; new READ tool `tim_show_untagged`
+- Tests: extractTags, tags+aggregate, showUntagged filter
+
+## Gotchas
+- Aggregation store-side in `writeBatchSummary` — loop is MCP-only
+- Idempotent write → tags first write only; re-tag = `tim_show_untagged` + `tim_tag_add` + `aggregateSessionTags`
+- `tim_tag_add` alone does NOT re-aggregate
+
+## Verify
+`npx tsc -b && npx vitest run` — 245 passed
+
+Plan: `docs/hashtag-plan.md`

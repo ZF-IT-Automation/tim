@@ -154,6 +154,7 @@ const TimWriteBatchSummarySchema = z.object({
   summary: z.string(),
   seqFrom: z.number().int().nonnegative(),
   seqTo: z.number().int().nonnegative(),
+  tags: z.array(z.string()).optional(),
 });
 
 const TimRecordCommitSchema = z.object({
@@ -471,7 +472,7 @@ const WRITE_TOOLS = new Set([
 const READ_TOOLS = new Set([
   'tim_read', 'tim_search', 'tim_trace', 'tim_health', 'tim_stats',
   'tim_export', 'tim_doctor', 'tim_sync', 'tim_load_project', 'tim_read_project', 'tim_tasks',
-  'tim_show_unsummarized', 'tim_show_all_unsummarized',
+  'tim_show_unsummarized', 'tim_show_all_unsummarized', 'tim_show_untagged',
 ]);
 
 function scheduleAutoSync(toolName: string, s: TimStore): void {
@@ -737,6 +738,15 @@ export async function startServer(): Promise<void> {
         },
       },
       {
+        name: 'tim_show_untagged',
+        description:
+          'Return batch-summary nodes that have only structural tags (#session-summary, #batch-summary) and no content hashtags. Use for re-tagging failed or legacy summaries.',
+        inputSchema: {
+          type: 'object',
+          properties: {},
+        },
+      },
+      {
         name: 'tim_write_batch_summary',
         description:
           'Write an idempotent Batch summary node under the session Summary tree. Used by tim-summarizer CLI.',
@@ -748,6 +758,7 @@ export async function startServer(): Promise<void> {
             summary: { type: 'string' },
             seqFrom: { type: 'number', minimum: 0 },
             seqTo: { type: 'number', minimum: 0 },
+            tags: { type: 'array', items: { type: 'string' } },
           },
           required: ['sessionId', 'batchIndex', 'summary', 'seqFrom', 'seqTo'],
         },
@@ -1199,13 +1210,20 @@ export async function startServer(): Promise<void> {
           };
         }
 
+        case 'tim_show_untagged': {
+          const untagged = await getSessions().showUntagged();
+          return {
+            content: [{ type: 'text', text: JSON.stringify(untagged, null, 2) }],
+          };
+        }
+
         case 'tim_write_batch_summary': {
-          const { sessionId, batchIndex, summary, seqFrom, seqTo } =
+          const { sessionId, batchIndex, summary, seqFrom, seqTo, tags } =
             TimWriteBatchSummarySchema.parse(args);
           const node = await getSessions().writeBatchSummary(sessionId, batchIndex, summary, {
             seqFrom,
             seqTo,
-          });
+          }, tags);
           return {
             content: [{ type: 'text', text: JSON.stringify(node, null, 2) }],
           };
