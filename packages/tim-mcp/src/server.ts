@@ -28,6 +28,7 @@ import {
 } from 'tim-hooks';
 import { tim_export, tim_import } from 'tim-migrate';
 import { autoPush, autoPull } from 'tim-sync-client';
+import { validateWriteTags } from './write-validate.js';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -1037,6 +1038,18 @@ export async function startServer(): Promise<void> {
             writeOpts.parentId = row.id;
           }
 
+          // Enforce tags for non-schema entries. Schema entries (sections,
+          // project roots, sessions, exchanges, batch summaries, commits,
+          // checkpoints) are exempt — everything else is user content and
+          // must carry at least 2 tags for discoverability.
+          const tagsValidation = validateWriteTags(writeOpts.tags, writeOpts.metadata);
+          if (!tagsValidation.ok) {
+            return {
+              content: [{ type: 'text', text: JSON.stringify(tagsValidation, null, 2) }],
+              isError: true,
+            };
+          }
+
           const entry = await s.write(opts.content, writeOpts);
           return {
             content: [{ type: 'text', text: JSON.stringify(entry, null, 2) }],
@@ -1511,6 +1524,44 @@ export async function startServer(): Promise<void> {
   });
 
   // ─── Start ────────────────────────────────────────────
+
+  // BUG 4: Global error guards — keep the stdio server alive when an
+  // async tool handler or fire-and-forget promise throws OUTSIDE the
+  // dispatcher try/catch. Without these, Node 24's default behavior is
+  // to crash the process on any unhandled rejection, killing the MCP
+  // server and triggering the client's auto-retry cooldown.
+  // We log to stderr + persist via ErrorLogger + stay alive.
+  process.on('unhandledRejection', (reason, promise) => {
+    const err = reason instanceof Error ? reason : new Error(String(reason));
+    console.error('[tim-mcp] unhandledRejection:', err.stack ?? err.message);
+    try {
+      getErrorLogger().logError({
+        tool: 'mcp-server',
+        error: `unhandledRejection: ${err.message}`,
+        stack: err.stack,
+      });
+    } catch {
+      // ErrorLogger itself failed — nothing more we can do, stay alive.
+    }
+  });
+
+  process.on('uncaughtException', (err) => {
+    console.error('[tim-mcp] uncaughtException:', err.stack ?? err.message);
+    try {
+      getErrorLogger().logError({
+        tool: 'mcp-server',
+        error: `uncaughtException: ${err.message}`,
+        stack: err.stack,
+      });
+    } catch {
+      // Same as above.
+    }
+    // Note: we intentionally do NOT call process.exit(). The stdio pipe
+    // stays open and subsequent MCP requests continue to be served. The
+    // MCP SDK's processReadBuffer() already wraps readMessage() in
+    // try/catch (see @modelcontextprotocol/sdk/dist/esm/server/stdio.js),
+    // so a malformed input frame cannot kill the server either.
+  });
 
   const transport = new StdioServerTransport();
   await server.connect(transport);

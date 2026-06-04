@@ -24,30 +24,42 @@ import { CurateManager } from './curate.js';
  *   3. Special chars `^ * ( ) " '` in raw input can throw `fts5: syntax error`.
  *
  * Strategy:
- *   - Split on whitespace + punctuation boundaries.
+ *   - For `token:value` patterns, if `token` matches a real FTS5 column name
+ *     (title, content, tags), pass through as-is. Otherwise, split into two
+ *     tokens (the bogus "column" becomes a search term).
  *   - Drop FTS5 operator words (AND, OR, NOT, NEAR) case-insensitive.
- *   - Escape colons so `task:true` becomes two safe tokens `task` `true`,
- *     not a column filter.
- *   - Strip quotes/parens/carets, replace with space.
+ *   - Strip quotes/parens/carets/stars, replace with space.
  *   - Re-emit as `token1 token2` (implicit FTS5 AND).
  *   - Return empty string if no safe tokens survive — caller must skip the query.
  */
 export function sanitizeFtsQuery(query: string): string {
   if (!query) return '';
-  // Drop chars that confuse FTS5 tokenization entirely: " ' ( ) * ^
-  // Replace colon with space so "task:true" becomes "task true" (two safe tokens).
-  const cleaned = query
-    .replace(/["'*()^]/g, ' ')
-    .replace(/:/g, ' ');
-  const tokens = cleaned
+  // FTS5 columns defined in schema.ts — these are the ONLY column names
+  // a `token:value` filter is allowed to reference. Anything else is a
+  // crash ("no such column: X").
+  const REAL_COLUMNS = new Set(['title', 'content', 'tags']);
+  // Step 1: rewrite each `token:` occurrence.
+  //   - If token is a real FTS5 column (title/content/tags), preserve the
+  //     `token:value` form (pass-through).
+  //   - If token is NOT a real column, split it: keep the token as a
+  //     search term AND keep the value as a search term.
+  //     We do this by replacing the colon with a space, NOT the whole match.
+  let s = query.replace(/([A-Za-z_][A-Za-z0-9_]*):/g, (m, col) => {
+    if (REAL_COLUMNS.has(col.toLowerCase())) {
+      return m; // keep "title:" / "content:" / "tags:" intact
+    }
+    return col + ' '; // "kind:summary" → "kind summary" (split, don't drop)
+  });
+  // Step 2: drop chars that confuse FTS5 tokenization: " ' ( ) * ^
+  s = s.replace(/["'*()^]/g, ' ');
+  // Step 3: split, drop operator words, trim.
+  const tokens = s
     .split(/\s+/)
     .map(t => t.trim())
     .filter(t => t.length > 0)
-    // Drop FTS5 operator words (whole-word, case-insensitive)
     .filter(t => !/^(AND|OR|NOT|NEAR)$/i.test(t));
   if (tokens.length === 0) return '';
-  // Implicit FTS5 AND — each token joined by space. If a user actually wants
-  // a phrase, they can wrap it in quotes in a future PR.
+  // Implicit FTS5 AND — each token joined by space.
   return tokens.join(' ');
 }
 

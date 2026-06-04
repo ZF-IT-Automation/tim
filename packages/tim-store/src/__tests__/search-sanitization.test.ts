@@ -51,10 +51,20 @@ describe('sanitizeFtsQuery (BUG 1)', () => {
     expect(sanitizeFtsQuery('   AND OR   ')).toBe('');
   });
 
-  it('preserves alphanumeric tokens and joins with implicit AND', () => {
-    expect(sanitizeFtsQuery('hello world')).toBe('hello world');
-    expect(sanitizeFtsQuery('  spaced   out  ')).toBe('spaced out');
-    expect(sanitizeFtsQuery('foo123 bar456')).toBe('foo123 bar456');
+  it('preserves legitimate FTS5 column filters (title:Doc passes through)', () => {
+    // title/content/tags are the real FTS5 column names — these colons
+    // must be preserved so the column-filter still works.
+    expect(sanitizeFtsQuery('title:Doc')).toBe('title:Doc');
+    expect(sanitizeFtsQuery('content:hello')).toBe('content:hello');
+    expect(sanitizeFtsQuery('tags:important')).toBe('tags:important');
+  });
+
+  it('strips bogus "column" filters but keeps the words as tokens', () => {
+    // kind/summary/task/a are NOT real FTS5 columns — sanitizer must
+    // split them into two safe tokens.
+    expect(sanitizeFtsQuery('kind:summary')).toBe('kind summary');
+    expect(sanitizeFtsQuery('task:true')).toBe('task true');
+    expect(sanitizeFtsQuery('a:1')).toBe('a 1');
   });
 });
 
