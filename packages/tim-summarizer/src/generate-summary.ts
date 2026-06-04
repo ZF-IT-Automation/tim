@@ -2,7 +2,26 @@ import type { UnsummarizedBatch } from './mcp-client.js';
 import { spawn } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as os from 'os';
 import { getTimDir, loadConfig } from 'tim-core';
+
+function resolveEnvVar(name: string): string | undefined {
+  if (process.env[name]) return process.env[name];
+  // Fallback: read from ~/.hermes/.env (Hermes env file)
+  try {
+    const envPath = path.join(os.homedir(), '.hermes', '.env');
+    if (fs.existsSync(envPath)) {
+      const content = fs.readFileSync(envPath, 'utf-8');
+      for (const line of content.split('\n')) {
+        const m = line.match(/^(\w+)=(.*)$/);
+        if (m && m[1] === name) return m[2];
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return undefined;
+}
 
 export type ErrorLogFn = (tool: string, error: string, stack?: string) => void;
 
@@ -157,10 +176,31 @@ async function tryCli(
     stdinPrompt = prompt;
   } else if (cli === 'opencode') {
     const fullModel = provider ? `${provider}/${model}` : model;
-    // No non-agentic opencode subcommand; pass prompt via stdin (no shell).
     command = 'opencode';
     args = ['run', '-m', fullModel, '--print-logs'];
     stdinPrompt = prompt;
+  } else if (cli === 'curl-openrouter') {
+    // Direct OpenRouter API call via curl — no CLI dependency.
+    const apiKey = resolveEnvVar('OPENROUTER_API_KEY');
+    if (!apiKey) {
+      appendSummarizerLog(`FAIL curl-openrouter/${model}: OPENROUTER_API_KEY not set`);
+      return null;
+    }
+    const payload = JSON.stringify({
+      model,
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0.3,
+      max_tokens: 2000,
+    });
+    command = 'curl';
+    args = [
+      '-s', 'https://openrouter.ai/api/v1/chat/completions',
+      '-H', `Authorization: Bearer ${apiKey}`,
+      '-H', 'Content-Type: application/json',
+      '-d', payload,
+      '--max-time', String(timeoutSec),
+    ];
+    stdinPrompt = null;
   } else {
     command = cli;
     args = provider
@@ -204,6 +244,24 @@ async function tryCli(
         const tokenIdx = text.indexOf('\ntokens used\n');
         if (tokenIdx >= 0) text = text.slice(0, tokenIdx);
         text = text.trim();
+      }
+    }
+    if (cli === 'curl-openrouter') {
+      // Parse OpenRouter JSON response
+      try {
+        const json = JSON.parse(text);
+        text = json?.choices?.[0]?.message?.content?.trim() || '';
+        if (!text) {
+          const detail = `empty content in OpenRouter response: ${stdout.slice(0, 500)}`;
+          appendSummarizerLog(`FAIL ${label}: ${detail}`);
+          onError?.(label, detail);
+          return null;
+        }
+      } catch {
+        const detail = `JSON parse error: ${stdout.slice(0, 500)}`;
+        appendSummarizerLog(`FAIL ${label}: ${detail}`);
+        onError?.(label, detail);
+        return null;
       }
     }
     if (text.length === 0) {

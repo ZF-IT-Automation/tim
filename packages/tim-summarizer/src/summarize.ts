@@ -40,19 +40,34 @@ export async function runProjectSummary(label: string): Promise<boolean> {
   const result = await store.loadProject(label);
   if (!result) throw new Error(`Project not found: ${label}`);
 
-  const summaries = result.children
+  // Collect batch summary content from each session-summary-root node.
+  // The root nodes themselves have empty content; real summaries are in #batch-summary children.
+  const sessionNodes = result.children
     .filter(c => c.tags.includes('#session-summary'))
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-    .map(c => (c.content?.trim() || c.title.trim()))
-    .filter(Boolean);
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+
+  if (sessionNodes.length === 0) return false;
+
+  const summaries: string[] = [];
+  for (const session of sessionNodes) {
+    const children = await store.getChildren(session.id);
+    const batchSummaries = children
+      .filter(c => c.tags.includes('#batch-summary'))
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      .map(c => c.content?.trim() || c.title.trim())
+      .filter(Boolean);
+    if (batchSummaries.length > 0) {
+      summaries.push(...batchSummaries);
+    } else if (session.content?.trim()) {
+      summaries.push(session.content.trim());
+    }
+  }
   if (summaries.length === 0) return false;
 
   const summary = await generateProjectSummary(summaries);
   if (!summary) return false; // total CLI failure → write nothing
 
   const newContent = mergeProjectSummary(result.project.content, summary);
-  // Pass title too: store.update() strips the first content line as title
-  // when patch.title is undefined and the entry already has a title.
   await store.update(result.project.id, {
     title: result.project.title,
     content: newContent,
