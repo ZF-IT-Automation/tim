@@ -1042,12 +1042,29 @@ export class TimStore implements MemoryInterface {
     const entriesByType: Record<string, number> = {};
     for (const r of typeRows) entriesByType[r.content_type] = r.c;
 
-    // Top tags
-    const allTags = this.db.prepare("SELECT tags FROM entries WHERE irrelevant = 0 AND tags != '[]'").all() as { tags: string }[];
+    // Top tags — defensively parse each row's tags column. A corrupt
+    // (non-JSON) tags value would otherwise crash the whole stats() call,
+    // which is exactly the BUG 2 production crash we saw today.
+    // We skip the bad row and continue, logging via stderr so a curator
+    // sweep can find it later.
+    const allTags = this.db.prepare("SELECT id, tags FROM entries WHERE irrelevant = 0 AND tags != '[]'").all() as { id: string; tags: string }[];
     const tagCounts = new Map<string, number>();
+    let skipped = 0;
     for (const row of allTags) {
-      const tags = JSON.parse(row.tags) as string[];
-      for (const tag of tags) {
+      let parsed: string[];
+      try {
+        parsed = JSON.parse(row.tags) as string[];
+      } catch (err) {
+        skipped++;
+        console.error(`[TimStore.stats] skipping entry ${row.id}: invalid tags JSON (${(err as Error).message})`);
+        continue;
+      }
+      if (!Array.isArray(parsed)) {
+        skipped++;
+        console.error(`[TimStore.stats] skipping entry ${row.id}: tags parsed to non-array (${typeof parsed})`);
+        continue;
+      }
+      for (const tag of parsed) {
         tagCounts.set(tag, (tagCounts.get(tag) ?? 0) + 1);
       }
     }

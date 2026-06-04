@@ -1001,7 +1001,17 @@ export async function startServer(): Promise<void> {
         case 'tim_read': {
           const { id, depth, includeEdges, includeChildren, showIrrelevant } = TimReadSchema.parse(args);
           const entry = await s.read(id, { depth, includeEdges, includeChildren, showIrrelevant });
-          if (!entry) return { content: [{ type: 'text', text: 'Entry not found' }] };
+          // Return null as JSON (parseable) + isError: true so clients can
+          // distinguish "not found" from a successful read of an entry
+          // whose body is literally "null". Pre-fix this returned the
+          // plain text "Entry not found" which broke JSON clients that
+          // tried to parse every successful response.
+          if (!entry) {
+            return {
+              content: [{ type: 'text', text: JSON.stringify(null) }],
+              isError: true,
+            };
+          }
           const edges = includeEdges ? await s.getEdges(id, 'both') : [];
           return {
             content: [{ type: 'text', text: JSON.stringify({ entry, edges }, null, 2) }],
