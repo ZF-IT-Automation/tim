@@ -9,10 +9,47 @@ import type {
   SearchOptions, MemoryInterface, HealthReport, MemoryStats,
   AgentIdentity, StagingRecord, ContentType,
   SyncEntity, SyncOperation, EventBus, EventType,
-  ResolveProjectResult,
+  ResolveProjectResult, ResolveSectionResult, SectionCandidate,
 } from 'tim-core';
 import { runMigrations, createTriggers, getCurrentVersion } from './schema.js';
 import { CurateManager } from './curate.js';
+
+/**
+ * Sanitize a user-supplied query string into a safe FTS5 MATCH expression.
+ *
+ * Problems this guards against (verified empirically against better-sqlite3 FTS5):
+ *   1. `task:true` → "no such column: task"   (token:value parsed as column filter)
+ *   2. `"foo AND bar"` literal text containing AND is a valid FTS5 operator,
+ *      so users searching for "AND" or "OR" as words can collide with FTS5 syntax.
+ *   3. Special chars `^ * ( ) " '` in raw input can throw `fts5: syntax error`.
+ *
+ * Strategy:
+ *   - Split on whitespace + punctuation boundaries.
+ *   - Drop FTS5 operator words (AND, OR, NOT, NEAR) case-insensitive.
+ *   - Escape colons so `task:true` becomes two safe tokens `task` `true`,
+ *     not a column filter.
+ *   - Strip quotes/parens/carets, replace with space.
+ *   - Re-emit as `token1 token2` (implicit FTS5 AND).
+ *   - Return empty string if no safe tokens survive — caller must skip the query.
+ */
+export function sanitizeFtsQuery(query: string): string {
+  if (!query) return '';
+  // Drop chars that confuse FTS5 tokenization entirely: " ' ( ) * ^
+  // Replace colon with space so "task:true" becomes "task true" (two safe tokens).
+  const cleaned = query
+    .replace(/["'*()^]/g, ' ')
+    .replace(/:/g, ' ');
+  const tokens = cleaned
+    .split(/\s+/)
+    .map(t => t.trim())
+    .filter(t => t.length > 0)
+    // Drop FTS5 operator words (whole-word, case-insensitive)
+    .filter(t => !/^(AND|OR|NOT|NEAR)$/i.test(t));
+  if (tokens.length === 0) return '';
+  // Implicit FTS5 AND — each token joined by space. If a user actually wants
+  // a phrase, they can wrap it in quotes in a future PR.
+  return tokens.join(' ');
+}
 
 export interface TimStoreOptions {
   emitter?: Pick<EventBus, 'emit'>;
@@ -193,6 +230,98 @@ export class TimStore implements MemoryInterface {
     if (matches.length === 0) return { status: 'not_found', query: q };
     if (matches.length === 1) return { status: 'found', label: matches[0]! };
     return { status: 'ambiguous', query: q, labels: matches.sort() };
+  }
+
+  /**
+   * Resolve a section by (projectId, title) within a project root.
+   *
+   * Sections are direct children of a project root (kind=project, parent_id=NULL
+   * typically, or any node whose metadata.label matches). Used by tim_write to
+   * disambiguate `parentTitle="Tasks"` lookups — silently picking the first
+   * match caused orphan writes under wrong/legacy sections.
+   *
+   * Returns a tagged union:
+   *   - found:      exactly one match.
+   *   - not_found:  zero matches; `candidates` lists the section titles that
+   *                 DO exist under the project (helps the caller recover).
+   *   - ambiguous:  multiple matches; `candidates` carries id+title+project+
+   *                 depth+createdAt for each (caller re-issues with parentId).
+   */
+  async resolveSectionByTitle(
+    projectId: string,
+    title: string,
+  ): Promise<ResolveSectionResult> {
+    const resolved = await this.resolveProjectLabel(projectId);
+    if (resolved.status !== 'found') {
+      // Project itself is missing or ambiguous. Surface as not_found with
+      // project label untouched — caller can decide whether to escalate.
+      return { status: 'not_found', project: projectId, title, candidates: [] };
+    }
+    const projectLabel = resolved.label;
+
+    // Find the project root entry.
+    const projectRow = this.db.prepare(`
+      SELECT id FROM entries
+      WHERE json_extract(metadata, '$.kind') = 'project'
+        AND json_extract(metadata, '$.label') = ?
+        AND irrelevant = 0
+        AND tombstoned_at IS NULL
+    `).get(projectLabel) as { id: string } | undefined;
+    if (!projectRow) {
+      return { status: 'not_found', project: projectLabel, title, candidates: [] };
+    }
+
+    // All matches: every direct child of the project root with this title
+    // that is still live (not irrelevant, not tombstoned).
+    const matches = this.db.prepare(`
+      SELECT e.id, e.title, e.depth, e.created_at
+      FROM entries e
+      WHERE e.parent_id = ?
+        AND e.title = ?
+        AND e.irrelevant = 0
+        AND e.tombstoned_at IS NULL
+      ORDER BY e.created_at ASC
+    `).all(projectRow.id, title) as Array<{
+      id: string; title: string; depth: number; created_at: string;
+    }>;
+
+    if (matches.length === 1) {
+      const m = matches[0]!;
+      return {
+        status: 'found',
+        id: m.id,
+        project: projectLabel,
+        title: m.title,
+      };
+    }
+
+    if (matches.length > 1) {
+      const candidates: SectionCandidate[] = matches.map(m => ({
+        id: m.id,
+        title: m.title,
+        project: projectLabel,
+        depth: m.depth,
+        createdAt: m.created_at,
+      }));
+      return { status: 'ambiguous', project: projectLabel, title, candidates };
+    }
+
+    // Zero matches. List sibling section titles under the project root so the
+    // caller can see what's actually there.
+    const siblings = this.db.prepare(`
+      SELECT DISTINCT title FROM entries
+      WHERE parent_id = ?
+        AND irrelevant = 0
+        AND tombstoned_at IS NULL
+        AND title != ''
+      ORDER BY title ASC
+    `).all(projectRow.id) as Array<{ title: string }>;
+    return {
+      status: 'not_found',
+      project: projectLabel,
+      title,
+      candidates: siblings.map(s => s.title),
+    };
   }
 
   /** Resolve label/alias/id to a project entry; throws on missing or ambiguous. */
@@ -634,8 +763,10 @@ export class TimStore implements MemoryInterface {
   }
 
   async searchFts(query: string, limit: number = 10): Promise<Entry[]> {
-    // Sanitize FTS5 query
-    const sanitized = query.replace(/['"]/g, '');
+    // Sanitize FTS5 query — strip operator words, escape special chars, AND-join tokens.
+    // See sanitizeFtsQuery() in store-utils for rationale.
+    const sanitized = sanitizeFtsQuery(query);
+    if (!sanitized) return [];
     const rows = this.db.prepare(`
       SELECT e.* FROM entries e
       INNER JOIN fts_entries f ON e.rowid = f.rowid
