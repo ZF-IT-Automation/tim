@@ -31,10 +31,12 @@ export {
   releaseLock,
   markerPath,
   MARKER_FILENAME,
+  MARKER_VERSION,
   MARKER_LOCK,
   LOCK_TTL_MS,
   isSessionLocked,
   type ProjectMarker,
+  type ProjectMarkerInput,
   type MarkerLocation,
   type FindMarkerOptions,
 } from './marker.js';

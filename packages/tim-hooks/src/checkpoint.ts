@@ -106,6 +106,7 @@ export async function runSessionStart(
       ? session.metadata.batch_size
       : 5,
     batches_summarized: 0,
+    version: 2,
   });
 
   await runConfiguredHooks('sessionStart', params.hooksConfig, {

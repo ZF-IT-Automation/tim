@@ -3,7 +3,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { loadConfig } from 'tim-core';
 import { TimStore, deriveCounters, resolveProjectDisplayName } from 'tim-store';
-import type { FindMarkerOptions, ProjectMarker } from 'tim-hooks';
+import type { FindMarkerOptions, ProjectMarker, ProjectMarkerInput } from 'tim-hooks';
 import { findMarker, findMarkerOptionsFromEnv } from 'tim-hooks';
 
 const RECONCILE_TTL_MS = 5_000;
@@ -20,18 +20,19 @@ function dbPath(): string {
 /** DB-authoritative exchange counters (5s in-process cache). */
 export async function reconcileMarkerCounters(
   store: TimStore,
-  marker: ProjectMarker,
+  marker: ProjectMarkerInput,
 ): Promise<ProjectMarker> {
   const sid = marker.session?.trim();
-  if (!sid) return marker;
+  if (!sid) return { version: 2, ...marker };
 
   const entry = await store.read(sid);
-  if (!entry || entry.metadata.kind !== 'session') return marker;
+  if (!entry || entry.metadata.kind !== 'session') return { version: 2, ...marker };
 
   const now = Date.now();
   const hit = reconcileCache.get(sid);
   if (hit && now - hit.at < RECONCILE_TTL_MS) {
     return {
+      version: 2,
       ...marker,
       exchanges: hit.exchanges,
       batches_summarized: hit.batches_summarized,
@@ -45,6 +46,7 @@ export async function reconcileMarkerCounters(
     batches_summarized: batchesSummarized,
   });
   return {
+    version: 2,
     ...marker,
     exchanges: exchangeCount,
     batches_summarized: batchesSummarized,
@@ -79,7 +81,7 @@ export function summaryIn(exchanges: number, batchSize: number): number {
   return bs - mod;
 }
 
-export function formatTimStatusLine(marker: ProjectMarker, projectName?: string): string {
+export function formatTimStatusLine(marker: ProjectMarkerInput, projectName?: string): string {
   const batchSize = marker.batch_size > 0 ? marker.batch_size : 5;
   const exchanges = Math.max(0, marker.exchanges);
   const inBatch = exchangesInCurrentBatch(exchanges, batchSize);
@@ -101,7 +103,7 @@ export interface HermesStatusJson {
 }
 
 export function formatHermesStatus(
-  marker: ProjectMarker | null,
+  marker: ProjectMarkerInput | null,
   projectName?: string,
 ): HermesStatusJson {
   if (!marker) {

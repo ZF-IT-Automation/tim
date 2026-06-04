@@ -1414,28 +1414,6 @@ export async function startServer(): Promise<void> {
             // Non-critical — brief still returned
           }
 
-          // Backward-compat: global marker for tim-session-start directive injection
-          try {
-            const globalMarker = path.join(os.homedir(), '.tim-project');
-            let marker: Record<string, unknown> = {};
-            if (fs.existsSync(globalMarker)) {
-              marker = JSON.parse(fs.readFileSync(globalMarker, 'utf8'));
-            }
-            marker.route_exchanges_to = projectLabel;
-            marker.project = projectLabel;
-            if (sessionId) {
-              const sessions =
-                typeof marker.sessions === 'object' && marker.sessions !== null
-                  ? { ...(marker.sessions as Record<string, string>) }
-                  : {};
-              sessions[projectLabel] = sessionId;
-              marker.sessions = sessions;
-            }
-            fs.writeFileSync(globalMarker, JSON.stringify(marker, null, 2) + '\n');
-          } catch {
-            // Non-critical — don't fail the request
-          }
-
           const formatted = formatProjectOutput(result, budget, loadProjectSchema(), 'load');
           return {
             content: [{

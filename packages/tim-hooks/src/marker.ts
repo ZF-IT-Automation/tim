@@ -7,40 +7,109 @@ import { deriveCounters } from 'tim-store';
 export const MARKER_FILENAME = '.tim-project';
 export const MARKER_LOCK = '.tim-project.lock';
 
+/**
+ * Current marker schema version. Bump this when the on-disk shape changes;
+ * readers detect older files by the missing/unknown `version` field and
+ * normalize to the current shape.
+ */
+export const MARKER_VERSION = 2;
+
+/**
+ * .tim-project — v2 schema.
+ *
+ * v2 removed the legacy `route_exchanges_to` and `sessions` map fields
+ * (hmem-era cruft: written by the MCP server, read by nothing). See
+ * `references/sql-to-mcp-mapping.md` and the schema evaluation journal
+ * for the field-by-field rationale.
+ *
+ * `version` is required on disk; the read path fills it in automatically
+ * for v1 files so existing installations keep working without an explicit
+ * migration step. The next write upgrades the file to v2.
+ */
 export interface ProjectMarker {
+  version: 2;
   project: string;
   session: string;
   exchanges: number;
   batch_size: number;
   batches_summarized: number;
-  /** Global ~/.tim-project only: last project label loaded via tim_load_project */
-  route_exchanges_to?: string;
-  /** Global ~/.tim-project only: project label → harness session id */
-  sessions?: Record<string, string>;
 }
+
+/**
+ * Input shape for writeMarker. Callers MAY omit `version` — the writer
+ * always stamps the current version on disk. All other fields are required.
+ * Kept as a separate alias so the read API can return the strict v2 type
+ * while the write API stays convenient for callers that don't care about
+ * the version field.
+ */
+export type ProjectMarkerInput = Omit<ProjectMarker, 'version'> & {
+  version?: 2;
+};
 
 export function markerPath(cwd: string): string {
   return path.join(cwd, MARKER_FILENAME);
 }
 
+/**
+ * Read a marker and normalize it to the current schema version.
+ *
+ * - Missing file → null
+ * - Corrupt JSON → null
+ * - v1 file (no `version` field) → strips `route_exchanges_to` + `sessions`
+ *   map, sets `version: 2`, returns the upgraded object. The file itself
+ *   is NOT rewritten here — the next `writeMarker` call upgrades it.
+ * - v2 file → returned as-is.
+ *
+ * Callers always see a v2-conformant `ProjectMarker` regardless of what's
+ * on disk. This is the only safe way to evolve the schema without forcing
+ * a one-shot migration.
+ */
 export function readMarker(cwd: string): ProjectMarker | null {
   const p = markerPath(cwd);
   if (!fs.existsSync(p)) return null;
+  let raw: unknown;
   try {
-    return JSON.parse(fs.readFileSync(p, 'utf8')) as ProjectMarker;
+    raw = JSON.parse(fs.readFileSync(p, 'utf8'));
   } catch {
     return null;
   }
+  return normalizeMarker(raw);
 }
 
-/** Write a project marker file, merging with existing fields to preserve
- *  global-only state (sessions map, route_exchanges_to) that callers
- *  like runSessionStart don't carry. */
-export function writeMarker(cwd: string, marker: ProjectMarker): void {
+/**
+ * Coerce an unknown JSON value into a v2 ProjectMarker. Strips legacy
+ * fields. Returns null if the value isn't a usable marker (missing
+ * project/session, or wrong types).
+ */
+function normalizeMarker(raw: unknown): ProjectMarker | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const obj = raw as Record<string, unknown>;
+
+  if (typeof obj.project !== 'string' || obj.project.length === 0) return null;
+  if (typeof obj.session !== 'string') return null;
+  if (typeof obj.exchanges !== 'number' || !Number.isFinite(obj.exchanges)) return null;
+  if (typeof obj.batch_size !== 'number' || !Number.isFinite(obj.batch_size)) return null;
+  if (typeof obj.batches_summarized !== 'number' || !Number.isFinite(obj.batches_summarized)) {
+    return null;
+  }
+
+  return {
+    version: MARKER_VERSION,
+    project: obj.project,
+    session: obj.session,
+    exchanges: obj.exchanges,
+    batch_size: obj.batch_size,
+    batches_summarized: obj.batches_summarized,
+  };
+}
+
+/** Write a project marker file. Always emits the current schema version:
+ *  the on-disk file becomes v2 on first write, regardless of the caller's
+ *  input. This is the auto-upgrade path for v1 files. */
+export function writeMarker(cwd: string, marker: ProjectMarkerInput): void {
   const p = markerPath(cwd);
-  const existing = readMarker(cwd);
-  const merged: ProjectMarker = existing ? { ...existing, ...marker } : marker;
-  fs.writeFileSync(p, JSON.stringify(merged, null, 2));
+  const upgraded: ProjectMarker = { ...marker, version: MARKER_VERSION };
+  fs.writeFileSync(p, JSON.stringify(upgraded, null, 2));
 }
 
 /**
@@ -55,8 +124,9 @@ export function syncNearestProjectMarker(
   const located = findMarker(startCwd, options?.findOptions);
   if (!located) return false;
   const sessionId = options?.sessionId?.trim();
+  const { version: _v, ...rest } = located.marker;
   writeMarker(located.dir, {
-    ...located.marker,
+    ...rest,
     project: projectLabel,
     ...(sessionId ? { session: sessionId } : {}),
   });
@@ -73,13 +143,14 @@ export async function reconcileMarker(store: TimStore, cwd: string): Promise<Pro
   const marker = readMarker(cwd);
   if (!marker) throw new Error(`No ${MARKER_FILENAME} in ${cwd}`);
   const { exchangeCount, batchesSummarized } = await deriveCounters(store, marker.session);
-  const reconciled: ProjectMarker = {
+  const reconciled: ProjectMarkerInput = {
     ...marker,
     exchanges: exchangeCount,
     batches_summarized: batchesSummarized,
   };
   writeMarker(cwd, reconciled);
-  return reconciled;
+  // Read back to return the canonical v2 shape (writeMarker upgraded the file).
+  return readMarker(cwd) ?? reconciled as ProjectMarker;
 }
 
 export const LOCK_TTL_MS = 10 * 60_000;
