@@ -103,7 +103,7 @@ describe('formatProjectOutput render_tail', () => {
     createdAt: '2026-06-01T00:00:00Z',
   } as any;
 
-  const entries = Array.from({ length: 5 }, (_, i) => ({
+  const entries = Array.from({ length: 12 }, (_, i) => ({
     id: `log-${i + 1}`,
     parentId: 'log',
     title: `Entry ${i + 1}`,
@@ -118,9 +118,10 @@ describe('formatProjectOutput render_tail', () => {
       { project, children: [log, ...entries], truncated: false },
       200,
     );
+    expect(out).toMatch(/  Log\n/);
     expect(out).toMatch(/Entry 1/);
-    expect(out).toMatch(/Entry 3/);
-    expect(out).not.toMatch(/Entry 5/);
+    expect(out).toMatch(/Entry 10/);
+    expect(out).not.toMatch(/Entry 11\b/);
     expect(out).toMatch(/… 2 more$/m);
   });
 
@@ -132,9 +133,10 @@ describe('formatProjectOutput render_tail', () => {
       schema,
     );
     expect(out).toMatch(/Entry 3/);
-    expect(out).toMatch(/Entry 4/);
-    expect(out).toMatch(/Entry 5/);
+    expect(out).toMatch(/Entry 11/);
+    expect(out).toMatch(/Entry 12/);
     expect(out).not.toMatch(/Entry 1\b/);
+    expect(out).not.toMatch(/Entry 2\b/);
     expect(out).toMatch(/… 2 more \(older\)$/m);
   });
 
@@ -144,8 +146,191 @@ describe('formatProjectOutput render_tail', () => {
       { project, children: [tailLog, ...entries], truncated: false },
       200,
     );
-    expect(out).toMatch(/Entry 5/);
+    expect(out).toMatch(/Entry 12/);
     expect(out).toMatch(/… 2 more \(older\)$/m);
+  });
+});
+
+describe('formatProjectOutput entry badges', () => {
+  const project = {
+    id: 'P1',
+    metadata: { label: 'P1', kind: 'project' },
+    title: 'P1 — x',
+    content: '',
+    tags: [],
+    createdAt: '2026-06-01T00:00:00Z',
+  } as any;
+
+  const section = {
+    id: 'tasks',
+    parentId: 'P1',
+    title: 'Tasks',
+    metadata: { order: 0 },
+    tags: [],
+    content: '',
+    createdAt: '2026-06-01T00:00:00Z',
+  } as any;
+
+  it('renders task status badges', () => {
+    const children = [
+      section,
+      {
+        id: 't1',
+        parentId: 'tasks',
+        title: 'Ship feature',
+        metadata: { order: 0, task: true, status: 'in_progress' },
+        tags: [],
+        content: '',
+        createdAt: '2026-06-01T00:00:00Z',
+      },
+      {
+        id: 't2',
+        parentId: 'tasks',
+        title: 'Write docs',
+        metadata: { order: 1, task: true, status: 'done' },
+        tags: [],
+        content: '',
+        createdAt: '2026-06-01T00:00:00Z',
+      },
+      {
+        id: 't3',
+        parentId: 'tasks',
+        title: 'No status task',
+        metadata: { order: 2, task: true },
+        tags: [],
+        content: '',
+        createdAt: '2026-06-01T00:00:00Z',
+      },
+    ] as any[];
+
+    const out = formatProjectOutput({ project, children, truncated: false }, 200);
+    expect(out).toMatch(/Ship feature \[in_progress\]/);
+    expect(out).toMatch(/Write docs \[done\]/);
+    expect(out).toMatch(/No status task \[todo\]/);
+  });
+
+  it('renders error severity badges', () => {
+    const log = { ...section, id: 'log', title: 'Log' };
+    const children = [
+      log,
+      {
+        id: 'e1',
+        parentId: 'log',
+        title: 'DB down',
+        metadata: { order: 0, kind: 'error', severity: 'critical' },
+        tags: [],
+        content: '',
+        createdAt: '2026-06-01T00:00:00Z',
+      },
+      {
+        id: 'e2',
+        parentId: 'log',
+        title: 'Slow query',
+        metadata: { order: 1, kind: 'error', severity: 'high' },
+        tags: [],
+        content: '',
+        createdAt: '2026-06-01T00:00:00Z',
+      },
+      {
+        id: 'e3',
+        parentId: 'log',
+        title: 'Typo in UI',
+        metadata: { order: 2, kind: 'error', severity: 'low' },
+        tags: [],
+        content: '',
+        createdAt: '2026-06-01T00:00:00Z',
+      },
+      {
+        id: 'e4',
+        parentId: 'log',
+        title: 'Unknown severity',
+        metadata: { order: 3, kind: 'error' },
+        tags: [],
+        content: '',
+        createdAt: '2026-06-01T00:00:00Z',
+      },
+    ] as any[];
+
+    const out = formatProjectOutput({ project, children, truncated: false }, 200);
+    expect(out).toMatch(/DB down \[critical\]/);
+    expect(out).toMatch(/Slow query \[high\]/);
+    expect(out).toMatch(/Typo in UI \[low\]/);
+    expect(out).toMatch(/Unknown severity \[medium\]/);
+  });
+
+  it('omits badges on plain entries', () => {
+    const children = [
+      section,
+      {
+        id: 'n1',
+        parentId: 'tasks',
+        title: 'Plain note',
+        metadata: { order: 0 },
+        tags: [],
+        content: '',
+        createdAt: '2026-06-01T00:00:00Z',
+      },
+    ] as any[];
+
+    const out = formatProjectOutput({ project, children, truncated: false }, 200);
+    expect(out).toMatch(/Plain note/);
+    expect(out).not.toMatch(/Plain note \[/);
+  });
+});
+
+describe('formatProjectOutput section block layout', () => {
+  const project = {
+    id: 'P1',
+    metadata: { label: 'P1', kind: 'project' },
+    title: 'P1 — x',
+    content: '',
+    tags: [],
+    createdAt: '2026-06-01T00:00:00Z',
+  } as any;
+
+  it('renders section name on its own line with body below', () => {
+    const section = {
+      id: 'rules',
+      parentId: 'P1',
+      title: 'Rules',
+      metadata: { order: 0 },
+      tags: [],
+      content: 'Always use MCP for DB',
+      createdAt: '2026-06-01T00:00:00Z',
+    } as any;
+
+    const out = formatProjectOutput({ project, children: [section], truncated: false }, 200);
+    expect(out).toMatch(/  Rules\n    Always use MCP for DB/);
+  });
+
+  it('shows No entries for empty section without children', () => {
+    const section = {
+      id: 'empty',
+      parentId: 'P1',
+      title: 'Ideas',
+      metadata: { order: 0 },
+      tags: [],
+      content: '',
+      createdAt: '2026-06-01T00:00:00Z',
+    } as any;
+
+    const out = formatProjectOutput({ project, children: [section], truncated: false }, 200);
+    expect(out).toMatch(/  Ideas\n    No entries/);
+  });
+
+  it('skips section entirely when render_depth is 0', () => {
+    const section = {
+      id: 'hidden-kids',
+      parentId: 'P1',
+      title: 'Archive',
+      metadata: { order: 0, render_depth: 0 },
+      tags: [],
+      content: 'section body',
+      createdAt: '2026-06-01T00:00:00Z',
+    } as any;
+
+    const out = formatProjectOutput({ project, children: [section], truncated: false }, 200);
+    expect(out).not.toContain('Archive');
   });
 });
 
