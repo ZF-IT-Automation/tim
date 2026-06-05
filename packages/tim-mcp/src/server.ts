@@ -240,6 +240,19 @@ const TimTasksSchema = z.object({
   status: z.enum(['todo', 'in_progress', 'done', 'cancelled']).optional(),
 });
 
+const TimShowSchema = z.object({
+  what: z.string().describe(
+    'tasks|errors|bugs|ideas|decisions|learnings|commits|all|<SectionName>',
+  ),
+  root: z.string().optional().describe(
+    'project label/alias/name; "" or "all" = ALL projects; omit = active project',
+  ),
+  with: z.string().optional().describe(
+    'comma-separated AND filters: open,done,urgent,recent,<tagname>,<free text>',
+  ),
+  limit: z.number().min(1).max(100).optional().default(20),
+});
+
 const TimErrorStatsSchema = z.object({
   hours: z.number().min(1).max(720).optional().default(24),
   limit: z.number().min(1).max(100).optional().default(10),
@@ -390,6 +403,202 @@ async function formatTasksOutput(store: TimStore, tasks: TaskRecord[]): Promise<
   return lines.join('\n').trimEnd();
 }
 
+type ResolveRootsResult =
+  | { labels: string[]; error?: undefined }
+  | { labels?: undefined; error: string };
+
+async function resolveRoots(store: TimStore, root?: string): Promise<ResolveRootsResult> {
+  if (root === undefined) {
+    const marker = findMarker(process.cwd());
+    if (marker) return { labels: [marker.marker.project] };
+    const active = getActiveProjectLabel();
+    if (active) return { labels: [active] };
+    return { error: 'no active project; pass root explicitly or "all"' };
+  }
+
+  if (root === '' || root.toLowerCase() === 'all') {
+    const projects = await store.listProjects();
+    return { labels: projects.map(p => p.label) };
+  }
+
+  const r = await store.resolveProjectLabel(root);
+  if (r.status === 'found') return { labels: [r.label] };
+  if (r.status === 'ambiguous') {
+    return { error: `ambiguous: ${r.labels.join(', ')}` };
+  }
+
+  const needle = root.toLowerCase();
+  const hits = (await store.listProjects()).filter(p =>
+    p.title.toLowerCase().includes(needle),
+  );
+  if (hits.length === 1) return { labels: [hits[0]!.label] };
+  if (hits.length > 1) {
+    return { error: `ambiguous name: ${hits.map(h => h.label).join(', ')}` };
+  }
+  return { error: `root not found: ${root}` };
+}
+
+function dedupeById(entries: Entry[]): Entry[] {
+  const seen = new Set<string>();
+  const out: Entry[] = [];
+  for (const e of entries) {
+    if (seen.has(e.id)) continue;
+    seen.add(e.id);
+    out.push(e);
+  }
+  return out;
+}
+
+function scopeEntries(store: TimStore, entries: Entry[], labels: string[]): Entry[] {
+  return entries.filter(e => {
+    const label = store.getProjectLabel(e.id);
+    return label != null && labels.includes(label);
+  });
+}
+
+async function sectionChildren(
+  store: TimStore,
+  name: string,
+  labels: string[],
+): Promise<Entry[]> {
+  const result: Entry[] = [];
+  for (const label of labels) {
+    const resolved = await store.resolveProjectLabel(label);
+    if (resolved.status !== 'found') continue;
+    const project = await store.read(resolved.label);
+    if (!project) continue;
+    const sec = await store.resolveSectionByTitle(project.id, name);
+    if (sec.status === 'found') {
+      result.push(...await store.getChildren(sec.id));
+    } else if (sec.status === 'ambiguous') {
+      for (const cand of sec.candidates) {
+        result.push(...await store.getChildren(cand.id));
+      }
+    }
+  }
+  return result;
+}
+
+async function allSectionChildren(store: TimStore, labels: string[]): Promise<Entry[]> {
+  const result: Entry[] = [];
+  for (const label of labels) {
+    const resolved = await store.resolveProjectLabel(label);
+    if (resolved.status !== 'found') continue;
+    const project = await store.read(resolved.label);
+    if (!project) continue;
+    const sections = await store.getChildren(project.id);
+    for (const section of sections) {
+      result.push(...await store.getChildren(section.id));
+    }
+  }
+  return result;
+}
+
+async function fetchByWhat(
+  store: TimStore,
+  what: string,
+  labels: string[],
+): Promise<Entry[]> {
+  const lc = what.toLowerCase();
+  switch (lc) {
+    case 'tasks': {
+      const rows = await store.getTasks();
+      const scoped = rows.filter(r =>
+        r.project_label != null && labels.includes(r.project_label),
+      );
+      const entries: Entry[] = [];
+      for (const row of scoped) {
+        const e = await store.read(row.id);
+        if (e) entries.push(e);
+      }
+      return entries;
+    }
+    case 'errors': {
+      const a = await store.getByMetadataType('error');
+      const b = await store.getByTag('#error');
+      return scopeEntries(store, dedupeById([...a, ...b]), labels);
+    }
+    case 'bugs':
+      return scopeEntries(store, await store.getByTag('#bug'), labels);
+    case 'decisions':
+      return scopeEntries(store, await store.getByTag('#decision'), labels);
+    case 'learnings':
+      return scopeEntries(store, await store.getByTag('#learning'), labels);
+    case 'commits':
+      return scopeEntries(store, await store.getByMetadataKind('commit', 1000), labels);
+    case 'ideas':
+      return sectionChildren(store, 'Ideas', labels);
+    case 'all':
+      return allSectionChildren(store, labels);
+    default:
+      return sectionChildren(store, what, labels);
+  }
+}
+
+const SHOW_STATUS_ORDER: Record<string, number> = {
+  in_progress: 0,
+  todo: 1,
+};
+const SHOW_PRIORITY_ORDER: Record<string, number> = {
+  high: 0,
+  medium: 1,
+  low: 2,
+};
+
+function sortForShow(entries: Entry[]): Entry[] {
+  return [...entries].sort((a, b) => {
+    const statusA = SHOW_STATUS_ORDER[String(a.metadata.status ?? '')] ?? 2;
+    const statusB = SHOW_STATUS_ORDER[String(b.metadata.status ?? '')] ?? 2;
+    if (statusA !== statusB) return statusA - statusB;
+
+    const priorityA = SHOW_PRIORITY_ORDER[String(a.metadata.priority ?? '')] ?? 3;
+    const priorityB = SHOW_PRIORITY_ORDER[String(b.metadata.priority ?? '')] ?? 3;
+    if (priorityA !== priorityB) return priorityA - priorityB;
+
+    return b.createdAt.localeCompare(a.createdAt);
+  });
+}
+
+function formatShowLine(entry: Entry): string {
+  const icon = taskStatusIcon((entry.metadata.status as string | null) ?? null);
+  const title = entry.title.padEnd(44, ' ');
+  const tagStr = entry.tags.join(' ');
+  return `  ${icon} ${title}${tagStr ? ' ' + tagStr : ''}`.trimEnd();
+}
+
+async function formatShowOutput(store: TimStore, entries: Entry[]): Promise<string> {
+  const grouped = new Map<string, Entry[]>();
+  for (const entry of entries) {
+    const label = store.getProjectLabel(entry.id) ?? '(no project)';
+    const list = grouped.get(label) ?? [];
+    list.push(entry);
+    grouped.set(label, list);
+  }
+
+  const projectLabels = [...grouped.keys()].sort((a, b) => a.localeCompare(b));
+  const lines: string[] = [];
+
+  for (const label of projectLabels) {
+    const groupEntries = sortForShow(grouped.get(label)!);
+    let header = label;
+    if (label !== '(no project)') {
+      const project = await store.read(label);
+      if (project) {
+        const parsed = parseProjectContent(project);
+        header = `${label} — ${parsed.title}`;
+      }
+    }
+    lines.push(header);
+    for (const entry of groupEntries) {
+      lines.push(formatShowLine(entry));
+    }
+    lines.push('');
+  }
+
+  lines.push('[!]=in_progress [ ]=todo [x]=done [-]=cancelled');
+  return lines.join('\n').trimEnd();
+}
+
 function resolveProjectRef(session: Entry): string | null {
   const uid = session.metadata.project_uid ?? session.metadata.projectUid;
   if (typeof uid === 'string' && uid) return uid;
@@ -494,6 +703,7 @@ const WRITE_TOOLS = new Set([
 const READ_TOOLS = new Set([
   'tim_read', 'tim_search', 'tim_trace', 'tim_health', 'tim_stats',
   'tim_export', 'tim_doctor', 'tim_sync', 'tim_load_project', 'tim_read_project', 'tim_tasks',
+  'tim_show',
   'tim_show_unsummarized', 'tim_show_all_unsummarized', 'tim_show_untagged',
 ]);
 
@@ -944,6 +1154,32 @@ export async function startServer(): Promise<void> {
             },
           },
           required: ['label'],
+        },
+      },
+      {
+        name: 'tim_show',
+        description:
+          'Unified overview: tasks, errors, bugs, ideas, decisions, learnings, commits, sections, or all. ' +
+          'Use root for project scope (omit=active, "all"=cross-project). ' +
+          'Use with for comma-separated AND filters (open,done,urgent,recent,<tag>,<free text>).',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            what: {
+              type: 'string',
+              description: 'tasks|errors|bugs|ideas|decisions|learnings|commits|all|<SectionName>',
+            },
+            root: {
+              type: 'string',
+              description: 'Project label/alias/name; "" or "all" = all projects; omit = active',
+            },
+            with: {
+              type: 'string',
+              description: 'Comma-separated AND filters: open,done,urgent,recent,<tag>,<free text>',
+            },
+            limit: { type: 'number', minimum: 1, maximum: 100, default: 20 },
+          },
+          required: ['what'],
         },
       },
       {
@@ -1472,6 +1708,24 @@ export async function startServer(): Promise<void> {
               type: 'text',
               text: formatted,
             }],
+          };
+        }
+
+        case 'tim_show': {
+          const { what, root, limit } = TimShowSchema.parse(args);
+          const roots = await resolveRoots(s, root);
+          if ('error' in roots && roots.error) {
+            return {
+              content: [{ type: 'text', text: roots.error }],
+              isError: true,
+            };
+          }
+          let entries = await fetchByWhat(s, what, roots.labels!);
+          entries = sortForShow(entries);
+          entries = entries.slice(0, limit);
+          const formatted = await formatShowOutput(s, entries);
+          return {
+            content: [{ type: 'text', text: formatted }],
           };
         }
 
