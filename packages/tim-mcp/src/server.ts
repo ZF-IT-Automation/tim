@@ -36,12 +36,18 @@ import * as path from 'path';
 // ─── Tool Schemas ───────────────────────────────────────
 
 const TimReadSchema = z.object({
-  id: z.string().describe('Entry ID (ULID)'),
+  id: z.union([z.string(), z.array(z.string())]).optional()
+    .describe('Entry ID (ULID), or array of IDs for batch read'),
+  project: z.string().optional().describe('Project label/alias/name (auto-resolved)'),
+  section: z.string().optional().describe('Section title — read its children'),
   depth: z.number().min(1).max(5).optional().default(2),
   includeEdges: z.boolean().optional().default(false),
   includeChildren: z.boolean().optional().default(false),
   showIrrelevant: z.boolean().optional().default(false),
-});
+}).refine(
+  d => d.id !== undefined || d.project !== undefined || d.section !== undefined,
+  { message: 'tim_read requires one of: id, project, section' },
+);
 
 const TimWriteSchema = z.object({
   content: z.string().describe('Entry body content'),
@@ -792,12 +798,19 @@ export async function startServer(): Promise<void> {
         inputSchema: {
           type: 'object',
           properties: {
-            id: { type: 'string', description: 'Entry ID (ULID)' },
+            id: {
+              oneOf: [
+                { type: 'string', description: 'Entry ID (ULID)' },
+                { type: 'array', items: { type: 'string' }, description: 'Batch entry IDs' },
+              ],
+            },
+            project: { type: 'string', description: 'Project label/alias/name (auto-resolved)' },
+            section: { type: 'string', description: 'Section title — read its children' },
             depth: { type: 'number', default: 2, description: 'How many levels to read (1-5)' },
             includeEdges: { type: 'boolean', default: false },
+            includeChildren: { type: 'boolean', default: false },
             showIrrelevant: { type: 'boolean', default: false },
           },
-          required: ['id'],
         },
       },
       {
@@ -1289,22 +1302,185 @@ export async function startServer(): Promise<void> {
     try {
       switch (name) {
         case 'tim_read': {
-          const { id, depth, includeEdges, includeChildren, showIrrelevant } = TimReadSchema.parse(args);
-          const entry = await s.read(id, { depth, includeEdges, includeChildren, showIrrelevant });
-          // Return null as JSON (parseable) + isError: true so clients can
-          // distinguish "not found" from a successful read of an entry
-          // whose body is literally "null". Pre-fix this returned the
-          // plain text "Entry not found" which broke JSON clients that
-          // tried to parse every successful response.
-          if (!entry) {
+          const {
+            id,
+            project,
+            section,
+            depth,
+            includeEdges,
+            includeChildren,
+            showIrrelevant,
+          } = TimReadSchema.parse(args);
+          const readOpts = { depth, includeChildren, showIrrelevant };
+
+          if (Array.isArray(id)) {
+            let projectLabel: string | null = null;
+            if (project) {
+              const pr = await s.resolveProjectLabel(project);
+              if (pr.status === 'ambiguous') {
+                return {
+                  content: [{ type: 'text', text: `ambiguous project: ${pr.labels.join(', ')}` }],
+                  isError: true,
+                };
+              }
+              if (pr.status !== 'found') {
+                return {
+                  content: [{ type: 'text', text: `project not found: ${project}` }],
+                  isError: true,
+                };
+              }
+              projectLabel = pr.label;
+            }
+            const entries: Entry[] = [];
+            const missing: string[] = [];
+            for (const entryId of id) {
+              const entry = await s.read(entryId, readOpts);
+              if (!entry) {
+                missing.push(entryId);
+                continue;
+              }
+              if (projectLabel && s.getProjectLabel(entry.id) !== projectLabel) {
+                missing.push(entryId);
+                continue;
+              }
+              entries.push(entry);
+            }
             return {
-              content: [{ type: 'text', text: JSON.stringify(null) }],
-              isError: true,
+              content: [{ type: 'text', text: JSON.stringify({ entries, missing }, null, 2) }],
             };
           }
-          const edges = includeEdges ? await s.getEdges(id, 'both') : [];
+
+          if (section) {
+            let projectLabel = project;
+            if (!projectLabel) {
+              const roots = await resolveRoots(s, undefined);
+              if (roots.error) {
+                return {
+                  content: [{ type: 'text', text: roots.error }],
+                  isError: true,
+                };
+              }
+              if (roots.labels!.length !== 1) {
+                return {
+                  content: [{
+                    type: 'text',
+                    text: 'section read requires a single project (pass project or bind one)',
+                  }],
+                  isError: true,
+                };
+              }
+              projectLabel = roots.labels![0];
+            }
+            const pr = await s.resolveProjectLabel(projectLabel);
+            if (pr.status !== 'found') {
+              return {
+                content: [{ type: 'text', text: `project not found: ${projectLabel}` }],
+                isError: true,
+              };
+            }
+            const projEntry = await s.read(pr.label);
+            if (!projEntry) {
+              return {
+                content: [{ type: 'text', text: `project not found: ${projectLabel}` }],
+                isError: true,
+              };
+            }
+            const sec = await s.resolveSectionByTitle(projEntry.id, section);
+            if (sec.status === 'ambiguous') {
+              return {
+                content: [{
+                  type: 'text',
+                  text: `ambiguous section '${section}': ${sec.candidates.map(c => c.id).join(', ')}`,
+                }],
+                isError: true,
+              };
+            }
+            if (sec.status !== 'found') {
+              return {
+                content: [{
+                  type: 'text',
+                  text: `section not found: ${section} (candidates: ${sec.candidates.join(', ')})`,
+                }],
+                isError: true,
+              };
+            }
+            const sectionEntry = await s.read(sec.id, readOpts);
+            const children = await s.getChildren(sec.id);
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({ section: sectionEntry, children }, null, 2),
+              }],
+            };
+          }
+
+          if (project && id === undefined) {
+            const pr = await s.resolveProjectLabel(project);
+            if (pr.status === 'ambiguous') {
+              return {
+                content: [{ type: 'text', text: `ambiguous project: ${pr.labels.join(', ')}` }],
+                isError: true,
+              };
+            }
+            if (pr.status !== 'found') {
+              return {
+                content: [{ type: 'text', text: `project not found: ${project}` }],
+                isError: true,
+              };
+            }
+            const entry = await s.read(pr.label, readOpts);
+            if (!entry) {
+              return {
+                content: [{ type: 'text', text: JSON.stringify(null) }],
+                isError: true,
+              };
+            }
+            const edges = includeEdges ? await s.getEdges(entry.id, 'both') : [];
+            return {
+              content: [{ type: 'text', text: JSON.stringify({ entry, edges }, null, 2) }],
+            };
+          }
+
+          if (typeof id === 'string') {
+            let projectLabel: string | null = null;
+            if (project) {
+              const pr = await s.resolveProjectLabel(project);
+              if (pr.status === 'ambiguous') {
+                return {
+                  content: [{ type: 'text', text: `ambiguous project: ${pr.labels.join(', ')}` }],
+                  isError: true,
+                };
+              }
+              if (pr.status !== 'found') {
+                return {
+                  content: [{ type: 'text', text: `project not found: ${project}` }],
+                  isError: true,
+                };
+              }
+              projectLabel = pr.label;
+            }
+            const entry = await s.read(id, readOpts);
+            if (!entry) {
+              return {
+                content: [{ type: 'text', text: JSON.stringify(null) }],
+                isError: true,
+              };
+            }
+            if (projectLabel && s.getProjectLabel(entry.id) !== projectLabel) {
+              return {
+                content: [{ type: 'text', text: JSON.stringify(null) }],
+                isError: true,
+              };
+            }
+            const edges = includeEdges ? await s.getEdges(id, 'both') : [];
+            return {
+              content: [{ type: 'text', text: JSON.stringify({ entry, edges }, null, 2) }],
+            };
+          }
+
           return {
-            content: [{ type: 'text', text: JSON.stringify({ entry, edges }, null, 2) }],
+            content: [{ type: 'text', text: 'tim_read requires one of: id, project, section' }],
+            isError: true,
           };
         }
 
