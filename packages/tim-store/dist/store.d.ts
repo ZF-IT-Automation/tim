@@ -140,6 +140,22 @@ export declare class TimStore implements MemoryInterface {
     curate(): CurateManager;
     /** @internal Exposed for tests */
     getDb(): Database.Database;
+    /** Entries whose metadata JSON has non-boolean values for known boolean keys (legacy 1/0/"true"/"false"). */
+    findEntriesWithNonBooleanTask(): Array<{
+        id: string;
+        metadata: string;
+    }>;
+    /**
+     * One-shot migration: coerce legacy boolean metadata primitives to real booleans.
+     * @returns counts of found / updated / skipped rows
+     */
+    reconcileMetadataTypes(options?: {
+        dryRun?: boolean;
+    }): Promise<{
+        found: number;
+        updated: number;
+        skipped: number;
+    }>;
     write(content: string, options?: WriteOptions): Promise<Entry>;
     update(id: string, patch: Partial<Entry>): Promise<Entry>;
     delete(id: string, hard?: boolean): Promise<void>;

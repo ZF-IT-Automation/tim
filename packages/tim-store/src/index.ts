@@ -80,3 +80,11 @@ export {
   getUnackedStaging,
   type StagingRow,
 } from './sync-methods.js';
+export {
+  coerceMetadataBooleans,
+  isTaskMarker,
+  normalizeTaskValue,
+  metadataNeedsCoercion,
+  parseAndCoerceMetadata,
+  BOOLEAN_METADATA_KEYS,
+} from './metadata-coerce.js';

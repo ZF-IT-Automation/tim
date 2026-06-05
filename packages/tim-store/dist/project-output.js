@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.formatProjectOutput = formatProjectOutput;
+const metadata_coerce_js_1 = require("./metadata-coerce.js");
 const FORMAT_SEP = '─'.repeat(40);
 function truncText(s, max) {
     const t = s.replace(/\s+/g, ' ').trim();
@@ -91,7 +92,7 @@ function sectionContentBody(section) {
     return truncText(sectionPreview(section), 200);
 }
 function entryBadge(entry) {
-    if (entry.metadata.task === true) {
+    if ((0, metadata_coerce_js_1.isTaskMarker)(entry.metadata.task)) {
         return ` [${entry.metadata.status || 'todo'}]`;
     }
     if (entry.metadata.kind === 'error') {

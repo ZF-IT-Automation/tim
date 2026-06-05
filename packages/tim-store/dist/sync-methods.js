@@ -5,6 +5,7 @@ exports.ackStaging = ackStaging;
 exports.applyRemoteEntry = applyRemoteEntry;
 exports.applyRemoteEdge = applyRemoteEdge;
 const tim_sync_1 = require("tim-sync");
+const metadata_coerce_js_1 = require("./metadata-coerce.js");
 function getUnackedStaging(db) {
     return db.prepare('SELECT * FROM staging WHERE acked = 0 ORDER BY rowid').all();
 }
@@ -50,10 +51,11 @@ function applyRemoteEntry(db, payloadJson, lwwTimestamp, lwwDevice, deleted) {
         return true;
     }
     const entry = JSON.parse(payloadJson);
+    const coercedMetadata = JSON.stringify((0, metadata_coerce_js_1.parseAndCoerceMetadata)(entry.metadata));
     db.prepare(`INSERT OR REPLACE INTO entries
     (id, parent_id, title, content, content_type, depth, confidence, created_at,
      accessed_at, decay_rate, visibility, tags, irrelevant, favorite, tombstoned_at, metadata)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(entry.id, entry.parent_id ?? null, entry.title ?? '', entry.content, entry.content_type, entry.depth, entry.confidence, entry.created_at, entry.accessed_at, entry.decay_rate, entry.visibility, entry.tags, entry.irrelevant, entry.favorite ?? 0, entry.tombstoned_at, entry.metadata);
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(entry.id, entry.parent_id ?? null, entry.title ?? '', entry.content, entry.content_type, entry.depth, entry.confidence, entry.created_at, entry.accessed_at, entry.decay_rate, entry.visibility, entry.tags, entry.irrelevant, entry.favorite ?? 0, entry.tombstoned_at, coercedMetadata);
     return true;
 }
 function applyRemoteEdge(db, payloadJson, lwwTimestamp, lwwDevice, deleted) {

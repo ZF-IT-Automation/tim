@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3';
 import { resolveLWW } from 'tim-sync';
 import type { StagingRecord } from 'tim-core';
+import { parseAndCoerceMetadata } from './metadata-coerce.js';
 
 export interface StagingRow {
   rowid: number;
@@ -115,6 +116,8 @@ export function applyRemoteEntry(
     metadata: string;
   };
 
+  const coercedMetadata = JSON.stringify(parseAndCoerceMetadata(entry.metadata));
+
   db.prepare(`INSERT OR REPLACE INTO entries
     (id, parent_id, title, content, content_type, depth, confidence, created_at,
      accessed_at, decay_rate, visibility, tags, irrelevant, favorite, tombstoned_at, metadata)
@@ -134,7 +137,7 @@ export function applyRemoteEntry(
     entry.irrelevant,
     entry.favorite ?? 0,
     entry.tombstoned_at,
-    entry.metadata,
+    coercedMetadata,
   );
   return true;
 }

@@ -3,6 +3,7 @@
 
 import Database from 'better-sqlite3';
 import type { Entry } from 'tim-core';
+import { parseAndCoerceMetadata } from './metadata-coerce.js';
 
 // ─── Internal Row Type ────────────────────────────────────
 
@@ -49,7 +50,7 @@ function rowToEntry(row: RowEntry): Entry {
     irrelevant: row.irrelevant === 1,
     favorite: row.favorite === 1,
     tombstonedAt: row.tombstoned_at,
-    metadata: JSON.parse(row.metadata),
+    metadata: parseAndCoerceMetadata(row.metadata),
   };
 }
 

@@ -13,6 +13,7 @@ import type {
 } from 'tim-core';
 import { runMigrations, createTriggers, getCurrentVersion } from './schema.js';
 import { CurateManager } from './curate.js';
+import { metadataNeedsCoercion, parseAndCoerceMetadata } from './metadata-coerce.js';
 
 /**
  * Sanitize a user-supplied query string into a safe FTS5 MATCH expression.
@@ -667,6 +668,57 @@ export class TimStore implements MemoryInterface {
     return this.db;
   }
 
+  /** Entries whose metadata JSON has non-boolean values for known boolean keys (legacy 1/0/"true"/"false"). */
+  findEntriesWithNonBooleanTask(): Array<{ id: string; metadata: string }> {
+    const rows = this.db
+      .prepare('SELECT id, metadata FROM entries WHERE tombstoned_at IS NULL')
+      .all() as Array<{ id: string; metadata: string }>;
+
+    return rows.filter(row => {
+      try {
+        const parsed = JSON.parse(row.metadata) as Record<string, unknown>;
+        return metadataNeedsCoercion(parsed);
+      } catch {
+        return false;
+      }
+    });
+  }
+
+  /**
+   * One-shot migration: coerce legacy boolean metadata primitives to real booleans.
+   * @returns counts of found / updated / skipped rows
+   */
+  async reconcileMetadataTypes(options: { dryRun?: boolean } = {}): Promise<{
+    found: number;
+    updated: number;
+    skipped: number;
+  }> {
+    const dryRun = options.dryRun ?? false;
+    const rows = this.findEntriesWithNonBooleanTask();
+    let updated = 0;
+    let skipped = 0;
+
+    for (const row of rows) {
+      let coerced: Record<string, unknown>;
+      try {
+        coerced = parseAndCoerceMetadata(row.metadata);
+      } catch {
+        skipped++;
+        continue;
+      }
+
+      if (dryRun) {
+        updated++;
+        continue;
+      }
+
+      await this.update(row.id, { metadata: coerced });
+      updated++;
+    }
+
+    return { found: rows.length, updated, skipped };
+  }
+
   async write(content: string, options: WriteOptions = {}): Promise<Entry> {
     const now = new Date().toISOString();
     const id = options.id ?? formatEntryId({ metadata: options.metadata, now: new Date(now) });
@@ -1290,7 +1342,7 @@ function rowToEntry(row: RowEntry): Entry {
     irrelevant: row.irrelevant === 1,
     favorite: row.favorite === 1,
     tombstonedAt: row.tombstoned_at,
-    metadata: JSON.parse(row.metadata),
+    metadata: parseAndCoerceMetadata(row.metadata),
   };
 }
 

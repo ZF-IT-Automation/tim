@@ -12,6 +12,7 @@ const ulid_1 = require("ulid");
 const entry_id_js_1 = require("./entry-id.js");
 const schema_js_1 = require("./schema.js");
 const curate_js_1 = require("./curate.js");
+const metadata_coerce_js_1 = require("./metadata-coerce.js");
 /**
  * Sanitize a user-supplied query string into a safe FTS5 MATCH expression.
  *
@@ -560,6 +561,48 @@ class TimStore {
     getDb() {
         return this.db;
     }
+    /** Entries whose metadata JSON has non-boolean values for known boolean keys (legacy 1/0/"true"/"false"). */
+    findEntriesWithNonBooleanTask() {
+        const rows = this.db
+            .prepare('SELECT id, metadata FROM entries WHERE tombstoned_at IS NULL')
+            .all();
+        return rows.filter(row => {
+            try {
+                const parsed = JSON.parse(row.metadata);
+                return (0, metadata_coerce_js_1.metadataNeedsCoercion)(parsed);
+            }
+            catch {
+                return false;
+            }
+        });
+    }
+    /**
+     * One-shot migration: coerce legacy boolean metadata primitives to real booleans.
+     * @returns counts of found / updated / skipped rows
+     */
+    async reconcileMetadataTypes(options = {}) {
+        const dryRun = options.dryRun ?? false;
+        const rows = this.findEntriesWithNonBooleanTask();
+        let updated = 0;
+        let skipped = 0;
+        for (const row of rows) {
+            let coerced;
+            try {
+                coerced = (0, metadata_coerce_js_1.parseAndCoerceMetadata)(row.metadata);
+            }
+            catch {
+                skipped++;
+                continue;
+            }
+            if (dryRun) {
+                updated++;
+                continue;
+            }
+            await this.update(row.id, { metadata: coerced });
+            updated++;
+        }
+        return { found: rows.length, updated, skipped };
+    }
     async write(content, options = {}) {
         const now = new Date().toISOString();
         const id = options.id ?? (0, entry_id_js_1.formatEntryId)({ metadata: options.metadata, now: new Date(now) });
@@ -1040,7 +1083,7 @@ function rowToEntry(row) {
         irrelevant: row.irrelevant === 1,
         favorite: row.favorite === 1,
         tombstonedAt: row.tombstoned_at,
-        metadata: JSON.parse(row.metadata),
+        metadata: (0, metadata_coerce_js_1.parseAndCoerceMetadata)(row.metadata),
     };
 }
 function rowToEdge(row) {

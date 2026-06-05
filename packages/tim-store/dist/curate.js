@@ -3,6 +3,7 @@
 // Atomic rename, move, batch flag updates, tag operations.
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.CurateManager = void 0;
+const metadata_coerce_js_1 = require("./metadata-coerce.js");
 // ─── Helpers ─────────────────────────────────────────────
 function rowToEntry(row) {
     return {
@@ -21,7 +22,7 @@ function rowToEntry(row) {
         irrelevant: row.irrelevant === 1,
         favorite: row.favorite === 1,
         tombstonedAt: row.tombstoned_at,
-        metadata: JSON.parse(row.metadata),
+        metadata: (0, metadata_coerce_js_1.parseAndCoerceMetadata)(row.metadata),
     };
 }
 function getEntry(db, id) {

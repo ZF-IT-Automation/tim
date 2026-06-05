@@ -276,6 +276,81 @@ describe('formatProjectOutput entry badges', () => {
     expect(out).toMatch(/Plain note/);
     expect(out).not.toMatch(/Plain note \[/);
   });
+
+  it('renders [done] badge when task is integer 1', () => {
+    const children = [
+      section,
+      {
+        id: 't-int',
+        parentId: 'tasks',
+        title: 'Legacy int task',
+        metadata: { order: 0, task: 1, status: 'done' },
+        tags: [],
+        content: '',
+        createdAt: '2026-06-01T00:00:00Z',
+      },
+    ] as any[];
+
+    const out = formatProjectOutput({ project, children, truncated: false }, 200);
+    expect(out).toMatch(/Legacy int task \[done\]/);
+  });
+
+  it('renders [done] badge when task is string "true"', () => {
+    const children = [
+      section,
+      {
+        id: 't-str',
+        parentId: 'tasks',
+        title: 'Legacy str task',
+        metadata: { order: 0, task: 'true', status: 'done' },
+        tags: [],
+        content: '',
+        createdAt: '2026-06-01T00:00:00Z',
+      },
+    ] as any[];
+
+    const out = formatProjectOutput({ project, children, truncated: false }, 200);
+    expect(out).toMatch(/Legacy str task \[done\]/);
+  });
+
+  it('renders [done] badge when task is boolean true (regression)', () => {
+    const children = [
+      section,
+      {
+        id: 't-bool',
+        parentId: 'tasks',
+        title: 'Bool task',
+        metadata: { order: 0, task: true, status: 'done' },
+        tags: [],
+        content: '',
+        createdAt: '2026-06-01T00:00:00Z',
+      },
+    ] as any[];
+
+    const out = formatProjectOutput({ project, children, truncated: false }, 200);
+    expect(out).toMatch(/Bool task \[done\]/);
+  });
+
+  it('omits badge for false-like task values', () => {
+    for (const task of [false, 0, 'false'] as const) {
+      const children = [
+        section,
+        {
+          id: `t-${String(task)}`,
+          parentId: 'tasks',
+          title: `Task ${String(task)}`,
+          metadata: { order: 0, task, status: 'done' },
+          tags: [],
+          content: '',
+          createdAt: '2026-06-01T00:00:00Z',
+        },
+      ] as any[];
+
+      const out = formatProjectOutput({ project, children, truncated: false }, 200);
+      expect(out).toMatch(new RegExp(`Task ${String(task)}`));
+      expect(out).not.toMatch(new RegExp(`Task ${String(task)} \\[`));
+    }
+  });
 });
 
 describe('formatProjectOutput section block layout', () => {

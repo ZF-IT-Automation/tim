@@ -1,5 +1,6 @@
 import type { Entry } from 'tim-core';
 import type { LoadProjectResult } from './store.js';
+import { isTaskMarker } from './metadata-coerce.js';
 
 const FORMAT_SEP = '─'.repeat(40);
 
@@ -115,7 +116,7 @@ function sectionContentBody(section: Entry): string {
 }
 
 function entryBadge(entry: Entry): string {
-  if (entry.metadata.task === true) {
+  if (isTaskMarker(entry.metadata.task)) {
     return ` [${entry.metadata.status || 'todo'}]`;
   }
   if (entry.metadata.kind === 'error') {

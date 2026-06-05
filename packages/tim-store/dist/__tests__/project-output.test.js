@@ -245,6 +245,73 @@ const project_output_js_1 = require("../project-output.js");
         (0, vitest_1.expect)(out).toMatch(/Plain note/);
         (0, vitest_1.expect)(out).not.toMatch(/Plain note \[/);
     });
+    (0, vitest_1.it)('renders [done] badge when task is integer 1', () => {
+        const children = [
+            section,
+            {
+                id: 't-int',
+                parentId: 'tasks',
+                title: 'Legacy int task',
+                metadata: { order: 0, task: 1, status: 'done' },
+                tags: [],
+                content: '',
+                createdAt: '2026-06-01T00:00:00Z',
+            },
+        ];
+        const out = (0, project_output_js_1.formatProjectOutput)({ project, children, truncated: false }, 200);
+        (0, vitest_1.expect)(out).toMatch(/Legacy int task \[done\]/);
+    });
+    (0, vitest_1.it)('renders [done] badge when task is string "true"', () => {
+        const children = [
+            section,
+            {
+                id: 't-str',
+                parentId: 'tasks',
+                title: 'Legacy str task',
+                metadata: { order: 0, task: 'true', status: 'done' },
+                tags: [],
+                content: '',
+                createdAt: '2026-06-01T00:00:00Z',
+            },
+        ];
+        const out = (0, project_output_js_1.formatProjectOutput)({ project, children, truncated: false }, 200);
+        (0, vitest_1.expect)(out).toMatch(/Legacy str task \[done\]/);
+    });
+    (0, vitest_1.it)('renders [done] badge when task is boolean true (regression)', () => {
+        const children = [
+            section,
+            {
+                id: 't-bool',
+                parentId: 'tasks',
+                title: 'Bool task',
+                metadata: { order: 0, task: true, status: 'done' },
+                tags: [],
+                content: '',
+                createdAt: '2026-06-01T00:00:00Z',
+            },
+        ];
+        const out = (0, project_output_js_1.formatProjectOutput)({ project, children, truncated: false }, 200);
+        (0, vitest_1.expect)(out).toMatch(/Bool task \[done\]/);
+    });
+    (0, vitest_1.it)('omits badge for false-like task values', () => {
+        for (const task of [false, 0, 'false']) {
+            const children = [
+                section,
+                {
+                    id: `t-${String(task)}`,
+                    parentId: 'tasks',
+                    title: `Task ${String(task)}`,
+                    metadata: { order: 0, task, status: 'done' },
+                    tags: [],
+                    content: '',
+                    createdAt: '2026-06-01T00:00:00Z',
+                },
+            ];
+            const out = (0, project_output_js_1.formatProjectOutput)({ project, children, truncated: false }, 200);
+            (0, vitest_1.expect)(out).toMatch(new RegExp(`Task ${String(task)}`));
+            (0, vitest_1.expect)(out).not.toMatch(new RegExp(`Task ${String(task)} \\[`));
+        }
+    });
 });
 (0, vitest_1.describe)('formatProjectOutput section block layout', () => {
     const project = {
