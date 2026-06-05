@@ -77,15 +77,31 @@ export function readMarker(cwd: string): ProjectMarker | null {
 }
 
 /**
+ * Whitelist for valid project labels in .tim-project. P = Project,
+ * L = Learning, E = Error, N = Note — same shape TIM uses everywhere
+ * (P0062, L0042, E0031, N0014). A corrupt or out-of-schema label here
+ * silently poisons the whole session-binding pipeline (statusline,
+ * hooks, load_project), so we reject anything that doesn't match.
+ */
+const PROJECT_LABEL_PATTERN = /^[PLEN]\d{4}$/;
+
+/**
  * Coerce an unknown JSON value into a v2 ProjectMarker. Strips legacy
  * fields. Returns null if the value isn't a usable marker (missing
- * project/session, or wrong types).
+ * project/session, wrong types, or malformed project label).
  */
 function normalizeMarker(raw: unknown): ProjectMarker | null {
   if (!raw || typeof raw !== 'object') return null;
   const obj = raw as Record<string, unknown>;
 
   if (typeof obj.project !== 'string' || obj.project.length === 0) return null;
+  if (!PROJECT_LABEL_PATTERN.test(obj.project)) {
+    console.warn(
+      `[tim-hooks] .tim-project has malformed project label "${obj.project}" — ` +
+        `expected ^[PLEN]\\d{4}$ (P0062, L0042, …). Ignoring marker.`,
+    );
+    return null;
+  }
   if (typeof obj.session !== 'string') return null;
   if (typeof obj.exchanges !== 'number' || !Number.isFinite(obj.exchanges)) return null;
   if (typeof obj.batch_size !== 'number' || !Number.isFinite(obj.batch_size)) return null;

@@ -31,24 +31,24 @@ describe('marker', () => {
 
   it('round-trips a marker file', () => {
     writeMarker(dir, {
-      project: 'P1',
+      project: 'P0001',
       session: 's1',
       exchanges: 3,
       batch_size: 5,
       batches_summarized: 0,
     });
-    expect(readMarker(dir)).toMatchObject({ project: 'P1', session: 's1', exchanges: 3 });
+    expect(readMarker(dir)).toMatchObject({ project: 'P0001', session: 's1', exchanges: 3 });
   });
 
   it('detectProject prefers the .tim-project marker', () => {
     writeMarker(dir, {
-      project: 'P9',
+      project: 'P0009',
       session: 's',
       exchanges: 0,
       batch_size: 5,
       batches_summarized: 0,
     });
-    expect(detectProject(dir)?.project).toBe('P9');
+    expect(detectProject(dir)?.project).toBe('P0009');
   });
 
   it('detectProject returns null when no marker exists', () => {
@@ -93,25 +93,25 @@ describe('marker', () => {
   });
 
   it('findMarker returns the marker in the cwd itself', () => {
-    writeMarker(dir, { project: 'P1', session: 's', exchanges: 0, batch_size: 5, batches_summarized: 0 });
+    writeMarker(dir, { project: 'P0001', session: 's', exchanges: 0, batch_size: 5, batches_summarized: 0 });
     const found = findMarker(dir, { maxRoot: dir });
-    expect(found?.marker.project).toBe('P1');
+    expect(found?.marker.project).toBe('P0001');
     expect(found?.dir).toBe(fs.realpathSync(dir));
   });
 
   it('findMarker walks up to a parent marker', () => {
-    writeMarker(dir, { project: 'PARENT', session: 's', exchanges: 0, batch_size: 5, batches_summarized: 0 });
+    writeMarker(dir, { project: 'P0002', session: 's', exchanges: 0, batch_size: 5, batches_summarized: 0 });
     const sub = path.join(dir, 'a', 'b', 'c');
     fs.mkdirSync(sub, { recursive: true });
-    expect(findMarker(sub, { maxRoot: dir })?.marker.project).toBe('PARENT');
+    expect(findMarker(sub, { maxRoot: dir })?.marker.project).toBe('P0002');
   });
 
   it('findMarker: nearest marker wins over an ancestor', () => {
-    writeMarker(dir, { project: 'PARENT', session: 's', exchanges: 0, batch_size: 5, batches_summarized: 0 });
+    writeMarker(dir, { project: 'P0002', session: 's', exchanges: 0, batch_size: 5, batches_summarized: 0 });
     const sub = path.join(dir, 'child');
     fs.mkdirSync(sub, { recursive: true });
-    writeMarker(sub, { project: 'CHILD', session: 's', exchanges: 0, batch_size: 5, batches_summarized: 0 });
-    expect(findMarker(sub, { maxRoot: dir })?.marker.project).toBe('CHILD');
+    writeMarker(sub, { project: 'P0003', session: 's', exchanges: 0, batch_size: 5, batches_summarized: 0 });
+    expect(findMarker(sub, { maxRoot: dir })?.marker.project).toBe('P0003');
   });
 
   it('findMarker: repo marker wins over ~/.tim-project on the same walk chain', () => {
@@ -120,21 +120,21 @@ describe('marker', () => {
     const sub = path.join(repo, 'packages');
     fs.mkdirSync(sub, { recursive: true });
     writeMarker(fakeHome, {
-      project: 'HOME',
+      project: 'P0099',
       session: 's',
       exchanges: 0,
       batch_size: 5,
       batches_summarized: 0,
     });
     writeMarker(repo, {
-      project: 'REPO',
+      project: 'P0063',
       session: 's',
       exchanges: 0,
       batch_size: 5,
       batches_summarized: 0,
     });
     const found = findMarker(sub, { maxRoot: fakeHome });
-    expect(found?.marker.project).toBe('REPO');
+    expect(found?.marker.project).toBe('P0063');
     expect(found?.dir).toBe(fs.realpathSync(repo));
   });
 
@@ -145,10 +145,87 @@ describe('marker', () => {
   });
 
   it('findMarker stops at a corrupt nearest marker (does not silently use an ancestor)', () => {
-    writeMarker(dir, { project: 'PARENT', session: 's', exchanges: 0, batch_size: 5, batches_summarized: 0 });
+    writeMarker(dir, { project: 'P0002', session: 's', exchanges: 0, batch_size: 5, batches_summarized: 0 });
     const sub = path.join(dir, 'child');
     fs.mkdirSync(sub, { recursive: true });
     fs.writeFileSync(path.join(sub, '.tim-project'), '{ not valid json');
+    expect(findMarker(sub, { maxRoot: dir })).toBeNull();
+  });
+
+  // Regression: a hand-edited or stale .tim-project with a malformed
+  // project label (e.g. "notalabel", "12345", or wrong digit count)
+  // must not be treated as authoritative. The original bug was a P9999
+  // label silently binding the session to a non-existent project
+  // (TIM's Inbox-fallback is P0000, never P9999). The new whitelist
+  // rejects any label that doesn't match the canonical ^[PLEN]\d{4}$
+  // shape so the resolution chain falls back to ~/.tim/active-project
+  // or INBOX_PROJECT_LABEL (P0000).
+  it.each(['notalabel', '12345', 'P12345', 'P', 'P0', 'p0062', 'P006', 'P0062X'])(
+    'readMarker returns null for malformed project label %s',
+    (bad) => {
+      fs.writeFileSync(
+        path.join(dir, '.tim-project'),
+        JSON.stringify({
+          project: bad,
+          session: 's',
+          exchanges: 0,
+          batch_size: 5,
+          batches_summarized: 0,
+          version: 2,
+        }),
+      );
+      expect(readMarker(dir)).toBeNull();
+    },
+  );
+
+  it('readMarker returns null for empty project string and wrong-type project', () => {
+    fs.writeFileSync(
+      path.join(dir, '.tim-project'),
+      JSON.stringify({
+        project: '',
+        session: 's',
+        exchanges: 0,
+        batch_size: 5,
+        batches_summarized: 0,
+        version: 2,
+      }),
+    );
+    expect(readMarker(dir)).toBeNull();
+  });
+
+  it('readMarker accepts valid P/L/E/N-prefixed labels', () => {
+    for (const label of ['P0062', 'L0042', 'E0031', 'N0014']) {
+      fs.writeFileSync(
+        path.join(dir, '.tim-project'),
+        JSON.stringify({
+          project: label,
+          session: 's',
+          exchanges: 0,
+          batch_size: 5,
+          batches_summarized: 0,
+          version: 2,
+        }),
+      );
+      expect(readMarker(dir)?.project).toBe(label);
+    }
+  });
+
+  it('findMarker returns null when the only marker has a malformed project label', () => {
+    fs.writeFileSync(
+      path.join(dir, '.tim-project'),
+      JSON.stringify({
+        project: 'notalabel',
+        session: 's',
+        exchanges: 0,
+        batch_size: 5,
+        batches_summarized: 0,
+        version: 2,
+      }),
+    );
+    const sub = path.join(dir, 'a', 'b');
+    fs.mkdirSync(sub, { recursive: true });
+    // findMarker must reject the corrupt nearest marker — same
+    // contract as for unparseable JSON.
     expect(findMarker(sub, { maxRoot: dir })).toBeNull();
   });
 
@@ -209,7 +286,7 @@ describe('marker v2 schema', () => {
 
   it('writeMarker stamps the current version on disk', () => {
     writeMarker(dir, {
-      project: 'P1',
+      project: 'P0001',
       session: 's1',
       exchanges: 0,
       batch_size: 5,
@@ -223,7 +300,7 @@ describe('marker v2 schema', () => {
 
   it('readMarker returns the v2 shape (with version: 2)', () => {
     writeMarker(dir, {
-      project: 'P1',
+      project: 'P0001',
       session: 's1',
       exchanges: 3,
       batch_size: 5,
@@ -231,7 +308,7 @@ describe('marker v2 schema', () => {
     });
     const m = readMarker(dir);
     expect(m?.version).toBe(2);
-    expect(m?.project).toBe('P1');
+    expect(m?.project).toBe('P0001');
     expect(m?.session).toBe('s1');
     expect(m?.exchanges).toBe(3);
     expect(m?.batch_size).toBe(5);
@@ -322,7 +399,7 @@ describe('marker v2 schema', () => {
       path.join(dir, '.tim-project'),
       JSON.stringify({
         version: 1,
-        project: 'P',
+        project: 'P0001',
         session: 's',
         exchanges: 0,
         batch_size: 5,
@@ -341,7 +418,7 @@ describe('marker v2 schema', () => {
     fs.writeFileSync(
       path.join(dir, '.tim-project'),
       JSON.stringify({
-        project: 'P',
+        project: 'P0001',
         session: 's',
         // exchanges missing
         batch_size: 5,
@@ -355,7 +432,7 @@ describe('marker v2 schema', () => {
     fs.writeFileSync(
       path.join(dir, '.tim-project'),
       JSON.stringify({
-        project: 'P',
+        project: 'P0001',
         session: 's',
         exchanges: 'not a number',
         batch_size: 5,
@@ -368,7 +445,7 @@ describe('marker v2 schema', () => {
   it('ProjectMarkerInput accepts a marker without version (writer fills it in)', () => {
     // Type-level test: this line must compile.
     const input: Parameters<typeof writeMarker>[1] = {
-      project: 'P',
+      project: 'P0001',
       session: 's',
       exchanges: 0,
       batch_size: 5,
