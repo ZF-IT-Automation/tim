@@ -500,9 +500,14 @@ export class TimStore implements MemoryInterface {
 
   /**
    * Query root-level entries (parent_id IS NULL) that are not projects.
-   * Optionally filter by tag (exact match within JSON tags array).
+   * Filter by either:
+   *   - `type`: exact match on `json_extract(metadata, '$.type')` (preferred)
+   *   - `tag` : legacy string-tag match via JSON-LIKE (deprecated, kept
+   *             for backward compatibility with the pre-Phase-0 hook)
+   *
+   * `type` takes precedence if both are supplied.
    */
-  getRootLevelEntries(tag?: string): Entry[] {
+  getRootLevelEntries(filter?: { type?: string; tag?: string }): Entry[] {
     let sql = `
       SELECT * FROM entries
       WHERE parent_id IS NULL
@@ -512,10 +517,13 @@ export class TimStore implements MemoryInterface {
     `;
     const params: unknown[] = [];
 
-    if (tag) {
+    if (filter?.type) {
+      sql += ` AND json_extract(metadata, '$.type') = ?`;
+      params.push(filter.type);
+    } else if (filter?.tag) {
       sql += ` AND tags LIKE ?`;
-      // Match the tag within JSON array: e.g., '%"#rule"%'
-      params.push(`%"${tag}"%`);
+      // Match the tag within JSON array: e.g., '%"#rule"%' (legacy).
+      params.push(`%"${filter.tag}"%`);
     }
 
     sql += ` ORDER BY created_at ASC`;
