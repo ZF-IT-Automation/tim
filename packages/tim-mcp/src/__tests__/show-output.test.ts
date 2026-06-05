@@ -255,6 +255,140 @@ describe('tim_show', () => {
     expect(text).not.toContain('Random root');
   });
 
+  it('with:open excludes done and cancelled tasks', async () => {
+    const proj = await client.callTool('tim_create_project', { label: 'P0450', content: 'Filter Proj' });
+    const project = JSON.parse(proj.result!.content[0].text);
+    const section = await client.callTool('tim_write', {
+      content: 'Tasks',
+      parentId: project.id,
+      metadata: { kind: 'section' },
+      tags: ['#section', '#schema'],
+    });
+    const sec = JSON.parse(section.result!.content[0].text);
+
+    for (const [content, status] of [
+      ['Open task', 'todo'],
+      ['Done task', 'done'],
+      ['Cancelled task', 'cancelled'],
+    ]) {
+      await client.callTool('tim_write', {
+        content,
+        parentId: sec.id,
+        metadata: { task: true, status },
+        tags: ['#task', '#test'],
+      });
+    }
+
+    const resp = await client.callTool('tim_show', { what: 'tasks', root: 'P0450', with: 'open' });
+    const text = resp.result!.content[0].text;
+    expect(text).toContain('Open task');
+    expect(text).not.toContain('Done task');
+    expect(text).not.toContain('Cancelled task');
+  });
+
+  it('with:done returns only done tasks', async () => {
+    await seedProjectWithTask(client, 'P0451', 'Done Proj', 'Todo task', { status: 'todo' });
+    await seedProjectWithTask(client, 'P0452', 'Done Proj 2', 'Finished task', { status: 'done' });
+
+    const resp = await client.callTool('tim_show', {
+      what: 'tasks',
+      root: 'all',
+      with: 'done',
+    });
+    const text = resp.result!.content[0].text;
+    expect(text).toContain('Finished task');
+    expect(text).not.toContain('Todo task');
+  });
+
+  it('with:urgent returns only #urgent entries', async () => {
+    const proj = await client.callTool('tim_create_project', { label: 'P0453', content: 'Urgent Proj' });
+    const project = JSON.parse(proj.result!.content[0].text);
+    const section = await client.callTool('tim_write', {
+      content: 'Tasks',
+      parentId: project.id,
+      metadata: { kind: 'section' },
+      tags: ['#section', '#schema'],
+    });
+    const sec = JSON.parse(section.result!.content[0].text);
+
+    await client.callTool('tim_write', {
+      content: 'Urgent item',
+      parentId: sec.id,
+      metadata: { task: true, status: 'todo' },
+      tags: ['#task', '#urgent', '#test'],
+    });
+    await client.callTool('tim_write', {
+      content: 'Normal item',
+      parentId: sec.id,
+      metadata: { task: true, status: 'todo' },
+      tags: ['#task', '#test'],
+    });
+
+    const resp = await client.callTool('tim_show', { what: 'tasks', root: 'P0453', with: 'urgent' });
+    const text = resp.result!.content[0].text;
+    expect(text).toContain('Urgent item');
+    expect(text).not.toContain('Normal item');
+  });
+
+  it('with:recent keeps freshly written entries', async () => {
+    await seedProjectWithTask(client, 'P0454', 'Recent Proj', 'Fresh task');
+    const resp = await client.callTool('tim_show', {
+      what: 'tasks',
+      root: 'P0454',
+      with: 'recent',
+    });
+    const text = resp.result!.content[0].text;
+    expect(text).toContain('Fresh task');
+  });
+
+  it('with freetext narrows via FTS intersect', async () => {
+    await seedProjectWithTask(client, 'P0455', 'FTS Proj', 'UniqueAlphaKeyword task');
+    await seedProjectWithTask(client, 'P0456', 'FTS Proj 2', 'Other unrelated task');
+
+    const resp = await client.callTool('tim_show', {
+      what: 'tasks',
+      root: 'all',
+      with: 'UniqueAlphaKeyword',
+    });
+    const text = resp.result!.content[0].text;
+    expect(text).toContain('UniqueAlphaKeyword');
+    expect(text).not.toContain('Other unrelated');
+  });
+
+  it('limit applied after scope not before', async () => {
+    const proj = await client.callTool('tim_create_project', { label: 'P0460', content: 'Limit Proj' });
+    const project = JSON.parse(proj.result!.content[0].text);
+    const section = await client.callTool('tim_write', {
+      content: 'Tasks',
+      parentId: project.id,
+      metadata: { kind: 'section' },
+      tags: ['#section', '#schema'],
+    });
+    const sec = JSON.parse(section.result!.content[0].text);
+
+    for (let i = 0; i < 3; i++) {
+      await client.callTool('tim_write', {
+        content: `Scoped task ${i}`,
+        parentId: sec.id,
+        metadata: { task: true, status: 'todo' },
+        tags: ['#task', '#test'],
+      });
+    }
+    for (let i = 0; i < 25; i++) {
+      await seedProjectWithTask(client, `P09${String(i).padStart(2, '0')}`, `Noise ${i}`, `Noise task ${i}`);
+    }
+
+    const resp = await client.callTool('tim_show', {
+      what: 'tasks',
+      root: 'P0460',
+      limit: 2,
+    });
+    const text = resp.result!.content[0].text;
+    const scopedMatches = (text.match(/Scoped task/g) ?? []).length;
+    expect(scopedMatches).toBe(2);
+    expect(text).not.toContain('Noise task');
+  });
+
   it('output includes status legend and glyphs', async () => {
     await seedProjectWithTask(client, 'P0430', 'Glyph Test', 'In progress task', {
       status: 'in_progress',

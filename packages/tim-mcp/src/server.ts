@@ -545,6 +545,60 @@ const SHOW_PRIORITY_ORDER: Record<string, number> = {
   low: 2,
 };
 
+async function applyWith(
+  store: TimStore,
+  entries: Entry[],
+  withStr: string | undefined,
+): Promise<Entry[]> {
+  if (!withStr) return entries;
+  const terms = withStr.split(',').map(t => t.trim()).filter(Boolean);
+  let result = entries;
+  const ftsTerms: string[] = [];
+
+  for (const t of terms) {
+    const lc = t.toLowerCase();
+    switch (lc) {
+      case 'open':
+        result = result.filter(e => {
+          const st = e.metadata.status as string | undefined;
+          return st !== 'done' && st !== 'cancelled';
+        });
+        break;
+      case 'done':
+        result = result.filter(e => e.metadata.status === 'done');
+        break;
+      case 'urgent':
+        result = result.filter(e => e.tags.includes('#urgent'));
+        break;
+      case 'recent': {
+        const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+        result = result.filter(e => Date.parse(e.createdAt) >= cutoff);
+        break;
+      }
+      default: {
+        const tagForm = t.startsWith('#') ? t : `#${t}`;
+        if (result.some(e => e.tags.includes(tagForm) || e.tags.includes(t))) {
+          result = result.filter(e => e.tags.includes(tagForm) || e.tags.includes(t));
+        } else {
+          ftsTerms.push(t);
+        }
+        break;
+      }
+    }
+  }
+
+  if (ftsTerms.length > 0) {
+    const hitIds = new Set<string>();
+    for (const q of ftsTerms) {
+      const hits = await store.searchFts(q, 1000);
+      for (const e of hits) hitIds.add(e.id);
+    }
+    result = result.filter(e => hitIds.has(e.id));
+  }
+
+  return result;
+}
+
 function sortForShow(entries: Entry[]): Entry[] {
   return [...entries].sort((a, b) => {
     const statusA = SHOW_STATUS_ORDER[String(a.metadata.status ?? '')] ?? 2;
@@ -1712,7 +1766,7 @@ export async function startServer(): Promise<void> {
         }
 
         case 'tim_show': {
-          const { what, root, limit } = TimShowSchema.parse(args);
+          const { what, root, with: withStr, limit } = TimShowSchema.parse(args);
           const roots = await resolveRoots(s, root);
           if ('error' in roots && roots.error) {
             return {
@@ -1721,6 +1775,7 @@ export async function startServer(): Promise<void> {
             };
           }
           let entries = await fetchByWhat(s, what, roots.labels!);
+          entries = await applyWith(s, entries, withStr);
           entries = sortForShow(entries);
           entries = entries.slice(0, limit);
           const formatted = await formatShowOutput(s, entries);
