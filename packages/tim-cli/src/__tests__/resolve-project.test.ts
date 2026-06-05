@@ -50,8 +50,12 @@ describe('tim resolve-project / bind-project', () => {
   });
 
   it('bind-project preserves existing counters, only changes project', () => {
+    // Pre-seed with a label that satisfies the v2 PROJECT_LABEL_PATTERN
+    // (`^[PLEN]\d{4}$`). Using a real-looking P-label exercises the
+    // "preserves counters" path without tripping normalizeMarker's
+    // pattern guard.
     fs.writeFileSync(path.join(dir, '.tim-project'),
-      JSON.stringify({ project: 'OLD', session: 's7', exchanges: 12, batch_size: 3, batches_summarized: 4 }));
+      JSON.stringify({ version: 2, project: 'P0063', session: 's7', exchanges: 12, batch_size: 3, batches_summarized: 4 }));
     run(['bind-project', '--cwd', dir, '--label', 'P0100'], { TIM_MARKER_MAX_ROOT: dir });
     const marker = JSON.parse(fs.readFileSync(path.join(dir, '.tim-project'), 'utf8'));
     expect(marker).toMatchObject({ project: 'P0100', session: 's7', exchanges: 12, batch_size: 3, batches_summarized: 4 });
