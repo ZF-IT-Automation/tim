@@ -1266,7 +1266,9 @@ export async function startServer(): Promise<void> {
       },
       {
         name: 'tim_tasks',
-        description: 'List open tasks across all projects, grouped by project and sorted by status, priority, and due date.',
+        description:
+          "[DEPRECATED — use tim_show what='tasks'] List open tasks across all projects, " +
+          'grouped by project and sorted by status, priority, and due date.',
         inputSchema: {
           type: 'object',
           properties: {

@@ -369,3 +369,48 @@ describe('tim_write where shorthand', () => {
     expect(writeResp.result?.isError).toBeFalsy();
   });
 });
+
+describe('tim_tasks deprecation regression', () => {
+  let client: McpClient;
+  let dbPath: string;
+
+  beforeEach(async () => {
+    dbPath = `/tmp/tim-tasks-reg-${Date.now()}-${Math.random().toString(36).slice(2)}.db`;
+    if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath);
+    client = new McpClient(dbPath);
+    await client.init();
+  });
+
+  afterEach(() => {
+    client.kill();
+    if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath);
+  });
+
+  async function seedTask(label: string, title: string, status: string) {
+    const proj = await client.callTool('tim_create_project', { label, content: title });
+    const project = JSON.parse(proj.result!.content[0].text);
+    const section = await client.callTool('tim_write', {
+      content: 'Next Steps',
+      parentId: project.id,
+      metadata: { kind: 'section' },
+      tags: ['#section', '#schema'],
+    });
+    const sec = JSON.parse(section.result!.content[0].text);
+    await client.callTool('tim_write', {
+      content: `${title} task`,
+      parentId: sec.id,
+      metadata: { task: true, status },
+      tags: ['#task', '#test'],
+    });
+  }
+
+  it('getTasks status filter via tim_tasks returns only done tasks', async () => {
+    await seedTask('P0700', 'TodoProj', 'todo');
+    await seedTask('P0701', 'DoneProj', 'done');
+
+    const resp = await client.callTool('tim_tasks', { status: 'done' });
+    const text = resp.result!.content[0].text;
+    expect(text).toContain('DoneProj task');
+    expect(text).not.toContain('TodoProj task');
+  });
+});
