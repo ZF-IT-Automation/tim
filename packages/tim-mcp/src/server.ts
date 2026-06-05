@@ -55,6 +55,9 @@ const TimWriteSchema = z.object({
   parentId: z.string().optional(),
   parentTitle: z.string().optional().describe('Resolve parent by title within a project'),
   projectId: z.string().optional().describe('Project label for parentTitle resolution, e.g. P0062'),
+  where: z.string().optional()
+    .describe('Shorthand "P0062/Tasks" → resolves project + section to parentId. ' +
+              'Loses to explicit parentId. Project part accepts label/alias/name.'),
   contentType: z.enum(['text', 'json', 'blob']).optional().default('text'),
   confidence: z.number().min(0).max(1).optional().default(1.0),
   tags: z.array(z.string()).optional().default([]),
@@ -827,6 +830,10 @@ export async function startServer(): Promise<void> {
             parentId: { type: 'string' },
             parentTitle: { type: 'string', description: 'Section title; requires projectId' },
             projectId: { type: 'string', description: 'Project label, e.g. P0062' },
+            where: {
+              type: 'string',
+              description: 'Shorthand P0062/Tasks → project + section parentId (parentId wins)',
+            },
             contentType: { type: 'string', enum: ['text', 'json', 'blob'], default: 'text' },
             confidence: { type: 'number', minimum: 0, maximum: 1, default: 1.0 },
             tags: { type: 'array', items: { type: 'string' }, default: [] },
@@ -1494,7 +1501,65 @@ export async function startServer(): Promise<void> {
 
         case 'tim_write': {
           const opts = TimWriteSchema.parse(args);
-          const { parentTitle, projectId, ...writeOpts } = opts;
+          const { parentTitle, projectId, where, ...writeOpts } = opts;
+
+          if (!writeOpts.parentId && where) {
+            const parts = where.split('/');
+            const projPart = parts[0]?.trim();
+            const secPart = parts.slice(1).join('/').trim();
+            if (!projPart || !secPart) {
+              return {
+                content: [{
+                  type: 'text',
+                  text: `Invalid where shorthand '${where}' — expected P0062/Tasks`,
+                }],
+                isError: true,
+              };
+            }
+            const pr = await s.resolveProjectLabel(projPart);
+            if (pr.status === 'ambiguous') {
+              return {
+                content: [{
+                  type: 'text',
+                  text: `ambiguous project in where: ${pr.labels.join(', ')}`,
+                }],
+                isError: true,
+              };
+            }
+            if (pr.status !== 'found') {
+              return {
+                content: [{ type: 'text', text: `project not found in where: ${projPart}` }],
+                isError: true,
+              };
+            }
+            const projEntry = await s.read(pr.label);
+            if (!projEntry) {
+              return {
+                content: [{ type: 'text', text: `project not found in where: ${projPart}` }],
+                isError: true,
+              };
+            }
+            const sr = await s.resolveSectionByTitle(projEntry.id, secPart);
+            if (sr.status === 'ambiguous') {
+              return {
+                content: [{
+                  type: 'text',
+                  text: `ambiguous section '${secPart}': ${sr.candidates.map(c => `${c.title} (${c.id})`).join(', ')}`,
+                }],
+                isError: true,
+              };
+            }
+            if (sr.status !== 'found') {
+              return {
+                content: [{
+                  type: 'text',
+                  text: `section not found: ${secPart} (candidates: ${sr.candidates.join(', ')})`,
+                }],
+                isError: true,
+              };
+            }
+            writeOpts.parentId = sr.id;
+          }
 
           if (!writeOpts.parentId && parentTitle) {
             if (!projectId) {

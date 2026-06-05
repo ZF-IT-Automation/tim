@@ -257,3 +257,115 @@ describe('tim_search extended', () => {
     expect(missResults).toHaveLength(0);
   });
 });
+
+describe('tim_write where shorthand', () => {
+  let client: McpClient;
+  let dbPath: string;
+
+  beforeEach(async () => {
+    dbPath = `/tmp/tim-write-where-${Date.now()}-${Math.random().toString(36).slice(2)}.db`;
+    if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath);
+    client = new McpClient(dbPath);
+    await client.init();
+  });
+
+  afterEach(() => {
+    client.kill();
+    if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath);
+  });
+
+  it('where P0062/Tasks resolves project and section parent', async () => {
+    const proj = await client.callTool('tim_create_project', { label: 'P0600', content: 'Where Proj' });
+    const project = JSON.parse(proj.result!.content[0].text);
+    await client.callTool('tim_write', {
+      content: 'Tasks',
+      parentId: project.id,
+      metadata: { kind: 'section' },
+      tags: ['#section', '#schema'],
+    });
+
+    const writeResp = await client.callTool('tim_write', {
+      content: 'Task via where',
+      where: 'P0600/Tasks',
+      metadata: { task: true, status: 'todo' },
+      tags: ['#task', '#test'],
+    });
+    expect(writeResp.error).toBeUndefined();
+    expect(writeResp.result?.isError).toBeFalsy();
+    const written = JSON.parse(writeResp.result!.content[0].text);
+
+    const readResp = await client.callTool('tim_read', {
+      project: 'P0600',
+      section: 'Tasks',
+    });
+    const parsed = JSON.parse(readResp.result!.content[0].text);
+    expect(parsed.children.some((c: { id: string }) => c.id === written.id)).toBe(true);
+  });
+
+  it('explicit parentId overrides where', async () => {
+    const proj = await client.callTool('tim_create_project', { label: 'P0601', content: 'Override Proj' });
+    const project = JSON.parse(proj.result!.content[0].text);
+    const tasks = await client.callTool('tim_write', {
+      content: 'Tasks',
+      parentId: project.id,
+      metadata: { kind: 'section' },
+      tags: ['#section', '#schema'],
+    });
+    const tasksSec = JSON.parse(tasks.result!.content[0].text);
+    const ideas = await client.callTool('tim_write', {
+      content: 'Ideas',
+      parentId: project.id,
+      metadata: { kind: 'section' },
+      tags: ['#section', '#schema'],
+    });
+    const ideasSec = JSON.parse(ideas.result!.content[0].text);
+
+    const writeResp = await client.callTool('tim_write', {
+      content: 'Ideas child',
+      where: 'P0601/Tasks',
+      parentId: ideasSec.id,
+      tags: ['#idea', '#test'],
+    });
+    const written = JSON.parse(writeResp.result!.content[0].text);
+
+    const ideasRead = await client.callTool('tim_read', { project: 'P0601', section: 'Ideas' });
+    const ideasParsed = JSON.parse(ideasRead.result!.content[0].text);
+    expect(ideasParsed.children.some((c: { id: string }) => c.id === written.id)).toBe(true);
+
+    const tasksRead = await client.callTool('tim_read', { project: 'P0601', section: 'Tasks' });
+    const tasksParsed = JSON.parse(tasksRead.result!.content[0].text);
+    expect(tasksParsed.children.some((c: { id: string }) => c.id === written.id)).toBe(false);
+    expect(tasksSec.id).not.toBe(ideasSec.id);
+  });
+
+  it('bad section in where returns clean error', async () => {
+    await client.callTool('tim_create_project', { label: 'P0602', content: 'Bad Section Proj' });
+    const writeResp = await client.callTool('tim_write', {
+      content: 'Orphan attempt',
+      where: 'P0602/NoSuchSection',
+      tags: ['#note', '#test'],
+    });
+    expect(writeResp.result?.isError).toBe(true);
+    expect(writeResp.result!.content[0].text).toContain('section not found');
+  });
+
+  it('parentTitle+projectId path still works (regression)', async () => {
+    const proj = await client.callTool('tim_create_project', { label: 'P0603', content: 'Legacy Proj' });
+    const project = JSON.parse(proj.result!.content[0].text);
+    await client.callTool('tim_write', {
+      content: 'Tasks',
+      parentId: project.id,
+      metadata: { kind: 'section' },
+      tags: ['#section', '#schema'],
+    });
+
+    const writeResp = await client.callTool('tim_write', {
+      content: 'Legacy write',
+      parentTitle: 'Tasks',
+      projectId: 'P0603',
+      tags: ['#task', '#test'],
+    });
+    expect(writeResp.error).toBeUndefined();
+    expect(writeResp.result?.isError).toBeFalsy();
+  });
+});
