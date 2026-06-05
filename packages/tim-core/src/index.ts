@@ -258,6 +258,8 @@ export interface TimConfig {
 export {
   type ProjectMetadata,
   type ResolveProjectResult,
+  type SectionCandidate,
+  type ResolveSectionResult,
 } from './project.js';
 export { InProcessEventBus } from './event-bus.js';
 export {
