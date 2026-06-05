@@ -51,20 +51,23 @@ if [[ -n "$local_marker" ]]; then
   fi
 fi
 
-# ── Root-level entries: #rule + #human ──
+# ── Root-level entries: metadata.type=rule + metadata.type=human ──
+# Phase 0: pass --type (structured query via json_extract). The legacy
+# --tag '#rule' / --tag '#human' form is still accepted by the CLI as a
+# deprecated alias, but new code should use --type.
 root_context=""
-rules_text=$(node "$TIM_CLI" root-entries --tag '#rule' --format content 2>/dev/null || true)
-human_text=$(node "$TIM_CLI" root-entries --tag '#human' --format content 2>/dev/null || true)
+rules_text=$(node "$TIM_CLI" root-entries --type rule --format content 2>/dev/null || true)
+human_text=$(node "$TIM_CLI" root-entries --type human --format content 2>/dev/null || true)
 
 if [[ -n "$rules_text" ]]; then
   root_context+="
-─── TIM Root Rules (#rule) ───
+─── TIM Root Rules ───
 $rules_text"
 fi
 
 if [[ -n "$human_text" ]]; then
   root_context+="
-─── TIM Human Context (#human) ───
+─── TIM Human Context ───
 $human_text"
 fi
 
