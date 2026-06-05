@@ -2,3 +2,7 @@ dist/
 node_modules/
 *.tsbuildinfo
 .tim/
+
+# Runtime session marker — per-developer/session state (session id, exchange count).
+# Canonical default project label lives in committed tim.json instead.
+.tim-project

@@ -57,6 +57,31 @@ describe('marker', () => {
     expect(detectProject(dir)).toBeNull();
   });
 
+  it('readMarker falls back to tim.json when no .tim-project exists', () => {
+    fs.writeFileSync(path.join(dir, 'tim.json'), JSON.stringify({ project: 'P0063' }));
+    expect(readMarker(dir)?.project).toBe('P0063');
+    expect(readMarker(dir)?.exchanges).toBe(0);
+  });
+
+  it('readMarker prefers .tim-project over tim.json', () => {
+    fs.writeFileSync(path.join(dir, 'tim.json'), JSON.stringify({ project: 'P0062' }));
+    writeMarker(dir, {
+      project: 'P0063',
+      session: 's',
+      exchanges: 1,
+      batch_size: 5,
+      batches_summarized: 0,
+    });
+    expect(readMarker(dir)?.project).toBe('P0063');
+  });
+
+  it('findMarker walks up to parent tim.json when no .tim-project exists', () => {
+    fs.writeFileSync(path.join(dir, 'tim.json'), JSON.stringify({ project: 'P0063' }));
+    const sub = path.join(dir, 'a', 'b');
+    fs.mkdirSync(sub, { recursive: true });
+    expect(findMarker(sub, { maxRoot: dir })?.marker.project).toBe('P0063');
+  });
+
   it('reconcileMarker overwrites cached counters with DB-derived values', async () => {
     const store = new TimStore(':memory:');
     const sessions = new SessionManager(store);

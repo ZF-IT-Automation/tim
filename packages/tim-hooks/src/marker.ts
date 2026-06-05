@@ -8,6 +8,14 @@ export const MARKER_FILENAME = '.tim-project';
 export const MARKER_LOCK = '.tim-project.lock';
 
 /**
+ * Committed default project label for repos that gitignore `.tim-project`.
+ * Contains only the stable `project` field; runtime counters live in the
+ * local `.tim-project` file created on session start. Override per-machine
+ * by creating `.tim-project` in the repo root (it wins over tim.json).
+ */
+export const CANONICAL_PROJECT_FILENAME = 'tim.json';
+
+/**
  * Current marker schema version. Bump this when the on-disk shape changes;
  * readers detect older files by the missing/unknown `version` field and
  * normalize to the current shape.
@@ -50,6 +58,20 @@ export function markerPath(cwd: string): string {
   return path.join(cwd, MARKER_FILENAME);
 }
 
+export function canonicalProjectPath(cwd: string): string {
+  return path.join(cwd, CANONICAL_PROJECT_FILENAME);
+}
+
+/** Valid project labels: P/L/E/N + 4 digits (P0062, L0042, …). */
+const PROJECT_LABEL_PATTERN = /^[PLEN]\d{4}$/;
+
+/**
+ * Sentinel label for the Inbox project (P0000). Always treated as
+ * valid even when not present in the DB — the Inbox is a system
+ * project that tim-store.ensureInboxProject() materializes lazily.
+ */
+export const INBOX_LABEL = 'P0000';
+
 /**
  * Read a marker and normalize it to the current schema version.
  *
@@ -63,9 +85,31 @@ export function markerPath(cwd: string): string {
  * Callers always see a v2-conformant `ProjectMarker` regardless of what's
  * on disk. This is the only safe way to evolve the schema without forcing
  * a one-shot migration.
+ *
+ * When no `.tim-project` exists, falls back to `tim.json` (committed
+ * canonical default). A real `.tim-project` always wins — even when
+ * corrupt (returns null rather than silently using tim.json).
  */
 export function readMarker(cwd: string): ProjectMarker | null {
   const p = markerPath(cwd);
+  if (fs.existsSync(p)) {
+    let raw: unknown;
+    try {
+      raw = JSON.parse(fs.readFileSync(p, 'utf8'));
+    } catch {
+      return null;
+    }
+    return normalizeMarker(raw);
+  }
+  return readCanonicalProject(cwd);
+}
+
+/**
+ * Read the committed default project from tim.json. Runtime fields use
+ * neutral defaults — session start overwrites them into `.tim-project`.
+ */
+function readCanonicalProject(cwd: string): ProjectMarker | null {
+  const p = canonicalProjectPath(cwd);
   if (!fs.existsSync(p)) return null;
   let raw: unknown;
   try {
@@ -73,24 +117,24 @@ export function readMarker(cwd: string): ProjectMarker | null {
   } catch {
     return null;
   }
-  return normalizeMarker(raw);
+  if (!raw || typeof raw !== 'object') return null;
+  const obj = raw as Record<string, unknown>;
+  if (typeof obj.project !== 'string' || !PROJECT_LABEL_PATTERN.test(obj.project)) {
+    console.warn(
+      `[tim-hooks] ${CANONICAL_PROJECT_FILENAME} has malformed project label ` +
+        `"${String(obj.project)}" — expected ^[PLEN]\\d{4}$. Ignoring.`,
+    );
+    return null;
+  }
+  return {
+    version: MARKER_VERSION,
+    project: obj.project,
+    session: '',
+    exchanges: 0,
+    batch_size: 5,
+    batches_summarized: 0,
+  };
 }
-
-/**
- * Whitelist for valid project labels in .tim-project. P = Project,
- * L = Learning, E = Error, N = Note — same shape TIM uses everywhere
- * (P0062, L0042, E0031, N0014). A corrupt or out-of-schema label here
- * silently poisons the whole session-binding pipeline (statusline,
- * hooks, load_project), so we reject anything that doesn't match.
- */
-const PROJECT_LABEL_PATTERN = /^[PLEN]\d{4}$/;
-
-/**
- * Sentinel label for the Inbox project (P0000). Always treated as
- * valid even when not present in the DB — the Inbox is a system
- * project that tim-store.ensureInboxProject() materializes lazily.
- */
-export const INBOX_LABEL = 'P0000';
 
 /**
  * Coerce an unknown JSON value into a v2 ProjectMarker. Strips legacy
@@ -307,7 +351,8 @@ function pickMarkerLocation(candidates: MarkerLocation[]): MarkerLocation {
  * Pure FS — no store, no network — safe for hooks under a tight timeout.
  *
  * If a marker FILE exists but is unparseable, we STOP and return null rather than
- * silently binding an ancestor's project.
+ * silently binding an ancestor's project. When no `.tim-project` exists at a
+ * directory, `tim.json` is checked as a committed fallback (deepest wins).
  */
 export function findMarker(startCwd: string, options?: FindMarkerOptions): MarkerLocation | null {
   const maxRoot = options?.maxRoot ? path.resolve(options.maxRoot) : null;
@@ -318,6 +363,9 @@ export function findMarker(startCwd: string, options?: FindMarkerOptions): Marke
       const marker = readMarker(dir); // null when corrupt
       if (!marker) return null;
       found.push({ marker, dir });
+    } else {
+      const canonical = readCanonicalProject(dir);
+      if (canonical) found.push({ marker: canonical, dir });
     }
     const parent = path.dirname(dir);
     if (parent === dir) break; // reached the filesystem root

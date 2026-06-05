@@ -32,6 +32,8 @@ export {
   acquireLock,
   releaseLock,
   markerPath,
+  canonicalProjectPath,
+  CANONICAL_PROJECT_FILENAME,
   MARKER_FILENAME,
   MARKER_VERSION,
   MARKER_LOCK,
