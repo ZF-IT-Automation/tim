@@ -114,6 +114,27 @@ export declare class TimStore implements MemoryInterface {
         tag?: string;
     }): Entry[];
     getTasks(opts?: GetTasksOptions): Promise<TaskRecord[]>;
+    /** All project root nodes (kind='project'). Used for cross-project overview + name resolution. */
+    listProjects(): Promise<Array<{
+        id: string;
+        label: string;
+        title: string;
+    }>>;
+    /**
+     * Entries carrying a tag. Tags stored as JSON array string → matched with
+     * `tags LIKE '%"<tag>"%'`. `tag` is normalized: leading '#' kept as stored
+     * (caller passes exact stored form, e.g. '#bug'). `limit` is an INTERNAL
+     * safety cap (default 1000), NOT the user-facing limit.
+     */
+    getByTag(tag: string, limit?: number): Promise<Entry[]>;
+    /** Entries where json_extract(metadata,'$.type') = type. `limit` internal cap (default 1000). */
+    getByMetadataType(type: string, limit?: number): Promise<Entry[]>;
+    /**
+     * Public wrapper of findProjectLabelForParent.
+     * Resolves the owning project label for ANY entry by walking parent_id up.
+     * Returns null if the entry has no project ancestor.
+     */
+    getProjectLabel(entryId: string): string | null;
     private findProjectLabelForParent;
     close(): void;
     curate(): CurateManager;

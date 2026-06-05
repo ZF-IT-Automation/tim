@@ -51,18 +51,24 @@ const os = __importStar(require("os"));
 const path = __importStar(require("path"));
 // ─── Tool Schemas ───────────────────────────────────────
 const TimReadSchema = zod_1.z.object({
-    id: zod_1.z.string().describe('Entry ID (ULID)'),
+    id: zod_1.z.union([zod_1.z.string(), zod_1.z.array(zod_1.z.string())]).optional()
+        .describe('Entry ID (ULID), or array of IDs for batch read'),
+    project: zod_1.z.string().optional().describe('Project label/alias/name (auto-resolved)'),
+    section: zod_1.z.string().optional().describe('Section title — read its children'),
     depth: zod_1.z.number().min(1).max(5).optional().default(2),
     includeEdges: zod_1.z.boolean().optional().default(false),
     includeChildren: zod_1.z.boolean().optional().default(false),
     showIrrelevant: zod_1.z.boolean().optional().default(false),
-});
+}).refine(d => d.id !== undefined || d.project !== undefined || d.section !== undefined, { message: 'tim_read requires one of: id, project, section' });
 const TimWriteSchema = zod_1.z.object({
     content: zod_1.z.string().describe('Entry body content'),
     title: zod_1.z.string().optional(),
     parentId: zod_1.z.string().optional(),
     parentTitle: zod_1.z.string().optional().describe('Resolve parent by title within a project'),
     projectId: zod_1.z.string().optional().describe('Project label for parentTitle resolution, e.g. P0062'),
+    where: zod_1.z.string().optional()
+        .describe('Shorthand "P0062/Tasks" → resolves project + section to parentId. ' +
+        'Loses to explicit parentId. Project part accepts label/alias/name.'),
     contentType: zod_1.z.enum(['text', 'json', 'blob']).optional().default('text'),
     confidence: zod_1.z.number().min(0).max(1).optional().default(1.0),
     tags: zod_1.z.array(zod_1.z.string()).optional().default([]),
@@ -73,6 +79,10 @@ const TimSearchSchema = zod_1.z.object({
     query: zod_1.z.string().describe('FTS5 search query'),
     topK: zod_1.z.number().min(1).max(100).optional().default(10),
     searchType: zod_1.z.enum(['fts', 'vector', 'hybrid']).optional().default('fts'),
+    root: zod_1.z.string().optional().describe('Scope to project (label/alias/name)'),
+    type: zod_1.z.string().optional().describe('Filter metadata.type (rule|human|task|error)'),
+    tag: zod_1.z.string().optional().describe('Filter exact tag (with or without # prefix)'),
+    status: zod_1.z.string().optional().describe('Filter metadata.status'),
 });
 const TimLinkSchema = zod_1.z.object({
     sourceId: zod_1.z.string(),
@@ -226,6 +236,12 @@ const TimReadProjectSchema = zod_1.z.object({
 const TimTasksSchema = zod_1.z.object({
     status: zod_1.z.enum(['todo', 'in_progress', 'done', 'cancelled']).optional(),
 });
+const TimShowSchema = zod_1.z.object({
+    what: zod_1.z.string().describe('tasks|errors|bugs|ideas|decisions|learnings|commits|all|<SectionName>'),
+    root: zod_1.z.string().optional().describe('project label/alias/name; "" or "all" = ALL projects; omit = active project'),
+    with: zod_1.z.string().optional().describe('comma-separated AND filters: open,done,urgent,recent,<tagname>,<free text>'),
+    limit: zod_1.z.number().min(1).max(100).optional().default(20),
+});
 const TimErrorStatsSchema = zod_1.z.object({
     hours: zod_1.z.number().min(1).max(720).optional().default(24),
     limit: zod_1.z.number().min(1).max(100).optional().default(10),
@@ -365,6 +381,230 @@ async function formatTasksOutput(store, tasks) {
     lines.push('Status legend: [!] = in_progress, [ ] = todo, [x] = done, [-] = cancelled');
     return lines.join('\n').trimEnd();
 }
+async function resolveRoots(store, root) {
+    if (root === undefined) {
+        const marker = (0, tim_hooks_1.findMarker)(process.cwd());
+        if (marker)
+            return { labels: [marker.marker.project] };
+        const active = (0, tim_hooks_1.getActiveProjectLabel)();
+        if (active)
+            return { labels: [active] };
+        return { error: 'no active project; pass root explicitly or "all"' };
+    }
+    if (root === '' || root.toLowerCase() === 'all') {
+        const projects = await store.listProjects();
+        return { labels: projects.map(p => p.label) };
+    }
+    const r = await store.resolveProjectLabel(root);
+    if (r.status === 'found')
+        return { labels: [r.label] };
+    if (r.status === 'ambiguous') {
+        return { error: `ambiguous: ${r.labels.join(', ')}` };
+    }
+    const needle = root.toLowerCase();
+    const hits = (await store.listProjects()).filter(p => p.title.toLowerCase().includes(needle));
+    if (hits.length === 1)
+        return { labels: [hits[0].label] };
+    if (hits.length > 1) {
+        return { error: `ambiguous name: ${hits.map(h => h.label).join(', ')}` };
+    }
+    return { error: `root not found: ${root}` };
+}
+function dedupeById(entries) {
+    const seen = new Set();
+    const out = [];
+    for (const e of entries) {
+        if (seen.has(e.id))
+            continue;
+        seen.add(e.id);
+        out.push(e);
+    }
+    return out;
+}
+function scopeEntries(store, entries, labels) {
+    return entries.filter(e => {
+        const label = store.getProjectLabel(e.id);
+        return label != null && labels.includes(label);
+    });
+}
+async function sectionChildren(store, name, labels) {
+    const result = [];
+    for (const label of labels) {
+        const resolved = await store.resolveProjectLabel(label);
+        if (resolved.status !== 'found')
+            continue;
+        const project = await store.read(resolved.label);
+        if (!project)
+            continue;
+        const sec = await store.resolveSectionByTitle(project.id, name);
+        if (sec.status === 'found') {
+            result.push(...await store.getChildren(sec.id));
+        }
+        else if (sec.status === 'ambiguous') {
+            for (const cand of sec.candidates) {
+                result.push(...await store.getChildren(cand.id));
+            }
+        }
+    }
+    return result;
+}
+async function allSectionChildren(store, labels) {
+    const result = [];
+    for (const label of labels) {
+        const resolved = await store.resolveProjectLabel(label);
+        if (resolved.status !== 'found')
+            continue;
+        const project = await store.read(resolved.label);
+        if (!project)
+            continue;
+        const sections = await store.getChildren(project.id);
+        for (const section of sections) {
+            result.push(...await store.getChildren(section.id));
+        }
+    }
+    return result;
+}
+async function fetchByWhat(store, what, labels) {
+    const lc = what.toLowerCase();
+    switch (lc) {
+        case 'tasks': {
+            const rows = await store.getTasks();
+            const scoped = rows.filter(r => r.project_label != null && labels.includes(r.project_label));
+            const entries = [];
+            for (const row of scoped) {
+                const e = await store.read(row.id);
+                if (e)
+                    entries.push(e);
+            }
+            return entries;
+        }
+        case 'errors': {
+            const a = await store.getByMetadataType('error');
+            const b = await store.getByTag('#error');
+            return scopeEntries(store, dedupeById([...a, ...b]), labels);
+        }
+        case 'bugs':
+            return scopeEntries(store, await store.getByTag('#bug'), labels);
+        case 'decisions':
+            return scopeEntries(store, await store.getByTag('#decision'), labels);
+        case 'learnings':
+            return scopeEntries(store, await store.getByTag('#learning'), labels);
+        case 'commits':
+            return scopeEntries(store, await store.getByMetadataKind('commit', 1000), labels);
+        case 'ideas':
+            return sectionChildren(store, 'Ideas', labels);
+        case 'all':
+            return allSectionChildren(store, labels);
+        default:
+            return sectionChildren(store, what, labels);
+    }
+}
+const SHOW_STATUS_ORDER = {
+    in_progress: 0,
+    todo: 1,
+};
+const SHOW_PRIORITY_ORDER = {
+    high: 0,
+    medium: 1,
+    low: 2,
+};
+async function applyWith(store, entries, withStr) {
+    if (!withStr)
+        return entries;
+    const terms = withStr.split(',').map(t => t.trim()).filter(Boolean);
+    let result = entries;
+    const ftsTerms = [];
+    for (const t of terms) {
+        const lc = t.toLowerCase();
+        switch (lc) {
+            case 'open':
+                result = result.filter(e => {
+                    const st = e.metadata.status;
+                    return st !== 'done' && st !== 'cancelled';
+                });
+                break;
+            case 'done':
+                result = result.filter(e => e.metadata.status === 'done');
+                break;
+            case 'urgent':
+                result = result.filter(e => e.tags.includes('#urgent'));
+                break;
+            case 'recent': {
+                const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+                result = result.filter(e => Date.parse(e.createdAt) >= cutoff);
+                break;
+            }
+            default: {
+                const tagForm = t.startsWith('#') ? t : `#${t}`;
+                if (result.some(e => e.tags.includes(tagForm) || e.tags.includes(t))) {
+                    result = result.filter(e => e.tags.includes(tagForm) || e.tags.includes(t));
+                }
+                else {
+                    ftsTerms.push(t);
+                }
+                break;
+            }
+        }
+    }
+    if (ftsTerms.length > 0) {
+        const hitIds = new Set();
+        for (const q of ftsTerms) {
+            const hits = await store.searchFts(q, 1000);
+            for (const e of hits)
+                hitIds.add(e.id);
+        }
+        result = result.filter(e => hitIds.has(e.id));
+    }
+    return result;
+}
+function sortForShow(entries) {
+    return [...entries].sort((a, b) => {
+        const statusA = SHOW_STATUS_ORDER[String(a.metadata.status ?? '')] ?? 2;
+        const statusB = SHOW_STATUS_ORDER[String(b.metadata.status ?? '')] ?? 2;
+        if (statusA !== statusB)
+            return statusA - statusB;
+        const priorityA = SHOW_PRIORITY_ORDER[String(a.metadata.priority ?? '')] ?? 3;
+        const priorityB = SHOW_PRIORITY_ORDER[String(b.metadata.priority ?? '')] ?? 3;
+        if (priorityA !== priorityB)
+            return priorityA - priorityB;
+        return b.createdAt.localeCompare(a.createdAt);
+    });
+}
+function formatShowLine(entry) {
+    const icon = taskStatusIcon(entry.metadata.status ?? null);
+    const title = entry.title.padEnd(44, ' ');
+    const tagStr = entry.tags.join(' ');
+    return `  ${icon} ${title}${tagStr ? ' ' + tagStr : ''}`.trimEnd();
+}
+async function formatShowOutput(store, entries) {
+    const grouped = new Map();
+    for (const entry of entries) {
+        const label = store.getProjectLabel(entry.id) ?? '(no project)';
+        const list = grouped.get(label) ?? [];
+        list.push(entry);
+        grouped.set(label, list);
+    }
+    const projectLabels = [...grouped.keys()].sort((a, b) => a.localeCompare(b));
+    const lines = [];
+    for (const label of projectLabels) {
+        const groupEntries = sortForShow(grouped.get(label));
+        let header = label;
+        if (label !== '(no project)') {
+            const project = await store.read(label);
+            if (project) {
+                const parsed = parseProjectContent(project);
+                header = `${label} — ${parsed.title}`;
+            }
+        }
+        lines.push(header);
+        for (const entry of groupEntries) {
+            lines.push(formatShowLine(entry));
+        }
+        lines.push('');
+    }
+    lines.push('[!]=in_progress [ ]=todo [x]=done [-]=cancelled');
+    return lines.join('\n').trimEnd();
+}
 function resolveProjectRef(session) {
     const uid = session.metadata.project_uid ?? session.metadata.projectUid;
     if (typeof uid === 'string' && uid)
@@ -455,6 +695,7 @@ const WRITE_TOOLS = new Set([
 const READ_TOOLS = new Set([
     'tim_read', 'tim_search', 'tim_trace', 'tim_health', 'tim_stats',
     'tim_export', 'tim_doctor', 'tim_sync', 'tim_load_project', 'tim_read_project', 'tim_tasks',
+    'tim_show',
     'tim_show_unsummarized', 'tim_show_all_unsummarized', 'tim_show_untagged',
 ]);
 function scheduleAutoSync(toolName, s) {
@@ -483,12 +724,19 @@ async function startServer() {
                 inputSchema: {
                     type: 'object',
                     properties: {
-                        id: { type: 'string', description: 'Entry ID (ULID)' },
+                        id: {
+                            oneOf: [
+                                { type: 'string', description: 'Entry ID (ULID)' },
+                                { type: 'array', items: { type: 'string' }, description: 'Batch entry IDs' },
+                            ],
+                        },
+                        project: { type: 'string', description: 'Project label/alias/name (auto-resolved)' },
+                        section: { type: 'string', description: 'Section title — read its children' },
                         depth: { type: 'number', default: 2, description: 'How many levels to read (1-5)' },
                         includeEdges: { type: 'boolean', default: false },
+                        includeChildren: { type: 'boolean', default: false },
                         showIrrelevant: { type: 'boolean', default: false },
                     },
-                    required: ['id'],
                 },
             },
             {
@@ -501,6 +749,10 @@ async function startServer() {
                         parentId: { type: 'string' },
                         parentTitle: { type: 'string', description: 'Section title; requires projectId' },
                         projectId: { type: 'string', description: 'Project label, e.g. P0062' },
+                        where: {
+                            type: 'string',
+                            description: 'Shorthand P0062/Tasks → project + section parentId (parentId wins)',
+                        },
                         contentType: { type: 'string', enum: ['text', 'json', 'blob'], default: 'text' },
                         confidence: { type: 'number', minimum: 0, maximum: 1, default: 1.0 },
                         tags: { type: 'array', items: { type: 'string' }, default: [] },
@@ -519,6 +771,10 @@ async function startServer() {
                         query: { type: 'string' },
                         topK: { type: 'number', default: 10 },
                         searchType: { type: 'string', enum: ['fts', 'vector', 'hybrid'], default: 'fts' },
+                        root: { type: 'string', description: 'Scope to project (label/alias/name)' },
+                        type: { type: 'string', description: 'Filter metadata.type' },
+                        tag: { type: 'string', description: 'Filter exact tag' },
+                        status: { type: 'string', description: 'Filter metadata.status' },
                     },
                     required: ['query'],
                 },
@@ -895,8 +1151,34 @@ async function startServer() {
                 },
             },
             {
+                name: 'tim_show',
+                description: 'Unified overview: tasks, errors, bugs, ideas, decisions, learnings, commits, sections, or all. ' +
+                    'Use root for project scope (omit=active, "all"=cross-project). ' +
+                    'Use with for comma-separated AND filters (open,done,urgent,recent,<tag>,<free text>).',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        what: {
+                            type: 'string',
+                            description: 'tasks|errors|bugs|ideas|decisions|learnings|commits|all|<SectionName>',
+                        },
+                        root: {
+                            type: 'string',
+                            description: 'Project label/alias/name; "" or "all" = all projects; omit = active',
+                        },
+                        with: {
+                            type: 'string',
+                            description: 'Comma-separated AND filters: open,done,urgent,recent,<tag>,<free text>',
+                        },
+                        limit: { type: 'number', minimum: 1, maximum: 100, default: 20 },
+                    },
+                    required: ['what'],
+                },
+            },
+            {
                 name: 'tim_tasks',
-                description: 'List open tasks across all projects, grouped by project and sorted by status, priority, and due date.',
+                description: "[DEPRECATED — use tim_show what='tasks'] List open tasks across all projects, " +
+                    'grouped by project and sorted by status, priority, and due date.',
                 inputSchema: {
                     type: 'object',
                     properties: {
@@ -944,27 +1226,234 @@ async function startServer() {
         try {
             switch (name) {
                 case 'tim_read': {
-                    const { id, depth, includeEdges, includeChildren, showIrrelevant } = TimReadSchema.parse(args);
-                    const entry = await s.read(id, { depth, includeEdges, includeChildren, showIrrelevant });
-                    // Return null as JSON (parseable) + isError: true so clients can
-                    // distinguish "not found" from a successful read of an entry
-                    // whose body is literally "null". Pre-fix this returned the
-                    // plain text "Entry not found" which broke JSON clients that
-                    // tried to parse every successful response.
-                    if (!entry) {
+                    const { id, project, section, depth, includeEdges, includeChildren, showIrrelevant, } = TimReadSchema.parse(args);
+                    const readOpts = { depth, includeChildren, showIrrelevant };
+                    if (Array.isArray(id)) {
+                        let projectLabel = null;
+                        if (project) {
+                            const pr = await s.resolveProjectLabel(project);
+                            if (pr.status === 'ambiguous') {
+                                return {
+                                    content: [{ type: 'text', text: `ambiguous project: ${pr.labels.join(', ')}` }],
+                                    isError: true,
+                                };
+                            }
+                            if (pr.status !== 'found') {
+                                return {
+                                    content: [{ type: 'text', text: `project not found: ${project}` }],
+                                    isError: true,
+                                };
+                            }
+                            projectLabel = pr.label;
+                        }
+                        const entries = [];
+                        const missing = [];
+                        for (const entryId of id) {
+                            const entry = await s.read(entryId, readOpts);
+                            if (!entry) {
+                                missing.push(entryId);
+                                continue;
+                            }
+                            if (projectLabel && s.getProjectLabel(entry.id) !== projectLabel) {
+                                missing.push(entryId);
+                                continue;
+                            }
+                            entries.push(entry);
+                        }
                         return {
-                            content: [{ type: 'text', text: JSON.stringify(null) }],
-                            isError: true,
+                            content: [{ type: 'text', text: JSON.stringify({ entries, missing }, null, 2) }],
                         };
                     }
-                    const edges = includeEdges ? await s.getEdges(id, 'both') : [];
+                    if (section) {
+                        let projectLabel = project;
+                        if (!projectLabel) {
+                            const roots = await resolveRoots(s, undefined);
+                            if (roots.error) {
+                                return {
+                                    content: [{ type: 'text', text: roots.error }],
+                                    isError: true,
+                                };
+                            }
+                            if (roots.labels.length !== 1) {
+                                return {
+                                    content: [{
+                                            type: 'text',
+                                            text: 'section read requires a single project (pass project or bind one)',
+                                        }],
+                                    isError: true,
+                                };
+                            }
+                            projectLabel = roots.labels[0];
+                        }
+                        const pr = await s.resolveProjectLabel(projectLabel);
+                        if (pr.status !== 'found') {
+                            return {
+                                content: [{ type: 'text', text: `project not found: ${projectLabel}` }],
+                                isError: true,
+                            };
+                        }
+                        const projEntry = await s.read(pr.label);
+                        if (!projEntry) {
+                            return {
+                                content: [{ type: 'text', text: `project not found: ${projectLabel}` }],
+                                isError: true,
+                            };
+                        }
+                        const sec = await s.resolveSectionByTitle(projEntry.id, section);
+                        if (sec.status === 'ambiguous') {
+                            return {
+                                content: [{
+                                        type: 'text',
+                                        text: `ambiguous section '${section}': ${sec.candidates.map(c => c.id).join(', ')}`,
+                                    }],
+                                isError: true,
+                            };
+                        }
+                        if (sec.status !== 'found') {
+                            return {
+                                content: [{
+                                        type: 'text',
+                                        text: `section not found: ${section} (candidates: ${sec.candidates.join(', ')})`,
+                                    }],
+                                isError: true,
+                            };
+                        }
+                        const sectionEntry = await s.read(sec.id, readOpts);
+                        const children = await s.getChildren(sec.id);
+                        return {
+                            content: [{
+                                    type: 'text',
+                                    text: JSON.stringify({ section: sectionEntry, children }, null, 2),
+                                }],
+                        };
+                    }
+                    if (project && id === undefined) {
+                        const pr = await s.resolveProjectLabel(project);
+                        if (pr.status === 'ambiguous') {
+                            return {
+                                content: [{ type: 'text', text: `ambiguous project: ${pr.labels.join(', ')}` }],
+                                isError: true,
+                            };
+                        }
+                        if (pr.status !== 'found') {
+                            return {
+                                content: [{ type: 'text', text: `project not found: ${project}` }],
+                                isError: true,
+                            };
+                        }
+                        const entry = await s.read(pr.label, readOpts);
+                        if (!entry) {
+                            return {
+                                content: [{ type: 'text', text: JSON.stringify(null) }],
+                                isError: true,
+                            };
+                        }
+                        const edges = includeEdges ? await s.getEdges(entry.id, 'both') : [];
+                        return {
+                            content: [{ type: 'text', text: JSON.stringify({ entry, edges }, null, 2) }],
+                        };
+                    }
+                    if (typeof id === 'string') {
+                        let projectLabel = null;
+                        if (project) {
+                            const pr = await s.resolveProjectLabel(project);
+                            if (pr.status === 'ambiguous') {
+                                return {
+                                    content: [{ type: 'text', text: `ambiguous project: ${pr.labels.join(', ')}` }],
+                                    isError: true,
+                                };
+                            }
+                            if (pr.status !== 'found') {
+                                return {
+                                    content: [{ type: 'text', text: `project not found: ${project}` }],
+                                    isError: true,
+                                };
+                            }
+                            projectLabel = pr.label;
+                        }
+                        const entry = await s.read(id, readOpts);
+                        if (!entry) {
+                            return {
+                                content: [{ type: 'text', text: JSON.stringify(null) }],
+                                isError: true,
+                            };
+                        }
+                        if (projectLabel && s.getProjectLabel(entry.id) !== projectLabel) {
+                            return {
+                                content: [{ type: 'text', text: JSON.stringify(null) }],
+                                isError: true,
+                            };
+                        }
+                        const edges = includeEdges ? await s.getEdges(id, 'both') : [];
+                        return {
+                            content: [{ type: 'text', text: JSON.stringify({ entry, edges }, null, 2) }],
+                        };
+                    }
                     return {
-                        content: [{ type: 'text', text: JSON.stringify({ entry, edges }, null, 2) }],
+                        content: [{ type: 'text', text: 'tim_read requires one of: id, project, section' }],
+                        isError: true,
                     };
                 }
                 case 'tim_write': {
                     const opts = TimWriteSchema.parse(args);
-                    const { parentTitle, projectId, ...writeOpts } = opts;
+                    const { parentTitle, projectId, where, ...writeOpts } = opts;
+                    if (!writeOpts.parentId && where) {
+                        const parts = where.split('/');
+                        const projPart = parts[0]?.trim();
+                        const secPart = parts.slice(1).join('/').trim();
+                        if (!projPart || !secPart) {
+                            return {
+                                content: [{
+                                        type: 'text',
+                                        text: `Invalid where shorthand '${where}' — expected P0062/Tasks`,
+                                    }],
+                                isError: true,
+                            };
+                        }
+                        const pr = await s.resolveProjectLabel(projPart);
+                        if (pr.status === 'ambiguous') {
+                            return {
+                                content: [{
+                                        type: 'text',
+                                        text: `ambiguous project in where: ${pr.labels.join(', ')}`,
+                                    }],
+                                isError: true,
+                            };
+                        }
+                        if (pr.status !== 'found') {
+                            return {
+                                content: [{ type: 'text', text: `project not found in where: ${projPart}` }],
+                                isError: true,
+                            };
+                        }
+                        const projEntry = await s.read(pr.label);
+                        if (!projEntry) {
+                            return {
+                                content: [{ type: 'text', text: `project not found in where: ${projPart}` }],
+                                isError: true,
+                            };
+                        }
+                        const sr = await s.resolveSectionByTitle(projEntry.id, secPart);
+                        if (sr.status === 'ambiguous') {
+                            return {
+                                content: [{
+                                        type: 'text',
+                                        text: `ambiguous section '${secPart}': ${sr.candidates.map(c => `${c.title} (${c.id})`).join(', ')}`,
+                                    }],
+                                isError: true,
+                            };
+                        }
+                        if (sr.status !== 'found') {
+                            return {
+                                content: [{
+                                        type: 'text',
+                                        text: `section not found: ${secPart} (candidates: ${sr.candidates.join(', ')})`,
+                                    }],
+                                isError: true,
+                            };
+                        }
+                        writeOpts.parentId = sr.id;
+                    }
                     if (!writeOpts.parentId && parentTitle) {
                         if (!projectId) {
                             return {
@@ -1006,8 +1495,32 @@ async function startServer() {
                     };
                 }
                 case 'tim_search': {
-                    const { query, topK } = TimSearchSchema.parse(args);
-                    const results = await s.search({ query, topK });
+                    const { query, topK, root, type, tag, status } = TimSearchSchema.parse(args);
+                    const hasFilters = Boolean(root || type || tag || status);
+                    let results = await s.searchFts(query, hasFilters ? 1000 : topK);
+                    if (root) {
+                        const roots = await resolveRoots(s, root);
+                        if (roots.error) {
+                            return {
+                                content: [{ type: 'text', text: roots.error }],
+                                isError: true,
+                            };
+                        }
+                        results = results.filter(r => roots.labels.includes(s.getProjectLabel(r.id) ?? ''));
+                    }
+                    if (type) {
+                        results = results.filter(r => r.metadata.type === type);
+                    }
+                    if (tag) {
+                        const tg = tag.startsWith('#') ? tag : `#${tag}`;
+                        results = results.filter(r => r.tags.includes(tg) || r.tags.includes(tag));
+                    }
+                    if (status) {
+                        results = results.filter(r => r.metadata.status === status);
+                    }
+                    if (hasFilters) {
+                        results = results.slice(0, topK);
+                    }
                     return {
                         content: [{ type: 'text', text: JSON.stringify(results, null, 2) }],
                     };
@@ -1371,6 +1884,24 @@ async function startServer() {
                                 type: 'text',
                                 text: formatted,
                             }],
+                    };
+                }
+                case 'tim_show': {
+                    const { what, root, with: withStr, limit } = TimShowSchema.parse(args);
+                    const roots = await resolveRoots(s, root);
+                    if ('error' in roots && roots.error) {
+                        return {
+                            content: [{ type: 'text', text: roots.error }],
+                            isError: true,
+                        };
+                    }
+                    let entries = await fetchByWhat(s, what, roots.labels);
+                    entries = await applyWith(s, entries, withStr);
+                    entries = sortForShow(entries);
+                    entries = entries.slice(0, limit);
+                    const formatted = await formatShowOutput(s, entries);
+                    return {
+                        content: [{ type: 'text', text: formatted }],
                     };
                 }
                 case 'tim_tasks': {

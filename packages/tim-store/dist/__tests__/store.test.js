@@ -415,6 +415,88 @@ let store;
             (0, vitest_1.expect)(tasks[0].id).toBe(task.id);
         });
     });
+    // ─── Overview query methods ─────────────────────────────
+    (0, vitest_1.describe)('listProjects', () => {
+        (0, vitest_1.it)('returns all live projects with id, label, title', async () => {
+            const p1 = await store.createProject('P0300', { content: 'Alpha Project' });
+            const p2 = await store.createProject('P0301', { content: 'Beta Project' });
+            const projects = await store.listProjects();
+            const labels = projects.map(p => p.label).sort();
+            (0, vitest_1.expect)(labels).toEqual(['P0300', 'P0301']);
+            (0, vitest_1.expect)(projects.find(p => p.id === p1.id)?.title).toBe('Alpha Project');
+            (0, vitest_1.expect)(projects.find(p => p.id === p2.id)?.title).toBe('Beta Project');
+        });
+        (0, vitest_1.it)('excludes irrelevant and tombstoned projects', async () => {
+            const live = await store.createProject('P0302', { content: 'Live' });
+            const irrelevant = await store.createProject('P0303', { content: 'Irrelevant' });
+            const tombstoned = await store.createProject('P0304', { content: 'Tombstoned' });
+            await store.delete(irrelevant.id);
+            await store.delete(tombstoned.id, true);
+            const projects = await store.listProjects();
+            const ids = projects.map(p => p.id);
+            (0, vitest_1.expect)(ids).toContain(live.id);
+            (0, vitest_1.expect)(ids).not.toContain(irrelevant.id);
+            (0, vitest_1.expect)(ids).not.toContain(tombstoned.id);
+        });
+    });
+    (0, vitest_1.describe)('getByTag', () => {
+        (0, vitest_1.it)('returns entries with exact tag match', async () => {
+            const tagged = await store.write('Bug report', { tags: ['#bug', '#urgent'] });
+            await store.write('Clean entry', { tags: ['#note'] });
+            const bugs = await store.getByTag('#bug');
+            (0, vitest_1.expect)(bugs).toHaveLength(1);
+            (0, vitest_1.expect)(bugs[0].id).toBe(tagged.id);
+        });
+        (0, vitest_1.it)('does not match tag substring false positives', async () => {
+            await store.write('Bugfix note', { tags: ['#bugfix'] });
+            const bugs = await store.getByTag('#bug');
+            (0, vitest_1.expect)(bugs).toHaveLength(0);
+        });
+    });
+    (0, vitest_1.describe)('getByMetadataType', () => {
+        (0, vitest_1.it)('returns entries with matching metadata.type', async () => {
+            const err = await store.write('Error entry', {
+                metadata: { type: 'error' },
+                tags: ['#error', '#test'],
+            });
+            await store.write('Rule entry', {
+                metadata: { type: 'rule' },
+                tags: ['#rule', '#test'],
+            });
+            const errors = await store.getByMetadataType('error');
+            (0, vitest_1.expect)(errors).toHaveLength(1);
+            (0, vitest_1.expect)(errors[0].id).toBe(err.id);
+        });
+    });
+    (0, vitest_1.describe)('getProjectLabel', () => {
+        async function seedTaskProject(label, title, taskContent) {
+            const project = await store.createProject(label, { content: title });
+            const section = await store.write('Next Steps', {
+                parentId: project.id,
+                metadata: { kind: 'section', label: 'Next Steps' },
+            });
+            const task = await store.write(taskContent, {
+                parentId: section.id,
+                metadata: { task: true, status: 'todo' },
+            });
+            return { project, section, task };
+        }
+        (0, vitest_1.it)('returns project label for nested task', async () => {
+            const { task } = await seedTaskProject('P0310', 'TIM', 'Build feature');
+            (0, vitest_1.expect)(store.getProjectLabel(task.id)).toBe('P0310');
+        });
+        (0, vitest_1.it)('returns own label for project node', async () => {
+            const project = await store.createProject('P0311', { content: 'Self' });
+            (0, vitest_1.expect)(store.getProjectLabel(project.id)).toBe('P0311');
+        });
+        (0, vitest_1.it)('returns null for orphan entry', async () => {
+            const orphan = await store.write('Orphan', { parentId: null });
+            (0, vitest_1.expect)(store.getProjectLabel(orphan.id)).toBeNull();
+        });
+        (0, vitest_1.it)('returns null for missing entry', () => {
+            (0, vitest_1.expect)(store.getProjectLabel('nonexistent-id')).toBeNull();
+        });
+    });
     // ─── Title field ──────────────────────────────────────
     (0, vitest_1.describe)('title field', () => {
         (0, vitest_1.it)('writes with explicit title', async () => {

@@ -481,6 +481,61 @@ class TimStore {
             };
         });
     }
+    /** All project root nodes (kind='project'). Used for cross-project overview + name resolution. */
+    async listProjects() {
+        const rows = this.db.prepare(`
+      SELECT id, title, metadata FROM entries
+      WHERE json_extract(metadata, '$.kind') = 'project'
+        AND irrelevant = 0
+        AND tombstoned_at IS NULL
+      ORDER BY json_extract(metadata, '$.label') ASC
+    `).all();
+        return rows.map(r => {
+            const meta = JSON.parse(r.metadata);
+            return { id: r.id, label: meta.label ?? r.id, title: r.title ?? '' };
+        });
+    }
+    /**
+     * Entries carrying a tag. Tags stored as JSON array string → matched with
+     * `tags LIKE '%"<tag>"%'`. `tag` is normalized: leading '#' kept as stored
+     * (caller passes exact stored form, e.g. '#bug'). `limit` is an INTERNAL
+     * safety cap (default 1000), NOT the user-facing limit.
+     */
+    async getByTag(tag, limit = 1000) {
+        const rows = this.db.prepare(`
+      SELECT * FROM entries
+      WHERE tags LIKE ?
+        AND irrelevant = 0
+        AND tombstoned_at IS NULL
+      ORDER BY created_at DESC
+      LIMIT ?
+    `).all(`%"${tag}"%`, limit);
+        return rows.map(rowToEntry);
+    }
+    /** Entries where json_extract(metadata,'$.type') = type. `limit` internal cap (default 1000). */
+    async getByMetadataType(type, limit = 1000) {
+        const rows = this.db.prepare(`
+      SELECT * FROM entries
+      WHERE json_extract(metadata, '$.type') = ?
+        AND irrelevant = 0
+        AND tombstoned_at IS NULL
+      ORDER BY created_at DESC
+      LIMIT ?
+    `).all(type, limit);
+        return rows.map(rowToEntry);
+    }
+    /**
+     * Public wrapper of findProjectLabelForParent.
+     * Resolves the owning project label for ANY entry by walking parent_id up.
+     * Returns null if the entry has no project ancestor.
+     */
+    getProjectLabel(entryId) {
+        const row = this.db.prepare('SELECT id FROM entries WHERE id = ?')
+            .get(entryId);
+        if (!row)
+            return null;
+        return this.findProjectLabelForParent(entryId);
+    }
     findProjectLabelForParent(startParentId) {
         let currentId = startParentId;
         while (currentId) {
