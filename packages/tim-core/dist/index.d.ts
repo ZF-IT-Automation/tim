@@ -1,4 +1,24 @@
 export type ContentType = 'text' | 'json' | 'blob';
+/**
+ * Canonical semantic type for root-level entries that the agent treats
+ * differently from generic user content. Stored in `metadata.type` and
+ * queried via `json_extract(metadata, '$.type')`.
+ *
+ * Phase 0 of the Tags → Metadata.type refactor introduces this enum with
+ * the two values the session-start hook needs: `rule` (operative rules
+ * the agent must follow) and `human` (knowledge about the user —
+ * preferences, identity, context). Future phases may extend the enum.
+ *
+ * The legacy representation (`#rule` / `#human` as string tags) is
+ * deprecated but still readable via the `--tag` alias on
+ * `root-entries` for backward compatibility. New writes should use
+ * `metadata.type` directly.
+ */
+export declare const METADATA_TYPES: readonly ["rule", "human"];
+export type MetadataType = (typeof METADATA_TYPES)[number];
+export declare function isMetadataType(value: unknown): value is MetadataType;
+/** Normalize a legacy tag value (e.g. "#rule", " rule ", "RULE") to a MetadataType, or null. */
+export declare function normalizeLegacyTypeTag(tag: string | null | undefined): MetadataType | null;
 export interface Entry {
     id: string;
     parentId: string | null;
@@ -182,7 +202,7 @@ export interface TimConfig {
     };
     batch_size?: number;
 }
-export { type ProjectMetadata, type ResolveProjectResult, } from './project.js';
+export { type ProjectMetadata, type ResolveProjectResult, type SectionCandidate, type ResolveSectionResult, } from './project.js';
 export { InProcessEventBus } from './event-bus.js';
 export { loadConfig, saveConfig, getConfigPath, getTimDir, normalizeHookScripts, hooksEnabled, type HooksConfig, type TimConfigFile, } from './config.js';
 export { readTimSessionCache, resolveActiveSessionId, timSessionCachePath, type TimSessionCache, } from './session-cache.js';

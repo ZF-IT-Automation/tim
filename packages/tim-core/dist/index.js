@@ -2,7 +2,35 @@
 // TIM Core Types — v0.1.0-alpha
 // These types define the contract that all modules must implement.
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.evaluateLoadGate = exports.timSessionCachePath = exports.resolveActiveSessionId = exports.readTimSessionCache = exports.hooksEnabled = exports.normalizeHookScripts = exports.getTimDir = exports.getConfigPath = exports.saveConfig = exports.loadConfig = exports.InProcessEventBus = void 0;
+exports.evaluateLoadGate = exports.timSessionCachePath = exports.resolveActiveSessionId = exports.readTimSessionCache = exports.hooksEnabled = exports.normalizeHookScripts = exports.getTimDir = exports.getConfigPath = exports.saveConfig = exports.loadConfig = exports.InProcessEventBus = exports.METADATA_TYPES = void 0;
+exports.isMetadataType = isMetadataType;
+exports.normalizeLegacyTypeTag = normalizeLegacyTypeTag;
+/**
+ * Canonical semantic type for root-level entries that the agent treats
+ * differently from generic user content. Stored in `metadata.type` and
+ * queried via `json_extract(metadata, '$.type')`.
+ *
+ * Phase 0 of the Tags → Metadata.type refactor introduces this enum with
+ * the two values the session-start hook needs: `rule` (operative rules
+ * the agent must follow) and `human` (knowledge about the user —
+ * preferences, identity, context). Future phases may extend the enum.
+ *
+ * The legacy representation (`#rule` / `#human` as string tags) is
+ * deprecated but still readable via the `--tag` alias on
+ * `root-entries` for backward compatibility. New writes should use
+ * `metadata.type` directly.
+ */
+exports.METADATA_TYPES = ['rule', 'human'];
+function isMetadataType(value) {
+    return typeof value === 'string' && exports.METADATA_TYPES.includes(value);
+}
+/** Normalize a legacy tag value (e.g. "#rule", " rule ", "RULE") to a MetadataType, or null. */
+function normalizeLegacyTypeTag(tag) {
+    if (typeof tag !== 'string')
+        return null;
+    const cleaned = tag.trim().replace(/^#/, '').toLowerCase();
+    return isMetadataType(cleaned) ? cleaned : null;
+}
 var event_bus_js_1 = require("./event-bus.js");
 Object.defineProperty(exports, "InProcessEventBus", { enumerable: true, get: function () { return event_bus_js_1.InProcessEventBus; } });
 var config_js_1 = require("./config.js");
