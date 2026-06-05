@@ -174,3 +174,86 @@ describe('tim_read extended', () => {
     expect(parsed.children[0].title).toBe('Child task');
   });
 });
+
+describe('tim_search extended', () => {
+  let client: McpClient;
+  let dbPath: string;
+
+  beforeEach(async () => {
+    dbPath = `/tmp/tim-search-ext-${Date.now()}-${Math.random().toString(36).slice(2)}.db`;
+    if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath);
+    client = new McpClient(dbPath);
+    await client.init();
+  });
+
+  afterEach(() => {
+    client.kill();
+    if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath);
+  });
+
+  async function seedScopedEntry(
+    label: string,
+    content: string,
+    tags: string[],
+    meta: Record<string, unknown> = {},
+  ) {
+    const proj = await client.callTool('tim_create_project', { label, content: `${label} Proj` });
+    const project = JSON.parse(proj.result!.content[0].text);
+    const section = await client.callTool('tim_write', {
+      content: 'Notes',
+      parentId: project.id,
+      metadata: { kind: 'section' },
+      tags: ['#section', '#schema'],
+    });
+    const sec = JSON.parse(section.result!.content[0].text);
+    await client.callTool('tim_write', {
+      content,
+      parentId: sec.id,
+      tags,
+      metadata: meta,
+    });
+  }
+
+  it('root scopes search to project', async () => {
+    await seedScopedEntry('P0510', 'AlphaSearchToken', ['#note', '#test']);
+    await seedScopedEntry('P0511', 'AlphaSearchToken', ['#note', '#test']);
+
+    const resp = await client.callTool('tim_search', {
+      query: 'AlphaSearchToken',
+      root: 'P0510',
+    });
+    const results = JSON.parse(resp.result!.content[0].text);
+    expect(results.length).toBeGreaterThanOrEqual(1);
+    expect(results.every((r: { title: string }) => r.title === 'AlphaSearchToken')).toBe(true);
+  });
+
+  it('type tag status filters combine with AND', async () => {
+    await seedScopedEntry('P0520', 'Errmark', ['#combo', '#test'], {
+      type: 'error',
+      status: 'todo',
+    });
+    await seedScopedEntry('P0521', 'Rulemark', ['#combo', '#test'], {
+      type: 'rule',
+      status: 'todo',
+    });
+
+    const hit = await client.callTool('tim_search', {
+      query: 'Errmark',
+      type: 'error',
+      tag: 'combo',
+      status: 'todo',
+    });
+    const hitResults = JSON.parse(hit.result!.content[0].text);
+    expect(hitResults).toHaveLength(1);
+    expect(hitResults[0].title).toBe('Errmark');
+
+    const miss = await client.callTool('tim_search', {
+      query: 'Rulemark',
+      type: 'error',
+      tag: 'combo',
+      status: 'todo',
+    });
+    const missResults = JSON.parse(miss.result!.content[0].text);
+    expect(missResults).toHaveLength(0);
+  });
+});

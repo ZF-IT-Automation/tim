@@ -66,6 +66,10 @@ const TimSearchSchema = z.object({
   query: z.string().describe('FTS5 search query'),
   topK: z.number().min(1).max(100).optional().default(10),
   searchType: z.enum(['fts', 'vector', 'hybrid']).optional().default('fts'),
+  root: z.string().optional().describe('Scope to project (label/alias/name)'),
+  type: z.string().optional().describe('Filter metadata.type (rule|human|task|error)'),
+  tag: z.string().optional().describe('Filter exact tag (with or without # prefix)'),
+  status: z.string().optional().describe('Filter metadata.status'),
 });
 
 const TimLinkSchema = z.object({
@@ -841,6 +845,10 @@ export async function startServer(): Promise<void> {
             query: { type: 'string' },
             topK: { type: 'number', default: 10 },
             searchType: { type: 'string', enum: ['fts', 'vector', 'hybrid'], default: 'fts' },
+            root: { type: 'string', description: 'Scope to project (label/alias/name)' },
+            type: { type: 'string', description: 'Filter metadata.type' },
+            tag: { type: 'string', description: 'Filter exact tag' },
+            status: { type: 'string', description: 'Filter metadata.status' },
           },
           required: ['query'],
         },
@@ -1533,8 +1541,34 @@ export async function startServer(): Promise<void> {
         }
 
         case 'tim_search': {
-          const { query, topK } = TimSearchSchema.parse(args);
-          const results = await s.search({ query, topK });
+          const { query, topK, root, type, tag, status } = TimSearchSchema.parse(args);
+          const hasFilters = Boolean(root || type || tag || status);
+          let results = await s.searchFts(query, hasFilters ? 1000 : topK);
+          if (root) {
+            const roots = await resolveRoots(s, root);
+            if (roots.error) {
+              return {
+                content: [{ type: 'text', text: roots.error }],
+                isError: true,
+              };
+            }
+            results = results.filter(r =>
+              roots.labels!.includes(s.getProjectLabel(r.id) ?? ''),
+            );
+          }
+          if (type) {
+            results = results.filter(r => r.metadata.type === type);
+          }
+          if (tag) {
+            const tg = tag.startsWith('#') ? tag : `#${tag}`;
+            results = results.filter(r => r.tags.includes(tg) || r.tags.includes(tag));
+          }
+          if (status) {
+            results = results.filter(r => r.metadata.status === status);
+          }
+          if (hasFilters) {
+            results = results.slice(0, topK);
+          }
           return {
             content: [{ type: 'text', text: JSON.stringify(results, null, 2) }],
           };
