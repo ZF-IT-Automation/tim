@@ -579,6 +579,64 @@ export class TimStore implements MemoryInterface {
     });
   }
 
+  /** All project root nodes (kind='project'). Used for cross-project overview + name resolution. */
+  async listProjects(): Promise<Array<{ id: string; label: string; title: string }>> {
+    const rows = this.db.prepare(`
+      SELECT id, title, metadata FROM entries
+      WHERE json_extract(metadata, '$.kind') = 'project'
+        AND irrelevant = 0
+        AND tombstoned_at IS NULL
+      ORDER BY json_extract(metadata, '$.label') ASC
+    `).all() as { id: string; title: string; metadata: string }[];
+    return rows.map(r => {
+      const meta = JSON.parse(r.metadata) as Record<string, unknown>;
+      return { id: r.id, label: (meta.label as string) ?? r.id, title: r.title ?? '' };
+    });
+  }
+
+  /**
+   * Entries carrying a tag. Tags stored as JSON array string → matched with
+   * `tags LIKE '%"<tag>"%'`. `tag` is normalized: leading '#' kept as stored
+   * (caller passes exact stored form, e.g. '#bug'). `limit` is an INTERNAL
+   * safety cap (default 1000), NOT the user-facing limit.
+   */
+  async getByTag(tag: string, limit: number = 1000): Promise<Entry[]> {
+    const rows = this.db.prepare(`
+      SELECT * FROM entries
+      WHERE tags LIKE ?
+        AND irrelevant = 0
+        AND tombstoned_at IS NULL
+      ORDER BY created_at DESC
+      LIMIT ?
+    `).all(`%"${tag}"%`, limit) as RowEntry[];
+    return rows.map(rowToEntry);
+  }
+
+  /** Entries where json_extract(metadata,'$.type') = type. `limit` internal cap (default 1000). */
+  async getByMetadataType(type: string, limit: number = 1000): Promise<Entry[]> {
+    const rows = this.db.prepare(`
+      SELECT * FROM entries
+      WHERE json_extract(metadata, '$.type') = ?
+        AND irrelevant = 0
+        AND tombstoned_at IS NULL
+      ORDER BY created_at DESC
+      LIMIT ?
+    `).all(type, limit) as RowEntry[];
+    return rows.map(rowToEntry);
+  }
+
+  /**
+   * Public wrapper of findProjectLabelForParent.
+   * Resolves the owning project label for ANY entry by walking parent_id up.
+   * Returns null if the entry has no project ancestor.
+   */
+  getProjectLabel(entryId: string): string | null {
+    const row = this.db.prepare('SELECT id FROM entries WHERE id = ?')
+      .get(entryId) as { id: string } | undefined;
+    if (!row) return null;
+    return this.findProjectLabelForParent(entryId);
+  }
+
   private findProjectLabelForParent(startParentId: string | null): string | null {
     let currentId = startParentId;
     while (currentId) {
