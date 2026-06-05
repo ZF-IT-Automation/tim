@@ -11,6 +11,8 @@ import {
   reconcileMarker,
   acquireLock,
   releaseLock,
+  validateMarkerAgainstStore,
+  INBOX_LABEL,
 } from '../marker.js';
 import { TimStore, SessionManager } from 'tim-store';
 
@@ -453,5 +455,87 @@ describe('marker v2 schema', () => {
     };
     writeMarker(dir, input);
     expect(readMarker(dir)?.version).toBe(2);
+  });
+});
+
+// ─── DB-existence validation (P9999 defense-in-depth) ────────────────────
+//
+// The pattern check in normalizeMarker catches "P9", "P", "notalabel",
+// etc. — but a label like "P9999" matches the pattern yet never
+// corresponds to a real TIM project. The P9999 bug bound the statusline
+// to a non-existent project because the on-disk marker was trusted.
+// `validateMarkerAgainstStore` closes that gap: the marker is only
+// accepted when the project label resolves to a real entry in the DB.
+describe('validateMarkerAgainstStore', () => {
+  let store: TimStore;
+  beforeEach(() => {
+    store = new TimStore(':memory:');
+  });
+  afterEach(() => {
+    store.close();
+  });
+
+  it('rejects a pattern-valid label that has no matching DB entry (P9999 case)', async () => {
+    await store.createProject('P0062');
+    const bogus = {
+      version: 2 as const,
+      project: 'P9999',
+      session: 's',
+      exchanges: 0,
+      batch_size: 5,
+      batches_summarized: 0,
+    };
+    expect(await validateMarkerAgainstStore(bogus, store)).toBeNull();
+  });
+
+  it('accepts a label that resolves to a real project, returning the canonical form', async () => {
+    await store.createProject('P0062');
+    const ok = {
+      version: 2 as const,
+      project: 'P0062',
+      session: 's',
+      exchanges: 0,
+      batch_size: 5,
+      batches_summarized: 0,
+    };
+    const validated = await validateMarkerAgainstStore(ok, store);
+    expect(validated?.project).toBe('P0062');
+  });
+
+  it('accepts the Inbox (P0000) even when it is not yet materialized in the DB', async () => {
+    // P0000 is exempt: tim-store.ensureInboxProject() creates it lazily,
+    // and session-start should never block on that materialization just
+    // to validate a marker.
+    const inbox = {
+      version: 2 as const,
+      project: INBOX_LABEL,
+      session: 's',
+      exchanges: 0,
+      batch_size: 5,
+      batches_summarized: 0,
+    };
+    const validated = await validateMarkerAgainstStore(inbox, store);
+    expect(validated?.project).toBe('P0000');
+  });
+
+  it('fails open (accepts) when the DB lookup itself throws — pattern check still gates', async () => {
+    const ok = {
+      version: 2 as const,
+      project: 'P0062',
+      session: 's',
+      exchanges: 0,
+      batch_size: 5,
+      batches_summarized: 0,
+    };
+    const broken = {
+      resolveProjectLabel: () => {
+        throw new Error('db locked');
+      },
+    } as unknown as Pick<TimStore, 'resolveProjectLabel'>;
+    // The marker is returned unchanged — we never reject a label that
+    // already passed the pattern check just because the DB is briefly
+    // unavailable. The pattern check is the strict gate; the DB
+    // existence check is the soft gate.
+    expect(await validateMarkerAgainstStore(ok, broken)).toEqual(ok);
   });
 });

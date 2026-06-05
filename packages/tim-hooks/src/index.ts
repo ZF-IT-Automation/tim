@@ -27,6 +27,8 @@ export {
   buildSessionDirective,
   reconcileMarker,
   syncNearestProjectMarker,
+  validateMarkerAgainstStore,
+  INBOX_LABEL,
   acquireLock,
   releaseLock,
   markerPath,

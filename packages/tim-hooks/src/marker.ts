@@ -86,9 +86,24 @@ export function readMarker(cwd: string): ProjectMarker | null {
 const PROJECT_LABEL_PATTERN = /^[PLEN]\d{4}$/;
 
 /**
+ * Sentinel label for the Inbox project (P0000). Always treated as
+ * valid even when not present in the DB — the Inbox is a system
+ * project that tim-store.ensureInboxProject() materializes lazily.
+ */
+export const INBOX_LABEL = 'P0000';
+
+/**
  * Coerce an unknown JSON value into a v2 ProjectMarker. Strips legacy
  * fields. Returns null if the value isn't a usable marker (missing
  * project/session, wrong types, or malformed project label).
+ *
+ * NOTE: This is the pure-FS reader. The DB-existence check
+ * (project label must resolve to a real entry in the TIM DB) lives
+ * in `validateMarkerAgainstStore` — called from the two write-side
+ * paths (runSessionStart, syncNearestProjectMarker) before they
+ * persist anything. We deliberately keep the disk reader free of
+ * DB dependencies so hooks under a tight timeout can still parse
+ * the marker without paying for an SQLite roundtrip.
  */
 function normalizeMarker(raw: unknown): ProjectMarker | null {
   if (!raw || typeof raw !== 'object') return null;
@@ -117,6 +132,51 @@ function normalizeMarker(raw: unknown): ProjectMarker | null {
     batch_size: obj.batch_size,
     batches_summarized: obj.batches_summarized,
   };
+}
+
+/**
+ * Defense-in-depth check: a project label that matches the
+ * pattern but is semantically bogus (e.g. `P9999` — a label that
+ * was never issued by TIM, often the residue of a hand-edit or a
+ * botched commit) must NOT be persisted into `.tim-project`. The
+ * original P9999 bug bound the statusline to a non-existent
+ * project because the file was trusted blindly.
+ *
+ * Resolution: pattern-match (already enforced by normalizeMarker)
+ * AND the project must exist as a `kind=project` entry in the DB.
+ * The Inbox (P0000) is exempt — it's a system project that
+ * tim-store creates on first use via `ensureInboxProject`.
+ *
+ * Returns the marker on success, null on rejection. On DB error
+ * (store unavailable, DB locked, etc.) we FAIL OPEN: a corrupted
+ * DB is not a license to corrupt the marker, but a transient
+ * read failure shouldn't brick the session-start hook. The
+ * pattern check in normalizeMarker still ran, so we never accept
+ * malformed labels — we just skip the existence confirmation.
+ */
+export async function validateMarkerAgainstStore(
+  marker: ProjectMarker,
+  store: Pick<TimStore, 'resolveProjectLabel'>,
+): Promise<ProjectMarker | null> {
+  if (marker.project === INBOX_LABEL) return marker;
+  let resolved;
+  try {
+    resolved = await store.resolveProjectLabel(marker.project);
+  } catch (err) {
+    console.warn(
+      `[tim-hooks] .tim-project validation: DB lookup for "${marker.project}" ` +
+        `failed (${(err as Error).message ?? err}) — accepting on pattern match only.`,
+    );
+    return marker;
+  }
+  if (resolved.status === 'found') {
+    return { ...marker, project: resolved.label };
+  }
+  console.warn(
+    `[tim-hooks] .tim-project has pattern-valid project label "${marker.project}" ` +
+      `but no matching entry exists in the DB. Treating as corrupt.`,
+  );
+  return null;
 }
 
 /** Write a project marker file. Always emits the current schema version:

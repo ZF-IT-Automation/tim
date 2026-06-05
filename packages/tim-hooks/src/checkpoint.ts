@@ -11,7 +11,7 @@ import {
   type TimStore,
 } from 'tim-store';
 import { runConfiguredHooks, type HookEnv } from './hooks.js';
-import { findMarker, writeMarker } from './marker.js';
+import { findMarker, writeMarker, validateMarkerAgainstStore } from './marker.js';
 import {
   onSessionStop,
   maybeSpawnProjectSummary,
@@ -53,11 +53,51 @@ async function resolveSessionProjectId(
   cwd: string,
   explicitProjectId?: string,
 ): Promise<string> {
-  if (explicitProjectId) return explicitProjectId;
+  if (explicitProjectId) {
+    // Validate explicit project ids against the DB so a hand-edited
+    // `--project=P9999` (or a botched upstream commit) can't smuggle
+    // a bogus label into the marker. The Inbox (P0000) is exempt —
+    // it's a system project that tim-store.ensureInboxProject()
+    // materializes on first use. This closes the second half of the
+    // P9999 bug: even if the on-disk marker was repaired, an
+    // explicit override could re-poison the file.
+    if (explicitProjectId !== 'P0000') {
+      const resolved = await store.resolveProjectLabel(explicitProjectId);
+      if (resolved.status === 'found') return resolved.label;
+      if (resolved.status === 'not_found') {
+        throw new Error(
+          `Project not found: ${explicitProjectId}. Use tim_load_project to pick a real project.`,
+        );
+      }
+      throw new Error(
+        `Ambiguous project label: ${explicitProjectId} matches ${resolved.labels.join(', ')}.`,
+      );
+    }
+    return explicitProjectId;
+  }
   const located = findMarker(cwd);
-  if (located) return located.marker.project;
+  if (located) {
+    // The on-disk marker already passed the pattern check inside
+    // findMarker → readMarker. Apply the DB-existence check here so
+    // a corrupt label (P9999) doesn't bind the session.
+    const validated = await validateMarkerAgainstStore(located.marker, store);
+    if (validated) return validated.project;
+  }
   const active = getActiveProjectLabel();
-  if (active) return active;
+  if (active) {
+    const validated = await validateMarkerAgainstStore(
+      {
+        version: 2,
+        project: active,
+        session: '',
+        exchanges: 0,
+        batch_size: 5,
+        batches_summarized: 0,
+      },
+      store,
+    );
+    if (validated) return validated.project;
+  }
   await ensureInboxProject(store);
   return INBOX_PROJECT_LABEL;
 }
