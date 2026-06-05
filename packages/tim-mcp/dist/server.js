@@ -45,6 +45,7 @@ const tim_core_1 = require("tim-core");
 const tim_hooks_1 = require("tim-hooks");
 const tim_migrate_1 = require("tim-migrate");
 const tim_sync_client_1 = require("tim-sync-client");
+const write_validate_js_1 = require("./write-validate.js");
 const fs = __importStar(require("fs"));
 const os = __importStar(require("os"));
 const path = __importStar(require("path"));
@@ -945,8 +946,17 @@ async function startServer() {
                 case 'tim_read': {
                     const { id, depth, includeEdges, includeChildren, showIrrelevant } = TimReadSchema.parse(args);
                     const entry = await s.read(id, { depth, includeEdges, includeChildren, showIrrelevant });
-                    if (!entry)
-                        return { content: [{ type: 'text', text: 'Entry not found' }] };
+                    // Return null as JSON (parseable) + isError: true so clients can
+                    // distinguish "not found" from a successful read of an entry
+                    // whose body is literally "null". Pre-fix this returned the
+                    // plain text "Entry not found" which broke JSON clients that
+                    // tried to parse every successful response.
+                    if (!entry) {
+                        return {
+                            content: [{ type: 'text', text: JSON.stringify(null) }],
+                            isError: true,
+                        };
+                    }
                     const edges = includeEdges ? await s.getEdges(id, 'both') : [];
                     return {
                         content: [{ type: 'text', text: JSON.stringify({ entry, edges }, null, 2) }],
@@ -978,6 +988,17 @@ async function startServer() {
                             };
                         }
                         writeOpts.parentId = row.id;
+                    }
+                    // Enforce tags for non-schema entries. Schema entries (sections,
+                    // project roots, sessions, exchanges, batch summaries, commits,
+                    // checkpoints) are exempt — everything else is user content and
+                    // must carry at least 2 tags for discoverability.
+                    const tagsValidation = (0, write_validate_js_1.validateWriteTags)(writeOpts.tags, writeOpts.metadata);
+                    if (!tagsValidation.ok) {
+                        return {
+                            content: [{ type: 'text', text: JSON.stringify(tagsValidation, null, 2) }],
+                            isError: true,
+                        };
                     }
                     const entry = await s.write(opts.content, writeOpts);
                     return {
@@ -1318,27 +1339,6 @@ async function startServer() {
                     catch {
                         // Non-critical — brief still returned
                     }
-                    // Backward-compat: global marker for tim-session-start directive injection
-                    try {
-                        const globalMarker = path.join(os.homedir(), '.tim-project');
-                        let marker = {};
-                        if (fs.existsSync(globalMarker)) {
-                            marker = JSON.parse(fs.readFileSync(globalMarker, 'utf8'));
-                        }
-                        marker.route_exchanges_to = projectLabel;
-                        marker.project = projectLabel;
-                        if (sessionId) {
-                            const sessions = typeof marker.sessions === 'object' && marker.sessions !== null
-                                ? { ...marker.sessions }
-                                : {};
-                            sessions[projectLabel] = sessionId;
-                            marker.sessions = sessions;
-                        }
-                        fs.writeFileSync(globalMarker, JSON.stringify(marker, null, 2) + '\n');
-                    }
-                    catch {
-                        // Non-critical — don't fail the request
-                    }
                     const formatted = (0, tim_store_1.formatProjectOutput)(result, budget, loadProjectSchema(), 'load');
                     return {
                         content: [{
@@ -1425,6 +1425,44 @@ async function startServer() {
         }
     });
     // ─── Start ────────────────────────────────────────────
+    // BUG 4: Global error guards — keep the stdio server alive when an
+    // async tool handler or fire-and-forget promise throws OUTSIDE the
+    // dispatcher try/catch. Without these, Node 24's default behavior is
+    // to crash the process on any unhandled rejection, killing the MCP
+    // server and triggering the client's auto-retry cooldown.
+    // We log to stderr + persist via ErrorLogger + stay alive.
+    process.on('unhandledRejection', (reason, promise) => {
+        const err = reason instanceof Error ? reason : new Error(String(reason));
+        console.error('[tim-mcp] unhandledRejection:', err.stack ?? err.message);
+        try {
+            getErrorLogger().logError({
+                tool: 'mcp-server',
+                error: `unhandledRejection: ${err.message}`,
+                stack: err.stack,
+            });
+        }
+        catch {
+            // ErrorLogger itself failed — nothing more we can do, stay alive.
+        }
+    });
+    process.on('uncaughtException', (err) => {
+        console.error('[tim-mcp] uncaughtException:', err.stack ?? err.message);
+        try {
+            getErrorLogger().logError({
+                tool: 'mcp-server',
+                error: `uncaughtException: ${err.message}`,
+                stack: err.stack,
+            });
+        }
+        catch {
+            // Same as above.
+        }
+        // Note: we intentionally do NOT call process.exit(). The stdio pipe
+        // stays open and subsequent MCP requests continue to be served. The
+        // MCP SDK's processReadBuffer() already wraps readMessage() in
+        // try/catch (see @modelcontextprotocol/sdk/dist/esm/server/stdio.js),
+        // so a malformed input frame cannot kill the server either.
+    });
     const transport = new stdio_js_1.StdioServerTransport();
     await server.connect(transport);
     console.error(`TIM MCP server started (DB: ${DB_PATH})`);

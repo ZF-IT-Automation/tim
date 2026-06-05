@@ -64,14 +64,47 @@ async function loadProjectContext(store) {
     return store.read(label);
 }
 async function resolveSessionProjectId(store, cwd, explicitProjectId) {
-    if (explicitProjectId)
+    if (explicitProjectId) {
+        // Validate explicit project ids against the DB so a hand-edited
+        // `--project=P9999` (or a botched upstream commit) can't smuggle
+        // a bogus label into the marker. The Inbox (P0000) is exempt —
+        // it's a system project that tim-store.ensureInboxProject()
+        // materializes on first use. This closes the second half of the
+        // P9999 bug: even if the on-disk marker was repaired, an
+        // explicit override could re-poison the file.
+        if (explicitProjectId !== 'P0000') {
+            const resolved = await store.resolveProjectLabel(explicitProjectId);
+            if (resolved.status === 'found')
+                return resolved.label;
+            if (resolved.status === 'not_found') {
+                throw new Error(`Project not found: ${explicitProjectId}. Use tim_load_project to pick a real project.`);
+            }
+            throw new Error(`Ambiguous project label: ${explicitProjectId} matches ${resolved.labels.join(', ')}.`);
+        }
         return explicitProjectId;
+    }
     const located = (0, marker_js_1.findMarker)(cwd);
-    if (located)
-        return located.marker.project;
+    if (located) {
+        // The on-disk marker already passed the pattern check inside
+        // findMarker → readMarker. Apply the DB-existence check here so
+        // a corrupt label (P9999) doesn't bind the session.
+        const validated = await (0, marker_js_1.validateMarkerAgainstStore)(located.marker, store);
+        if (validated)
+            return validated.project;
+    }
     const active = getActiveProjectLabel();
-    if (active)
-        return active;
+    if (active) {
+        const validated = await (0, marker_js_1.validateMarkerAgainstStore)({
+            version: 2,
+            project: active,
+            session: '',
+            exchanges: 0,
+            batch_size: 5,
+            batches_summarized: 0,
+        }, store);
+        if (validated)
+            return validated.project;
+    }
     await (0, tim_store_1.ensureInboxProject)(store);
     return tim_store_1.INBOX_PROJECT_LABEL;
 }
@@ -98,6 +131,7 @@ async function runSessionStart(store, params) {
             ? session.metadata.batch_size
             : 5,
         batches_summarized: 0,
+        version: 2,
     });
     await (0, hooks_js_1.runConfiguredHooks)('sessionStart', params.hooksConfig, {
         TIM_SESSION_ID: params.sessionId,

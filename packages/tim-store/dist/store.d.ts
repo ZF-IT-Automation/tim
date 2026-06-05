@@ -1,6 +1,25 @@
 import Database from 'better-sqlite3';
-import type { Entry, Edge, EdgeType, ReadOptions, WriteOptions, DecayOptions, SearchOptions, MemoryInterface, HealthReport, MemoryStats, AgentIdentity, StagingRecord, EventBus, ResolveProjectResult } from 'tim-core';
+import type { Entry, Edge, EdgeType, ReadOptions, WriteOptions, DecayOptions, SearchOptions, MemoryInterface, HealthReport, MemoryStats, AgentIdentity, StagingRecord, EventBus, ResolveProjectResult, ResolveSectionResult } from 'tim-core';
 import { CurateManager } from './curate.js';
+/**
+ * Sanitize a user-supplied query string into a safe FTS5 MATCH expression.
+ *
+ * Problems this guards against (verified empirically against better-sqlite3 FTS5):
+ *   1. `task:true` → "no such column: task"   (token:value parsed as column filter)
+ *   2. `"foo AND bar"` literal text containing AND is a valid FTS5 operator,
+ *      so users searching for "AND" or "OR" as words can collide with FTS5 syntax.
+ *   3. Special chars `^ * ( ) " '` in raw input can throw `fts5: syntax error`.
+ *
+ * Strategy:
+ *   - For `token:value` patterns, if `token` matches a real FTS5 column name
+ *     (title, content, tags), pass through as-is. Otherwise, split into two
+ *     tokens (the bogus "column" becomes a search term).
+ *   - Drop FTS5 operator words (AND, OR, NOT, NEAR) case-insensitive.
+ *   - Strip quotes/parens/carets/stars, replace with space.
+ *   - Re-emit as `token1 token2` (implicit FTS5 AND).
+ *   - Return empty string if no safe tokens survive — caller must skip the query.
+ */
+export declare function sanitizeFtsQuery(query: string): string;
 export interface TimStoreOptions {
     emitter?: Pick<EventBus, 'emit'>;
     agentId?: string;
@@ -48,6 +67,22 @@ export declare class TimStore implements MemoryInterface {
      * Direct label/id lookup first, then metadata.aliases scan.
      */
     resolveProjectLabel(query: string): Promise<ResolveProjectResult>;
+    /**
+     * Resolve a section by (projectId, title) within a project root.
+     *
+     * Sections are direct children of a project root (kind=project, parent_id=NULL
+     * typically, or any node whose metadata.label matches). Used by tim_write to
+     * disambiguate `parentTitle="Tasks"` lookups — silently picking the first
+     * match caused orphan writes under wrong/legacy sections.
+     *
+     * Returns a tagged union:
+     *   - found:      exactly one match.
+     *   - not_found:  zero matches; `candidates` lists the section titles that
+     *                 DO exist under the project (helps the caller recover).
+     *   - ambiguous:  multiple matches; `candidates` carries id+title+project+
+     *                 depth+createdAt for each (caller re-issues with parentId).
+     */
+    resolveSectionByTitle(projectId: string, title: string): Promise<ResolveSectionResult>;
     /** Resolve label/alias/id to a project entry; throws on missing or ambiguous. */
     requireProject(projectId: string): Promise<Entry>;
     loadProject(label: string, options?: LoadProjectOptions): Promise<LoadProjectResult | null>;
@@ -67,9 +102,17 @@ export declare class TimStore implements MemoryInterface {
     getChildrenBySeq(parentId: string): Promise<Entry[]>;
     /**
      * Query root-level entries (parent_id IS NULL) that are not projects.
-     * Optionally filter by tag (exact match within JSON tags array).
+     * Filter by either:
+     *   - `type`: exact match on `json_extract(metadata, '$.type')` (preferred)
+     *   - `tag` : legacy string-tag match via JSON-LIKE (deprecated, kept
+     *             for backward compatibility with the pre-Phase-0 hook)
+     *
+     * `type` takes precedence if both are supplied.
      */
-    getRootLevelEntries(tag?: string): Entry[];
+    getRootLevelEntries(filter?: {
+        type?: string;
+        tag?: string;
+    }): Entry[];
     getTasks(opts?: GetTasksOptions): Promise<TaskRecord[]>;
     private findProjectLabelForParent;
     close(): void;

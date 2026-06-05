@@ -19,7 +19,7 @@ function parseProjectContent(title, content) {
     return {
         title: headerTitle,
         status,
-        description: truncText(rest || combined, 150),
+        description: truncText(rest || combined, 300),
         packages: packagesMatch ? parseInt(packagesMatch[1], 10) : undefined,
         tests: testsMatch ? parseInt(testsMatch[1], 10) : undefined,
     };
@@ -55,7 +55,7 @@ function parseSessionEntry(entry) {
     if (exMatch) {
         summary = combined.replace(/\s*[—–-]\s*\d+\s+exchanges?.*$/i, '').trim();
     }
-    return { exchanges, summary: truncText(summary, 50), date };
+    return { exchanges, summary: truncText(summary, 120), date };
 }
 function compareEntryOrder(a, b) {
     const oa = Number(a.metadata.order);
@@ -85,12 +85,21 @@ function buildChildMap(children) {
 function childCountLabel(count) {
     return count === 1 ? '[1 subnode]' : `[${count} subnodes]`;
 }
-function sectionContentSuffix(section) {
+function sectionContentBody(section) {
     if (isEmptyBody(section))
-        return '—';
-    return `"${truncText(sectionPreview(section), 80)}"`;
+        return '';
+    return truncText(sectionPreview(section), 200);
 }
-const MAX_CHILDREN_PER_LEVEL = 3;
+function entryBadge(entry) {
+    if (entry.metadata.task === true) {
+        return ` [${entry.metadata.status || 'todo'}]`;
+    }
+    if (entry.metadata.kind === 'error') {
+        return ` [${entry.metadata.severity || 'medium'}]`;
+    }
+    return '';
+}
+const MAX_CHILDREN_PER_LEVEL = 10;
 const PROJECT_SUMMARY_MARKER = '## Project Summary';
 const RECENT_SESSIONS_COUNT = 5; // TODO: read from config
 function normalizeRenderDepth(value) {
@@ -179,7 +188,7 @@ function formatChildrenTree(children, childMap, depth, budget, schema, renderTai
         if (childRenderDepth === 0) {
             continue;
         }
-        lines.push(`${indent}${entryTitle(child)}`);
+        lines.push(`${indent}${entryTitle(child)}${entryBadge(child)}`);
         budget.remaining -= 1;
         shown += 1;
         const subkids = childMap.get(child.id) ?? [];
@@ -201,7 +210,7 @@ function formatSectionLineSuffix(section, subkids, renderDepth) {
     if (subkids.length > 0 && !shouldRenderChildren(renderDepth)) {
         return childCountLabel(subkids.length);
     }
-    return sectionContentSuffix(section);
+    return sectionContentBody(section);
 }
 function formatProjectOutput(result, budget, schema, renderMode) {
     const { project, children, truncated } = result;
@@ -251,12 +260,23 @@ function formatProjectOutput(result, budget, schema, renderMode) {
             }
             const useTail = resolveRenderTail(section, schemaSection?.render_tail);
             const subkids = childMap.get(section.id) ?? [];
-            const suffix = formatSectionLineSuffix(section, subkids, renderDepth);
-            lines.push(`  ${name.padEnd(28)} ${suffix}`.trimEnd());
-            if (subkids.length > 0 && shouldRenderChildren(renderDepth)) {
-                const nextDepth = maxChildDepth(renderDepth);
-                if (nextDepth > 0) {
-                    lines.push(...formatChildrenTree(subkids, childMap, 0, budgetState, schema, useTail, renderMode));
+            lines.push(`  ${name}`);
+            if (subkids.length > 0 && !shouldRenderChildren(renderDepth)) {
+                lines.push(`    ${childCountLabel(subkids.length)}`);
+            }
+            else {
+                const content = sectionContentBody(section);
+                if (content) {
+                    lines.push(`    ${content}`);
+                }
+                else if (subkids.length === 0) {
+                    lines.push(`    No entries`);
+                }
+                if (subkids.length > 0 && shouldRenderChildren(renderDepth)) {
+                    const nextDepth = maxChildDepth(renderDepth);
+                    if (nextDepth > 0) {
+                        lines.push(...formatChildrenTree(subkids, childMap, 0, budgetState, schema, useTail, renderMode));
+                    }
                 }
             }
         }

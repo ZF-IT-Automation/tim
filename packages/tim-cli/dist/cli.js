@@ -220,6 +220,7 @@ async function cmdBindProject(args) {
         exchanges: existing?.exchanges ?? 0,
         batch_size: existing?.batch_size ?? 5,
         batches_summarized: existing?.batches_summarized ?? 0,
+        version: 2,
     };
     (0, tim_hooks_1.writeMarker)(cwd, marker);
     console.log(`Wrote .tim-project → ${label} at ${cwd}`);
@@ -378,13 +379,60 @@ async function cmdImport(args) {
         store.close();
     }
 }
-async function cmdRootEntries(args) {
+async function cmdMigrateTagsToTypes(args) {
     const flags = parseArgs(args);
-    const tag = flags.tag;
+    const dryRun = flags['dry-run'] === 'true';
+    const sampleLimit = flags['sample-limit'] ? parseInt(flags['sample-limit'], 10) : 20;
     const config = (0, tim_core_1.loadConfig)();
     const store = new tim_store_1.TimStore(getDbPath(config));
     try {
-        const entries = store.getRootLevelEntries(tag);
+        const report = await (0, tim_migrate_1.migrateTagsToTypes)(store, { dryRun, sampleLimit });
+        console.log(JSON.stringify(report, null, 2));
+        if (dryRun) {
+            console.error(`\n[tim] migrate tags-to-types — DRY RUN. ${report.migrated} entries would be migrated.`);
+        }
+        else {
+            console.error(`\n[tim] migrate tags-to-types — ${report.migrated} migrated, ${report.skipped} skipped, ${report.errors.length} errors.`);
+        }
+    }
+    finally {
+        store.close();
+    }
+}
+async function cmdRootEntries(args) {
+    const flags = parseArgs(args);
+    const type = flags.type;
+    const tag = flags.tag;
+    // Backward-compat: --tag '#rule' still works (Phase 0 keeps the alias
+    // for hooks and external scripts). When --tag is the only filter, log
+    // a deprecation warning and route to the type-based query path.
+    let resolvedType;
+    let resolvedTag;
+    if (type) {
+        resolvedType = type;
+        if (tag) {
+            // Both flags → type wins, warn about the conflict.
+            console.error(`[tim] root-entries: --type and --tag both passed; --type (${type}) takes precedence.`);
+        }
+    }
+    else if (tag) {
+        const normalized = (0, tim_core_1.normalizeLegacyTypeTag)(tag);
+        if (normalized) {
+            console.error(`[tim] root-entries: --tag '${tag}' is deprecated; use --type ${normalized} instead.`);
+            resolvedType = normalized;
+        }
+        else {
+            // Not a known type tag → fall back to legacy JSON-LIKE matching
+            // so external scripts that pass arbitrary tags keep working.
+            console.error(`[tim] root-entries: --tag '${tag}' is deprecated and not a known metadata type. ` +
+                `Falling back to legacy tag-LIKE match.`);
+            resolvedTag = tag;
+        }
+    }
+    const config = (0, tim_core_1.loadConfig)();
+    const store = new tim_store_1.TimStore(getDbPath(config));
+    try {
+        const entries = store.getRootLevelEntries({ type: resolvedType, tag: resolvedTag });
         if (flags.format === 'json') {
             console.log(JSON.stringify(entries, null, 2));
             return;
@@ -456,6 +504,19 @@ async function main() {
         case 'import':
             await cmdImport(rest);
             break;
+        case 'migrate': {
+            // Subcommand dispatch: `tim migrate <sub> [args...]`
+            const sub = rest[0];
+            if (sub === 'tags-to-types') {
+                await cmdMigrateTagsToTypes(rest.slice(1));
+            }
+            else {
+                console.error(`Usage: tim migrate <subcommand>\n` +
+                    `  tags-to-types   Convert legacy #rule / #human tags to metadata.type [--dry-run] [--sample-limit N]`);
+                process.exit(1);
+            }
+            break;
+        }
         case 'sync': {
             const sub = rest[0];
             await (0, sync_cli_js_1.cmdSync)(sub, rest.slice(1));
@@ -490,6 +551,7 @@ Commands:
   setup-hermes-statusline  Install Hermes TUI status bar (symlinks, config, cli patch) [--dry-run] [--skip-build]
   export [path]           Export to .hmem or markdown (--format hmem|text)
   import <path>           Import from .hmem (--dry-run, --deduplicate)
+  migrate tags-to-types   Convert legacy #rule / #human tags to metadata.type (--dry-run, --sample-limit N)
   sync connect            Connect to o9k-sync server
   sync push               Push unacked staging to server
   sync pull               Pull remote changes

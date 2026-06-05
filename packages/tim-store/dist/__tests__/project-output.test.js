@@ -93,7 +93,7 @@ const project_output_js_1 = require("../project-output.js");
         content: '',
         createdAt: '2026-06-01T00:00:00Z',
     };
-    const entries = Array.from({ length: 5 }, (_, i) => ({
+    const entries = Array.from({ length: 12 }, (_, i) => ({
         id: `log-${i + 1}`,
         parentId: 'log',
         title: `Entry ${i + 1}`,
@@ -104,25 +104,195 @@ const project_output_js_1 = require("../project-output.js");
     }));
     (0, vitest_1.it)('shows first N children by default (head)', () => {
         const out = (0, project_output_js_1.formatProjectOutput)({ project, children: [log, ...entries], truncated: false }, 200);
+        (0, vitest_1.expect)(out).toMatch(/  Log\n/);
         (0, vitest_1.expect)(out).toMatch(/Entry 1/);
-        (0, vitest_1.expect)(out).toMatch(/Entry 3/);
-        (0, vitest_1.expect)(out).not.toMatch(/Entry 5/);
+        (0, vitest_1.expect)(out).toMatch(/Entry 10/);
+        (0, vitest_1.expect)(out).not.toMatch(/Entry 11\b/);
         (0, vitest_1.expect)(out).toMatch(/… 2 more$/m);
     });
     (0, vitest_1.it)('shows last N children when schema sets render_tail', () => {
         const schema = { sections: [{ name: 'Log', render_tail: true }] };
         const out = (0, project_output_js_1.formatProjectOutput)({ project, children: [log, ...entries], truncated: false }, 200, schema);
         (0, vitest_1.expect)(out).toMatch(/Entry 3/);
-        (0, vitest_1.expect)(out).toMatch(/Entry 4/);
-        (0, vitest_1.expect)(out).toMatch(/Entry 5/);
+        (0, vitest_1.expect)(out).toMatch(/Entry 11/);
+        (0, vitest_1.expect)(out).toMatch(/Entry 12/);
         (0, vitest_1.expect)(out).not.toMatch(/Entry 1\b/);
+        (0, vitest_1.expect)(out).not.toMatch(/Entry 2\b/);
         (0, vitest_1.expect)(out).toMatch(/… 2 more \(older\)$/m);
     });
     (0, vitest_1.it)('per-entry metadata.render_tail overrides schema', () => {
         const tailLog = { ...log, metadata: { ...log.metadata, render_tail: true } };
         const out = (0, project_output_js_1.formatProjectOutput)({ project, children: [tailLog, ...entries], truncated: false }, 200);
-        (0, vitest_1.expect)(out).toMatch(/Entry 5/);
+        (0, vitest_1.expect)(out).toMatch(/Entry 12/);
         (0, vitest_1.expect)(out).toMatch(/… 2 more \(older\)$/m);
+    });
+});
+(0, vitest_1.describe)('formatProjectOutput entry badges', () => {
+    const project = {
+        id: 'P1',
+        metadata: { label: 'P1', kind: 'project' },
+        title: 'P1 — x',
+        content: '',
+        tags: [],
+        createdAt: '2026-06-01T00:00:00Z',
+    };
+    const section = {
+        id: 'tasks',
+        parentId: 'P1',
+        title: 'Tasks',
+        metadata: { order: 0 },
+        tags: [],
+        content: '',
+        createdAt: '2026-06-01T00:00:00Z',
+    };
+    (0, vitest_1.it)('renders task status badges', () => {
+        const children = [
+            section,
+            {
+                id: 't1',
+                parentId: 'tasks',
+                title: 'Ship feature',
+                metadata: { order: 0, task: true, status: 'in_progress' },
+                tags: [],
+                content: '',
+                createdAt: '2026-06-01T00:00:00Z',
+            },
+            {
+                id: 't2',
+                parentId: 'tasks',
+                title: 'Write docs',
+                metadata: { order: 1, task: true, status: 'done' },
+                tags: [],
+                content: '',
+                createdAt: '2026-06-01T00:00:00Z',
+            },
+            {
+                id: 't3',
+                parentId: 'tasks',
+                title: 'No status task',
+                metadata: { order: 2, task: true },
+                tags: [],
+                content: '',
+                createdAt: '2026-06-01T00:00:00Z',
+            },
+        ];
+        const out = (0, project_output_js_1.formatProjectOutput)({ project, children, truncated: false }, 200);
+        (0, vitest_1.expect)(out).toMatch(/Ship feature \[in_progress\]/);
+        (0, vitest_1.expect)(out).toMatch(/Write docs \[done\]/);
+        (0, vitest_1.expect)(out).toMatch(/No status task \[todo\]/);
+    });
+    (0, vitest_1.it)('renders error severity badges', () => {
+        const log = { ...section, id: 'log', title: 'Log' };
+        const children = [
+            log,
+            {
+                id: 'e1',
+                parentId: 'log',
+                title: 'DB down',
+                metadata: { order: 0, kind: 'error', severity: 'critical' },
+                tags: [],
+                content: '',
+                createdAt: '2026-06-01T00:00:00Z',
+            },
+            {
+                id: 'e2',
+                parentId: 'log',
+                title: 'Slow query',
+                metadata: { order: 1, kind: 'error', severity: 'high' },
+                tags: [],
+                content: '',
+                createdAt: '2026-06-01T00:00:00Z',
+            },
+            {
+                id: 'e3',
+                parentId: 'log',
+                title: 'Typo in UI',
+                metadata: { order: 2, kind: 'error', severity: 'low' },
+                tags: [],
+                content: '',
+                createdAt: '2026-06-01T00:00:00Z',
+            },
+            {
+                id: 'e4',
+                parentId: 'log',
+                title: 'Unknown severity',
+                metadata: { order: 3, kind: 'error' },
+                tags: [],
+                content: '',
+                createdAt: '2026-06-01T00:00:00Z',
+            },
+        ];
+        const out = (0, project_output_js_1.formatProjectOutput)({ project, children, truncated: false }, 200);
+        (0, vitest_1.expect)(out).toMatch(/DB down \[critical\]/);
+        (0, vitest_1.expect)(out).toMatch(/Slow query \[high\]/);
+        (0, vitest_1.expect)(out).toMatch(/Typo in UI \[low\]/);
+        (0, vitest_1.expect)(out).toMatch(/Unknown severity \[medium\]/);
+    });
+    (0, vitest_1.it)('omits badges on plain entries', () => {
+        const children = [
+            section,
+            {
+                id: 'n1',
+                parentId: 'tasks',
+                title: 'Plain note',
+                metadata: { order: 0 },
+                tags: [],
+                content: '',
+                createdAt: '2026-06-01T00:00:00Z',
+            },
+        ];
+        const out = (0, project_output_js_1.formatProjectOutput)({ project, children, truncated: false }, 200);
+        (0, vitest_1.expect)(out).toMatch(/Plain note/);
+        (0, vitest_1.expect)(out).not.toMatch(/Plain note \[/);
+    });
+});
+(0, vitest_1.describe)('formatProjectOutput section block layout', () => {
+    const project = {
+        id: 'P1',
+        metadata: { label: 'P1', kind: 'project' },
+        title: 'P1 — x',
+        content: '',
+        tags: [],
+        createdAt: '2026-06-01T00:00:00Z',
+    };
+    (0, vitest_1.it)('renders section name on its own line with body below', () => {
+        const section = {
+            id: 'rules',
+            parentId: 'P1',
+            title: 'Rules',
+            metadata: { order: 0 },
+            tags: [],
+            content: 'Always use MCP for DB',
+            createdAt: '2026-06-01T00:00:00Z',
+        };
+        const out = (0, project_output_js_1.formatProjectOutput)({ project, children: [section], truncated: false }, 200);
+        (0, vitest_1.expect)(out).toMatch(/  Rules\n    Always use MCP for DB/);
+    });
+    (0, vitest_1.it)('shows No entries for empty section without children', () => {
+        const section = {
+            id: 'empty',
+            parentId: 'P1',
+            title: 'Ideas',
+            metadata: { order: 0 },
+            tags: [],
+            content: '',
+            createdAt: '2026-06-01T00:00:00Z',
+        };
+        const out = (0, project_output_js_1.formatProjectOutput)({ project, children: [section], truncated: false }, 200);
+        (0, vitest_1.expect)(out).toMatch(/  Ideas\n    No entries/);
+    });
+    (0, vitest_1.it)('skips section entirely when render_depth is 0', () => {
+        const section = {
+            id: 'hidden-kids',
+            parentId: 'P1',
+            title: 'Archive',
+            metadata: { order: 0, render_depth: 0 },
+            tags: [],
+            content: 'section body',
+            createdAt: '2026-06-01T00:00:00Z',
+        };
+        const out = (0, project_output_js_1.formatProjectOutput)({ project, children: [section], truncated: false }, 200);
+        (0, vitest_1.expect)(out).not.toContain('Archive');
     });
 });
 (0, vitest_1.describe)('formatProjectOutput project summary', () => {

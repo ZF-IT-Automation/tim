@@ -572,5 +572,81 @@ let store;
             (0, vitest_1.expect)(suppressed).toBe(false);
         });
     });
+    // ─── getRootLevelEntries — metadata.type filter ────────
+    (0, vitest_1.describe)('getRootLevelEntries', () => {
+        (0, vitest_1.it)('returns all root-level non-project entries with no filter', async () => {
+            await store.write('Rule one', { tags: ['#rule'] });
+            await store.write('Human one', { tags: ['#human'] });
+            await store.write('Plain note', { tags: ['#note'] });
+            const entries = store.getRootLevelEntries();
+            (0, vitest_1.expect)(entries.length).toBe(3);
+            const titles = entries.map(e => e.title);
+            (0, vitest_1.expect)(titles).toContain('Rule one');
+            (0, vitest_1.expect)(titles).toContain('Human one');
+            (0, vitest_1.expect)(titles).toContain('Plain note');
+        });
+        (0, vitest_1.it)('filters by metadata.type = rule', async () => {
+            await store.write('Rule one', { tags: ['#rule'] });
+            // The entry written via store.write has tags, not metadata.type.
+            // We need to directly insert an entry with metadata.type set via
+            // a raw SQL path because TimStore's write() doesn't do the migration.
+            store.getDb().prepare(`
+        INSERT INTO entries (id, title, content, parent_id, depth, confidence,
+          created_at, accessed_at, visibility, tags, metadata, irrelevant)
+        VALUES (?, ?, ?, NULL, 1, 1.0, ?, ?, 1, ?,
+          ?, 0)
+      `).run('rule1', 'Rule entry', '', new Date().toISOString(), new Date().toISOString(), JSON.stringify([]), JSON.stringify({ type: 'rule' }));
+            await store.write('Human one', { tags: ['#human'] });
+            await store.write('Plain note', { tags: ['#note'] });
+            const entries = store.getRootLevelEntries({ type: 'rule' });
+            (0, vitest_1.expect)(entries.length).toBe(1);
+            (0, vitest_1.expect)(entries[0].title).toBe('Rule entry');
+            (0, vitest_1.expect)(entries[0].metadata.type).toBe('rule');
+        });
+        (0, vitest_1.it)('filters by legacy tag (LIKE fallback)', async () => {
+            await store.write('Rule one', { tags: ['#rule'] });
+            await store.write('Human one', { tags: ['#human'] });
+            await store.write('Plain note', { tags: ['#note'] });
+            const entries = store.getRootLevelEntries({ tag: '#rule' });
+            (0, vitest_1.expect)(entries.length).toBe(1);
+            (0, vitest_1.expect)(entries[0].title).toBe('Rule one');
+            (0, vitest_1.expect)(entries[0].tags).toContain('#rule');
+        });
+        (0, vitest_1.it)('type takes precedence over tag when both supplied', async () => {
+            // Entry has #human tag → would match legacy filter.
+            // Entry with metadata.type=rule → would match type filter.
+            // When type=rule is given, the human-tagged entry should NOT appear.
+            await store.write('Human entry', { tags: ['#human'] });
+            store.getDb().prepare(`
+        INSERT INTO entries (id, title, content, parent_id, depth, confidence,
+          created_at, accessed_at, visibility, tags, metadata, irrelevant)
+        VALUES (?, ?, ?, NULL, 1, 1.0, ?, ?, 1, ?,
+          ?, 0)
+      `).run('rule2', 'Rule entry', '', new Date().toISOString(), new Date().toISOString(), JSON.stringify([]), JSON.stringify({ type: 'rule' }));
+            // Pass both type and tag; type wins.
+            const entries = store.getRootLevelEntries({ type: 'rule', tag: '#human' });
+            (0, vitest_1.expect)(entries.length).toBe(1);
+            (0, vitest_1.expect)(entries[0].title).toBe('Rule entry');
+        });
+        (0, vitest_1.it)('excludes project-root entries', async () => {
+            await store.write('Plain note', { tags: ['#note'] });
+            // Project root: has metadata.kind = 'project'
+            store.getDb().prepare(`
+        INSERT INTO entries (id, title, content, parent_id, depth, confidence,
+          created_at, accessed_at, visibility, tags, metadata, irrelevant)
+        VALUES (?, ?, ?, NULL, 1, 1.0, ?, ?, 1, ?,
+          ?, 0)
+      `).run('proj1', 'Project entry', '', new Date().toISOString(), new Date().toISOString(), JSON.stringify([]), JSON.stringify({ kind: 'project', type: 'rule' }));
+            const entries = store.getRootLevelEntries();
+            // Only the plain note, not the project root.
+            (0, vitest_1.expect)(entries.length).toBe(1);
+            (0, vitest_1.expect)(entries[0].title).toBe('Plain note');
+        });
+        (0, vitest_1.it)('empty result when no entries match type', async () => {
+            await store.write('Note', { tags: ['#note'] });
+            const entries = store.getRootLevelEntries({ type: 'rule' });
+            (0, vitest_1.expect)(entries.length).toBe(0);
+        });
+    });
 });
 //# sourceMappingURL=store.test.js.map

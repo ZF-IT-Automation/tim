@@ -1,7 +1,7 @@
 "use strict";
 // TIM Migration — package exports
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.createV2HmemDatabase = exports.inspectHmemFile = exports.detectHmemFormat = exports.labelFromMetadata = exports.tim_import = exports.exportToMarkdown = exports.exportToHmem = exports.tim_export = exports.verifyHmemFile = exports.migrateHmemToTim = void 0;
+exports.migrateTagsToTypes = exports.createV2HmemDatabase = exports.inspectHmemFile = exports.detectHmemFormat = exports.labelFromMetadata = exports.tim_import = exports.exportToMarkdown = exports.exportToHmem = exports.tim_export = exports.verifyHmemFile = exports.migrateHmemToTim = void 0;
 var migrate_js_1 = require("./migrate.js");
 Object.defineProperty(exports, "migrateHmemToTim", { enumerable: true, get: function () { return migrate_js_1.migrateHmemToTim; } });
 Object.defineProperty(exports, "verifyHmemFile", { enumerable: true, get: function () { return migrate_js_1.verifyHmemFile; } });
@@ -16,4 +16,6 @@ var hmem_format_js_1 = require("./hmem-format.js");
 Object.defineProperty(exports, "detectHmemFormat", { enumerable: true, get: function () { return hmem_format_js_1.detectHmemFormat; } });
 Object.defineProperty(exports, "inspectHmemFile", { enumerable: true, get: function () { return hmem_format_js_1.inspectHmemFile; } });
 Object.defineProperty(exports, "createV2HmemDatabase", { enumerable: true, get: function () { return hmem_format_js_1.createV2HmemDatabase; } });
+var tags_to_types_js_1 = require("./tags-to-types.js");
+Object.defineProperty(exports, "migrateTagsToTypes", { enumerable: true, get: function () { return tags_to_types_js_1.migrateTagsToTypes; } });
 //# sourceMappingURL=index.js.map
