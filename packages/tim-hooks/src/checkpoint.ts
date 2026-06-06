@@ -11,7 +11,7 @@ import {
   type TimStore,
 } from 'tim-store';
 import { runConfiguredHooks, type HookEnv } from './hooks.js';
-import { findMarker, writeMarker, validateMarkerAgainstStore } from './marker.js';
+import { readMarker, writeMarker, validateMarkerAgainstStore } from './marker.js';
 import {
   onSessionStop,
   maybeSpawnProjectSummary,
@@ -39,6 +39,33 @@ export function getActiveProjectLabel(): string | null {
 
   const label = fs.readFileSync(activeFile, 'utf8').trim();
   return label || null;
+}
+
+/**
+ * Resolve the active project from a .tim-project marker in cwd ONLY.
+ *
+ * No walk-up. No parent traversal. This is the Auto-Load Hook contract:
+ * a session binds to a project only if the marker is in the directory the
+ * user explicitly invoked the harness from. Walking up to a parent has
+ * caused repeated cross-project binding bugs (Worker A→B→C in 2 days);
+ * cwd-only is the same pattern Hermes statusline uses after the 133c5abd
+ * fix in its-over-9k, kept consistent here.
+ *
+ * Falls back to:
+ *  - readMarker(cwd) which checks .tim-project and then tim.json
+ *  - validateMarkerAgainstStore which gates the project label against the DB
+ *
+ * Returns the project label, or null when no cwd marker exists, the marker
+ * is corrupt, or the project does not exist in the DB.
+ */
+export async function resolveActiveProjectFromCwd(
+  cwd: string,
+  store: TimStore,
+): Promise<string | null> {
+  const marker = readMarker(cwd);
+  if (!marker) return null;
+  const validated = await validateMarkerAgainstStore(marker, store);
+  return validated?.project ?? null;
 }
 
 /** Load project entry by hmem-style label (e.g. P0062) when configured. */
@@ -75,14 +102,8 @@ async function resolveSessionProjectId(
     }
     return explicitProjectId;
   }
-  const located = findMarker(cwd);
-  if (located) {
-    // The on-disk marker already passed the pattern check inside
-    // findMarker → readMarker. Apply the DB-existence check here so
-    // a corrupt label (P9999) doesn't bind the session.
-    const validated = await validateMarkerAgainstStore(located.marker, store);
-    if (validated) return validated.project;
-  }
+  const cwdLabel = await resolveActiveProjectFromCwd(cwd, store);
+  if (cwdLabel) return cwdLabel;
   const active = getActiveProjectLabel();
   if (active) {
     const validated = await validateMarkerAgainstStore(
@@ -183,8 +204,8 @@ export async function runSessionEnd(
   try {
     const config = loadConfig();
     const threshold = config.projectSummary?.sessions_threshold ?? DEFAULT_PROJECT_SUMMARY_THRESHOLD;
-    const located = findMarker(cwd);
-    const label = located?.marker.project ?? getActiveProjectLabel();
+    const cwdLabel = await resolveActiveProjectFromCwd(cwd, store);
+    const label = cwdLabel ?? getActiveProjectLabel();
     await maybeSpawnProjectSummary(store, cwd, label, { threshold });
   } catch {
     /* non-critical */

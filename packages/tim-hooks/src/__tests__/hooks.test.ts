@@ -163,7 +163,11 @@ describe('session-end checkpoint orchestration', () => {
     }
   });
 
-  it('runSessionStart resolves a parent .tim-project from a subdirectory', async () => {
+  it('runSessionStart does NOT walk up to a parent .tim-project (cwd-only contract)', async () => {
+    // Auto-Load Hook contract: a session binds to a project ONLY when the
+    // .tim-project marker is in cwd. Walking up to a parent has caused
+    // repeated cross-project binding bugs (Worker A→B→C); see
+    // resolveActiveProjectFromCwd in checkpoint.ts.
     const store = new TimStore(':memory:');
     await store.createProject('P0042');
     const root = fs.mkdtempSync(path.join('/home/bbbee', '.tim-test-runs', 'sess-'));
@@ -173,17 +177,35 @@ describe('session-end checkpoint orchestration', () => {
     );
     const sub = path.join(root, 'pkg', 'inner');
     fs.mkdirSync(sub, { recursive: true });
+    // Ensure no TIM_PROJECT env / no ~/.tim/active-project pollutes the fallback path.
+    const originalEnv = process.env.TIM_PROJECT;
+    delete process.env.TIM_PROJECT;
+    const originalHome = process.env.HOME;
+    const homeBackup = originalHome
+      ? fs.existsSync(path.join(originalHome, '.tim', 'active-project'))
+        ? fs.readFileSync(path.join(originalHome, '.tim', 'active-project'), 'utf8')
+        : null
+      : null;
 
-    const { project } = await runSessionStart(store, {
-      sessionId: 'sess-sub',
-      agentName: 'a',
-      cwd: sub,
-      harness: 'test',
-    });
-
-    expect(project?.metadata.label ?? project?.id).toBe('P0042');
-    store.close();
-    fs.rmSync(root, { recursive: true, force: true });
+    try {
+      // No marker in `sub` → cwd-only binding must NOT find parent's P0042.
+      // Falls through to Inbox (P0000) per resolveSessionProjectId contract.
+      const { project } = await runSessionStart(store, {
+        sessionId: 'sess-sub',
+        agentName: 'a',
+        cwd: sub,
+        harness: 'test',
+      });
+      expect(project?.metadata.label ?? project?.id).toBe('P0000');
+    } finally {
+      if (originalEnv === undefined) delete process.env.TIM_PROJECT;
+      else process.env.TIM_PROJECT = originalEnv;
+      if (originalHome && homeBackup !== null) {
+        fs.writeFileSync(path.join(originalHome, '.tim', 'active-project'), homeBackup);
+      }
+      store.close();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 
