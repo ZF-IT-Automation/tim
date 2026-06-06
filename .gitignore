@@ -6,3 +6,10 @@ node_modules/
 # Runtime session marker — per-developer/session state (session id, exchange count).
 # Canonical default project label lives in committed tim.json instead.
 .tim-project
+
+# Hermes Worker-Spawn runtime symlinks (per-session, do not commit)
+.cursorrules
+.hermes.md
+AGENTS.md
+CLAUDE.md
+tmp/
