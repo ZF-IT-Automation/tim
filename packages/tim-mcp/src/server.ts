@@ -42,7 +42,7 @@ const TimReadSchema = z.object({
   section: z.string().optional().describe('Section title — read its children'),
   depth: z.number().min(1).max(5).optional().default(2),
   includeEdges: z.boolean().optional().default(false),
-  includeChildren: z.boolean().optional().default(false),
+  includeChildren: z.boolean().optional().default(true).describe('Default true: returns subtree (capped by depth). Set false for parent-only.'),
   showIrrelevant: z.boolean().optional().default(false),
 }).refine(
   d => d.id !== undefined || d.project !== undefined || d.section !== undefined,
@@ -815,7 +815,7 @@ export async function startServer(): Promise<void> {
             section: { type: 'string', description: 'Section title — read its children' },
             depth: { type: 'number', default: 2, description: 'How many levels to read (1-5)' },
             includeEdges: { type: 'boolean', default: false },
-            includeChildren: { type: 'boolean', default: false },
+            includeChildren: { type: 'boolean', default: true, description: 'Default true: returns subtree (capped by depth). Set false for parent-only.' },
             showIrrelevant: { type: 'boolean', default: false },
           },
         },

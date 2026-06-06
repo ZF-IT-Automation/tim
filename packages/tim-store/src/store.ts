@@ -147,7 +147,7 @@ export class TimStore implements MemoryInterface {
     const result = rowToEntry(entry);
 
     // Optionally include children (for tim_read with depth)
-    if (options.includeChildren) {
+    if (options.includeChildren && options.depth !== 1) {
       const depth = options.depth ?? 2;
       const children = this.loadChildrenRecursive(result.id, depth, 1);
       (result as any).children = children;
