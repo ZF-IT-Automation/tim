@@ -140,6 +140,7 @@ export function getCurrentVersion(): number {
 
 export function runMigrations(db: Database.Database): void {
   db.pragma('journal_mode = WAL');
+  db.pragma('busy_timeout = 5000');
   db.pragma('foreign_keys = ON');
 
   // Create version table if not exists

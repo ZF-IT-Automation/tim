@@ -185,17 +185,6 @@ export class TimStore implements MemoryInterface {
     label: string,
     options: CreateProjectOptions = {},
   ): Promise<Entry> {
-    const dup = this.db.prepare(`
-      SELECT id FROM entries
-      WHERE json_extract(metadata, '$.kind') = 'project'
-        AND json_extract(metadata, '$.label') = ?
-        AND irrelevant = 0
-        AND tombstoned_at IS NULL
-    `).get(label) as { id: string } | undefined;
-    if (dup) {
-      throw new Error(`Project label already exists: ${label} (${dup.id})`);
-    }
-
     const aliases = normalizeProjectAliases(options.aliases);
     const metadata = {
       ...(options.metadata ?? {}),
@@ -204,7 +193,30 @@ export class TimStore implements MemoryInterface {
       ...(aliases.length > 0 ? { aliases } : {}),
     };
 
-    return this.write(options.content ?? label, { metadata });
+    const tx = this.db.transaction((labelArg: string) => {
+      const dup = this.db.prepare(`
+        SELECT id FROM entries
+        WHERE json_extract(metadata, '$.kind') = 'project'
+          AND json_extract(metadata, '$.label') = ?
+          AND irrelevant = 0
+          AND tombstoned_at IS NULL
+      `).get(labelArg) as { id: string } | undefined;
+      if (dup) {
+        throw new Error(`Project label already exists: ${labelArg} (${dup.id})`);
+      }
+
+      const { entry } = this.buildEntryRow(options.content ?? label, { metadata });
+      this.insertEntrySync(entry);
+      return entry;
+    });
+
+    const entry = tx.immediate(label);
+    const timestamp = Date.now();
+    this.insertStagingSync(entry, timestamp, 1.0);
+
+    const result = rowToEntry(entry);
+    this.emit('memory:written', { entry: result, agentId: this.agentId, timestamp: entry.created_at });
+    return result;
   }
 
   /**
@@ -719,13 +731,15 @@ export class TimStore implements MemoryInterface {
     return { found: rows.length, updated, skipped };
   }
 
-  async write(content: string, options: WriteOptions = {}): Promise<Entry> {
+  private buildEntryRow(
+    content: string,
+    options: WriteOptions,
+  ): { entry: RowEntry; now: string; timestamp: number } {
     const now = new Date().toISOString();
     const id = options.id ?? formatEntryId({ metadata: options.metadata, now: new Date(now) });
     const timestamp = Date.now();
     const { title, body } = splitTitleBody(content, options.title);
 
-    // Calculate depth
     let depth = 1;
     const parentId = options.parentId ?? null;
     if (parentId) {
@@ -743,7 +757,7 @@ export class TimStore implements MemoryInterface {
       metadata.order = (maxRow.max_order ?? -1) + 1;
     }
 
-    const entry = {
+    const entry: RowEntry = {
       id,
       parent_id: parentId,
       title,
@@ -762,6 +776,10 @@ export class TimStore implements MemoryInterface {
       metadata: JSON.stringify(metadata),
     };
 
+    return { entry, now, timestamp };
+  }
+
+  private insertEntrySync(entry: RowEntry): void {
     this.db.prepare(`INSERT INTO entries (id, parent_id, title, content, content_type, depth,
       confidence, created_at, accessed_at, decay_rate, visibility, tags, irrelevant,
       favorite, tombstoned_at, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
@@ -769,15 +787,21 @@ export class TimStore implements MemoryInterface {
       entry.confidence, entry.created_at, entry.accessed_at, entry.decay_rate,
       entry.visibility, entry.tags, entry.irrelevant, entry.favorite, entry.tombstoned_at, entry.metadata
     );
+  }
 
-    // Write to staging for sync
+  private insertStagingSync(entry: RowEntry, timestamp: number, confidence: number): void {
     this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
       lww_timestamp, lww_device, lww_confidence)
       VALUES (?, 'entry', 'upsert', ?, ?, ?, ?)`).run(
-      id, JSON.stringify(entry), timestamp, 'local', options.confidence ?? 1.0
+      entry.id, JSON.stringify(entry), timestamp, 'local', confidence
     );
+  }
 
-    // Create edges if provided
+  async write(content: string, options: WriteOptions = {}): Promise<Entry> {
+    const { entry, now, timestamp } = this.buildEntryRow(content, options);
+    this.insertEntrySync(entry);
+    this.insertStagingSync(entry, timestamp, options.confidence ?? 1.0);
+
     if (options.edges) {
       for (const edge of options.edges) {
         await this.link(entry.id, edge.targetId, edge.type, edge.weight, edge.metadata);
