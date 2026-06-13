@@ -78,6 +78,7 @@ export {
   applyRemoteEntry,
   applyRemoteEdge,
   getUnackedStaging,
+  recordFromPayload,
   type StagingRow,
 } from './sync-methods.js';
 export {

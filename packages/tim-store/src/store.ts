@@ -11,9 +11,11 @@ import type {
   SyncEntity, SyncOperation, EventBus, EventType,
   ResolveProjectResult, ResolveSectionResult, SectionCandidate,
 } from 'tim-core';
+import { resolveLWW } from 'tim-sync';
 import { runMigrations, createTriggers, getCurrentVersion } from './schema.js';
 import { CurateManager } from './curate.js';
 import { metadataNeedsCoercion, parseAndCoerceMetadata } from './metadata-coerce.js';
+import { recordFromPayload } from './sync-methods.js';
 
 /**
  * Sanitize a user-supplied query string into a safe FTS5 MATCH expression.
@@ -680,6 +682,47 @@ export class TimStore implements MemoryInterface {
     return this.db;
   }
 
+  /** Run `fn` inside a single exclusive DB transaction (serializes concurrent callers). */
+  runExclusive<T>(fn: () => T): T {
+    return this.db.transaction(fn)();
+  }
+
+  /** Synchronous write for use inside `runExclusive` transactions. */
+  writeSync(content: string, options: WriteOptions = {}): Entry {
+    const { entry, now, timestamp } = this.buildEntryRow(content, options);
+    this.insertEntrySync(entry);
+    this.insertStagingSync(entry, timestamp, options.confidence ?? 1.0);
+    const result = rowToEntry(entry);
+    this.emit('memory:written', { entry: result, agentId: this.agentId, timestamp: now });
+    return result;
+  }
+
+  getChildByKindSync(parentId: string, kind: string): Entry[] {
+    const rows = this.db.prepare(`
+      SELECT * FROM entries
+      WHERE parent_id = ?
+        AND json_extract(metadata, '$.kind') = ?
+        AND irrelevant = 0
+        AND tombstoned_at IS NULL
+      ORDER BY COALESCE(CAST(json_extract(metadata, '$.seq') AS INTEGER), 999999),
+               COALESCE(CAST(json_extract(metadata, '$.order') AS INTEGER), 999999),
+               created_at ASC
+    `).all(parentId, kind) as RowEntry[];
+    return rows.map(rowToEntry);
+  }
+
+  getChildrenBySeqSync(parentId: string): Entry[] {
+    const rows = this.db.prepare(`
+      SELECT * FROM entries
+      WHERE parent_id = ?
+        AND irrelevant = 0
+        AND tombstoned_at IS NULL
+      ORDER BY COALESCE(CAST(json_extract(metadata, '$.seq') AS INTEGER), 999999),
+               created_at ASC
+    `).all(parentId) as RowEntry[];
+    return rows.map(rowToEntry);
+  }
+
   /** Entries whose metadata JSON has non-boolean values for known boolean keys (legacy 1/0/"true"/"false"). */
   findEntriesWithNonBooleanTask(): Array<{ id: string; metadata: string }> {
     const rows = this.db
@@ -889,7 +932,18 @@ export class TimStore implements MemoryInterface {
         id, JSON.stringify({ id, tombstoned_at: now }), Date.now(), 'local', 1.0
       );
     } else {
-      this.db.prepare('UPDATE entries SET irrelevant = 1 WHERE id = ?').run(id);
+      const timestamp = Date.now();
+      const updated = {
+        ...existing,
+        irrelevant: 1,
+        accessed_at: now,
+      };
+      this.db.prepare('UPDATE entries SET irrelevant = 1, accessed_at = ? WHERE id = ?').run(now, id);
+      this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
+        lww_timestamp, lww_device, lww_confidence)
+        VALUES (?, 'entry', 'upsert', ?, ?, ?, ?)`).run(
+        id, JSON.stringify(updated), timestamp, 'local', updated.confidence
+      );
     }
 
     this.emit('memory:deleted', {
@@ -1075,10 +1129,40 @@ export class TimStore implements MemoryInterface {
       for (const record of records) {
         if (record.entityType === 'entry') {
           if (record.operation === 'delete') {
-            const payload = JSON.parse(record.payload);
+            const payload = JSON.parse(record.payload) as { id: string };
+            const existing = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(payload.id) as
+              RowEntry | undefined;
+            if (existing) {
+              const local = recordFromPayload(
+                payload.id,
+                'entry',
+                existing.tombstoned_at ? 'delete' : 'upsert',
+                JSON.stringify(existing),
+                Date.parse(existing.accessed_at ?? existing.created_at),
+                'local',
+                Number(existing.confidence ?? 1),
+              );
+              const { winner } = resolveLWW(local, record);
+              if (winner !== record) continue;
+            }
             deleteEntry.run(payload.id);
           } else {
             const entry = JSON.parse(record.payload) as RowEntry;
+            const existing = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(entry.id) as
+              RowEntry | undefined;
+            if (existing) {
+              const local = recordFromPayload(
+                entry.id,
+                'entry',
+                existing.tombstoned_at ? 'delete' : 'upsert',
+                JSON.stringify(existing),
+                Date.parse(existing.accessed_at ?? existing.created_at),
+                'local',
+                Number(existing.confidence ?? 1),
+              );
+              const { winner } = resolveLWW(local, record);
+              if (winner !== record) continue;
+            }
             upsertEntry.run(
               entry.id, entry.parent_id, entry.title ?? '', entry.content, entry.content_type,
               entry.depth, entry.confidence, entry.created_at, entry.accessed_at,
@@ -1087,11 +1171,39 @@ export class TimStore implements MemoryInterface {
             );
           }
         } else if (record.entityType === 'edge') {
+          const edge = JSON.parse(record.payload) as RowEdge;
+          const compositeKey = `${edge.source_id}|${edge.target_id}|${edge.type}`;
+          const existing = this.db.prepare(
+            'SELECT * FROM edges WHERE source_id = ? AND target_id = ? AND type = ?',
+          ).get(edge.source_id, edge.target_id, edge.type) as RowEdge | undefined;
+
           if (record.operation === 'delete') {
-            const payload = JSON.parse(record.payload);
-            deleteEdge.run(payload.id);
+            if (existing) {
+              const local = recordFromPayload(
+                compositeKey,
+                'edge',
+                'upsert',
+                JSON.stringify(existing),
+                record.lwwTimestamp,
+                'local',
+              );
+              const { winner } = resolveLWW(local, record);
+              if (winner !== record) continue;
+            }
+            deleteEdge.run(edge.id);
           } else {
-            const edge = JSON.parse(record.payload) as RowEdge;
+            if (existing) {
+              const local = recordFromPayload(
+                compositeKey,
+                'edge',
+                'upsert',
+                JSON.stringify(existing),
+                record.lwwTimestamp,
+                'local',
+              );
+              const { winner } = resolveLWW(local, record);
+              if (winner !== record) continue;
+            }
             upsertEdge.run(
               edge.id, edge.source_id, edge.target_id,
               edge.type, edge.weight, edge.metadata

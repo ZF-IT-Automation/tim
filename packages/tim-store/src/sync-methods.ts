@@ -25,7 +25,7 @@ export function ackStaging(db: Database.Database, keys: string[]): void {
   db.prepare(`UPDATE staging SET acked = 1 WHERE key IN (${placeholders})`).run(...keys);
 }
 
-function recordFromPayload(
+export function recordFromPayload(
   key: string,
   entityType: 'entry' | 'edge',
   operation: 'upsert' | 'delete',

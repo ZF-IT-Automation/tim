@@ -6,7 +6,6 @@ import {
   deriveCounters,
   EXCHANGES_NODE_TITLE,
   findChildByKind,
-  getCurrentBatch,
   KIND_BATCH,
   KIND_EXCHANGE,
   KIND_EXCHANGE_BATCH,
@@ -280,65 +279,79 @@ export class SessionManager {
         ? session.metadata.batch_size
         : DEFAULT_BATCH_SIZE;
 
-    let { batchNode, usersInBatch, allBatches: exchangeBatches } = await getCurrentBatch(
-      this.store,
-      exNode.id,
-    );
+    const written = this.store.runExclusive(() => {
+      let allBatches = this.store.getChildByKindSync(exNode.id, KIND_EXCHANGE_BATCH);
+      let batchNode = allBatches[allBatches.length - 1] ?? null;
+      if (!batchNode) {
+        batchNode = this.store.writeSync('Batch 1', {
+          parentId: exNode.id,
+          metadata: { kind: KIND_EXCHANGE_BATCH, batch_index: 1, order: 1 },
+        });
+        allBatches = [batchNode];
+      }
 
-    const allUserNodes: Entry[] = [];
-    for (const b of exchangeBatches) {
-      const users = (await this.store.getChildrenBySeq(b.id)).filter(
+      let usersInBatch = this.store.getChildrenBySeqSync(batchNode.id).filter(
         u => u.metadata.role === 'user',
       );
-      allUserNodes.push(...users);
-    }
-    let seq = allUserNodes.reduce(
-      (m, u) => Math.max(m, typeof u.metadata.seq === 'number' ? u.metadata.seq : 0),
-      0,
-    );
 
-    let currentUser: Entry | null = allUserNodes[allUserNodes.length - 1] ?? null;
-
-    const written: Entry[] = [];
-    for (const e of entries) {
-      if (e.role === 'user') {
-        if (usersInBatch.length >= batchSize) {
-          const fullBatchId = batchNode.id;
-          const fullBatchIndex =
-            typeof batchNode.metadata.batch_index === 'number'
-              ? batchNode.metadata.batch_index
-              : exchangeBatches.length;
-          const nextIndex = fullBatchIndex + 1;
-          batchNode = await this.store.write(`Batch ${nextIndex}`, {
-            parentId: exNode.id,
-            metadata: { kind: KIND_EXCHANGE_BATCH, batch_index: nextIndex, order: nextIndex },
-          });
-          usersInBatch = [];
-          this.onBatchFull?.({
-            sessionId,
-            batchId: fullBatchId,
-            batchIndex: fullBatchIndex,
-          });
-        }
-        seq += 1;
-        currentUser = await this.store.write(e.content, {
-          parentId: batchNode.id,
-          metadata: { kind: KIND_EXCHANGE, role: 'user', seq, sessionId },
-          tags: ['#exchange'],
-        });
-        usersInBatch.push(currentUser);
-        written.push(currentUser);
-      } else {
-        const parentId = currentUser ? currentUser.id : batchNode.id;
-        const agentSeq = currentUser ? currentUser.metadata.seq : seq;
-        const a = await this.store.write(e.content, {
-          parentId,
-          metadata: { kind: KIND_EXCHANGE, role: 'agent', seq: agentSeq, sessionId },
-          tags: ['#exchange'],
-        });
-        written.push(a);
+      const allUserNodes: Entry[] = [];
+      for (const b of allBatches) {
+        const users = this.store.getChildrenBySeqSync(b.id).filter(
+          u => u.metadata.role === 'user',
+        );
+        allUserNodes.push(...users);
       }
-    }
+      let seq = allUserNodes.reduce(
+        (m, u) => Math.max(m, typeof u.metadata.seq === 'number' ? u.metadata.seq : 0),
+        0,
+      );
+
+      let currentUser: Entry | null = allUserNodes[allUserNodes.length - 1] ?? null;
+      const result: Entry[] = [];
+
+      for (const e of entries) {
+        if (e.role === 'user') {
+          if (usersInBatch.length >= batchSize) {
+            const fullBatchId = batchNode.id;
+            const fullBatchIndex =
+              typeof batchNode.metadata.batch_index === 'number'
+                ? batchNode.metadata.batch_index
+                : allBatches.length;
+            const nextIndex = fullBatchIndex + 1;
+            batchNode = this.store.writeSync(`Batch ${nextIndex}`, {
+              parentId: exNode.id,
+              metadata: { kind: KIND_EXCHANGE_BATCH, batch_index: nextIndex, order: nextIndex },
+            });
+            allBatches.push(batchNode);
+            usersInBatch = [];
+            this.onBatchFull?.({
+              sessionId,
+              batchId: fullBatchId,
+              batchIndex: fullBatchIndex,
+            });
+          }
+          seq += 1;
+          currentUser = this.store.writeSync(e.content, {
+            parentId: batchNode.id,
+            metadata: { kind: KIND_EXCHANGE, role: 'user', seq, sessionId },
+            tags: ['#exchange'],
+          });
+          usersInBatch.push(currentUser);
+          result.push(currentUser);
+        } else {
+          const parentId = currentUser ? currentUser.id : batchNode.id;
+          const agentSeq = currentUser ? currentUser.metadata.seq : seq;
+          const a = this.store.writeSync(e.content, {
+            parentId,
+            metadata: { kind: KIND_EXCHANGE, role: 'agent', seq: agentSeq, sessionId },
+            tags: ['#exchange'],
+          });
+          result.push(a);
+        }
+      }
+
+      return result;
+    });
 
     const { exchangeCount } = await deriveCounters(this.store, sessionId);
     await this.store.update(sessionId, {
