@@ -27,7 +27,7 @@ import {
   syncNearestProjectMarker,
 } from 'tim-hooks';
 import { tim_export, tim_import } from 'tim-migrate';
-import { autoPush, autoPull } from 'tim-sync-client';
+import { autoPush, autoPull, resetSyncCooldowns, loadConfig as loadSyncConfig } from 'tim-sync-client';
 import { validateWriteTags } from './write-validate.js';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -1699,6 +1699,24 @@ export async function startServer(): Promise<void> {
                 content: [{ type: 'text', text: JSON.stringify({ cursor, pendingCount: pending.length }) }],
               };
             }
+            case 'pull': {
+              const config = loadSyncConfig();
+              if (!config) {
+                return { content: [{ type: 'text', text: 'Sync not configured (set TIM_SYNC_PASSPHRASE and tim-sync config)' }] };
+              }
+              // Force re-arm: manual pull bypasses cooldown + in-flight guard
+              resetSyncCooldowns();
+              const result = await autoPull(s);
+              const cursor = await s.getStagingCursor();
+              return {
+                content: [{ type: 'text', text: JSON.stringify({
+                  pulled: result.pulled ?? 0,
+                  conflicts: result.conflicts ?? 0,
+                  cursor,
+                  timestamp: new Date().toISOString(),
+                }) }],
+              };
+            }
             default:
               return { content: [{ type: 'text', text: `Sync action '${action}' not yet implemented` }] };
           }
@@ -1717,7 +1735,7 @@ export async function startServer(): Promise<void> {
             const edges = await s.getEdges(entryId, 'outgoing');
             const leaseEdge = edges.find(e => e.type === 'leases');
             if (leaseEdge) {
-              await s.update(leaseEdge.id, { irrelevant: true } as any);
+              await s.unlink(leaseEdge.id);
               return { content: [{ type: 'text', text: `Revoked lease on ${entryId}` }] };
             }
             return { content: [{ type: 'text', text: `No active lease found for ${entryId}` }] };

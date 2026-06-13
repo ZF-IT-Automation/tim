@@ -1027,6 +1027,43 @@ export class TimStore implements MemoryInterface {
     return edge;
   }
 
+  async unlink(edgeId: string): Promise<void> {
+    const row = this.db.prepare('SELECT * FROM edges WHERE id = ?').get(edgeId) as RowEdge | undefined;
+    if (!row) return;
+
+    this.db.prepare('DELETE FROM edges WHERE id = ?').run(edgeId);
+
+    const edgeKey = `${row.source_id}|${row.target_id}|${row.type}`;
+    const ts = Date.now();
+    const edgeRow = {
+      id: row.id,
+      source_id: row.source_id,
+      target_id: row.target_id,
+      type: row.type,
+      weight: row.weight,
+      metadata: row.metadata,
+    };
+    this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
+      lww_timestamp, lww_device, lww_confidence)
+      VALUES (?, 'edge', 'delete', ?, ?, ?, ?)`).run(
+      edgeKey, JSON.stringify(edgeRow), ts, this.agentId, 1.0,
+    );
+
+    const edge: Edge = {
+      id: row.id,
+      sourceId: row.source_id,
+      targetId: row.target_id,
+      type: row.type as EdgeType,
+      weight: row.weight,
+      metadata: row.metadata ? JSON.parse(row.metadata) : {},
+    };
+    this.emit('edge:deleted', {
+      edge,
+      agentId: this.agentId,
+      timestamp: new Date().toISOString(),
+    });
+  }
+
   async getEdges(id: string, direction: 'outgoing' | 'incoming' | 'both' = 'both'): Promise<Edge[]> {
     let rows: RowEdge[] = [];
 

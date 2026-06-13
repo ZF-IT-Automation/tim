@@ -24,5 +24,5 @@ export {
 } from './config.js';
 export { loadQueue, saveQueue, enqueue, flushQueue, PUSH_CHUNK, type QueueItem } from './queue.js';
 export { pushCycle, pullCycle, runPush, runPull, buildSyncContext, type SyncCycleContext } from './sync.js';
-export { autoPush, autoPull, resetSyncCooldowns } from './auto-sync.js';
+export { autoPush, autoPull, resetSyncCooldowns, _peekCooldown } from './auto-sync.js';
 export { startDevServer, resetDevServer } from './dev-server.js';

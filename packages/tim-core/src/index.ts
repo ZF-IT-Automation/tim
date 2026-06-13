@@ -204,6 +204,7 @@ export type EventType =
   | 'memory:updated'
   | 'memory:deleted'
   | 'edge:created'
+  | 'edge:deleted'
   | 'sync:pushed'
   | 'sync:pulled'
   | 'agent:registered'

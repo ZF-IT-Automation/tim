@@ -17,39 +17,68 @@ function markSynced(key: string): void {
   syncCooldowns.set(key, Date.now());
 }
 
-export async function autoPush(store: TimStore): Promise<void> {
+/** @internal peek at cooldown timestamp for tests (0 = not armed) */
+export function _peekCooldown(key: string): number {
+  return syncCooldowns.get(key) ?? 0;
+}
+
+export interface AutoPushResult {
+  ran: boolean;
+  pushed?: number;
+  queued?: boolean;
+  reason?: string;
+}
+
+export async function autoPush(store: TimStore): Promise<AutoPushResult> {
   const passphrase = process.env.TIM_SYNC_PASSPHRASE;
-  if (!passphrase || !shouldSync('push', COOLDOWN_MS) || pushInFlight) return;
+  if (!passphrase) return { ran: false, reason: 'no-passphrase' };
+  if (pushInFlight) return { ran: false, reason: 'in-flight' };
+  if (!shouldSync('push', COOLDOWN_MS)) return { ran: false, reason: 'cooldown' };
 
   const config = loadConfig();
-  if (!config) return;
+  if (!config) return { ran: false, reason: 'no-config' };
 
-  markSynced('push');
   pushInFlight = true;
   try {
     const ctx = buildSyncContext(store, config, passphrase, getDeviceId());
-    await runPush(ctx);
+    const result = await runPush(ctx);
+    markSynced('push'); // ONLY arm cooldown on success
+    return { ran: true, pushed: result.pushed, queued: result.queued };
   } catch (err) {
     console.error('[tim-sync] autoPush failed:', (err as Error).message);
+    // do NOT markSynced — let next call retry immediately (gated by InFlight only)
+    return { ran: true, reason: 'error' };
   } finally {
     pushInFlight = false;
   }
 }
 
-export async function autoPull(store: TimStore): Promise<void> {
+export interface AutoPullResult {
+  ran: boolean;
+  pulled?: number;
+  conflicts?: number;
+  reason?: string;
+}
+
+export async function autoPull(store: TimStore): Promise<AutoPullResult> {
   const passphrase = process.env.TIM_SYNC_PASSPHRASE;
-  if (!passphrase || !shouldSync('pull', COOLDOWN_MS) || pullInFlight) return;
+  if (!passphrase) return { ran: false, reason: 'no-passphrase' };
+  if (pullInFlight) return { ran: false, reason: 'in-flight' };
+  if (!shouldSync('pull', COOLDOWN_MS)) return { ran: false, reason: 'cooldown' };
 
   const config = loadConfig();
-  if (!config) return;
+  if (!config) return { ran: false, reason: 'no-config' };
 
-  markSynced('pull');
   pullInFlight = true;
   try {
     const ctx = buildSyncContext(store, config, passphrase, getDeviceId());
-    await runPull(ctx);
+    const result = await runPull(ctx);
+    markSynced('pull'); // ONLY arm cooldown on success
+    return { ran: true, pulled: result.pulled, conflicts: result.conflicts };
   } catch (err) {
     console.error('[tim-sync] autoPull failed:', (err as Error).message);
+    // do NOT markSynced — let next call retry immediately (gated by InFlight only)
+    return { ran: true, reason: 'error' };
   } finally {
     pullInFlight = false;
   }
