@@ -1,0 +1,5 @@
+# packages/tim-core/config/types.yaml
+# Repo-default custom types (versioned, empty by default).
+# User override: ~/.tim/types.yaml
+# Load order at startup: repo-default → user-override → final merged ALL_TYPES
+custom_types: {}

@@ -1,24 +1,5 @@
 export type ContentType = 'text' | 'json' | 'blob';
-/**
- * Canonical semantic type for root-level entries that the agent treats
- * differently from generic user content. Stored in `metadata.type` and
- * queried via `json_extract(metadata, '$.type')`.
- *
- * Phase 0 of the Tags → Metadata.type refactor introduces this enum with
- * the two values the session-start hook needs: `rule` (operative rules
- * the agent must follow) and `human` (knowledge about the user —
- * preferences, identity, context). Future phases may extend the enum.
- *
- * The legacy representation (`#rule` / `#human` as string tags) is
- * deprecated but still readable via the `--tag` alias on
- * `root-entries` for backward compatibility. New writes should use
- * `metadata.type` directly.
- */
-export declare const METADATA_TYPES: readonly ["rule", "human"];
-export type MetadataType = (typeof METADATA_TYPES)[number];
-export declare function isMetadataType(value: unknown): value is MetadataType;
-/** Normalize a legacy tag value (e.g. "#rule", " rule ", "RULE") to a MetadataType, or null. */
-export declare function normalizeLegacyTypeTag(tag: string | null | undefined): MetadataType | null;
+export { BUILTIN_METADATA_TYPES, BUILTIN_TYPES, LEGACY_METADATA_TYPES, ALL_METADATA_TYPES, METADATA_TYPES, type BuiltinMetadataType, type BuiltinType, type LegacyMetadataType, type MetadataType, type EntryMetadata, isBuiltinMetadataType, isBuiltinType, isMetadataType, normalizeLegacyTypeTag, } from './types.js';
 export interface Entry {
     id: string;
     parentId: string | null;
@@ -35,7 +16,7 @@ export interface Entry {
     irrelevant: boolean;
     favorite: boolean;
     tombstonedAt: string | null;
-    metadata: Record<string, unknown>;
+    metadata: import('./types.js').EntryMetadata;
 }
 export type EdgeType = 'relates' | 'extends' | 'contradicts' | 'implements' | 'blocks' | 'leases' | 'tagged' | 'summarizes' | 'session_exchange' | 'contradicted_by';
 export interface Edge {

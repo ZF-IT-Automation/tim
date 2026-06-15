@@ -7,34 +7,22 @@ import { ulid } from 'ulid';
 
 export type ContentType = 'text' | 'json' | 'blob';
 
-/**
- * Canonical semantic type for root-level entries that the agent treats
- * differently from generic user content. Stored in `metadata.type` and
- * queried via `json_extract(metadata, '$.type')`.
- *
- * Phase 0 of the Tags → Metadata.type refactor introduces this enum with
- * the two values the session-start hook needs: `rule` (operative rules
- * the agent must follow) and `human` (knowledge about the user —
- * preferences, identity, context). Future phases may extend the enum.
- *
- * The legacy representation (`#rule` / `#human` as string tags) is
- * deprecated but still readable via the `--tag` alias on
- * `root-entries` for backward compatibility. New writes should use
- * `metadata.type` directly.
- */
-export const METADATA_TYPES = ['rule', 'human'] as const;
-export type MetadataType = (typeof METADATA_TYPES)[number];
-
-export function isMetadataType(value: unknown): value is MetadataType {
-  return typeof value === 'string' && (METADATA_TYPES as readonly string[]).includes(value);
-}
-
-/** Normalize a legacy tag value (e.g. "#rule", " rule ", "RULE") to a MetadataType, or null. */
-export function normalizeLegacyTypeTag(tag: string | null | undefined): MetadataType | null {
-  if (typeof tag !== 'string') return null;
-  const cleaned = tag.trim().replace(/^#/, '').toLowerCase();
-  return isMetadataType(cleaned) ? cleaned : null;
-}
+export {
+  BUILTIN_METADATA_TYPES,
+  BUILTIN_TYPES,
+  LEGACY_METADATA_TYPES,
+  ALL_METADATA_TYPES,
+  METADATA_TYPES,
+  type BuiltinMetadataType,
+  type BuiltinType,
+  type LegacyMetadataType,
+  type MetadataType,
+  type EntryMetadata,
+  isBuiltinMetadataType,
+  isBuiltinType,
+  isMetadataType,
+  normalizeLegacyTypeTag,
+} from './types.js';
 
 export interface Entry {
   id: string;                    // ULID
@@ -52,7 +40,7 @@ export interface Entry {
   irrelevant: boolean;           // soft delete
   favorite: boolean;             // curated highlight flag
   tombstonedAt: string | null;   // hard-delete marker
-  metadata: Record<string, unknown>; // extensible
+  metadata: import('./types.js').EntryMetadata;
 }
 
 // ─── Edge ─────────────────────────────────────────────────

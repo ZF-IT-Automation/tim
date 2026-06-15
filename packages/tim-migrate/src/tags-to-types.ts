@@ -3,13 +3,12 @@
 // already-migrated DB is a no-op.
 
 import type { TimStore } from 'tim-store';
-import { isMetadataType, type MetadataType } from 'tim-core';
+import { isMetadataType, type LegacyMetadataType } from 'tim-core';
 
 /**
- * Mapping from legacy tag → metadata.type. Phase 0 only knows two
- * values (`rule`, `human`). New types will be added in later phases.
+ * Mapping from legacy tag → metadata.type. Phase 0 tags (`#rule`, `#human`).
  */
-const LEGACY_TAG_TO_TYPE: ReadonlyMap<string, MetadataType> = new Map([
+const LEGACY_TAG_TO_TYPE: ReadonlyMap<string, LegacyMetadataType> = new Map([
   ['#rule', 'rule'],
   ['rule', 'rule'],
   ['#human', 'human'],
@@ -21,7 +20,7 @@ export interface MigrationEntryResult {
   title: string;
   oldTags: string[];
   newTags: string[];
-  typeSet: MetadataType | null;
+  typeSet: LegacyMetadataType | null;
   changed: boolean;
 }
 
@@ -117,7 +116,7 @@ export async function migrateTagsToTypes(
     }
 
     // Find the first recognized legacy tag in the tag list.
-    let detectedType: MetadataType | null = null;
+    let detectedType: LegacyMetadataType | null = null;
     const removableIndices = new Set<number>();
     for (let i = 0; i < oldTags.length; i++) {
       const key = tagToTypeKey(oldTags[i]);
