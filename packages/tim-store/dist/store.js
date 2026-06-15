@@ -466,44 +466,74 @@ class TimStore {
     async getTasks(opts) {
         let sql = `
       SELECT e.* FROM entries e
-      WHERE json_extract(e.metadata, '$.task') = true
+      WHERE json_extract(e.metadata, '$.task') IS NOT NULL
+        AND json_extract(e.metadata, '$.task') != false
         AND e.irrelevant = 0
-      AND e.tombstoned_at IS NULL
         AND e.tombstoned_at IS NULL
     `;
         const params = [];
         if (opts?.status) {
-            sql += ` AND json_extract(e.metadata, '$.status') = ?`;
+            sql += ` AND COALESCE(
+        json_extract(e.metadata, '$.task.status'),
+        json_extract(e.metadata, '$.status')
+      ) = ?`;
             params.push(opts.status);
         }
         sql += `
       ORDER BY
-        CASE json_extract(e.metadata, '$.status')
+        CASE COALESCE(
+          json_extract(e.metadata, '$.task.status'),
+          json_extract(e.metadata, '$.status')
+        )
           WHEN 'in_progress' THEN 0
           WHEN 'todo' THEN 1
           ELSE 2
         END,
-        CASE json_extract(e.metadata, '$.priority')
+        CASE COALESCE(
+          json_extract(e.metadata, '$.task.priority'),
+          json_extract(e.metadata, '$.priority')
+        )
           WHEN 'high' THEN 0
           WHEN 'medium' THEN 1
           WHEN 'low' THEN 2
           ELSE 3
         END,
-        CASE WHEN json_extract(e.metadata, '$.due') IS NULL THEN 1 ELSE 0 END,
-        json_extract(e.metadata, '$.due') ASC
+        CASE WHEN COALESCE(
+          json_extract(e.metadata, '$.task.due_date'),
+          json_extract(e.metadata, '$.due')
+        ) IS NULL THEN 1 ELSE 0 END,
+        COALESCE(
+          json_extract(e.metadata, '$.task.due_date'),
+          json_extract(e.metadata, '$.due')
+        ) ASC
     `;
         const rows = this.db.prepare(sql).all(...params);
         return rows.map(row => {
             const meta = JSON.parse(row.metadata);
+            let status = null;
+            let priority = null;
+            let due = null;
+            const task = meta.task;
+            if (typeof task === 'object' && task !== null && !Array.isArray(task)) {
+                const tm = task;
+                status = tm.status ?? null;
+                priority = tm.priority ?? null;
+                due = tm.due_date ?? null;
+            }
+            else if (task === true) {
+                status = meta.status ?? null;
+                priority = meta.priority ?? null;
+                due = meta.due ?? null;
+            }
             return {
                 id: row.id,
                 title: row.title,
                 content: row.content,
                 parent_id: row.parent_id,
                 project_label: this.findProjectLabelForParent(row.parent_id),
-                status: meta.status ?? null,
-                priority: meta.priority ?? null,
-                due: meta.due ?? null,
+                status,
+                priority,
+                due,
             };
         });
     }

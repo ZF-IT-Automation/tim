@@ -14,6 +14,8 @@ Usage:
   python3 migrate_v3_types.py --verify                     # stats only, no writes
   python3 migrate_v3_types.py --verify --inherit           # section pass + inheritance stats
   python3 migrate_v3_types.py --dry-run --inherit          # show inheritance upgrades
+  python3 migrate_v3_types.py --task-subsections           # migrate tags → metadata.task object
+  python3 migrate_v3_types.py --task-subsections --verify  # stats only, no writes
   python3 migrate_v3_types.py --force-rebuild-types        # overwrite existing type (DANGEROUS)
 
 The script is OUTSIDE the tim-mcp TypeScript package because:
@@ -98,6 +100,8 @@ BUILTIN_TYPES = frozenset({
     "standard", "project", "task", "error", "decision", "learning", "idea",
     "log", "commit", "summary", "session", "batch_summary", "exchange", "event",
 })
+
+STATUS_TAGS = frozenset({"todo", "done", "in_progress", "cancelled"})
 
 LOG_PATH = "/var/log/tim-migration.log"
 MCP_TIMEOUT_SEC = 30.0
@@ -481,6 +485,187 @@ def merge_metadata(existing: dict[str, Any], new_type: str) -> dict[str, Any]:
     return merged
 
 
+# ─── Task sub-sections (Phase 2a) ────────────────────────────────────────────
+
+def is_task_object(task_val: Any) -> bool:
+    return isinstance(task_val, dict) and not isinstance(task_val, bool)
+
+
+def parse_task_tags(tags: list[Any]) -> dict[str, str]:
+    """Parse legacy #todo / #priority-* / #due-YYYY-MM-DD tags into task fields."""
+    parsed: dict[str, str] = {}
+    for tag in tags:
+        if not isinstance(tag, str):
+            continue
+        cleaned = tag.strip().lstrip("#")
+        if cleaned in STATUS_TAGS and "status" not in parsed:
+            parsed["status"] = cleaned
+        elif cleaned.startswith("priority-") and "priority" not in parsed:
+            parsed["priority"] = cleaned[len("priority-") :]
+        elif cleaned.startswith("due-") and "due_date" not in parsed:
+            parsed["due_date"] = cleaned[len("due-") :]
+    return parsed
+
+
+def build_task_object(
+    tags: list[Any],
+    meta: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Build nested metadata.task from tags + flat completion_evidence. None = skip."""
+    parsed = parse_task_tags(tags)
+    completion_evidence = meta.get("completion_evidence")
+
+    if not parsed and completion_evidence is None:
+        return None
+
+    task_obj: dict[str, Any] = {
+        "status": parsed.get("status", "todo"),
+        "priority": parsed.get("priority", "medium"),
+    }
+    if "due_date" in parsed:
+        task_obj["due_date"] = parsed["due_date"]
+    if completion_evidence is not None:
+        task_obj["completion_evidence"] = completion_evidence
+    return task_obj
+
+
+def collect_task_entries(
+    all_pairs: list[tuple[dict[str, Any], str]],
+) -> list[dict[str, Any]]:
+    """Filter walked entries to those with metadata.type == task."""
+    tasks: list[dict[str, Any]] = []
+    for entry, _derived in all_pairs:
+        meta = entry.get("metadata") or {}
+        if isinstance(meta, dict) and meta.get("type") == "task":
+            tasks.append(entry)
+    return tasks
+
+
+def run_task_subsections(args: argparse.Namespace, logger: logging.Logger) -> int:
+    server_path = Path(args.server).resolve()
+    env: dict[str, str] = {}
+    if args.db:
+        env["TIM_DB_PATH"] = args.db
+
+    client = McpClient(server_path, env=env)
+    client.start()
+
+    total = 0
+    updated = 0
+    skipped = 0
+    errors = 0
+
+    try:
+        projects = discover_projects(client, logger)
+        logger.info("Discovered %d project(s)", len(projects))
+
+        all_pairs: list[tuple[dict[str, Any], str]] = []
+        parent_map: dict[str, str] = {}
+        for label in projects:
+            tree = load_project_tree(client, label, depth=args.depth)
+            if tree is None:
+                logger.warning("Could not load project %s", label)
+                continue
+            walk_entries(tree, None, None, None, all_pairs, parent_map)
+
+        task_entries = collect_task_entries(all_pairs)
+        total = len(task_entries)
+        logger.info("Found %d task entries (metadata.type=task)", total)
+
+        limit = args.limit if args.limit and args.limit > 0 else None
+        processed = 0
+
+        for entry in task_entries:
+            if limit is not None and processed >= limit:
+                break
+
+            entry_id = entry.get("id")
+            if not isinstance(entry_id, str) or not entry_id:
+                continue
+
+            meta = entry.get("metadata") or {}
+            if not isinstance(meta, dict):
+                meta = {}
+
+            tags = entry.get("tags") or []
+            if not isinstance(tags, list):
+                tags = []
+
+            existing_task = meta.get("task")
+            if is_task_object(existing_task):
+                record = {
+                    "id": entry_id,
+                    "tags": tags,
+                    "task": existing_task,
+                    "status": "skipped",
+                }
+                print(json.dumps(record))
+                skipped += 1
+                processed += 1
+                continue
+
+            task_obj = build_task_object(tags, meta)
+            if task_obj is None:
+                record = {
+                    "id": entry_id,
+                    "tags": tags,
+                    "task": None,
+                    "status": "skipped",
+                }
+                print(json.dumps(record))
+                skipped += 1
+                processed += 1
+                continue
+
+            record = {
+                "id": entry_id,
+                "tags": tags,
+                "task": task_obj,
+                "status": "updated" if not args.verify else "would_update",
+            }
+
+            if args.verify or args.dry_run:
+                print(json.dumps(record))
+                if not args.verify:
+                    updated += 1
+                processed += 1
+                continue
+
+            new_meta = dict(meta)
+            new_meta["task"] = task_obj
+            try:
+                client.call_tool("tim_update", {"id": entry_id, "metadata": new_meta})
+                record["status"] = "updated"
+                print(json.dumps(record))
+                updated += 1
+            except McpError as exc:
+                errors += 1
+                record["status"] = "error"
+                record["error"] = str(exc)
+                print(json.dumps(record))
+                logger.error("tim_update failed for %s: %s", entry_id, exc)
+
+            processed += 1
+            if processed % 100 == 0:
+                logger.info("Progress: %d task entries processed", processed)
+
+    finally:
+        client.close()
+
+    print(
+        f"\n=== Task sub-sections ===\n"
+        f"  total: {total}\n"
+        f"  updated: {updated}\n"
+        f"  skipped: {skipped}\n"
+        f"  errors: {errors}",
+        file=sys.stderr,
+    )
+    mode = "verify" if args.verify else ("dry-run" if args.dry_run else "live")
+    print(f"  mode: {mode}", file=sys.stderr)
+
+    return 1 if errors > 0 else 0
+
+
 def run_migration(args: argparse.Namespace, logger: logging.Logger) -> int:
     server_path = Path(args.server).resolve()
     env: dict[str, str] = {}
@@ -649,6 +834,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=False,
         help="Second pass: inherit type from typed ancestors for unmapped entries",
     )
+    p.add_argument(
+        "--task-subsections",
+        action="store_true",
+        default=False,
+        help="Migrate legacy task tags into nested metadata.task object (Phase 2a)",
+    )
     return p
 
 
@@ -661,16 +852,23 @@ def main() -> int:
         logger.error("--dry-run and --verify are mutually exclusive")
         return 2
 
+    if args.task_subsections and args.inherit:
+        logger.error("--task-subsections and --inherit are mutually exclusive")
+        return 2
+
     logger.info(
-        "migrate_v3_types start (dry_run=%s verify=%s inherit=%s limit=%s force=%s)",
+        "migrate_v3_types start (dry_run=%s verify=%s inherit=%s task_subsections=%s limit=%s force=%s)",
         args.dry_run,
         args.verify,
         args.inherit,
+        args.task_subsections,
         args.limit,
         args.force_rebuild_types,
     )
 
     try:
+        if args.task_subsections:
+            return run_task_subsections(args, logger)
         return run_migration(args, logger)
     except McpError as exc:
         logger.error("Fatal MCP error: %s", exc)

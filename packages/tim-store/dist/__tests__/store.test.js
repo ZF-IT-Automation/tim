@@ -414,6 +414,59 @@ let store;
             (0, vitest_1.expect)(tasks).toHaveLength(1);
             (0, vitest_1.expect)(tasks[0].id).toBe(task.id);
         });
+        (0, vitest_1.it)('reads nested metadata.task sub-section', async () => {
+            const project = await store.createProject('P0208', { content: 'Nested Task' });
+            const section = await store.write('Tasks', {
+                parentId: project.id,
+                metadata: { kind: 'section' },
+            });
+            await store.write('Nested todo', {
+                parentId: section.id,
+                metadata: {
+                    type: 'task',
+                    task: {
+                        status: 'todo',
+                        priority: 'high',
+                        due_date: '2026-07-01',
+                    },
+                },
+            });
+            const tasks = await store.getTasks();
+            (0, vitest_1.expect)(tasks).toHaveLength(1);
+            (0, vitest_1.expect)(tasks[0].status).toBe('todo');
+            (0, vitest_1.expect)(tasks[0].priority).toBe('high');
+            (0, vitest_1.expect)(tasks[0].due).toBe('2026-07-01');
+        });
+        (0, vitest_1.it)('reads legacy flat metadata when task is boolean true', async () => {
+            await seedTaskProject('P0209', 'Legacy', 'Flat task', {
+                status: 'in_progress',
+                priority: 'medium',
+                due: '2026-08-15',
+            });
+            const tasks = await store.getTasks();
+            (0, vitest_1.expect)(tasks).toHaveLength(1);
+            (0, vitest_1.expect)(tasks[0].status).toBe('in_progress');
+            (0, vitest_1.expect)(tasks[0].priority).toBe('medium');
+            (0, vitest_1.expect)(tasks[0].due).toBe('2026-08-15');
+        });
+        (0, vitest_1.it)('filters nested task status', async () => {
+            const project = await store.createProject('P0210', { content: 'Filter Nested' });
+            const section = await store.write('Tasks', {
+                parentId: project.id,
+                metadata: { kind: 'section' },
+            });
+            await store.write('Open nested', {
+                parentId: section.id,
+                metadata: { type: 'task', task: { status: 'todo', priority: 'low' } },
+            });
+            await store.write('Done nested', {
+                parentId: section.id,
+                metadata: { type: 'task', task: { status: 'done', priority: 'low' } },
+            });
+            const todoTasks = await store.getTasks({ status: 'todo' });
+            (0, vitest_1.expect)(todoTasks).toHaveLength(1);
+            (0, vitest_1.expect)(todoTasks[0].title).toBe('Open nested');
+        });
     });
     // ─── Overview query methods ─────────────────────────────
     (0, vitest_1.describe)('listProjects', () => {

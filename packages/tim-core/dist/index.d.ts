@@ -1,5 +1,5 @@
 export type ContentType = 'text' | 'json' | 'blob';
-export { BUILTIN_METADATA_TYPES, BUILTIN_TYPES, LEGACY_METADATA_TYPES, ALL_METADATA_TYPES, METADATA_TYPES, type BuiltinMetadataType, type BuiltinType, type LegacyMetadataType, type MetadataType, type EntryMetadata, isBuiltinMetadataType, isBuiltinType, isMetadataType, normalizeLegacyTypeTag, } from './types.js';
+export { BUILTIN_METADATA_TYPES, BUILTIN_TYPES, LEGACY_METADATA_TYPES, ALL_METADATA_TYPES, METADATA_TYPES, type BuiltinMetadataType, type BuiltinType, type LegacyMetadataType, type MetadataType, type EntryMetadata, type TaskMetadata, type RuleMetadata, type BugMetadata, isBuiltinMetadataType, isBuiltinType, isMetadataType, normalizeLegacyTypeTag, } from './types.js';
 export interface Entry {
     id: string;
     parentId: string | null;

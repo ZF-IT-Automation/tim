@@ -37,6 +37,26 @@ export const ALL_METADATA_TYPES = [
   ...LEGACY_METADATA_TYPES,
 ] as const;
 
+/** Nested task sub-section (Schema v3 Phase 2a). */
+export interface TaskMetadata {
+  status?: 'todo' | 'in_progress' | 'done' | 'cancelled';
+  priority?: 'low' | 'medium' | 'high' | 'critical';
+  due_date?: string; // ISO 8601 date
+  completion_evidence?: string | null;
+}
+
+/** Stub for Phase 2b */
+export interface RuleMetadata {
+  trigger?: string;
+  action?: string;
+}
+
+/** Stub for Phase 2c */
+export interface BugMetadata {
+  severity?: 'low' | 'medium' | 'high' | 'critical';
+  status?: 'open' | 'investigating' | 'fixed' | 'verified' | 'wontfix';
+}
+
 /** Entry metadata — `type` is the Schema v3 semantic classifier. */
 export interface EntryMetadata {
   type?: MetadataType;

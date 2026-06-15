@@ -563,47 +563,78 @@ export class TimStore implements MemoryInterface {
   async getTasks(opts?: GetTasksOptions): Promise<TaskRecord[]> {
     let sql = `
       SELECT e.* FROM entries e
-      WHERE json_extract(e.metadata, '$.task') = true
+      WHERE json_extract(e.metadata, '$.task') IS NOT NULL
+        AND json_extract(e.metadata, '$.task') != false
         AND e.irrelevant = 0
-      AND e.tombstoned_at IS NULL
         AND e.tombstoned_at IS NULL
     `;
     const params: unknown[] = [];
 
     if (opts?.status) {
-      sql += ` AND json_extract(e.metadata, '$.status') = ?`;
+      sql += ` AND COALESCE(
+        json_extract(e.metadata, '$.task.status'),
+        json_extract(e.metadata, '$.status')
+      ) = ?`;
       params.push(opts.status);
     }
 
     sql += `
       ORDER BY
-        CASE json_extract(e.metadata, '$.status')
+        CASE COALESCE(
+          json_extract(e.metadata, '$.task.status'),
+          json_extract(e.metadata, '$.status')
+        )
           WHEN 'in_progress' THEN 0
           WHEN 'todo' THEN 1
           ELSE 2
         END,
-        CASE json_extract(e.metadata, '$.priority')
+        CASE COALESCE(
+          json_extract(e.metadata, '$.task.priority'),
+          json_extract(e.metadata, '$.priority')
+        )
           WHEN 'high' THEN 0
           WHEN 'medium' THEN 1
           WHEN 'low' THEN 2
           ELSE 3
         END,
-        CASE WHEN json_extract(e.metadata, '$.due') IS NULL THEN 1 ELSE 0 END,
-        json_extract(e.metadata, '$.due') ASC
+        CASE WHEN COALESCE(
+          json_extract(e.metadata, '$.task.due_date'),
+          json_extract(e.metadata, '$.due')
+        ) IS NULL THEN 1 ELSE 0 END,
+        COALESCE(
+          json_extract(e.metadata, '$.task.due_date'),
+          json_extract(e.metadata, '$.due')
+        ) ASC
     `;
 
     const rows = this.db.prepare(sql).all(...params) as RowEntry[];
     return rows.map(row => {
       const meta = JSON.parse(row.metadata) as Record<string, unknown>;
+      let status: string | null = null;
+      let priority: string | null = null;
+      let due: string | null = null;
+
+      const task = meta.task;
+      if (typeof task === 'object' && task !== null && !Array.isArray(task)) {
+        const tm = task as Record<string, unknown>;
+        status = (tm.status as string | undefined) ?? null;
+        priority = (tm.priority as string | undefined) ?? null;
+        due = (tm.due_date as string | undefined) ?? null;
+      } else if (task === true) {
+        status = (meta.status as string | undefined) ?? null;
+        priority = (meta.priority as string | undefined) ?? null;
+        due = (meta.due as string | undefined) ?? null;
+      }
+
       return {
         id: row.id,
         title: row.title,
         content: row.content,
         parent_id: row.parent_id,
         project_label: this.findProjectLabelForParent(row.parent_id),
-        status: (meta.status as string | undefined) ?? null,
-        priority: (meta.priority as string | undefined) ?? null,
-        due: (meta.due as string | undefined) ?? null,
+        status,
+        priority,
+        due,
       };
     });
   }
