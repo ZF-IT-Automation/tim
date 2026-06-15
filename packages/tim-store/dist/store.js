@@ -252,6 +252,7 @@ class TimStore {
       WHERE e.parent_id = ?
         AND e.title = ?
         AND e.irrelevant = 0
+      AND e.tombstoned_at IS NULL
         AND e.tombstoned_at IS NULL
       ORDER BY e.created_at ASC
     `).all(projectRow.id, title);
@@ -467,6 +468,7 @@ class TimStore {
       SELECT e.* FROM entries e
       WHERE json_extract(e.metadata, '$.task') = true
         AND e.irrelevant = 0
+      AND e.tombstoned_at IS NULL
         AND e.tombstoned_at IS NULL
     `;
         const params = [];
@@ -838,6 +840,7 @@ class TimStore {
       INNER JOIN fts_entries f ON e.rowid = f.rowid
       WHERE fts_entries MATCH ?
       AND e.irrelevant = 0
+      AND e.tombstoned_at IS NULL
       ORDER BY rank
       LIMIT ?
     `).all(sanitized, limit);
