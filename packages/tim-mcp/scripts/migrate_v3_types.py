@@ -16,6 +16,8 @@ Usage:
   python3 migrate_v3_types.py --dry-run --inherit          # show inheritance upgrades
   python3 migrate_v3_types.py --task-subsections           # migrate tags → metadata.task object
   python3 migrate_v3_types.py --task-subsections --verify  # stats only, no writes
+  python3 migrate_v3_types.py --rule-subsections           # migrate #rule → metadata.rule object
+  python3 migrate_v3_types.py --rule-subsections --verify  # stats only, no writes
   python3 migrate_v3_types.py --force-rebuild-types        # overwrite existing type (DANGEROUS)
 
 The script is OUTSIDE the tim-mcp TypeScript package because:
@@ -64,6 +66,7 @@ import argparse
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 import time
@@ -86,6 +89,7 @@ SECTION_TO_TYPE: dict[str, str] = {
     "log": "log",
     "commits": "commit",
     "summary": "summary",
+    "rules": "rule",
 }
 
 KIND_TO_TYPE: dict[str, str] = {
@@ -666,6 +670,184 @@ def run_task_subsections(args: argparse.Namespace, logger: logging.Logger) -> in
     return 1 if errors > 0 else 0
 
 
+# ─── Rule sub-sections (Phase 2b) ────────────────────────────────────────────
+
+def is_rule_object(rule_val: Any) -> bool:
+    return isinstance(rule_val, dict) and not isinstance(rule_val, bool)
+
+
+def has_rule_tag(tags: list[Any]) -> bool:
+    for tag in tags:
+        if not isinstance(tag, str):
+            continue
+        cleaned = tag.strip().lower().lstrip("#")
+        if cleaned == "rule":
+            return True
+    return False
+
+
+def parse_rule_content(title: str, content: str) -> dict[str, str]:
+    """Parse rule title/content into trigger + action sub-section fields."""
+    title = (title or "").strip()
+    body = (content or "").strip()
+
+    if not body:
+        return {"trigger": "", "action": title}
+
+    sentences = re.split(r"(?<=[.!?])\s+|\n+", body)
+    sentences = [s.strip() for s in sentences if s.strip()]
+
+    trigger = ""
+    action = body
+
+    for i, sentence in enumerate(sentences):
+        lower = sentence.lower()
+        if lower.startswith("when ") or lower.startswith("trigger"):
+            trigger = sentence
+            rest = sentences[i + 1 :]
+            action = " ".join(rest).strip() if rest else ""
+            break
+
+    return {"trigger": trigger, "action": action}
+
+
+def build_rule_object(title: str, content: str) -> dict[str, str]:
+    return parse_rule_content(title, content)
+
+
+def collect_rule_entries(
+    all_pairs: list[tuple[dict[str, Any], str]],
+) -> list[dict[str, Any]]:
+    """Filter walked entries to those with #rule tag or metadata.type == rule."""
+    rules: list[dict[str, Any]] = []
+    for entry, _derived in all_pairs:
+        meta = entry.get("metadata") or {}
+        tags = entry.get("tags") or []
+        if not isinstance(meta, dict):
+            meta = {}
+        if not isinstance(tags, list):
+            tags = []
+        if meta.get("type") == "rule" or has_rule_tag(tags):
+            rules.append(entry)
+    return rules
+
+
+def run_rule_subsections(args: argparse.Namespace, logger: logging.Logger) -> int:
+    server_path = Path(args.server).resolve()
+    env: dict[str, str] = {}
+    if args.db:
+        env["TIM_DB_PATH"] = args.db
+
+    client = McpClient(server_path, env=env)
+    client.start()
+
+    total = 0
+    updated = 0
+    skipped = 0
+    errors = 0
+
+    try:
+        projects = discover_projects(client, logger)
+        logger.info("Discovered %d project(s)", len(projects))
+
+        all_pairs: list[tuple[dict[str, Any], str]] = []
+        parent_map: dict[str, str] = {}
+        for label in projects:
+            tree = load_project_tree(client, label, depth=args.depth)
+            if tree is None:
+                logger.warning("Could not load project %s", label)
+                continue
+            walk_entries(tree, None, None, None, all_pairs, parent_map)
+
+        rule_entries = collect_rule_entries(all_pairs)
+        total = len(rule_entries)
+        logger.info("Found %d rule entries (#rule tag or metadata.type=rule)", total)
+
+        limit = args.limit if args.limit and args.limit > 0 else None
+        processed = 0
+
+        for entry in rule_entries:
+            if limit is not None and processed >= limit:
+                break
+
+            entry_id = entry.get("id")
+            if not isinstance(entry_id, str) or not entry_id:
+                continue
+
+            meta = entry.get("metadata") or {}
+            if not isinstance(meta, dict):
+                meta = {}
+
+            tags = entry.get("tags") or []
+            if not isinstance(tags, list):
+                tags = []
+
+            existing_rule = meta.get("rule")
+            if is_rule_object(existing_rule):
+                record = {
+                    "id": entry_id,
+                    "tags": tags,
+                    "rule": existing_rule,
+                    "status": "skipped",
+                }
+                print(json.dumps(record))
+                skipped += 1
+                processed += 1
+                continue
+
+            title = entry.get("title") if isinstance(entry.get("title"), str) else ""
+            content = entry.get("content") if isinstance(entry.get("content"), str) else ""
+            rule_obj = build_rule_object(title, content)
+
+            record = {
+                "id": entry_id,
+                "tags": tags,
+                "rule": rule_obj,
+                "status": "updated" if not args.verify else "would_update",
+            }
+
+            if args.verify or args.dry_run:
+                print(json.dumps(record))
+                if not args.verify:
+                    updated += 1
+                processed += 1
+                continue
+
+            new_meta = dict(meta)
+            new_meta["rule"] = rule_obj
+            try:
+                client.call_tool("tim_update", {"id": entry_id, "metadata": new_meta})
+                record["status"] = "updated"
+                print(json.dumps(record))
+                updated += 1
+            except McpError as exc:
+                errors += 1
+                record["status"] = "error"
+                record["error"] = str(exc)
+                print(json.dumps(record))
+                logger.error("tim_update failed for %s: %s", entry_id, exc)
+
+            processed += 1
+            if processed % 100 == 0:
+                logger.info("Progress: %d rule entries processed", processed)
+
+    finally:
+        client.close()
+
+    print(
+        f"\n=== Rule sub-sections ===\n"
+        f"  total: {total}\n"
+        f"  updated: {updated}\n"
+        f"  skipped: {skipped}\n"
+        f"  errors: {errors}",
+        file=sys.stderr,
+    )
+    mode = "verify" if args.verify else ("dry-run" if args.dry_run else "live")
+    print(f"  mode: {mode}", file=sys.stderr)
+
+    return 1 if errors > 0 else 0
+
+
 def run_migration(args: argparse.Namespace, logger: logging.Logger) -> int:
     server_path = Path(args.server).resolve()
     env: dict[str, str] = {}
@@ -840,6 +1022,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=False,
         help="Migrate legacy task tags into nested metadata.task object (Phase 2a)",
     )
+    p.add_argument(
+        "--rule-subsections",
+        action="store_true",
+        default=False,
+        help="Migrate #rule entries into nested metadata.rule object (Phase 2b)",
+    )
     return p
 
 
@@ -856,12 +1044,21 @@ def main() -> int:
         logger.error("--task-subsections and --inherit are mutually exclusive")
         return 2
 
+    if args.rule_subsections and args.inherit:
+        logger.error("--rule-subsections and --inherit are mutually exclusive")
+        return 2
+
+    if args.task_subsections and args.rule_subsections:
+        logger.error("--task-subsections and --rule-subsections are mutually exclusive")
+        return 2
+
     logger.info(
-        "migrate_v3_types start (dry_run=%s verify=%s inherit=%s task_subsections=%s limit=%s force=%s)",
+        "migrate_v3_types start (dry_run=%s verify=%s inherit=%s task_subsections=%s rule_subsections=%s limit=%s force=%s)",
         args.dry_run,
         args.verify,
         args.inherit,
         args.task_subsections,
+        args.rule_subsections,
         args.limit,
         args.force_rebuild_types,
     )
@@ -869,6 +1066,8 @@ def main() -> int:
     try:
         if args.task_subsections:
             return run_task_subsections(args, logger)
+        if args.rule_subsections:
+            return run_rule_subsections(args, logger)
         return run_migration(args, logger)
     except McpError as exc:
         logger.error("Fatal MCP error: %s", exc)

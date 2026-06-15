@@ -1,4 +1,4 @@
-export { TimStore, type TimStoreOptions, type CreateProjectOptions, type LoadProjectOptions, type LoadProjectResult, type TaskRecord, type GetTasksOptions, } from './store.js';
+export { TimStore, type TimStoreOptions, type CreateProjectOptions, type LoadProjectOptions, type LoadProjectResult, type TaskRecord, type GetTasksOptions, type RuleRecord, } from './store.js';
 export type { ResolveProjectResult } from 'tim-core';
 export { formatProjectOutput, type ProjectSchema, type ProjectSchemaSection, } from './project-output.js';
 export { cropDisplayName, projectDisplayNameFromEntry, resolveProjectDisplayName, resolveProjectBindingLabel, } from './project-display.js';
@@ -8,7 +8,7 @@ export { deriveCounters, findChildByKind, getCurrentBatch, ensureInboxProject, t
 export { CommitManager, type RecordCommitParams, } from './commit.js';
 export { COMMITS_SECTION_TITLE, COMMITS_SECTION_ORDER, KIND_COMMITS_ROOT, KIND_COMMIT, COMMIT_TAG, } from './commit-tree.js';
 export { CurateManager, type UpdateManyFlags } from './curate.js';
-export { validateTaskMetadata } from './validate.js';
+export { validateTaskMetadata, validateRuleMetadata } from './validate.js';
 export { ErrorLogger, type ErrorLogEntry, type ErrorStats } from './error-log.js';
 export { formatEntryId, sessionShortFromMetadata } from './entry-id.js';
 export { ackStaging, applyRemoteEntry, applyRemoteEdge, getUnackedStaging, recordFromPayload, type StagingRow, } from './sync-methods.js';

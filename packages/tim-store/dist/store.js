@@ -537,6 +537,45 @@ class TimStore {
             };
         });
     }
+    async getRules() {
+        const rows = this.db.prepare(`
+      SELECT e.* FROM entries e
+      WHERE (
+        json_extract(e.metadata, '$.type') = 'rule'
+        OR (
+          json_extract(e.metadata, '$.rule') IS NOT NULL
+          AND json_extract(e.metadata, '$.rule') != false
+        )
+        OR e.tags LIKE '%"#rule"%'
+      )
+        AND e.irrelevant = 0
+        AND e.tombstoned_at IS NULL
+      ORDER BY e.created_at ASC
+    `).all();
+        return rows.map(row => {
+            const meta = JSON.parse(row.metadata);
+            let trigger = null;
+            let action = null;
+            const rule = meta.rule;
+            if (typeof rule === 'object' && rule !== null && !Array.isArray(rule)) {
+                const rm = rule;
+                trigger = typeof rm.trigger === 'string' ? rm.trigger : null;
+                action = typeof rm.action === 'string' ? rm.action : null;
+            }
+            else if (meta.type === 'rule') {
+                action = row.title || null;
+            }
+            return {
+                id: row.id,
+                title: row.title,
+                content: row.content,
+                parent_id: row.parent_id,
+                project_label: this.findProjectLabelForParent(row.parent_id),
+                trigger,
+                action,
+            };
+        });
+    }
     /** All project root nodes (kind='project'). Used for cross-project overview + name resolution. */
     async listProjects() {
         const rows = this.db.prepare(`

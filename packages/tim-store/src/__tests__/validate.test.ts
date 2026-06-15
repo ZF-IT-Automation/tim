@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { validateTaskMetadata } from '../validate.js';
+import { validateTaskMetadata, validateRuleMetadata } from '../validate.js';
 
 describe('validateTaskMetadata', () => {
   it('warns when type=task but task sub-section missing', () => {
@@ -49,5 +49,46 @@ describe('validateTaskMetadata', () => {
   it('ignores non-task entries', () => {
     expect(validateTaskMetadata({ type: 'standard' })).toEqual([]);
     expect(validateTaskMetadata({})).toEqual([]);
+  });
+});
+
+describe('validateRuleMetadata', () => {
+  it('warns when type=rule but rule sub-section missing', () => {
+    const warnings = validateRuleMetadata({ type: 'rule' });
+    expect(warnings).toContainEqual('rule metadata missing');
+  });
+
+  it('warns when rule sub-section is boolean not object', () => {
+    const warnings = validateRuleMetadata({ type: 'rule', rule: true });
+    expect(warnings).toContainEqual('rule metadata missing');
+  });
+
+  it('warns when rule.trigger missing', () => {
+    const warnings = validateRuleMetadata({
+      type: 'rule',
+      rule: { action: 'Do the thing' },
+    });
+    expect(warnings).toContainEqual('trigger recommended');
+  });
+
+  it('warns when rule.action missing', () => {
+    const warnings = validateRuleMetadata({
+      type: 'rule',
+      rule: { trigger: 'When user asks' },
+    });
+    expect(warnings).toContainEqual('action recommended');
+  });
+
+  it('no warnings for valid rule sub-section', () => {
+    const warnings = validateRuleMetadata({
+      type: 'rule',
+      rule: { trigger: 'When user says caveman', action: 'Use caveman mode' },
+    });
+    expect(warnings).toEqual([]);
+  });
+
+  it('ignores non-rule entries', () => {
+    expect(validateRuleMetadata({ type: 'standard' })).toEqual([]);
+    expect(validateRuleMetadata({})).toEqual([]);
   });
 });

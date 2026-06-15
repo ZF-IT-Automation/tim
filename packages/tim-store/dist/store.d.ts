@@ -50,6 +50,15 @@ export interface TaskRecord {
     priority: string | null;
     due: string | null;
 }
+export interface RuleRecord {
+    id: string;
+    title: string;
+    content: string;
+    parent_id: string | null;
+    project_label: string | null;
+    trigger: string | null;
+    action: string | null;
+}
 export interface GetTasksOptions {
     status?: string;
 }
@@ -114,6 +123,7 @@ export declare class TimStore implements MemoryInterface {
         tag?: string;
     }): Entry[];
     getTasks(opts?: GetTasksOptions): Promise<TaskRecord[]>;
+    getRules(): Promise<RuleRecord[]>;
     /** All project root nodes (kind='project'). Used for cross-project overview + name resolution. */
     listProjects(): Promise<Array<{
         id: string;

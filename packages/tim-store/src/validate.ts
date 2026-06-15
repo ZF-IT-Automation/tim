@@ -22,3 +22,26 @@ export function validateTaskMetadata(metadata: Record<string, unknown>): string[
 
   return warnings;
 }
+
+export function validateRuleMetadata(metadata: Record<string, unknown>): string[] {
+  const warnings: string[] = [];
+
+  if (metadata.type === 'rule') {
+    const rule = metadata.rule;
+    if (!rule || typeof rule !== 'object' || Array.isArray(rule)) {
+      warnings.push('rule metadata missing');
+    } else {
+      const ruleObj = rule as Record<string, unknown>;
+      const trigger = ruleObj.trigger;
+      if (typeof trigger !== 'string' || !trigger.trim()) {
+        warnings.push('trigger recommended');
+      }
+      const action = ruleObj.action;
+      if (typeof action !== 'string' || !action.trim()) {
+        warnings.push('action recommended');
+      }
+    }
+  }
+
+  return warnings;
+}

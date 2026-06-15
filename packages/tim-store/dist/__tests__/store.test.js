@@ -468,6 +468,43 @@ let store;
             (0, vitest_1.expect)(todoTasks[0].title).toBe('Open nested');
         });
     });
+    // ─── getRules — nested metadata.rule sub-section ────────
+    (0, vitest_1.describe)('getRules', () => {
+        (0, vitest_1.it)('reads nested metadata.rule sub-section', async () => {
+            await store.write('Caveman rule', {
+                tags: ['#rule'],
+                metadata: {
+                    type: 'rule',
+                    rule: {
+                        trigger: 'When user says caveman',
+                        action: 'Use caveman mode',
+                    },
+                },
+            });
+            const rules = await store.getRules();
+            (0, vitest_1.expect)(rules).toHaveLength(1);
+            (0, vitest_1.expect)(rules[0].trigger).toBe('When user says caveman');
+            (0, vitest_1.expect)(rules[0].action).toBe('Use caveman mode');
+        });
+        (0, vitest_1.it)('reads legacy type=rule without nested rule object', async () => {
+            store.getDb().prepare(`
+        INSERT INTO entries (id, title, content, parent_id, depth, confidence,
+          created_at, accessed_at, visibility, tags, metadata, irrelevant)
+        VALUES (?, ?, ?, NULL, 1, 1.0, ?, ?, 1, ?,
+          ?, 0)
+      `).run('legacy-rule', 'Legacy rule title', 'Body content', new Date().toISOString(), new Date().toISOString(), JSON.stringify([]), JSON.stringify({ type: 'rule' }));
+            const rules = await store.getRules();
+            const legacy = rules.find(r => r.id === 'legacy-rule');
+            (0, vitest_1.expect)(legacy).toBeDefined();
+            (0, vitest_1.expect)(legacy.trigger).toBeNull();
+            (0, vitest_1.expect)(legacy.action).toBe('Legacy rule title');
+        });
+        (0, vitest_1.it)('matches entries with #rule tag only', async () => {
+            await store.write('Tagged rule', { tags: ['#rule'] });
+            const rules = await store.getRules();
+            (0, vitest_1.expect)(rules.some(r => r.title === 'Tagged rule')).toBe(true);
+        });
+    });
     // ─── Overview query methods ─────────────────────────────
     (0, vitest_1.describe)('listProjects', () => {
         (0, vitest_1.it)('returns all live projects with id, label, title', async () => {

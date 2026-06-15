@@ -564,6 +564,55 @@ describe('TimStore', () => {
     });
   });
 
+  // ─── getRules — nested metadata.rule sub-section ────────
+
+  describe('getRules', () => {
+    it('reads nested metadata.rule sub-section', async () => {
+      await store.write('Caveman rule', {
+        tags: ['#rule'],
+        metadata: {
+          type: 'rule',
+          rule: {
+            trigger: 'When user says caveman',
+            action: 'Use caveman mode',
+          },
+        },
+      });
+
+      const rules = await store.getRules();
+      expect(rules).toHaveLength(1);
+      expect(rules[0].trigger).toBe('When user says caveman');
+      expect(rules[0].action).toBe('Use caveman mode');
+    });
+
+    it('reads legacy type=rule without nested rule object', async () => {
+      store.getDb().prepare(`
+        INSERT INTO entries (id, title, content, parent_id, depth, confidence,
+          created_at, accessed_at, visibility, tags, metadata, irrelevant)
+        VALUES (?, ?, ?, NULL, 1, 1.0, ?, ?, 1, ?,
+          ?, 0)
+      `).run(
+        'legacy-rule', 'Legacy rule title', 'Body content',
+        new Date().toISOString(), new Date().toISOString(),
+        JSON.stringify([]),
+        JSON.stringify({ type: 'rule' }),
+      );
+
+      const rules = await store.getRules();
+      const legacy = rules.find(r => r.id === 'legacy-rule');
+      expect(legacy).toBeDefined();
+      expect(legacy!.trigger).toBeNull();
+      expect(legacy!.action).toBe('Legacy rule title');
+    });
+
+    it('matches entries with #rule tag only', async () => {
+      await store.write('Tagged rule', { tags: ['#rule'] });
+
+      const rules = await store.getRules();
+      expect(rules.some(r => r.title === 'Tagged rule')).toBe(true);
+    });
+  });
+
   // ─── Overview query methods ─────────────────────────────
 
   describe('listProjects', () => {
