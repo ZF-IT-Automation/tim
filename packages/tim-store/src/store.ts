@@ -111,6 +111,20 @@ export interface RuleRecord {
   action: string | null;
 }
 
+export interface BugRecord {
+  id: string;
+  title: string;
+  content: string;
+  parent_id: string | null;
+  project_label: string | null;
+  severity: string | null;
+  status: string | null;
+}
+
+export interface GetBugsOptions {
+  status?: string;
+}
+
 export interface GetTasksOptions {
   status?: string;
 }
@@ -645,6 +659,73 @@ export class TimStore implements MemoryInterface {
         status,
         priority,
         due,
+      };
+    });
+  }
+
+  async getBugs(opts?: GetBugsOptions): Promise<BugRecord[]> {
+    let sql = `
+      SELECT e.* FROM entries e
+      WHERE (
+        json_extract(e.metadata, '$.type') = 'bug'
+        OR (
+          json_extract(e.metadata, '$.bug') IS NOT NULL
+          AND json_extract(e.metadata, '$.bug') != false
+        )
+        OR e.tags LIKE '%"#bug"%'
+      )
+        AND e.irrelevant = 0
+        AND e.tombstoned_at IS NULL
+    `;
+    const params: unknown[] = [];
+
+    if (opts?.status) {
+      sql += ` AND COALESCE(
+        json_extract(e.metadata, '$.bug.status'),
+        json_extract(e.metadata, '$.status')
+      ) = ?`;
+      params.push(opts.status);
+    }
+
+    sql += `
+      ORDER BY
+        CASE COALESCE(
+          json_extract(e.metadata, '$.bug.severity'),
+          json_extract(e.metadata, '$.severity')
+        )
+          WHEN 'P0' THEN 0
+          WHEN 'P1' THEN 1
+          WHEN 'P2' THEN 2
+          WHEN 'P3' THEN 3
+          ELSE 4
+        END,
+        e.created_at ASC
+    `;
+
+    const rows = this.db.prepare(sql).all(...params) as RowEntry[];
+    return rows.map(row => {
+      const meta = JSON.parse(row.metadata) as Record<string, unknown>;
+      let severity: string | null = null;
+      let status: string | null = null;
+
+      const bug = meta.bug;
+      if (typeof bug === 'object' && bug !== null && !Array.isArray(bug)) {
+        const bm = bug as Record<string, unknown>;
+        severity = (bm.severity as string | undefined) ?? null;
+        status = (bm.status as string | undefined) ?? null;
+      } else if (meta.type === 'bug') {
+        severity = (meta.severity as string | undefined) ?? null;
+        status = (meta.status as string | undefined) ?? null;
+      }
+
+      return {
+        id: row.id,
+        title: row.title,
+        content: row.content,
+        parent_id: row.parent_id,
+        project_label: this.findProjectLabelForParent(row.parent_id),
+        severity,
+        status,
       };
     });
   }

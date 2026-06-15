@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { validateTaskMetadata, validateRuleMetadata } from '../validate.js';
+import { validateTaskMetadata, validateRuleMetadata, validateBugMetadata } from '../validate.js';
 
 describe('validateTaskMetadata', () => {
   it('warns when type=task but task sub-section missing', () => {
@@ -90,5 +90,50 @@ describe('validateRuleMetadata', () => {
   it('ignores non-rule entries', () => {
     expect(validateRuleMetadata({ type: 'standard' })).toEqual([]);
     expect(validateRuleMetadata({})).toEqual([]);
+  });
+});
+
+describe('validateBugMetadata', () => {
+  it('warns when type=bug but bug sub-section missing', () => {
+    const warnings = validateBugMetadata({ type: 'bug' });
+    expect(warnings).toContainEqual(
+      expect.stringContaining('bug metadata missing'),
+    );
+  });
+
+  it('warns when bug sub-section is boolean not object', () => {
+    const warnings = validateBugMetadata({ type: 'bug', bug: true });
+    expect(warnings).toContainEqual(
+      expect.stringContaining('bug metadata missing'),
+    );
+  });
+
+  it('warns when severity missing', () => {
+    const warnings = validateBugMetadata({
+      type: 'bug',
+      bug: { status: 'open' },
+    });
+    expect(warnings).toContainEqual('severity recommended');
+  });
+
+  it('warns when status missing', () => {
+    const warnings = validateBugMetadata({
+      type: 'bug',
+      bug: { severity: 'P1' },
+    });
+    expect(warnings).toContainEqual('status recommended');
+  });
+
+  it('no warnings for valid bug sub-section', () => {
+    const warnings = validateBugMetadata({
+      type: 'bug',
+      bug: { severity: 'P1', status: 'open' },
+    });
+    expect(warnings).toEqual([]);
+  });
+
+  it('ignores non-bug entries', () => {
+    expect(validateBugMetadata({ type: 'standard' })).toEqual([]);
+    expect(validateBugMetadata({})).toEqual([]);
   });
 });

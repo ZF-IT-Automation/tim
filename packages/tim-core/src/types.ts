@@ -51,10 +51,10 @@ export interface RuleMetadata {
   action?: string;
 }
 
-/** Stub for Phase 2c */
+/** Nested bug sub-section (Schema v3 Phase 2c). */
 export interface BugMetadata {
-  severity?: 'low' | 'medium' | 'high' | 'critical';
-  status?: 'open' | 'investigating' | 'fixed' | 'verified' | 'wontfix';
+  severity?: 'P0' | 'P1' | 'P2' | 'P3';
+  status?: 'open' | 'in_progress' | 'fixed' | 'wontfix';
 }
 
 /** Entry metadata — `type` is the Schema v3 semantic classifier. */

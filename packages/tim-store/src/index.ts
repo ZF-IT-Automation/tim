@@ -72,7 +72,7 @@ export {
   COMMIT_TAG,
 } from './commit-tree.js';
 export { CurateManager, type UpdateManyFlags } from './curate.js';
-export { validateTaskMetadata, validateRuleMetadata } from './validate.js';
+export { validateTaskMetadata, validateRuleMetadata, validateBugMetadata } from './validate.js';
 export { ErrorLogger, type ErrorLogEntry, type ErrorStats } from './error-log.js';
 export { formatEntryId, sessionShortFromMetadata } from './entry-id.js';
 export {

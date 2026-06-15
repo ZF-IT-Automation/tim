@@ -45,3 +45,26 @@ export function validateRuleMetadata(metadata: Record<string, unknown>): string[
 
   return warnings;
 }
+
+export function validateBugMetadata(metadata: Record<string, unknown>): string[] {
+  const warnings: string[] = [];
+
+  if (metadata.type === 'bug') {
+    const bug = metadata.bug;
+    if (!bug || typeof bug !== 'object' || Array.isArray(bug)) {
+      warnings.push(
+        'bug metadata missing — recommended default: { severity: "P1", status: "open" }',
+      );
+    } else {
+      const bugObj = bug as Record<string, unknown>;
+      if (!bugObj.severity) {
+        warnings.push('severity recommended');
+      }
+      if (!bugObj.status) {
+        warnings.push('status recommended');
+      }
+    }
+  }
+
+  return warnings;
+}

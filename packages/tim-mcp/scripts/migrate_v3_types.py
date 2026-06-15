@@ -18,6 +18,8 @@ Usage:
   python3 migrate_v3_types.py --task-subsections --verify  # stats only, no writes
   python3 migrate_v3_types.py --rule-subsections           # migrate #rule → metadata.rule object
   python3 migrate_v3_types.py --rule-subsections --verify  # stats only, no writes
+  python3 migrate_v3_types.py --bug-subsections            # migrate bug tags → metadata.bug object
+  python3 migrate_v3_types.py --bug-subsections --verify   # stats only, no writes
   python3 migrate_v3_types.py --force-rebuild-types        # overwrite existing type (DANGEROUS)
 
 The script is OUTSIDE the tim-mcp TypeScript package because:
@@ -106,6 +108,8 @@ BUILTIN_TYPES = frozenset({
 })
 
 STATUS_TAGS = frozenset({"todo", "done", "in_progress", "cancelled"})
+BUG_SEVERITIES = frozenset({"P0", "P1", "P2", "P3"})
+BUG_STATUS_TAGS = frozenset({"open", "fixed", "wontfix", "in_progress"})
 
 LOG_PATH = "/var/log/tim-migration.log"
 MCP_TIMEOUT_SEC = 30.0
@@ -848,6 +852,167 @@ def run_rule_subsections(args: argparse.Namespace, logger: logging.Logger) -> in
     return 1 if errors > 0 else 0
 
 
+# ─── Bug sub-sections (Phase 2c) ─────────────────────────────────────────────
+
+def is_bug_object(bug_val: Any) -> bool:
+    return isinstance(bug_val, dict) and not isinstance(bug_val, bool)
+
+
+def parse_bug_tags(tags: list[Any]) -> dict[str, str]:
+    """Parse legacy #priority-P* / #severity-P* / #open|#fixed|#wontfix|#in_progress tags."""
+    parsed: dict[str, str] = {}
+    for tag in tags:
+        if not isinstance(tag, str):
+            continue
+        cleaned = tag.strip().lstrip("#")
+        lower = cleaned.lower()
+        if lower in BUG_STATUS_TAGS and "status" not in parsed:
+            parsed["status"] = lower
+        elif cleaned.startswith("priority-") and "severity" not in parsed:
+            sev = cleaned[len("priority-") :].upper()
+            if sev in BUG_SEVERITIES:
+                parsed["severity"] = sev
+        elif cleaned.startswith("severity-") and "severity" not in parsed:
+            sev = cleaned[len("severity-") :].upper()
+            if sev in BUG_SEVERITIES:
+                parsed["severity"] = sev
+    return parsed
+
+
+def build_bug_object(tags: list[Any]) -> dict[str, str]:
+    parsed = parse_bug_tags(tags)
+    return {
+        "severity": parsed.get("severity", "P1"),
+        "status": parsed.get("status", "open"),
+    }
+
+
+def collect_bug_entries(
+    all_pairs: list[tuple[dict[str, Any], str]],
+) -> list[dict[str, Any]]:
+    """Filter walked entries to those with metadata.type == bug."""
+    bugs: list[dict[str, Any]] = []
+    for entry, _derived in all_pairs:
+        meta = entry.get("metadata") or {}
+        if isinstance(meta, dict) and meta.get("type") == "bug":
+            bugs.append(entry)
+    return bugs
+
+
+def run_bug_subsections(args: argparse.Namespace, logger: logging.Logger) -> int:
+    server_path = Path(args.server).resolve()
+    env: dict[str, str] = {}
+    if args.db:
+        env["TIM_DB_PATH"] = args.db
+
+    client = McpClient(server_path, env=env)
+    client.start()
+
+    total = 0
+    updated = 0
+    skipped = 0
+    errors = 0
+
+    try:
+        projects = discover_projects(client, logger)
+        logger.info("Discovered %d project(s)", len(projects))
+
+        all_pairs: list[tuple[dict[str, Any], str]] = []
+        parent_map: dict[str, str] = {}
+        for label in projects:
+            tree = load_project_tree(client, label, depth=args.depth)
+            if tree is None:
+                logger.warning("Could not load project %s", label)
+                continue
+            walk_entries(tree, None, None, None, all_pairs, parent_map)
+
+        bug_entries = collect_bug_entries(all_pairs)
+        total = len(bug_entries)
+        logger.info("Found %d bug entries (metadata.type=bug)", total)
+
+        limit = args.limit if args.limit and args.limit > 0 else None
+        processed = 0
+
+        for entry in bug_entries:
+            if limit is not None and processed >= limit:
+                break
+
+            entry_id = entry.get("id")
+            if not isinstance(entry_id, str) or not entry_id:
+                continue
+
+            meta = entry.get("metadata") or {}
+            if not isinstance(meta, dict):
+                meta = {}
+
+            tags = entry.get("tags") or []
+            if not isinstance(tags, list):
+                tags = []
+
+            existing_bug = meta.get("bug")
+            if is_bug_object(existing_bug):
+                record = {
+                    "id": entry_id,
+                    "tags": tags,
+                    "bug": existing_bug,
+                    "status": "skipped",
+                }
+                print(json.dumps(record))
+                skipped += 1
+                processed += 1
+                continue
+
+            bug_obj = build_bug_object(tags)
+
+            record = {
+                "id": entry_id,
+                "tags": tags,
+                "bug": bug_obj,
+                "status": "updated" if not args.verify else "would_update",
+            }
+
+            if args.verify or args.dry_run:
+                print(json.dumps(record))
+                if not args.verify:
+                    updated += 1
+                processed += 1
+                continue
+
+            new_meta = dict(meta)
+            new_meta["bug"] = bug_obj
+            try:
+                client.call_tool("tim_update", {"id": entry_id, "metadata": new_meta})
+                record["status"] = "updated"
+                print(json.dumps(record))
+                updated += 1
+            except McpError as exc:
+                errors += 1
+                record["status"] = "error"
+                record["error"] = str(exc)
+                print(json.dumps(record))
+                logger.error("tim_update failed for %s: %s", entry_id, exc)
+
+            processed += 1
+            if processed % 100 == 0:
+                logger.info("Progress: %d bug entries processed", processed)
+
+    finally:
+        client.close()
+
+    print(
+        f"\n=== Bug sub-sections ===\n"
+        f"  total: {total}\n"
+        f"  updated: {updated}\n"
+        f"  skipped: {skipped}\n"
+        f"  errors: {errors}",
+        file=sys.stderr,
+    )
+    mode = "verify" if args.verify else ("dry-run" if args.dry_run else "live")
+    print(f"  mode: {mode}", file=sys.stderr)
+
+    return 1 if errors > 0 else 0
+
+
 def run_migration(args: argparse.Namespace, logger: logging.Logger) -> int:
     server_path = Path(args.server).resolve()
     env: dict[str, str] = {}
@@ -1028,6 +1193,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=False,
         help="Migrate #rule entries into nested metadata.rule object (Phase 2b)",
     )
+    p.add_argument(
+        "--bug-subsections",
+        action="store_true",
+        default=False,
+        help="Migrate bug entries into nested metadata.bug object (Phase 2c)",
+    )
     return p
 
 
@@ -1052,13 +1223,26 @@ def main() -> int:
         logger.error("--task-subsections and --rule-subsections are mutually exclusive")
         return 2
 
+    if args.bug_subsections and args.inherit:
+        logger.error("--bug-subsections and --inherit are mutually exclusive")
+        return 2
+
+    if args.bug_subsections and args.task_subsections:
+        logger.error("--bug-subsections and --task-subsections are mutually exclusive")
+        return 2
+
+    if args.bug_subsections and args.rule_subsections:
+        logger.error("--bug-subsections and --rule-subsections are mutually exclusive")
+        return 2
+
     logger.info(
-        "migrate_v3_types start (dry_run=%s verify=%s inherit=%s task_subsections=%s rule_subsections=%s limit=%s force=%s)",
+        "migrate_v3_types start (dry_run=%s verify=%s inherit=%s task_subsections=%s rule_subsections=%s bug_subsections=%s limit=%s force=%s)",
         args.dry_run,
         args.verify,
         args.inherit,
         args.task_subsections,
         args.rule_subsections,
+        args.bug_subsections,
         args.limit,
         args.force_rebuild_types,
     )
@@ -1068,6 +1252,8 @@ def main() -> int:
             return run_task_subsections(args, logger)
         if args.rule_subsections:
             return run_rule_subsections(args, logger)
+        if args.bug_subsections:
+            return run_bug_subsections(args, logger)
         return run_migration(args, logger)
     except McpError as exc:
         logger.error("Fatal MCP error: %s", exc)
