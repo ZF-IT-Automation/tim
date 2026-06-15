@@ -140,6 +140,12 @@ export declare class TimStore implements MemoryInterface {
     curate(): CurateManager;
     /** @internal Exposed for tests */
     getDb(): Database.Database;
+    /** Run `fn` inside a single exclusive DB transaction (serializes concurrent callers). */
+    runExclusive<T>(fn: () => T): T;
+    /** Synchronous write for use inside `runExclusive` transactions. */
+    writeSync(content: string, options?: WriteOptions): Entry;
+    getChildByKindSync(parentId: string, kind: string): Entry[];
+    getChildrenBySeqSync(parentId: string): Entry[];
     /** Entries whose metadata JSON has non-boolean values for known boolean keys (legacy 1/0/"true"/"false"). */
     findEntriesWithNonBooleanTask(): Array<{
         id: string;
@@ -156,12 +162,16 @@ export declare class TimStore implements MemoryInterface {
         updated: number;
         skipped: number;
     }>;
+    private buildEntryRow;
+    private insertEntrySync;
+    private insertStagingSync;
     write(content: string, options?: WriteOptions): Promise<Entry>;
     update(id: string, patch: Partial<Entry>): Promise<Entry>;
     delete(id: string, hard?: boolean): Promise<void>;
     search(options: SearchOptions): Promise<Entry[]>;
     searchFts(query: string, limit?: number): Promise<Entry[]>;
     link(sourceId: string, targetId: string, type: EdgeType, weight?: number, metadata?: Record<string, unknown>): Promise<Edge>;
+    unlink(edgeId: string): Promise<void>;
     getEdges(id: string, direction?: 'outgoing' | 'incoming' | 'both'): Promise<Edge[]>;
     traceChain(startId: string, edgeType?: EdgeType, depth?: number): Promise<Entry[]>;
     registerAgent(name: string, label: string): Promise<AgentIdentity>;

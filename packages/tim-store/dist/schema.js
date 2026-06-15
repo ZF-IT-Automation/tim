@@ -141,6 +141,7 @@ function getCurrentVersion() {
 }
 function runMigrations(db) {
     db.pragma('journal_mode = WAL');
+    db.pragma('busy_timeout = 5000');
     db.pragma('foreign_keys = ON');
     // Create version table if not exists
     db.exec(`CREATE TABLE IF NOT EXISTS _schema_version (version INTEGER NOT NULL)`);

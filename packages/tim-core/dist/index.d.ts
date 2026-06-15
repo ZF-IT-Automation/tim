@@ -140,7 +140,7 @@ export interface MemoryStats {
     newestEntry: string | null;
     staleCount: number;
 }
-export type EventType = 'memory:written' | 'memory:updated' | 'memory:deleted' | 'edge:created' | 'sync:pushed' | 'sync:pulled' | 'agent:registered' | 'rem:decay' | 'rem:compress' | 'rem:health';
+export type EventType = 'memory:written' | 'memory:updated' | 'memory:deleted' | 'edge:created' | 'edge:deleted' | 'sync:pushed' | 'sync:pulled' | 'agent:registered' | 'rem:decay' | 'rem:compress' | 'rem:health';
 export interface MemoryEvent {
     type: EventType;
     timestamp: string;

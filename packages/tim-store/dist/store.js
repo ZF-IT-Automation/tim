@@ -10,9 +10,11 @@ exports.sanitizeFtsQuery = sanitizeFtsQuery;
 const better_sqlite3_1 = __importDefault(require("better-sqlite3"));
 const ulid_1 = require("ulid");
 const entry_id_js_1 = require("./entry-id.js");
+const tim_sync_1 = require("tim-sync");
 const schema_js_1 = require("./schema.js");
 const curate_js_1 = require("./curate.js");
 const metadata_coerce_js_1 = require("./metadata-coerce.js");
+const sync_methods_js_1 = require("./sync-methods.js");
 /**
  * Sanitize a user-supplied query string into a safe FTS5 MATCH expression.
  *
@@ -90,7 +92,7 @@ class TimStore {
         let entry = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(id);
         // Label-based fallback for hmem compatibility (e.g., "P0062", "L0042")
         if (!entry && /^[A-Z]\d{4}$/.test(id)) {
-            entry = this.db.prepare("SELECT * FROM entries WHERE json_extract(metadata, '$.label') = ?").get(id);
+            entry = this.db.prepare("SELECT * FROM entries WHERE json_extract(metadata, '$.label') = ? AND tombstoned_at IS NULL").get(id);
         }
         if (!entry)
             return null;
@@ -102,7 +104,7 @@ class TimStore {
             return null;
         const result = rowToEntry(entry);
         // Optionally include children (for tim_read with depth)
-        if (options.includeChildren) {
+        if (options.includeChildren && options.depth !== 1) {
             const depth = options.depth ?? 2;
             const children = this.loadChildrenRecursive(result.id, depth, 1);
             result.children = children;
@@ -130,16 +132,6 @@ class TimStore {
         });
     }
     async createProject(label, options = {}) {
-        const dup = this.db.prepare(`
-      SELECT id FROM entries
-      WHERE json_extract(metadata, '$.kind') = 'project'
-        AND json_extract(metadata, '$.label') = ?
-        AND irrelevant = 0
-        AND tombstoned_at IS NULL
-    `).get(label);
-        if (dup) {
-            throw new Error(`Project label already exists: ${label} (${dup.id})`);
-        }
         const aliases = normalizeProjectAliases(options.aliases);
         const metadata = {
             ...(options.metadata ?? {}),
@@ -147,7 +139,26 @@ class TimStore {
             label,
             ...(aliases.length > 0 ? { aliases } : {}),
         };
-        return this.write(options.content ?? label, { metadata });
+        const tx = this.db.transaction((labelArg) => {
+            const dup = this.db.prepare(`
+        SELECT id FROM entries
+        WHERE json_extract(metadata, '$.kind') = 'project'
+          AND json_extract(metadata, '$.label') = ?
+          AND tombstoned_at IS NULL
+      `).get(labelArg);
+            if (dup) {
+                throw new Error(`Project label already exists: ${labelArg} (${dup.id})`);
+            }
+            const { entry } = this.buildEntryRow(options.content ?? label, { metadata });
+            this.insertEntrySync(entry);
+            return entry;
+        });
+        const entry = tx.immediate(label);
+        const timestamp = Date.now();
+        this.insertStagingSync(entry, timestamp, 1.0);
+        const result = rowToEntry(entry);
+        this.emit('memory:written', { entry: result, agentId: this.agentId, timestamp: entry.created_at });
+        return result;
     }
     /**
      * Resolve a project label or alias to a canonical P-label.
@@ -160,6 +171,18 @@ class TimStore {
         const direct = await this.read(q);
         if (direct?.metadata.kind === 'project') {
             const label = typeof direct.metadata.label === 'string' ? direct.metadata.label : q;
+            return { status: 'found', label };
+        }
+        const labelRow = this.db.prepare(`
+      SELECT metadata FROM entries
+      WHERE json_extract(metadata, '$.kind') = 'project'
+        AND json_extract(metadata, '$.label') = ?
+        AND irrelevant = 0
+        AND tombstoned_at IS NULL
+    `).get(q);
+        if (labelRow) {
+            const meta = JSON.parse(labelRow.metadata);
+            const label = typeof meta.label === 'string' ? meta.label : q;
             return { status: 'found', label };
         }
         const needle = q.toLowerCase();
@@ -561,6 +584,43 @@ class TimStore {
     getDb() {
         return this.db;
     }
+    /** Run `fn` inside a single exclusive DB transaction (serializes concurrent callers). */
+    runExclusive(fn) {
+        return this.db.transaction(fn)();
+    }
+    /** Synchronous write for use inside `runExclusive` transactions. */
+    writeSync(content, options = {}) {
+        const { entry, now, timestamp } = this.buildEntryRow(content, options);
+        this.insertEntrySync(entry);
+        this.insertStagingSync(entry, timestamp, options.confidence ?? 1.0);
+        const result = rowToEntry(entry);
+        this.emit('memory:written', { entry: result, agentId: this.agentId, timestamp: now });
+        return result;
+    }
+    getChildByKindSync(parentId, kind) {
+        const rows = this.db.prepare(`
+      SELECT * FROM entries
+      WHERE parent_id = ?
+        AND json_extract(metadata, '$.kind') = ?
+        AND irrelevant = 0
+        AND tombstoned_at IS NULL
+      ORDER BY COALESCE(CAST(json_extract(metadata, '$.seq') AS INTEGER), 999999),
+               COALESCE(CAST(json_extract(metadata, '$.order') AS INTEGER), 999999),
+               created_at ASC
+    `).all(parentId, kind);
+        return rows.map(rowToEntry);
+    }
+    getChildrenBySeqSync(parentId) {
+        const rows = this.db.prepare(`
+      SELECT * FROM entries
+      WHERE parent_id = ?
+        AND irrelevant = 0
+        AND tombstoned_at IS NULL
+      ORDER BY COALESCE(CAST(json_extract(metadata, '$.seq') AS INTEGER), 999999),
+               created_at ASC
+    `).all(parentId);
+        return rows.map(rowToEntry);
+    }
     /** Entries whose metadata JSON has non-boolean values for known boolean keys (legacy 1/0/"true"/"false"). */
     findEntriesWithNonBooleanTask() {
         const rows = this.db
@@ -603,12 +663,11 @@ class TimStore {
         }
         return { found: rows.length, updated, skipped };
     }
-    async write(content, options = {}) {
+    buildEntryRow(content, options) {
         const now = new Date().toISOString();
         const id = options.id ?? (0, entry_id_js_1.formatEntryId)({ metadata: options.metadata, now: new Date(now) });
         const timestamp = Date.now();
         const { title, body } = splitTitleBody(content, options.title);
-        // Calculate depth
         let depth = 1;
         const parentId = options.parentId ?? null;
         if (parentId) {
@@ -642,14 +701,22 @@ class TimStore {
             tombstoned_at: null,
             metadata: JSON.stringify(metadata),
         };
+        return { entry, now, timestamp };
+    }
+    insertEntrySync(entry) {
         this.db.prepare(`INSERT INTO entries (id, parent_id, title, content, content_type, depth,
       confidence, created_at, accessed_at, decay_rate, visibility, tags, irrelevant,
       favorite, tombstoned_at, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(entry.id, entry.parent_id, entry.title, entry.content, entry.content_type, entry.depth, entry.confidence, entry.created_at, entry.accessed_at, entry.decay_rate, entry.visibility, entry.tags, entry.irrelevant, entry.favorite, entry.tombstoned_at, entry.metadata);
-        // Write to staging for sync
+    }
+    insertStagingSync(entry, timestamp, confidence) {
         this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
       lww_timestamp, lww_device, lww_confidence)
-      VALUES (?, 'entry', 'upsert', ?, ?, ?, ?)`).run(id, JSON.stringify(entry), timestamp, 'local', options.confidence ?? 1.0);
-        // Create edges if provided
+      VALUES (?, 'entry', 'upsert', ?, ?, ?, ?)`).run(entry.id, JSON.stringify(entry), timestamp, 'local', confidence);
+    }
+    async write(content, options = {}) {
+        const { entry, now, timestamp } = this.buildEntryRow(content, options);
+        this.insertEntrySync(entry);
+        this.insertStagingSync(entry, timestamp, options.confidence ?? 1.0);
         if (options.edges) {
             for (const edge of options.edges) {
                 await this.link(entry.id, edge.targetId, edge.type, edge.weight, edge.metadata);
@@ -721,7 +788,16 @@ class TimStore {
         VALUES (?, 'entry', 'delete', ?, ?, ?, ?)`).run(id, JSON.stringify({ id, tombstoned_at: now }), Date.now(), 'local', 1.0);
         }
         else {
-            this.db.prepare('UPDATE entries SET irrelevant = 1 WHERE id = ?').run(id);
+            const timestamp = Date.now();
+            const updated = {
+                ...existing,
+                irrelevant: 1,
+                accessed_at: now,
+            };
+            this.db.prepare('UPDATE entries SET irrelevant = 1, accessed_at = ? WHERE id = ?').run(now, id);
+            this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
+        lww_timestamp, lww_device, lww_confidence)
+        VALUES (?, 'entry', 'upsert', ?, ?, ?, ?)`).run(id, JSON.stringify(updated), timestamp, 'local', updated.confidence);
         }
         this.emit('memory:deleted', {
             entry: rowToEntry(existing),
@@ -737,7 +813,14 @@ class TimStore {
         // Broader fix: index metadata.label + aliases in fts_entries (migration + triggers).
         const resolved = await this.resolveProjectLabel(options.query);
         if (resolved.status === 'found') {
-            const proj = await this.read(resolved.label);
+            const row = this.db.prepare(`
+        SELECT * FROM entries
+        WHERE json_extract(metadata, '$.kind') = 'project'
+          AND json_extract(metadata, '$.label') = ?
+          AND irrelevant = 0
+          AND tombstoned_at IS NULL
+      `).get(resolved.label);
+            const proj = row ? rowToEntry(row) : null;
             if (proj && !fts.some(e => e.id === proj.id)) {
                 return [proj, ...fts].slice(0, topK);
             }
@@ -785,6 +868,38 @@ class TimStore {
             timestamp: new Date().toISOString(),
         });
         return edge;
+    }
+    async unlink(edgeId) {
+        const row = this.db.prepare('SELECT * FROM edges WHERE id = ?').get(edgeId);
+        if (!row)
+            return;
+        this.db.prepare('DELETE FROM edges WHERE id = ?').run(edgeId);
+        const edgeKey = `${row.source_id}|${row.target_id}|${row.type}`;
+        const ts = Date.now();
+        const edgeRow = {
+            id: row.id,
+            source_id: row.source_id,
+            target_id: row.target_id,
+            type: row.type,
+            weight: row.weight,
+            metadata: row.metadata,
+        };
+        this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
+      lww_timestamp, lww_device, lww_confidence)
+      VALUES (?, 'edge', 'delete', ?, ?, ?, ?)`).run(edgeKey, JSON.stringify(edgeRow), ts, this.agentId, 1.0);
+        const edge = {
+            id: row.id,
+            sourceId: row.source_id,
+            targetId: row.target_id,
+            type: row.type,
+            weight: row.weight,
+            metadata: row.metadata ? JSON.parse(row.metadata) : {},
+        };
+        this.emit('edge:deleted', {
+            edge,
+            agentId: this.agentId,
+            timestamp: new Date().toISOString(),
+        });
     }
     async getEdges(id, direction = 'both') {
         let rows = [];
@@ -874,20 +989,47 @@ class TimStore {
                 if (record.entityType === 'entry') {
                     if (record.operation === 'delete') {
                         const payload = JSON.parse(record.payload);
+                        const existing = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(payload.id);
+                        if (existing) {
+                            const local = (0, sync_methods_js_1.recordFromPayload)(payload.id, 'entry', existing.tombstoned_at ? 'delete' : 'upsert', JSON.stringify(existing), Date.parse(existing.accessed_at ?? existing.created_at), 'local', Number(existing.confidence ?? 1));
+                            const { winner } = (0, tim_sync_1.resolveLWW)(local, record);
+                            if (winner !== record)
+                                continue;
+                        }
                         deleteEntry.run(payload.id);
                     }
                     else {
                         const entry = JSON.parse(record.payload);
+                        const existing = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(entry.id);
+                        if (existing) {
+                            const local = (0, sync_methods_js_1.recordFromPayload)(entry.id, 'entry', existing.tombstoned_at ? 'delete' : 'upsert', JSON.stringify(existing), Date.parse(existing.accessed_at ?? existing.created_at), 'local', Number(existing.confidence ?? 1));
+                            const { winner } = (0, tim_sync_1.resolveLWW)(local, record);
+                            if (winner !== record)
+                                continue;
+                        }
                         upsertEntry.run(entry.id, entry.parent_id, entry.title ?? '', entry.content, entry.content_type, entry.depth, entry.confidence, entry.created_at, entry.accessed_at, entry.decay_rate, entry.visibility, entry.tags, entry.irrelevant, entry.favorite ?? 0, entry.tombstoned_at, entry.metadata);
                     }
                 }
                 else if (record.entityType === 'edge') {
+                    const edge = JSON.parse(record.payload);
+                    const compositeKey = `${edge.source_id}|${edge.target_id}|${edge.type}`;
+                    const existing = this.db.prepare('SELECT * FROM edges WHERE source_id = ? AND target_id = ? AND type = ?').get(edge.source_id, edge.target_id, edge.type);
                     if (record.operation === 'delete') {
-                        const payload = JSON.parse(record.payload);
-                        deleteEdge.run(payload.id);
+                        if (existing) {
+                            const local = (0, sync_methods_js_1.recordFromPayload)(compositeKey, 'edge', 'upsert', JSON.stringify(existing), record.lwwTimestamp, 'local');
+                            const { winner } = (0, tim_sync_1.resolveLWW)(local, record);
+                            if (winner !== record)
+                                continue;
+                        }
+                        deleteEdge.run(edge.id);
                     }
                     else {
-                        const edge = JSON.parse(record.payload);
+                        if (existing) {
+                            const local = (0, sync_methods_js_1.recordFromPayload)(compositeKey, 'edge', 'upsert', JSON.stringify(existing), record.lwwTimestamp, 'local');
+                            const { winner } = (0, tim_sync_1.resolveLWW)(local, record);
+                            if (winner !== record)
+                                continue;
+                        }
                         upsertEdge.run(edge.id, edge.source_id, edge.target_id, edge.type, edge.weight, edge.metadata);
                     }
                 }

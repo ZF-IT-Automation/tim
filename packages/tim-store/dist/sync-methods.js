@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getUnackedStaging = getUnackedStaging;
 exports.ackStaging = ackStaging;
+exports.recordFromPayload = recordFromPayload;
 exports.applyRemoteEntry = applyRemoteEntry;
 exports.applyRemoteEdge = applyRemoteEdge;
 const tim_sync_1 = require("tim-sync");

@@ -1634,7 +1634,7 @@ export async function startServer(): Promise<void> {
         case 'tim_search': {
           const { query, topK, root, type, tag, status } = TimSearchSchema.parse(args);
           const hasFilters = Boolean(root || type || tag || status);
-          let results = await s.searchFts(query, hasFilters ? 1000 : topK);
+          let results = await s.search({ query, topK: hasFilters ? 1000 : topK });
           if (root) {
             const roots = await resolveRoots(s, root);
             if (roots.error) {

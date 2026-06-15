@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import type { StagingRecord } from 'tim-core';
 export interface StagingRow {
     rowid: number;
     key: string;
@@ -12,6 +13,7 @@ export interface StagingRow {
 }
 export declare function getUnackedStaging(db: Database.Database): StagingRow[];
 export declare function ackStaging(db: Database.Database, keys: string[]): void;
+export declare function recordFromPayload(key: string, entityType: 'entry' | 'edge', operation: 'upsert' | 'delete', payload: string, lwwTimestamp: number, lwwDevice: string, confidence?: number): StagingRecord;
 export declare function applyRemoteEntry(db: Database.Database, payloadJson: string, lwwTimestamp: number, lwwDevice: string, deleted: boolean): boolean;
 export declare function applyRemoteEdge(db: Database.Database, payloadJson: string, lwwTimestamp: number, lwwDevice: string, deleted: boolean): boolean;
 //# sourceMappingURL=sync-methods.d.ts.map

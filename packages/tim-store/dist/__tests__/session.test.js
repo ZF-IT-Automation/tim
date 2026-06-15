@@ -293,6 +293,17 @@ const index_js_1 = require("../index.js");
             const project = await store.requireProject('o9k');
             (0, vitest_1.expect)(project.metadata.label).toBe('P0048');
         });
+        (0, vitest_1.it)('startProjectSession throws with candidates when alias is ambiguous', async () => {
+            await store.createProject('PA1', { content: 'a1', aliases: ['shared'] });
+            await store.createProject('PA2', { content: 'a2', aliases: ['shared'] });
+            await (0, vitest_1.expect)(sessions.startProjectSession({
+                sessionId: 'sess-amb',
+                projectId: 'shared',
+                agentName: 'test',
+                cwd: '/tmp',
+                harness: 'test',
+            })).rejects.toThrow(/PA1.*PA2|PA2.*PA1/);
+        });
         (0, vitest_1.it)('is idempotent and reuses the Sessions section across sessions', async () => {
             await store.createProject('P0098');
             await sessions.startProjectSession({

@@ -10,6 +10,6 @@ export { COMMITS_SECTION_TITLE, COMMITS_SECTION_ORDER, KIND_COMMITS_ROOT, KIND_C
 export { CurateManager, type UpdateManyFlags } from './curate.js';
 export { ErrorLogger, type ErrorLogEntry, type ErrorStats } from './error-log.js';
 export { formatEntryId, sessionShortFromMetadata } from './entry-id.js';
-export { ackStaging, applyRemoteEntry, applyRemoteEdge, getUnackedStaging, type StagingRow, } from './sync-methods.js';
+export { ackStaging, applyRemoteEntry, applyRemoteEdge, getUnackedStaging, recordFromPayload, type StagingRow, } from './sync-methods.js';
 export { coerceMetadataBooleans, isTaskMarker, normalizeTaskValue, metadataNeedsCoercion, parseAndCoerceMetadata, BOOLEAN_METADATA_KEYS, } from './metadata-coerce.js';
 //# sourceMappingURL=index.d.ts.map

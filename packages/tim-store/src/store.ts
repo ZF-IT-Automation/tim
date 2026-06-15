@@ -135,7 +135,7 @@ export class TimStore implements MemoryInterface {
     // Label-based fallback for hmem compatibility (e.g., "P0062", "L0042")
     if (!entry && /^[A-Z]\d{4}$/.test(id)) {
       entry = this.db.prepare(
-        "SELECT * FROM entries WHERE json_extract(metadata, '$.label') = ?",
+        "SELECT * FROM entries WHERE json_extract(metadata, '$.label') = ? AND tombstoned_at IS NULL",
       ).get(id) as RowEntry | undefined;
     }
 

@@ -57,7 +57,7 @@ const TimReadSchema = zod_1.z.object({
     section: zod_1.z.string().optional().describe('Section title — read its children'),
     depth: zod_1.z.number().min(1).max(5).optional().default(2),
     includeEdges: zod_1.z.boolean().optional().default(false),
-    includeChildren: zod_1.z.boolean().optional().default(false),
+    includeChildren: zod_1.z.boolean().optional().default(true).describe('Default true: returns subtree (capped by depth). Set false for parent-only.'),
     showIrrelevant: zod_1.z.boolean().optional().default(false),
 }).refine(d => d.id !== undefined || d.project !== undefined || d.section !== undefined, { message: 'tim_read requires one of: id, project, section' });
 const TimWriteSchema = zod_1.z.object({
@@ -646,6 +646,30 @@ async function buildCortexReadyBlock(store, session) {
 }
 // ─── MCP Server Setup ───────────────────────────────────
 const DB_PATH = process.env.TIM_DB_PATH || (0, tim_core_1.loadConfig)().dbPath || process.env.HOME + '/.tim/tim.db';
+// Binary-write guard: refuse to start if DB is not a valid SQLite file.
+// Catches header corruption (e.g. accidental binary patch, OOM kill mid-write).
+// Escape hatch: HERMES_SKIP_DB_GUARD=1 bypasses the check.
+if (!process.env.HERMES_SKIP_DB_GUARD && fs.existsSync(DB_PATH)) {
+    try {
+        const fd = fs.openSync(DB_PATH, 'r');
+        const header = Buffer.alloc(16);
+        fs.readSync(fd, header, 0, 16, 0);
+        fs.closeSync(fd);
+        if (header.toString('utf8', 0, 15) !== 'SQLite format 3') {
+            const msg = `FATAL: ${DB_PATH} is not a valid SQLite database (header corruption).\n` +
+                `This can happen from accidental binary edits, disk-full mid-write, or OOM kills.\n` +
+                `To recover: run \'tim restore --list\' to see available snapshots, then \'tim restore\'.\n` +
+                `If you are certain the file is valid, set HERMES_SKIP_DB_GUARD=1 to bypass this check.`;
+            console.error(msg);
+            process.exit(1);
+        }
+    }
+    catch (e) {
+        console.error(`FATAL: cannot read DB header: ${e.message}`);
+        if (!process.env.HERMES_SKIP_DB_GUARD)
+            process.exit(1);
+    }
+}
 let store;
 let sessions;
 let commitMgr;
@@ -734,7 +758,7 @@ async function startServer() {
                         section: { type: 'string', description: 'Section title — read its children' },
                         depth: { type: 'number', default: 2, description: 'How many levels to read (1-5)' },
                         includeEdges: { type: 'boolean', default: false },
-                        includeChildren: { type: 'boolean', default: false },
+                        includeChildren: { type: 'boolean', default: true, description: 'Default true: returns subtree (capped by depth). Set false for parent-only.' },
                         showIrrelevant: { type: 'boolean', default: false },
                     },
                 },
@@ -1497,7 +1521,7 @@ async function startServer() {
                 case 'tim_search': {
                     const { query, topK, root, type, tag, status } = TimSearchSchema.parse(args);
                     const hasFilters = Boolean(root || type || tag || status);
-                    let results = await s.searchFts(query, hasFilters ? 1000 : topK);
+                    let results = await s.search({ query, topK: hasFilters ? 1000 : topK });
                     if (root) {
                         const roots = await resolveRoots(s, root);
                         if (roots.error) {
@@ -1579,6 +1603,24 @@ async function startServer() {
                                 content: [{ type: 'text', text: JSON.stringify({ cursor, pendingCount: pending.length }) }],
                             };
                         }
+                        case 'pull': {
+                            const config = (0, tim_sync_client_1.loadConfig)();
+                            if (!config) {
+                                return { content: [{ type: 'text', text: 'Sync not configured (set TIM_SYNC_PASSPHRASE and tim-sync config)' }] };
+                            }
+                            // Force re-arm: manual pull bypasses cooldown + in-flight guard
+                            (0, tim_sync_client_1.resetSyncCooldowns)();
+                            const result = await (0, tim_sync_client_1.autoPull)(s);
+                            const cursor = await s.getStagingCursor();
+                            return {
+                                content: [{ type: 'text', text: JSON.stringify({
+                                            pulled: result.pulled ?? 0,
+                                            conflicts: result.conflicts ?? 0,
+                                            cursor,
+                                            timestamp: new Date().toISOString(),
+                                        }) }],
+                            };
+                        }
                         default:
                             return { content: [{ type: 'text', text: `Sync action '${action}' not yet implemented` }] };
                     }
@@ -1597,7 +1639,7 @@ async function startServer() {
                         const edges = await s.getEdges(entryId, 'outgoing');
                         const leaseEdge = edges.find(e => e.type === 'leases');
                         if (leaseEdge) {
-                            await s.update(leaseEdge.id, { irrelevant: true });
+                            await s.unlink(leaseEdge.id);
                             return { content: [{ type: 'text', text: `Revoked lease on ${entryId}` }] };
                         }
                         return { content: [{ type: 'text', text: `No active lease found for ${entryId}` }] };

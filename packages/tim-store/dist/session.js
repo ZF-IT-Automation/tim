@@ -202,54 +202,67 @@ class SessionManager {
         const batchSize = typeof session.metadata.batch_size === 'number'
             ? session.metadata.batch_size
             : session_tree_js_1.DEFAULT_BATCH_SIZE;
-        let { batchNode, usersInBatch, allBatches: exchangeBatches } = await (0, session_tree_js_1.getCurrentBatch)(this.store, exNode.id);
-        const allUserNodes = [];
-        for (const b of exchangeBatches) {
-            const users = (await this.store.getChildrenBySeq(b.id)).filter(u => u.metadata.role === 'user');
-            allUserNodes.push(...users);
-        }
-        let seq = allUserNodes.reduce((m, u) => Math.max(m, typeof u.metadata.seq === 'number' ? u.metadata.seq : 0), 0);
-        let currentUser = allUserNodes[allUserNodes.length - 1] ?? null;
-        const written = [];
-        for (const e of entries) {
-            if (e.role === 'user') {
-                if (usersInBatch.length >= batchSize) {
-                    const fullBatchId = batchNode.id;
-                    const fullBatchIndex = typeof batchNode.metadata.batch_index === 'number'
-                        ? batchNode.metadata.batch_index
-                        : exchangeBatches.length;
-                    const nextIndex = fullBatchIndex + 1;
-                    batchNode = await this.store.write(`Batch ${nextIndex}`, {
-                        parentId: exNode.id,
-                        metadata: { kind: session_tree_js_1.KIND_EXCHANGE_BATCH, batch_index: nextIndex, order: nextIndex },
+        const written = this.store.runExclusive(() => {
+            let allBatches = this.store.getChildByKindSync(exNode.id, session_tree_js_1.KIND_EXCHANGE_BATCH);
+            let batchNode = allBatches[allBatches.length - 1] ?? null;
+            if (!batchNode) {
+                batchNode = this.store.writeSync('Batch 1', {
+                    parentId: exNode.id,
+                    metadata: { kind: session_tree_js_1.KIND_EXCHANGE_BATCH, batch_index: 1, order: 1 },
+                });
+                allBatches = [batchNode];
+            }
+            let usersInBatch = this.store.getChildrenBySeqSync(batchNode.id).filter(u => u.metadata.role === 'user');
+            const allUserNodes = [];
+            for (const b of allBatches) {
+                const users = this.store.getChildrenBySeqSync(b.id).filter(u => u.metadata.role === 'user');
+                allUserNodes.push(...users);
+            }
+            let seq = allUserNodes.reduce((m, u) => Math.max(m, typeof u.metadata.seq === 'number' ? u.metadata.seq : 0), 0);
+            let currentUser = allUserNodes[allUserNodes.length - 1] ?? null;
+            const result = [];
+            for (const e of entries) {
+                if (e.role === 'user') {
+                    if (usersInBatch.length >= batchSize) {
+                        const fullBatchId = batchNode.id;
+                        const fullBatchIndex = typeof batchNode.metadata.batch_index === 'number'
+                            ? batchNode.metadata.batch_index
+                            : allBatches.length;
+                        const nextIndex = fullBatchIndex + 1;
+                        batchNode = this.store.writeSync(`Batch ${nextIndex}`, {
+                            parentId: exNode.id,
+                            metadata: { kind: session_tree_js_1.KIND_EXCHANGE_BATCH, batch_index: nextIndex, order: nextIndex },
+                        });
+                        allBatches.push(batchNode);
+                        usersInBatch = [];
+                        this.onBatchFull?.({
+                            sessionId,
+                            batchId: fullBatchId,
+                            batchIndex: fullBatchIndex,
+                        });
+                    }
+                    seq += 1;
+                    currentUser = this.store.writeSync(e.content, {
+                        parentId: batchNode.id,
+                        metadata: { kind: session_tree_js_1.KIND_EXCHANGE, role: 'user', seq, sessionId },
+                        tags: ['#exchange'],
                     });
-                    usersInBatch = [];
-                    this.onBatchFull?.({
-                        sessionId,
-                        batchId: fullBatchId,
-                        batchIndex: fullBatchIndex,
-                    });
+                    usersInBatch.push(currentUser);
+                    result.push(currentUser);
                 }
-                seq += 1;
-                currentUser = await this.store.write(e.content, {
-                    parentId: batchNode.id,
-                    metadata: { kind: session_tree_js_1.KIND_EXCHANGE, role: 'user', seq, sessionId },
-                    tags: ['#exchange'],
-                });
-                usersInBatch.push(currentUser);
-                written.push(currentUser);
+                else {
+                    const parentId = currentUser ? currentUser.id : batchNode.id;
+                    const agentSeq = currentUser ? currentUser.metadata.seq : seq;
+                    const a = this.store.writeSync(e.content, {
+                        parentId,
+                        metadata: { kind: session_tree_js_1.KIND_EXCHANGE, role: 'agent', seq: agentSeq, sessionId },
+                        tags: ['#exchange'],
+                    });
+                    result.push(a);
+                }
             }
-            else {
-                const parentId = currentUser ? currentUser.id : batchNode.id;
-                const agentSeq = currentUser ? currentUser.metadata.seq : seq;
-                const a = await this.store.write(e.content, {
-                    parentId,
-                    metadata: { kind: session_tree_js_1.KIND_EXCHANGE, role: 'agent', seq: agentSeq, sessionId },
-                    tags: ['#exchange'],
-                });
-                written.push(a);
-            }
-        }
+            return result;
+        });
         const { exchangeCount } = await (0, session_tree_js_1.deriveCounters)(this.store, sessionId);
         await this.store.update(sessionId, {
             metadata: { ...session.metadata, exchange_count: exchangeCount },
