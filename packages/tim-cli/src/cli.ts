@@ -18,6 +18,8 @@ import {
 } from 'tim-hooks';
 import { tim_export, tim_import, exportToMarkdown, migrateTagsToTypes } from 'tim-migrate';
 import { cmdSync } from './sync-cli.js';
+import { cmdSnapshot } from './snapshot.js';
+import { cmdRestore } from './restore.js';
 import { runStatusline } from './statusline.js';
 import { cmdRecordCommit } from './record-commit.js';
 import {
@@ -548,6 +550,12 @@ async function main() {
       }
       break;
     }
+    case 'snapshot':
+      await cmdSnapshot(rest);
+      break;
+    case 'restore':
+      await cmdRestore(rest);
+      break;
     case 'sync': {
       const sub = rest[0];
       await cmdSync(sub, rest.slice(1));
@@ -583,6 +591,8 @@ Commands:
   export [path]           Export to .hmem or markdown (--format hmem|text)
   import <path>           Import from .hmem (--dry-run, --deduplicate)
   migrate tags-to-types   Convert legacy #rule / #human tags to metadata.type (--dry-run, --sample-limit N)
+  snapshot                 Snapshot the live TIM DB to /tmp/tim-snapshots/ (SQLite backup API)
+  restore                  Restore TIM DB from a snapshot (--from, --list, --dry-run, --force)
   sync connect            Connect to o9k-sync server
   sync push               Push unacked staging to server
   sync pull               Pull remote changes

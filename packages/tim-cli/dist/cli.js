@@ -40,6 +40,8 @@ const tim_core_1 = require("tim-core");
 const tim_hooks_1 = require("tim-hooks");
 const tim_migrate_1 = require("tim-migrate");
 const sync_cli_js_1 = require("./sync-cli.js");
+const snapshot_js_1 = require("./snapshot.js");
+const restore_js_1 = require("./restore.js");
 const statusline_js_1 = require("./statusline.js");
 const record_commit_js_1 = require("./record-commit.js");
 const hermes_statusline_install_js_1 = require("./hermes-statusline-install.js");
@@ -517,6 +519,12 @@ async function main() {
             }
             break;
         }
+        case 'snapshot':
+            await (0, snapshot_js_1.cmdSnapshot)(rest);
+            break;
+        case 'restore':
+            await (0, restore_js_1.cmdRestore)(rest);
+            break;
         case 'sync': {
             const sub = rest[0];
             await (0, sync_cli_js_1.cmdSync)(sub, rest.slice(1));
@@ -552,6 +560,8 @@ Commands:
   export [path]           Export to .hmem or markdown (--format hmem|text)
   import <path>           Import from .hmem (--dry-run, --deduplicate)
   migrate tags-to-types   Convert legacy #rule / #human tags to metadata.type (--dry-run, --sample-limit N)
+  snapshot                 Snapshot the live TIM DB to /tmp/tim-snapshots/ (SQLite backup API)
+  restore                  Restore TIM DB from a snapshot (--from, --list, --dry-run, --force)
   sync connect            Connect to o9k-sync server
   sync push               Push unacked staging to server
   sync pull               Pull remote changes
