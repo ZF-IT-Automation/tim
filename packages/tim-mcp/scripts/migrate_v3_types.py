@@ -12,6 +12,8 @@ Usage:
   python3 migrate_v3_types.py --limit 500
   python3 migrate_v3_types.py                              # all entries
   python3 migrate_v3_types.py --verify                     # stats only, no writes
+  python3 migrate_v3_types.py --verify --inherit           # section pass + inheritance stats
+  python3 migrate_v3_types.py --dry-run --inherit          # show inheritance upgrades
   python3 migrate_v3_types.py --force-rebuild-types        # overwrite existing type (DANGEROUS)
 
 The script is OUTSIDE the tim-mcp TypeScript package because:
@@ -307,23 +309,108 @@ def section_title_for_children(
     return parent_section
 
 
+def is_project_root(entry: dict[str, Any]) -> bool:
+    meta = entry.get("metadata") or {}
+    if not isinstance(meta, dict):
+        return False
+    return meta.get("kind") == "project"
+
+
+def get_explicit_type(entry: dict[str, Any]) -> str | None:
+    meta = entry.get("metadata") or {}
+    if not isinstance(meta, dict):
+        return None
+    t = meta.get("type")
+    return t if isinstance(t, str) else None
+
+
+def inherit_entry_type(
+    entry: dict[str, Any],
+    parent_map: dict[str, str],
+    entries_map: dict[str, dict[str, Any]],
+    derived_map: dict[str, str],
+) -> str:
+    """Walk up parent chain; inherit first non-standard/non-project ancestor type."""
+    entry_id = entry.get("id")
+    if not isinstance(entry_id, str):
+        return "standard"
+
+    current: str | None = parent_map.get(entry_id)
+    visited: set[str] = set()
+
+    while current and current not in visited:
+        visited.add(current)
+        ancestor = entries_map.get(current)
+        if ancestor is None:
+            break
+
+        if is_project_root(ancestor):
+            return "standard"
+
+        explicit = get_explicit_type(ancestor)
+        effective = explicit if explicit else derived_map.get(current, "standard")
+
+        if effective not in ("standard", "project"):
+            return effective
+
+        current = parent_map.get(current)
+
+    return "standard"
+
+
+def apply_inheritance_pass(
+    all_pairs: list[tuple[dict[str, Any], str]],
+    parent_map: dict[str, str],
+    entries_map: dict[str, dict[str, Any]],
+    logger: logging.Logger,
+) -> list[tuple[dict[str, Any], str]]:
+    derived_map: dict[str, str] = {}
+    for entry, derived in all_pairs:
+        eid = entry.get("id")
+        if isinstance(eid, str):
+            derived_map[eid] = derived
+
+    upgraded = 0
+    result: list[tuple[dict[str, Any], str]] = []
+    for entry, derived_type in all_pairs:
+        if get_explicit_type(entry) is None and derived_type == "standard":
+            new_type = inherit_entry_type(entry, parent_map, entries_map, derived_map)
+            if new_type != derived_type:
+                eid = entry.get("id")
+                logger.debug("Inherit %s: standard -> %s", eid, new_type)
+                upgraded += 1
+                derived_type = new_type
+                if isinstance(eid, str):
+                    derived_map[eid] = new_type
+        result.append((entry, derived_type))
+
+    logger.info("Inheritance pass: %d entries upgraded from standard", upgraded)
+    return result
+
+
 # ─── Tree walk ───────────────────────────────────────────────────────────────
 
 def walk_entries(
     entry: dict[str, Any],
     parent_section: str | None,
     parent_kind: str | None,
+    parent_id: str | None,
     out: list[tuple[dict[str, Any], str]],
+    parent_map: dict[str, str],
 ) -> None:
     derived = derive_entry_type(entry, parent_section)
     out.append((entry, derived))
+    entry_id = entry.get("id")
+    if isinstance(entry_id, str) and parent_id is not None:
+        parent_map[entry_id] = parent_id
     meta = entry.get("metadata") or {}
     entry_kind = meta.get("kind") if isinstance(meta, dict) else None
     entry_kind_str = entry_kind if isinstance(entry_kind, str) else None
     child_section = section_title_for_children(entry, parent_section, parent_kind)
+    child_parent_id = entry_id if isinstance(entry_id, str) else parent_id
     for child in entry.get("children") or []:
         if isinstance(child, dict):
-            walk_entries(child, child_section, entry_kind_str, out)
+            walk_entries(child, child_section, entry_kind_str, child_parent_id, out, parent_map)
 
 
 # ─── Project discovery ───────────────────────────────────────────────────────
@@ -414,14 +501,24 @@ def run_migration(args: argparse.Namespace, logger: logging.Logger) -> int:
         logger.info("Discovered %d project(s)", len(projects))
 
         all_pairs: list[tuple[dict[str, Any], str]] = []
+        parent_map: dict[str, str] = {}
         for label in projects:
             tree = load_project_tree(client, label, depth=args.depth)
             if tree is None:
                 logger.warning("Could not load project %s", label)
                 continue
-            walk_entries(tree, None, None, all_pairs)
+            walk_entries(tree, None, None, None, all_pairs, parent_map)
 
         logger.info("Collected %d entries across projects", len(all_pairs))
+
+        entries_map: dict[str, dict[str, Any]] = {}
+        for entry, _ in all_pairs:
+            eid = entry.get("id")
+            if isinstance(eid, str):
+                entries_map[eid] = entry
+
+        if args.inherit:
+            all_pairs = apply_inheritance_pass(all_pairs, parent_map, entries_map, logger)
 
         limit = args.limit if args.limit and args.limit > 0 else None
 
@@ -546,6 +643,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=5,
         help="Tree depth for tim_read per project (default: 5)",
     )
+    p.add_argument(
+        "--inherit",
+        action="store_true",
+        default=False,
+        help="Second pass: inherit type from typed ancestors for unmapped entries",
+    )
     return p
 
 
@@ -559,9 +662,10 @@ def main() -> int:
         return 2
 
     logger.info(
-        "migrate_v3_types start (dry_run=%s verify=%s limit=%s force=%s)",
+        "migrate_v3_types start (dry_run=%s verify=%s inherit=%s limit=%s force=%s)",
         args.dry_run,
         args.verify,
+        args.inherit,
         args.limit,
         args.force_rebuild_types,
     )
