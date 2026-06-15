@@ -84,4 +84,21 @@ describe('resolveProjectLabel', () => {
     expect(second.id).not.toBe(first.id);
     expect(second.metadata.label).toBe('P0001');
   });
+
+  it('search topK honored when label hit merged', async () => {
+    await store.createProject('TX', { content: 'target project' });
+    for (let i = 0; i < 15; i++) {
+      await store.write('TX matching content ' + i, { tags: [] });
+    }
+    const results = await store.search({ query: 'TX', topK: 5 });
+    expect(results).toHaveLength(5);
+    expect(results[0].metadata.label).toBe('TX');
+  });
+
+  it('createProject rejects when irrelevant entry with same label exists', async () => {
+    const first = await store.createProject('PXR', { content: 'will be irrelevant' });
+    await store.update(first.id, { irrelevant: true });
+    await expect(store.createProject('PXR', { content: 'should fail' }))
+      .rejects.toThrow(/Project label already exists/);
+  });
 });

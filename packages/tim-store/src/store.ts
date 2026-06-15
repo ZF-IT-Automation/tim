@@ -200,7 +200,6 @@ export class TimStore implements MemoryInterface {
         SELECT id FROM entries
         WHERE json_extract(metadata, '$.kind') = 'project'
           AND json_extract(metadata, '$.label') = ?
-          AND irrelevant = 0
           AND tombstoned_at IS NULL
       `).get(labelArg) as { id: string } | undefined;
       if (dup) {
@@ -232,6 +231,19 @@ export class TimStore implements MemoryInterface {
     const direct = await this.read(q);
     if (direct?.metadata.kind === 'project') {
       const label = typeof direct.metadata.label === 'string' ? direct.metadata.label : q;
+      return { status: 'found', label };
+    }
+
+    const labelRow = this.db.prepare(`
+      SELECT metadata FROM entries
+      WHERE json_extract(metadata, '$.kind') = 'project'
+        AND json_extract(metadata, '$.label') = ?
+        AND irrelevant = 0
+        AND tombstoned_at IS NULL
+    `).get(q) as { metadata: string } | undefined;
+    if (labelRow) {
+      const meta = JSON.parse(labelRow.metadata) as Record<string, unknown>;
+      const label = typeof meta.label === 'string' ? meta.label : q;
       return { status: 'found', label };
     }
 
@@ -962,7 +974,14 @@ export class TimStore implements MemoryInterface {
     // Broader fix: index metadata.label + aliases in fts_entries (migration + triggers).
     const resolved = await this.resolveProjectLabel(options.query);
     if (resolved.status === 'found') {
-      const proj = await this.read(resolved.label);
+      const row = this.db.prepare(`
+        SELECT * FROM entries
+        WHERE json_extract(metadata, '$.kind') = 'project'
+          AND json_extract(metadata, '$.label') = ?
+          AND irrelevant = 0
+          AND tombstoned_at IS NULL
+      `).get(resolved.label) as RowEntry | undefined;
+      const proj = row ? rowToEntry(row) : null;
       if (proj && !fts.some(e => e.id === proj.id)) {
         return [proj, ...fts].slice(0, topK);
       }
