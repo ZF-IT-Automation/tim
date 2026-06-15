@@ -716,6 +716,30 @@ async function buildCortexReadyBlock(store: TimStore, session: Entry): Promise<s
 
 const DB_PATH = process.env.TIM_DB_PATH || loadConfig().dbPath || process.env.HOME + '/.tim/tim.db';
 
+// Binary-write guard: refuse to start if DB is not a valid SQLite file.
+// Catches header corruption (e.g. accidental binary patch, OOM kill mid-write).
+// Escape hatch: HERMES_SKIP_DB_GUARD=1 bypasses the check.
+if (!process.env.HERMES_SKIP_DB_GUARD && fs.existsSync(DB_PATH)) {
+  try {
+    const fd = fs.openSync(DB_PATH, 'r');
+    const header = Buffer.alloc(16);
+    fs.readSync(fd, header, 0, 16, 0);
+    fs.closeSync(fd);
+    if (header.toString('utf8', 0, 15) !== 'SQLite format 3') {
+      const msg = `FATAL: ${DB_PATH} is not a valid SQLite database (header corruption).\n` +
+        `This can happen from accidental binary edits, disk-full mid-write, or OOM kills.\n` +
+        `To recover: run \'tim restore --list\' to see available snapshots, then \'tim restore\'.\n` +
+        `If you are certain the file is valid, set HERMES_SKIP_DB_GUARD=1 to bypass this check.`;
+      console.error(msg);
+      process.exit(1);
+    }
+  } catch (e: any) {
+    console.error(`FATAL: cannot read DB header: ${e.message}`);
+    if (!process.env.HERMES_SKIP_DB_GUARD) process.exit(1);
+  }
+}
+
+
 let store: TimStore;
 let sessions: SessionManager;
 let commitMgr: CommitManager;
