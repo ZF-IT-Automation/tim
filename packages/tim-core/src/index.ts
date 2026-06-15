@@ -25,6 +25,11 @@ export {
   isBuiltinType,
   isMetadataType,
   normalizeLegacyTypeTag,
+  DEPRECATED_STATUS_TAGS,
+  DEPRECATED_PRIORITY_TAGS,
+  DEPRECATED_TAGS,
+  isDeprecatedTag,
+  stripDeprecatedTags,
 } from './types.js';
 
 export interface Entry {

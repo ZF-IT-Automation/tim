@@ -8,7 +8,7 @@ export { deriveCounters, findChildByKind, getCurrentBatch, ensureInboxProject, t
 export { CommitManager, type RecordCommitParams, } from './commit.js';
 export { COMMITS_SECTION_TITLE, COMMITS_SECTION_ORDER, KIND_COMMITS_ROOT, KIND_COMMIT, COMMIT_TAG, } from './commit-tree.js';
 export { CurateManager, type UpdateManyFlags } from './curate.js';
-export { validateTaskMetadata, validateRuleMetadata } from './validate.js';
+export { validateTaskMetadata, validateRuleMetadata, validateBugMetadata, validateTagsDeprecated, } from './validate.js';
 export { ErrorLogger, type ErrorLogEntry, type ErrorStats } from './error-log.js';
 export { formatEntryId, sessionShortFromMetadata } from './entry-id.js';
 export { ackStaging, applyRemoteEntry, applyRemoteEdge, getUnackedStaging, recordFromPayload, type StagingRow, } from './sync-methods.js';

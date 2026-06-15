@@ -114,7 +114,7 @@ class McpClient {
         }, 100);
     }
 }
-async function seedProjectWithTask(client, label, title, taskTitle, taskMeta = {}, taskTags = ['#task', '#todo']) {
+async function seedProjectWithTask(client, label, title, taskTitle, taskMeta = {}, taskTags = ['#task', '#tim']) {
     const proj = await client.callTool('tim_create_project', { label, content: title });
     (0, vitest_1.expect)(proj.error).toBeUndefined();
     const project = JSON.parse(proj.result.content[0].text);
@@ -126,12 +126,20 @@ async function seedProjectWithTask(client, label, title, taskTitle, taskMeta = {
     });
     (0, vitest_1.expect)(section.error).toBeUndefined();
     const sec = JSON.parse(section.result.content[0].text);
-    await client.callTool('tim_write', {
+    const writeResp = await client.callTool('tim_write', {
         content: taskTitle,
         parentId: sec.id,
-        metadata: { task: true, status: 'todo', ...taskMeta },
+        metadata: {
+            type: 'task',
+            task: {
+                status: taskMeta.status ?? 'todo',
+                priority: taskMeta.priority ?? 'medium',
+            },
+        },
         tags: taskTags,
     });
+    (0, vitest_1.expect)(writeResp.error).toBeUndefined();
+    (0, vitest_1.expect)(writeResp.result?.isError).toBeFalsy();
 }
 (0, vitest_1.describe)('tim_show', () => {
     let client;

@@ -76,4 +76,39 @@ const validate_js_1 = require("../validate.js");
         (0, vitest_1.expect)((0, validate_js_1.validateRuleMetadata)({})).toEqual([]);
     });
 });
+(0, vitest_1.describe)('validateBugMetadata', () => {
+    (0, vitest_1.it)('warns when type=bug but bug sub-section missing', () => {
+        const warnings = (0, validate_js_1.validateBugMetadata)({ type: 'bug' });
+        (0, vitest_1.expect)(warnings).toContainEqual(vitest_1.expect.stringContaining('bug metadata missing'));
+    });
+    (0, vitest_1.it)('warns when bug sub-section is boolean not object', () => {
+        const warnings = (0, validate_js_1.validateBugMetadata)({ type: 'bug', bug: true });
+        (0, vitest_1.expect)(warnings).toContainEqual(vitest_1.expect.stringContaining('bug metadata missing'));
+    });
+    (0, vitest_1.it)('warns when severity missing', () => {
+        const warnings = (0, validate_js_1.validateBugMetadata)({
+            type: 'bug',
+            bug: { status: 'open' },
+        });
+        (0, vitest_1.expect)(warnings).toContainEqual('severity recommended');
+    });
+    (0, vitest_1.it)('warns when status missing', () => {
+        const warnings = (0, validate_js_1.validateBugMetadata)({
+            type: 'bug',
+            bug: { severity: 'P1' },
+        });
+        (0, vitest_1.expect)(warnings).toContainEqual('status recommended');
+    });
+    (0, vitest_1.it)('no warnings for valid bug sub-section', () => {
+        const warnings = (0, validate_js_1.validateBugMetadata)({
+            type: 'bug',
+            bug: { severity: 'P1', status: 'open' },
+        });
+        (0, vitest_1.expect)(warnings).toEqual([]);
+    });
+    (0, vitest_1.it)('ignores non-bug entries', () => {
+        (0, vitest_1.expect)((0, validate_js_1.validateBugMetadata)({ type: 'standard' })).toEqual([]);
+        (0, vitest_1.expect)((0, validate_js_1.validateBugMetadata)({})).toEqual([]);
+    });
+});
 //# sourceMappingURL=validate.test.js.map

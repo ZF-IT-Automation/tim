@@ -96,8 +96,8 @@ async function seedProjectWithTask(
   label: string,
   title: string,
   taskTitle: string,
-  taskMeta: Record<string, unknown> = {},
-  taskTags: string[] = ['#task', '#todo'],
+  taskMeta: { status?: string; priority?: string } = {},
+  taskTags: string[] = ['#task', '#tim'],
 ): Promise<void> {
   const proj = await client.callTool('tim_create_project', { label, content: title });
   expect(proj.error).toBeUndefined();
@@ -112,12 +112,20 @@ async function seedProjectWithTask(
   expect(section.error).toBeUndefined();
   const sec = JSON.parse(section.result!.content[0].text);
 
-  await client.callTool('tim_write', {
+  const writeResp = await client.callTool('tim_write', {
     content: taskTitle,
     parentId: sec.id,
-    metadata: { task: true, status: 'todo', ...taskMeta },
+    metadata: {
+      type: 'task',
+      task: {
+        status: taskMeta.status ?? 'todo',
+        priority: taskMeta.priority ?? 'medium',
+      },
+    },
     tags: taskTags,
   });
+  expect(writeResp.error).toBeUndefined();
+  expect(writeResp.result?.isError).toBeFalsy();
 }
 
 describe('tim_show', () => {

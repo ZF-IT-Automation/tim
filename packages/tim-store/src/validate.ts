@@ -3,6 +3,8 @@
  * Warnings only — no throws during migration phase.
  */
 
+import { isDeprecatedTag } from 'tim-core';
+
 export function validateTaskMetadata(metadata: Record<string, unknown>): string[] {
   const warnings: string[] = [];
 
@@ -66,5 +68,17 @@ export function validateBugMetadata(metadata: Record<string, unknown>): string[]
     }
   }
 
+  return warnings;
+}
+
+export function validateTagsDeprecated(tags: string[]): string[] {
+  const warnings: string[] = [];
+  for (const tag of tags) {
+    if (isDeprecatedTag(tag)) {
+      warnings.push(
+        `Deprecated tag '${tag}': use metadata.task.status / metadata.task.priority instead. Tag will not be written.`,
+      );
+    }
+  }
   return warnings;
 }

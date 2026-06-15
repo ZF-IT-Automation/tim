@@ -59,6 +59,18 @@ export interface RuleRecord {
     trigger: string | null;
     action: string | null;
 }
+export interface BugRecord {
+    id: string;
+    title: string;
+    content: string;
+    parent_id: string | null;
+    project_label: string | null;
+    severity: string | null;
+    status: string | null;
+}
+export interface GetBugsOptions {
+    status?: string;
+}
 export interface GetTasksOptions {
     status?: string;
 }
@@ -123,6 +135,7 @@ export declare class TimStore implements MemoryInterface {
         tag?: string;
     }): Entry[];
     getTasks(opts?: GetTasksOptions): Promise<TaskRecord[]>;
+    getBugs(opts?: GetBugsOptions): Promise<BugRecord[]>;
     getRules(): Promise<RuleRecord[]>;
     /** All project root nodes (kind='project'). Used for cross-project overview + name resolution. */
     listProjects(): Promise<Array<{

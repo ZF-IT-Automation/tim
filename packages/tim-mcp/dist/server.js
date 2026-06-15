@@ -508,6 +508,26 @@ const SHOW_PRIORITY_ORDER = {
     medium: 1,
     low: 2,
 };
+function resolveEntryTaskStatus(metadata) {
+    const task = metadata.task;
+    if (typeof task === 'object' && task !== null && !Array.isArray(task)) {
+        const st = task.status;
+        if (typeof st === 'string')
+            return st;
+    }
+    const st = metadata.status;
+    return typeof st === 'string' ? st : undefined;
+}
+function resolveEntryTaskPriority(metadata) {
+    const task = metadata.task;
+    if (typeof task === 'object' && task !== null && !Array.isArray(task)) {
+        const pr = task.priority;
+        if (typeof pr === 'string')
+            return pr;
+    }
+    const pr = metadata.priority;
+    return typeof pr === 'string' ? pr : undefined;
+}
 async function applyWith(store, entries, withStr) {
     if (!withStr)
         return entries;
@@ -519,12 +539,12 @@ async function applyWith(store, entries, withStr) {
         switch (lc) {
             case 'open':
                 result = result.filter(e => {
-                    const st = e.metadata.status;
+                    const st = resolveEntryTaskStatus(e.metadata);
                     return st !== 'done' && st !== 'cancelled';
                 });
                 break;
             case 'done':
-                result = result.filter(e => e.metadata.status === 'done');
+                result = result.filter(e => resolveEntryTaskStatus(e.metadata) === 'done');
                 break;
             case 'urgent':
                 result = result.filter(e => e.tags.includes('#urgent'));
@@ -559,19 +579,19 @@ async function applyWith(store, entries, withStr) {
 }
 function sortForShow(entries) {
     return [...entries].sort((a, b) => {
-        const statusA = SHOW_STATUS_ORDER[String(a.metadata.status ?? '')] ?? 2;
-        const statusB = SHOW_STATUS_ORDER[String(b.metadata.status ?? '')] ?? 2;
+        const statusA = SHOW_STATUS_ORDER[resolveEntryTaskStatus(a.metadata) ?? ''] ?? 2;
+        const statusB = SHOW_STATUS_ORDER[resolveEntryTaskStatus(b.metadata) ?? ''] ?? 2;
         if (statusA !== statusB)
             return statusA - statusB;
-        const priorityA = SHOW_PRIORITY_ORDER[String(a.metadata.priority ?? '')] ?? 3;
-        const priorityB = SHOW_PRIORITY_ORDER[String(b.metadata.priority ?? '')] ?? 3;
+        const priorityA = SHOW_PRIORITY_ORDER[resolveEntryTaskPriority(a.metadata) ?? ''] ?? 3;
+        const priorityB = SHOW_PRIORITY_ORDER[resolveEntryTaskPriority(b.metadata) ?? ''] ?? 3;
         if (priorityA !== priorityB)
             return priorityA - priorityB;
         return b.createdAt.localeCompare(a.createdAt);
     });
 }
 function formatShowLine(entry) {
-    const icon = taskStatusIcon(entry.metadata.status ?? null);
+    const icon = taskStatusIcon(resolveEntryTaskStatus(entry.metadata) ?? null);
     const title = entry.title.padEnd(44, ' ');
     const tagStr = entry.tags.join(' ');
     return `  ${icon} ${title}${tagStr ? ' ' + tagStr : ''}`.trimEnd();
@@ -779,7 +799,12 @@ async function startServer() {
                         },
                         contentType: { type: 'string', enum: ['text', 'json', 'blob'], default: 'text' },
                         confidence: { type: 'number', minimum: 0, maximum: 1, default: 1.0 },
-                        tags: { type: 'array', items: { type: 'string' }, default: [] },
+                        tags: {
+                            type: 'array',
+                            items: { type: 'string' },
+                            default: [],
+                            description: 'Topic tags only (#tim, #security). Status/priority tags (#todo, #done, #priority-*) are deprecated — use metadata.task.status / metadata.task.priority.',
+                        },
                         visibility: { type: 'number', default: 1 },
                         metadata: { type: 'object', default: {} },
                     },
@@ -840,7 +865,11 @@ async function startServer() {
                         id: { type: 'string' },
                         content: { type: 'string' },
                         confidence: { type: 'number', minimum: 0, maximum: 1 },
-                        tags: { type: 'array', items: { type: 'string' } },
+                        tags: {
+                            type: 'array',
+                            items: { type: 'string' },
+                            description: 'Topic tags only. Deprecated status/priority tags are stripped — use metadata.task.status / metadata.task.priority.',
+                        },
                         visibility: { type: 'number' },
                         metadata: { type: 'object' },
                     },
@@ -1084,7 +1113,7 @@ async function startServer() {
             },
             {
                 name: 'tim_tag_add',
-                description: 'Add tags to an entry (deduplicated).',
+                description: 'Add tags to an entry (deduplicated). Deprecated status/priority tags (#todo, #done, #priority-*) are skipped — use metadata.task.status / metadata.task.priority.',
                 inputSchema: {
                     type: 'object',
                     properties: {
@@ -1506,6 +1535,9 @@ async function startServer() {
                     // project roots, sessions, exchanges, batch summaries, commits,
                     // checkpoints) are exempt — everything else is user content and
                     // must carry at least 2 tags for discoverability.
+                    const tagWarnings = (0, tim_store_1.validateTagsDeprecated)(writeOpts.tags ?? []);
+                    const { clean: cleanWriteTags } = (0, tim_core_1.stripDeprecatedTags)(writeOpts.tags ?? []);
+                    writeOpts.tags = cleanWriteTags;
                     const tagsValidation = (0, write_validate_js_1.validateWriteTags)(writeOpts.tags, writeOpts.metadata);
                     if (!tagsValidation.ok) {
                         return {
@@ -1514,8 +1546,9 @@ async function startServer() {
                         };
                     }
                     const entry = await s.write(opts.content, writeOpts);
+                    const payload = tagWarnings.length > 0 ? { entry, warnings: tagWarnings } : entry;
                     return {
-                        content: [{ type: 'text', text: JSON.stringify(entry, null, 2) }],
+                        content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }],
                     };
                 }
                 case 'tim_search': {
@@ -1565,6 +1598,16 @@ async function startServer() {
                 }
                 case 'tim_update': {
                     const { id, ...patch } = TimUpdateSchema.parse(args);
+                    if (patch.tags !== undefined) {
+                        const tagWarnings = (0, tim_store_1.validateTagsDeprecated)(patch.tags);
+                        const { clean: cleanTags } = (0, tim_core_1.stripDeprecatedTags)(patch.tags);
+                        patch.tags = cleanTags;
+                        const entry = await s.update(id, patch);
+                        const payload = tagWarnings.length > 0 ? { entry, warnings: tagWarnings } : entry;
+                        return {
+                            content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }],
+                        };
+                    }
                     const entry = await s.update(id, patch);
                     return {
                         content: [{ type: 'text', text: JSON.stringify(entry, null, 2) }],
@@ -1807,9 +1850,27 @@ async function startServer() {
                 }
                 case 'tim_tag_add': {
                     const { id, tags } = TimTagAddSchema.parse(args);
-                    const entry = s.curate().tagAdd(id, tags);
+                    const tagWarnings = (0, tim_store_1.validateTagsDeprecated)(tags);
+                    const { clean: cleanTags } = (0, tim_core_1.stripDeprecatedTags)(tags);
+                    if (cleanTags.length === 0) {
+                        const existing = await s.read(id);
+                        if (!existing) {
+                            return {
+                                content: [{ type: 'text', text: `Entry not found: ${id}` }],
+                                isError: true,
+                            };
+                        }
+                        return {
+                            content: [{
+                                    type: 'text',
+                                    text: JSON.stringify({ entry: existing, warnings: tagWarnings }, null, 2),
+                                }],
+                        };
+                    }
+                    const entry = s.curate().tagAdd(id, cleanTags);
+                    const payload = tagWarnings.length > 0 ? { entry, warnings: tagWarnings } : entry;
                     return {
-                        content: [{ type: 'text', text: JSON.stringify(entry, null, 2) }],
+                        content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }],
                     };
                 }
                 case 'tim_tag_remove': {

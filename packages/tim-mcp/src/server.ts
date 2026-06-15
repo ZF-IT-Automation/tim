@@ -16,10 +16,11 @@ import {
   ensureInboxProject,
   INBOX_PROJECT_LABEL,
   ErrorLogger,
+  validateTagsDeprecated,
   type TaskRecord,
   type ProjectSchema,
 } from 'tim-store';
-import { loadConfig, resolveActiveSessionId, evaluateLoadGate, type EdgeType, type Entry } from 'tim-core';
+import { loadConfig, resolveActiveSessionId, evaluateLoadGate, stripDeprecatedTags, type EdgeType, type Entry } from 'tim-core';
 import {
   findMarker,
   getActiveProjectLabel,
@@ -558,6 +559,26 @@ const SHOW_PRIORITY_ORDER: Record<string, number> = {
   low: 2,
 };
 
+function resolveEntryTaskStatus(metadata: Record<string, unknown>): string | undefined {
+  const task = metadata.task;
+  if (typeof task === 'object' && task !== null && !Array.isArray(task)) {
+    const st = (task as Record<string, unknown>).status;
+    if (typeof st === 'string') return st;
+  }
+  const st = metadata.status;
+  return typeof st === 'string' ? st : undefined;
+}
+
+function resolveEntryTaskPriority(metadata: Record<string, unknown>): string | undefined {
+  const task = metadata.task;
+  if (typeof task === 'object' && task !== null && !Array.isArray(task)) {
+    const pr = (task as Record<string, unknown>).priority;
+    if (typeof pr === 'string') return pr;
+  }
+  const pr = metadata.priority;
+  return typeof pr === 'string' ? pr : undefined;
+}
+
 async function applyWith(
   store: TimStore,
   entries: Entry[],
@@ -573,12 +594,12 @@ async function applyWith(
     switch (lc) {
       case 'open':
         result = result.filter(e => {
-          const st = e.metadata.status as string | undefined;
+          const st = resolveEntryTaskStatus(e.metadata);
           return st !== 'done' && st !== 'cancelled';
         });
         break;
       case 'done':
-        result = result.filter(e => e.metadata.status === 'done');
+        result = result.filter(e => resolveEntryTaskStatus(e.metadata) === 'done');
         break;
       case 'urgent':
         result = result.filter(e => e.tags.includes('#urgent'));
@@ -614,12 +635,12 @@ async function applyWith(
 
 function sortForShow(entries: Entry[]): Entry[] {
   return [...entries].sort((a, b) => {
-    const statusA = SHOW_STATUS_ORDER[String(a.metadata.status ?? '')] ?? 2;
-    const statusB = SHOW_STATUS_ORDER[String(b.metadata.status ?? '')] ?? 2;
+    const statusA = SHOW_STATUS_ORDER[resolveEntryTaskStatus(a.metadata) ?? ''] ?? 2;
+    const statusB = SHOW_STATUS_ORDER[resolveEntryTaskStatus(b.metadata) ?? ''] ?? 2;
     if (statusA !== statusB) return statusA - statusB;
 
-    const priorityA = SHOW_PRIORITY_ORDER[String(a.metadata.priority ?? '')] ?? 3;
-    const priorityB = SHOW_PRIORITY_ORDER[String(b.metadata.priority ?? '')] ?? 3;
+    const priorityA = SHOW_PRIORITY_ORDER[resolveEntryTaskPriority(a.metadata) ?? ''] ?? 3;
+    const priorityB = SHOW_PRIORITY_ORDER[resolveEntryTaskPriority(b.metadata) ?? ''] ?? 3;
     if (priorityA !== priorityB) return priorityA - priorityB;
 
     return b.createdAt.localeCompare(a.createdAt);
@@ -627,7 +648,7 @@ function sortForShow(entries: Entry[]): Entry[] {
 }
 
 function formatShowLine(entry: Entry): string {
-  const icon = taskStatusIcon((entry.metadata.status as string | null) ?? null);
+  const icon = taskStatusIcon(resolveEntryTaskStatus(entry.metadata) ?? null);
   const title = entry.title.padEnd(44, ' ');
   const tagStr = entry.tags.join(' ');
   return `  ${icon} ${title}${tagStr ? ' ' + tagStr : ''}`.trimEnd();
@@ -860,7 +881,12 @@ export async function startServer(): Promise<void> {
             },
             contentType: { type: 'string', enum: ['text', 'json', 'blob'], default: 'text' },
             confidence: { type: 'number', minimum: 0, maximum: 1, default: 1.0 },
-            tags: { type: 'array', items: { type: 'string' }, default: [] },
+            tags: {
+              type: 'array',
+              items: { type: 'string' },
+              default: [],
+              description: 'Topic tags only (#tim, #security). Status/priority tags (#todo, #done, #priority-*) are deprecated — use metadata.task.status / metadata.task.priority.',
+            },
             visibility: { type: 'number', default: 1 },
             metadata: { type: 'object', default: {} },
           },
@@ -921,7 +947,11 @@ export async function startServer(): Promise<void> {
             id: { type: 'string' },
             content: { type: 'string' },
             confidence: { type: 'number', minimum: 0, maximum: 1 },
-            tags: { type: 'array', items: { type: 'string' } },
+            tags: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'Topic tags only. Deprecated status/priority tags are stripped — use metadata.task.status / metadata.task.priority.',
+            },
             visibility: { type: 'number' },
             metadata: { type: 'object' },
           },
@@ -1170,7 +1200,7 @@ export async function startServer(): Promise<void> {
       },
       {
         name: 'tim_tag_add',
-        description: 'Add tags to an entry (deduplicated).',
+        description: 'Add tags to an entry (deduplicated). Deprecated status/priority tags (#todo, #done, #priority-*) are skipped — use metadata.task.status / metadata.task.priority.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -1617,6 +1647,10 @@ export async function startServer(): Promise<void> {
           // project roots, sessions, exchanges, batch summaries, commits,
           // checkpoints) are exempt — everything else is user content and
           // must carry at least 2 tags for discoverability.
+          const tagWarnings = validateTagsDeprecated(writeOpts.tags ?? []);
+          const { clean: cleanWriteTags } = stripDeprecatedTags(writeOpts.tags ?? []);
+          writeOpts.tags = cleanWriteTags;
+
           const tagsValidation = validateWriteTags(writeOpts.tags, writeOpts.metadata);
           if (!tagsValidation.ok) {
             return {
@@ -1626,8 +1660,9 @@ export async function startServer(): Promise<void> {
           }
 
           const entry = await s.write(opts.content, writeOpts);
+          const payload = tagWarnings.length > 0 ? { entry, warnings: tagWarnings } : entry;
           return {
-            content: [{ type: 'text', text: JSON.stringify(entry, null, 2) }],
+            content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }],
           };
         }
 
@@ -1683,7 +1718,17 @@ export async function startServer(): Promise<void> {
 
         case 'tim_update': {
           const { id, ...patch } = TimUpdateSchema.parse(args);
-          const entry = await s.update(id, patch as any);
+          if (patch.tags !== undefined) {
+            const tagWarnings = validateTagsDeprecated(patch.tags);
+            const { clean: cleanTags } = stripDeprecatedTags(patch.tags);
+            patch.tags = cleanTags;
+            const entry = await s.update(id, patch as Partial<Entry>);
+            const payload = tagWarnings.length > 0 ? { entry, warnings: tagWarnings } : entry;
+            return {
+              content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }],
+            };
+          }
+          const entry = await s.update(id, patch as Partial<Entry>);
           return {
             content: [{ type: 'text', text: JSON.stringify(entry, null, 2) }],
           };
@@ -1948,9 +1993,27 @@ export async function startServer(): Promise<void> {
 
         case 'tim_tag_add': {
           const { id, tags } = TimTagAddSchema.parse(args);
-          const entry = s.curate().tagAdd(id, tags);
+          const tagWarnings = validateTagsDeprecated(tags);
+          const { clean: cleanTags } = stripDeprecatedTags(tags);
+          if (cleanTags.length === 0) {
+            const existing = await s.read(id);
+            if (!existing) {
+              return {
+                content: [{ type: 'text', text: `Entry not found: ${id}` }],
+                isError: true,
+              };
+            }
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({ entry: existing, warnings: tagWarnings }, null, 2),
+              }],
+            };
+          }
+          const entry = s.curate().tagAdd(id, cleanTags);
+          const payload = tagWarnings.length > 0 ? { entry, warnings: tagWarnings } : entry;
           return {
-            content: [{ type: 'text', text: JSON.stringify(entry, null, 2) }],
+            content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }],
           };
         }
 

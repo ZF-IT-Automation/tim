@@ -10,6 +10,7 @@ exports.sanitizeFtsQuery = sanitizeFtsQuery;
 const better_sqlite3_1 = __importDefault(require("better-sqlite3"));
 const ulid_1 = require("ulid");
 const entry_id_js_1 = require("./entry-id.js");
+const tim_core_1 = require("tim-core");
 const tim_sync_1 = require("tim-sync");
 const schema_js_1 = require("./schema.js");
 const curate_js_1 = require("./curate.js");
@@ -537,6 +538,68 @@ class TimStore {
             };
         });
     }
+    async getBugs(opts) {
+        let sql = `
+      SELECT e.* FROM entries e
+      WHERE (
+        json_extract(e.metadata, '$.type') = 'bug'
+        OR (
+          json_extract(e.metadata, '$.bug') IS NOT NULL
+          AND json_extract(e.metadata, '$.bug') != false
+        )
+        OR e.tags LIKE '%"#bug"%'
+      )
+        AND e.irrelevant = 0
+        AND e.tombstoned_at IS NULL
+    `;
+        const params = [];
+        if (opts?.status) {
+            sql += ` AND COALESCE(
+        json_extract(e.metadata, '$.bug.status'),
+        json_extract(e.metadata, '$.status')
+      ) = ?`;
+            params.push(opts.status);
+        }
+        sql += `
+      ORDER BY
+        CASE COALESCE(
+          json_extract(e.metadata, '$.bug.severity'),
+          json_extract(e.metadata, '$.severity')
+        )
+          WHEN 'P0' THEN 0
+          WHEN 'P1' THEN 1
+          WHEN 'P2' THEN 2
+          WHEN 'P3' THEN 3
+          ELSE 4
+        END,
+        e.created_at ASC
+    `;
+        const rows = this.db.prepare(sql).all(...params);
+        return rows.map(row => {
+            const meta = JSON.parse(row.metadata);
+            let severity = null;
+            let status = null;
+            const bug = meta.bug;
+            if (typeof bug === 'object' && bug !== null && !Array.isArray(bug)) {
+                const bm = bug;
+                severity = bm.severity ?? null;
+                status = bm.status ?? null;
+            }
+            else if (meta.type === 'bug') {
+                severity = meta.severity ?? null;
+                status = meta.status ?? null;
+            }
+            return {
+                id: row.id,
+                title: row.title,
+                content: row.content,
+                parent_id: row.parent_id,
+                project_label: this.findProjectLabelForParent(row.parent_id),
+                severity,
+                status,
+            };
+        });
+    }
     async getRules() {
         const rows = this.db.prepare(`
       SELECT e.* FROM entries e
@@ -785,6 +848,11 @@ class TimStore {
       VALUES (?, 'entry', 'upsert', ?, ?, ?, ?)`).run(entry.id, JSON.stringify(entry), timestamp, 'local', confidence);
     }
     async write(content, options = {}) {
+        const { clean: cleanTags, removed: removedTags } = (0, tim_core_1.stripDeprecatedTags)(options.tags ?? []);
+        if (removedTags.length > 0) {
+            console.warn(`[tim-store] Deprecated status/priority tags stripped: ${removedTags.join(', ')}`);
+        }
+        options = { ...options, tags: cleanTags };
         const { entry, now, timestamp } = this.buildEntryRow(content, options);
         this.insertEntrySync(entry);
         this.insertStagingSync(entry, timestamp, options.confidence ?? 1.0);
@@ -801,6 +869,13 @@ class TimStore {
         const existing = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(id);
         if (!existing)
             throw new Error(`Entry not found: ${id}`);
+        if (patch.tags !== undefined) {
+            const { clean: cleanTags, removed: removedTags } = (0, tim_core_1.stripDeprecatedTags)(patch.tags);
+            if (removedTags.length > 0) {
+                console.warn(`[tim-store] Deprecated status/priority tags stripped: ${removedTags.join(', ')}`);
+            }
+            patch = { ...patch, tags: cleanTags };
+        }
         const now = new Date().toISOString();
         const timestamp = Date.now();
         let title = existing.title;

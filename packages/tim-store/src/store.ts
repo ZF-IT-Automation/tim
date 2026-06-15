@@ -11,6 +11,7 @@ import type {
   SyncEntity, SyncOperation, EventBus, EventType,
   ResolveProjectResult, ResolveSectionResult, SectionCandidate,
 } from 'tim-core';
+import { stripDeprecatedTags } from 'tim-core';
 import { resolveLWW } from 'tim-sync';
 import { runMigrations, createTriggers, getCurrentVersion } from './schema.js';
 import { CurateManager } from './curate.js';
@@ -1019,6 +1020,12 @@ export class TimStore implements MemoryInterface {
   }
 
   async write(content: string, options: WriteOptions = {}): Promise<Entry> {
+    const { clean: cleanTags, removed: removedTags } = stripDeprecatedTags(options.tags ?? []);
+    if (removedTags.length > 0) {
+      console.warn(`[tim-store] Deprecated status/priority tags stripped: ${removedTags.join(', ')}`);
+    }
+    options = { ...options, tags: cleanTags };
+
     const { entry, now, timestamp } = this.buildEntryRow(content, options);
     this.insertEntrySync(entry);
     this.insertStagingSync(entry, timestamp, options.confidence ?? 1.0);
@@ -1037,6 +1044,14 @@ export class TimStore implements MemoryInterface {
   async update(id: string, patch: Partial<Entry>): Promise<Entry> {
     const existing = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(id) as RowEntry | undefined;
     if (!existing) throw new Error(`Entry not found: ${id}`);
+
+    if (patch.tags !== undefined) {
+      const { clean: cleanTags, removed: removedTags } = stripDeprecatedTags(patch.tags);
+      if (removedTags.length > 0) {
+        console.warn(`[tim-store] Deprecated status/priority tags stripped: ${removedTags.join(', ')}`);
+      }
+      patch = { ...patch, tags: cleanTags };
+    }
 
     const now = new Date().toISOString();
     const timestamp = Date.now();

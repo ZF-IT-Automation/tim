@@ -84,3 +84,34 @@ export function normalizeLegacyTypeTag(tag: string | null | undefined): LegacyMe
   if (cleaned === 'rule' || cleaned === 'human') return cleaned;
   return null;
 }
+
+// Status/priority tags — DEPRECATED. metadata.task.status is source-of-truth.
+export const DEPRECATED_STATUS_TAGS = new Set([
+  '#todo', '#done', '#in_progress', '#cancelled',
+  'todo', 'done', 'in_progress', 'cancelled',
+]);
+export const DEPRECATED_PRIORITY_TAGS = new Set([
+  '#priority-critical', '#priority-high', '#priority-medium', '#priority-low',
+  'priority-critical', 'priority-high', 'priority-medium', 'priority-low',
+]);
+export const DEPRECATED_TAGS = new Set([
+  ...DEPRECATED_STATUS_TAGS,
+  ...DEPRECATED_PRIORITY_TAGS,
+]);
+
+export function isDeprecatedTag(tag: string): boolean {
+  return DEPRECATED_TAGS.has(tag.toLowerCase());
+}
+
+export function stripDeprecatedTags(tags: string[]): { clean: string[]; removed: string[] } {
+  const clean: string[] = [];
+  const removed: string[] = [];
+  for (const tag of tags) {
+    if (isDeprecatedTag(tag)) {
+      removed.push(tag);
+    } else {
+      clean.push(tag);
+    }
+  }
+  return { clean, removed };
+}
