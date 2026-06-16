@@ -146,7 +146,10 @@ async function cmdResolveProject(args: string[]) {
   const cwd = flags.cwd ?? process.cwd();
   const format = flags.format ?? 'label';
 
-  const located = findMarker(cwd, findMarkerOptionsFromEnv());
+  const envOpts = findMarkerOptionsFromEnv() ?? {};
+  const walkUp =
+    flags['walk-up'] !== undefined ? flags['walk-up'] === 'true' : (envOpts.walkUp ?? false);
+  const located = findMarker(cwd, { ...envOpts, walkUp });
   if (!located) return; // no marker (or corrupt nearest) → silent skip, exit 0
 
   const { marker, dir } = located;
@@ -578,7 +581,7 @@ Commands:
   init                  Initialize TIM (create DB, register agents, write MCP config)
   doctor                Run diagnostics
   stats                 Show memory statistics
-  resolve-project       Print bound project from nearest .tim-project (--cwd, --format label|json|directive)
+  resolve-project       Print bound project from nearest .tim-project (--cwd, --walk-up, --format label|json|directive)
   resolve-session       Print project_ref for a TIM session (--session, --format label|directive|json)
   bind-project          Write/refresh .tim-project for a project (--label, --cwd, --session)
   record-commit         Record git commit to project Commits section (--cwd, --hash, --message, --diff)
