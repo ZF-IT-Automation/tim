@@ -28,6 +28,7 @@ export {
   reconcileMarker,
   syncNearestProjectMarker,
   validateMarkerAgainstStore,
+  validateProjectLabel,
   INBOX_LABEL,
   acquireLock,
   releaseLock,

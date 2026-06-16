@@ -66,6 +66,18 @@ export function canonicalProjectPath(cwd: string): string {
 const PROJECT_LABEL_PATTERN = /^[PLEN]\d{4}$/;
 
 /**
+ * Shape-valid label that must never be written to `.tim-project`.
+ * Used as a vitest fixture / corruption sentinel (see P9999 bug); DB
+ * validation also rejects it when the project does not exist.
+ */
+const DENIED_MARKER_LABELS = new Set(['P9999']);
+
+export function validateProjectLabel(label: string): boolean {
+  if (DENIED_MARKER_LABELS.has(label)) return false;
+  return PROJECT_LABEL_PATTERN.test(label);
+}
+
+/**
  * Sentinel label for the Inbox project (P0000). Always treated as
  * valid even when not present in the DB — the Inbox is a system
  * project that tim-store.ensureInboxProject() materializes lazily.
@@ -227,6 +239,13 @@ export async function validateMarkerAgainstStore(
  *  the on-disk file becomes v2 on first write, regardless of the caller's
  *  input. This is the auto-upgrade path for v1 files. */
 export function writeMarker(cwd: string, marker: ProjectMarkerInput): void {
+  if (!validateProjectLabel(marker.project)) {
+    console.warn(
+      `[tim-hooks] writeMarker: refusing to write invalid project label "${marker.project}" — ` +
+        `expected ^[PLEN]\\d{4}$ (P0062, L0042, …). Marker not written.`,
+    );
+    return;
+  }
   const p = markerPath(cwd);
   const upgraded: ProjectMarker = { ...marker, version: MARKER_VERSION };
   fs.writeFileSync(p, JSON.stringify(upgraded, null, 2));
@@ -241,6 +260,13 @@ export function syncNearestProjectMarker(
   projectLabel: string,
   options?: { sessionId?: string; findOptions?: FindMarkerOptions },
 ): boolean {
+  if (!validateProjectLabel(projectLabel)) {
+    console.warn(
+      `[tim-hooks] syncNearestProjectMarker: refusing to sync invalid project label ` +
+        `"${projectLabel}" — expected ^[PLEN]\\d{4}$. Returning false.`,
+    );
+    return false;
+  }
   const located = findMarker(startCwd, {
     walkUp: true,
     allowHome: true,

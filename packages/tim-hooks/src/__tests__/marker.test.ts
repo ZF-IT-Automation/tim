@@ -12,6 +12,7 @@ import {
   acquireLock,
   releaseLock,
   validateMarkerAgainstStore,
+  validateProjectLabel,
   INBOX_LABEL,
 } from '../marker.js';
 import { TimStore, SessionManager } from 'tim-store';
@@ -363,6 +364,38 @@ describe('marker', () => {
     ).toBe(true);
     expect(readMarker(sub)?.project).toBe('P0063');
     expect(readMarker(sub)?.session).toBe('20260602_155620_ee0929');
+    expect(readMarker(dir)?.project).toBe('P0062');
+  });
+
+  it('writeMarker refuses to write P9999 (invalid label — 5 digits)', () => {
+    expect(validateProjectLabel('P9999')).toBe(false);
+    writeMarker(dir, {
+      project: 'P9999',
+      session: 's',
+      exchanges: 0,
+      batch_size: 5,
+      batches_summarized: 0,
+    });
+    const markerFile = path.join(dir, '.tim-project');
+    const exists = fs.existsSync(markerFile);
+    if (exists) {
+      const content = JSON.parse(fs.readFileSync(markerFile, 'utf8'));
+      expect(content.project).not.toBe('P9999');
+    }
+  });
+
+  it('syncNearestProjectMarker with P9999 returns false and does not write', () => {
+    writeMarker(dir, {
+      project: 'P0062',
+      session: 'bg_old',
+      exchanges: 0,
+      batch_size: 5,
+      batches_summarized: 0,
+    });
+    const result = syncNearestProjectMarker(dir, 'P9999', {
+      findOptions: { maxRoot: dir },
+    });
+    expect(result).toBe(false);
     expect(readMarker(dir)?.project).toBe('P0062');
   });
 });
