@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tim-session-start.sh — Hermes pre_llm_call hook (TIM session start + project auto-load)
-# First turn: local .tim-project cwd-walk only (.tim-project is single source of truth for project).
+# First turn: .tim-project at cwd only (walk-up opt-in via --walk-up on resolve-project).
 # Requires: jq, node
 set -euo pipefail
 
@@ -20,27 +20,37 @@ tool="hermes"
 
 project=""
 directive=""
+cwd_marker_prompt=""
 
-# 1. Local .tim-project (cwd walk up)
-local_marker=$(node -e "
-  const fs = require('fs');
-  const path = require('path');
-  let dir = '$cwd';
-  while (true) {
-    const p = path.join(dir, '.tim-project');
-    if (fs.existsSync(p)) { process.stdout.write(p); break; }
-    const next = path.dirname(dir);
-    if (next === dir) break;
-    dir = next;
-  }
-" 2>/dev/null || true)
+# Cwd-only marker check (read-only prompt when missing)
+if [[ ! -f "$cwd/.tim-project" && ! -f "$cwd/tim.json" ]]; then
+  cwd_marker_prompt="📍 No TIM project marker at cwd ($cwd). findMarker defaults to cwd-only — create .tim-project here, or use tim resolve-project --walk-up from a repo subdir."
+fi
+
+local_marker=""
+if [[ -f "$cwd/.tim-project" ]]; then
+  local_marker="$cwd/.tim-project"
+elif [[ -f "$cwd/tim.json" ]]; then
+  local_marker="$cwd/tim.json"
+fi
 
 if [[ -n "$local_marker" ]]; then
   project=$(node "$TIM_CLI" resolve-project --cwd "$cwd" --format label 2>/dev/null || true)
   directive=$(node "$TIM_CLI" resolve-project --cwd "$cwd" --format directive 2>/dev/null || true)
 fi
 
-[[ -z "$project" ]] && { printf '{}\n'; exit 0; }
+[[ -z "$project" ]] && [[ -z "$cwd_marker_prompt" ]] && { printf '{}\n'; exit 0; }
+
+if [[ -n "$cwd_marker_prompt" ]]; then
+  if [[ -n "$directive" ]]; then
+    directive="${directive}
+${cwd_marker_prompt}"
+  else
+    directive="$cwd_marker_prompt"
+  fi
+fi
+
+[[ -z "$project" ]] && [[ -z "$directive" ]] && { printf '{}\n'; exit 0; }
 
 # End previous session if .tim-project marker has a different session ID
 # Fire-and-forget: must never block the new session-start
