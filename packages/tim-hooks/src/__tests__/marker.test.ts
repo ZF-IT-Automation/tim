@@ -79,7 +79,7 @@ describe('marker', () => {
     fs.writeFileSync(path.join(dir, 'tim.json'), JSON.stringify({ project: 'P0063' }));
     const sub = path.join(dir, 'a', 'b');
     fs.mkdirSync(sub, { recursive: true });
-    expect(findMarker(sub, { maxRoot: dir })?.marker.project).toBe('P0063');
+    expect(findMarker(sub, { maxRoot: dir, walkUp: true })?.marker.project).toBe('P0063');
   });
 
   it('reconcileMarker overwrites cached counters with DB-derived values', async () => {
@@ -130,7 +130,7 @@ describe('marker', () => {
     writeMarker(dir, { project: 'P0002', session: 's', exchanges: 0, batch_size: 5, batches_summarized: 0 });
     const sub = path.join(dir, 'a', 'b', 'c');
     fs.mkdirSync(sub, { recursive: true });
-    expect(findMarker(sub, { maxRoot: dir })?.marker.project).toBe('P0002');
+    expect(findMarker(sub, { maxRoot: dir, walkUp: true })?.marker.project).toBe('P0002');
   });
 
   it('findMarker: nearest marker wins over an ancestor', () => {
@@ -138,7 +138,7 @@ describe('marker', () => {
     const sub = path.join(dir, 'child');
     fs.mkdirSync(sub, { recursive: true });
     writeMarker(sub, { project: 'P0003', session: 's', exchanges: 0, batch_size: 5, batches_summarized: 0 });
-    expect(findMarker(sub, { maxRoot: dir })?.marker.project).toBe('P0003');
+    expect(findMarker(sub, { maxRoot: dir, walkUp: true })?.marker.project).toBe('P0003');
   });
 
   it('findMarker: repo marker wins over ~/.tim-project on the same walk chain', () => {
@@ -160,7 +160,7 @@ describe('marker', () => {
       batch_size: 5,
       batches_summarized: 0,
     });
-    const found = findMarker(sub, { maxRoot: fakeHome });
+    const found = findMarker(sub, { maxRoot: fakeHome, walkUp: true });
     expect(found?.marker.project).toBe('P0063');
     expect(found?.dir).toBe(fs.realpathSync(repo));
   });
@@ -168,7 +168,7 @@ describe('marker', () => {
   it('findMarker returns null when no marker exists up to root (no infinite loop)', () => {
     const sub = path.join(dir, 'x', 'y');
     fs.mkdirSync(sub, { recursive: true });
-    expect(findMarker(sub, { maxRoot: dir })).toBeNull();
+    expect(findMarker(sub, { maxRoot: dir, walkUp: true })).toBeNull();
   });
 
   it('findMarker stops at a corrupt nearest marker (does not silently use an ancestor)', () => {
@@ -176,7 +176,75 @@ describe('marker', () => {
     const sub = path.join(dir, 'child');
     fs.mkdirSync(sub, { recursive: true });
     fs.writeFileSync(path.join(sub, '.tim-project'), '{ not valid json');
-    expect(findMarker(sub, { maxRoot: dir })).toBeNull();
+    expect(findMarker(sub, { maxRoot: dir, walkUp: true })).toBeNull();
+  });
+
+  it('findMarker returns null for parent marker when walkUp is not set (cwd-only default)', () => {
+    writeMarker(dir, { project: 'P0002', session: 's', exchanges: 0, batch_size: 5, batches_summarized: 0 });
+    const sub = path.join(dir, 'child');
+    fs.mkdirSync(sub, { recursive: true });
+    expect(findMarker(sub)).toBeNull();
+  });
+
+  it('findMarker returns cwd marker without walkUp option', () => {
+    writeMarker(dir, { project: 'P0001', session: 's', exchanges: 0, batch_size: 5, batches_summarized: 0 });
+    expect(findMarker(dir)?.marker.project).toBe('P0001');
+  });
+
+  describe('findMarker allowHome', () => {
+    let homeDir: string;
+    let savedHome: string | undefined;
+
+    beforeEach(() => {
+      homeDir = fs.mkdtempSync(path.join(TEST_ROOT, 'fake-home-'));
+      savedHome = process.env.HOME;
+      process.env.HOME = homeDir;
+    });
+
+    afterEach(() => {
+      if (savedHome === undefined) delete process.env.HOME;
+      else process.env.HOME = savedHome;
+      fs.rmSync(homeDir, { recursive: true, force: true });
+    });
+
+    it('skips home ancestor when allowHome is false', () => {
+      writeMarker(homeDir, {
+        project: 'P0099',
+        session: 's',
+        exchanges: 0,
+        batch_size: 5,
+        batches_summarized: 0,
+      });
+      const sub = path.join(homeDir, 'projects', 'repo');
+      fs.mkdirSync(sub, { recursive: true });
+      expect(findMarker(sub, { maxRoot: homeDir, walkUp: true, allowHome: false })).toBeNull();
+    });
+
+    it('returns home ancestor when allowHome is true', () => {
+      writeMarker(homeDir, {
+        project: 'P0099',
+        session: 's',
+        exchanges: 0,
+        batch_size: 5,
+        batches_summarized: 0,
+      });
+      const sub = path.join(homeDir, 'projects', 'repo');
+      fs.mkdirSync(sub, { recursive: true });
+      expect(findMarker(sub, { maxRoot: homeDir, walkUp: true, allowHome: true })?.marker.project).toBe(
+        'P0099',
+      );
+    });
+
+    it('returns home marker when cwd is home even if allowHome is false', () => {
+      writeMarker(homeDir, {
+        project: 'P0099',
+        session: 's',
+        exchanges: 0,
+        batch_size: 5,
+        batches_summarized: 0,
+      });
+      expect(findMarker(homeDir, { walkUp: true, allowHome: false })?.marker.project).toBe('P0099');
+    });
   });
 
   // Regression: a hand-edited or stale .tim-project with a malformed
@@ -253,7 +321,7 @@ describe('marker', () => {
     fs.mkdirSync(sub, { recursive: true });
     // findMarker must reject the corrupt nearest marker — same
     // contract as for unparseable JSON.
-    expect(findMarker(sub, { maxRoot: dir })).toBeNull();
+    expect(findMarker(sub, { maxRoot: dir, walkUp: true })).toBeNull();
   });
 
   it('buildLoadDirective embeds the label and the load instruction', () => {
