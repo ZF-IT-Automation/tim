@@ -32,7 +32,7 @@ export async function cmdRecordCommit(args: string[]): Promise<void> {
   const flags = parseArgs(args);
   const cwd = flags.cwd ?? process.cwd();
 
-  const located = findMarker(cwd, findMarkerOptionsFromEnv());
+  const located = findMarker(cwd, { walkUp: true, ...findMarkerOptionsFromEnv() });
   const projectId = flags.project ?? located?.marker.project;
   if (!projectId) return;
 

@@ -126,7 +126,7 @@ async function resolveStatuslineMarker(
   options: FindMarkerOptions | undefined,
   store: TimStore,
 ): Promise<ProjectMarker | null> {
-  const located = findMarker(cwd, options);
+  const located = findMarker(cwd, { walkUp: true, ...options });
   if (!located) return null;
   // Project label comes from .tim-project only; DB may refresh exchange counters.
   return reconcileMarkerCounters(store, located.marker);
@@ -185,7 +185,7 @@ export interface StatuslineCliOptions {
 export async function runStatusline(opts: StatuslineCliOptions = {}): Promise<void> {
   const input = readStatuslineInputSync();
   const cwd = opts.cwd?.trim() || resolveStatuslineCwd(input);
-  const findOpts = findMarkerOptionsFromEnv();
+  const findOpts = { walkUp: true, ...findMarkerOptionsFromEnv() };
   const store = new TimStore(dbPath());
   try {
     const marker = await resolveStatuslineMarker(cwd, opts.sessionId?.trim(), findOpts, store);
