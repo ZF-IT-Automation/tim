@@ -1,108 +1,76 @@
 #!/usr/bin/env bash
-# tim-session-start.sh — Hermes pre_llm_call hook (TIM session start + project auto-load)
-# First turn: .tim-project at cwd only (walk-up opt-in via --walk-up on resolve-project).
-# Requires: jq, node
+# tim-session-start.sh — Generic TIM auto-load hook for CLI coding agents.
+#
+# Supports: Claude Code, Cursor CLI, Codex CLI, OpenCode (via plugin wrapper).
+#
+# Reads a harness-specific session-start payload from stdin, resolves the nearest
+# .tim-project marker (walk-up from cwd), and emits the buildLoadDirective text
+# wrapped in the JSON envelope expected by the calling harness.
+#
+# Requires: bash, jq, node (for tim CLI). Override TIM_CLI path via env var.
+#
+# Output formats (auto-detected from stdin payload shape):
+#   Claude Code  → {hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: "…"}}
+#   Cursor CLI   → {additional_context: "…"}
+#   Codex CLI    → plain text directive (stdout)
+#   Fallback     → {additional_context: "…"}  (Cursor-safe, also works as plain text)
+
 set -euo pipefail
 
 TIM_CLI="${TIM_CLI:-/home/bbbee/projects/tim/packages/tim-cli/dist/cli.js}"
 
+# Read stdin once (some harnesses pass payload, some pass nothing)
 payload="$(cat -)"
-is_first=$(printf '%s' "$payload" | jq -r '.extra.is_first_turn // false')
-parent=$(printf '%s' "$payload" | jq -r '.extra.parentUuid // .parent_session_id // empty')
-cwd=$(printf '%s' "$payload" | jq -r '.cwd // empty')
-session_key=$(printf '%s' "$payload" | jq -r '.session_id // empty')
-model=$(printf '%s' "$payload" | jq -r '.model // "unknown"')
-tool="hermes"
 
-[[ -n "$parent" ]] && { printf '{}\n'; exit 0; }
-[[ "$is_first" != "true" ]] && { printf '{}\n'; exit 0; }
-[[ -z "$cwd" ]] && { printf '{}\n'; exit 0; }
+# --- Determine cwd ---
+cwd=""
 
-project=""
-directive=""
-cwd_marker_prompt=""
-
-# Cwd-only marker check (read-only prompt when missing)
-if [[ ! -f "$cwd/.tim-project" && ! -f "$cwd/tim.json" ]]; then
-  cwd_marker_prompt="📍 No TIM project marker at cwd ($cwd). findMarker defaults to cwd-only — create .tim-project here, or use tim resolve-project --walk-up from a repo subdir."
+# Strategy 1: Extract from payload (Claude Code, Codex, Hermes send .cwd)
+if [[ -n "$payload" ]]; then
+  cwd=$(printf '%s' "$payload" | jq -r '.cwd // empty' 2>/dev/null || true)
 fi
 
-local_marker=""
-if [[ -f "$cwd/.tim-project" ]]; then
-  local_marker="$cwd/.tim-project"
-elif [[ -f "$cwd/tim.json" ]]; then
-  local_marker="$cwd/tim.json"
+# Strategy 2: Extract workspace path (some Cursor versions)
+if [[ -z "$cwd" && -n "$payload" ]]; then
+  cwd=$(printf '%s' "$payload" | jq -r '.workspace // empty' 2>/dev/null || true)
 fi
 
-if [[ -n "$local_marker" ]]; then
-  project=$(node "$TIM_CLI" resolve-project --cwd "$cwd" --format label 2>/dev/null || true)
-  directive=$(node "$TIM_CLI" resolve-project --cwd "$cwd" --format directive 2>/dev/null || true)
+# Strategy 3: Fall back to current working directory
+if [[ -z "$cwd" ]]; then
+  cwd=$(pwd)
 fi
 
-[[ -z "$project" ]] && [[ -z "$cwd_marker_prompt" ]] && { printf '{}\n'; exit 0; }
-
-if [[ -n "$cwd_marker_prompt" ]]; then
-  if [[ -n "$directive" ]]; then
-    directive="${directive}
-${cwd_marker_prompt}"
-  else
-    directive="$cwd_marker_prompt"
-  fi
+# --- Resolve project marker ---
+directive=$(node "$TIM_CLI" resolve-project --walk-up --cwd "$cwd" --format directive 2>/dev/null || true)
+if [[ -z "$directive" ]]; then
+  # No .tim-project marker found — silent skip (exit 0)
+  exit 0
 fi
 
-[[ -z "$project" ]] && [[ -z "$directive" ]] && { printf '{}\n'; exit 0; }
+# --- Detect harness and format output ---
 
-# End previous session if .tim-project marker has a different session ID
-# Fire-and-forget: must never block the new session-start
-if [[ -n "$local_marker" ]]; then
-  old_session=$(jq -r '.session // empty' "$local_marker" 2>/dev/null || true)
-  if [[ -n "$old_session" && "$old_session" != "$session_key" ]]; then
-    node "$TIM_CLI" hook session-end --session "$old_session" 2>/dev/null &
-  fi
+# Claude Code sends payload with .hookSpecificOutput (its own hook envelope)
+if printf '%s' "$payload" | jq -e '.hookSpecificOutput // empty' >/dev/null 2>&1; then
+  # Claude Code / Hermes format
+  exec jq -n --arg ctx "$directive" \
+    '{hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: $ctx}}'
 fi
 
-# ── Root-level entries: metadata.type=rule + metadata.type=human ──
-# Phase 0: pass --type (structured query via json_extract). The legacy
-# --tag '#rule' / --tag '#human' form is still accepted by the CLI as a
-# deprecated alias, but new code should use --type.
-root_context=""
-rules_text=$(node "$TIM_CLI" root-entries --type rule --format content 2>/dev/null || true)
-human_text=$(node "$TIM_CLI" root-entries --type human --format content 2>/dev/null || true)
-
-if [[ -n "$rules_text" ]]; then
-  root_context+="
-─── TIM Root Rules ───
-$rules_text"
+# Cursor sends payload with .conversation_id or .additional_context
+if printf '%s' "$payload" | jq -e '(.conversation_id // empty) or (.additional_context // empty)' >/dev/null 2>&1; then
+  # Cursor format
+  exec jq -n --arg ctx "$directive" \
+    '{additional_context: $ctx}'
 fi
 
-if [[ -n "$human_text" ]]; then
-  root_context+="
-─── TIM Human Context ───
-$human_text"
+# Codex sends payload with .session_id but NOT .hookSpecificOutput or .conversation_id
+if printf '%s' "$payload" | jq -e '.session_id // empty' >/dev/null 2>&1; then
+  # Codex format — plain text is auto-injected as extra developer context
+  printf '%s\n' "$directive"
+  exit 0
 fi
 
-# Merge root context with project directive
-if [[ -n "$root_context" ]]; then
-  directive="${directive}
-${root_context}"
-fi
-
-# Start / refresh TIM session subtree.
-# When the project was resolved from a local .tim-project marker (walk-up),
-# do NOT pass --project — let runSessionStart re-derive it from the marker
-# so the hook does not force a project override for every session start.
-if [[ -n "$session_key" ]]; then
-  args=(
-    --session "$session_key"
-    --cwd "$cwd"
-    --tool "$tool"
-    --model "$model"
-  )
-  if [[ -z "$local_marker" && -n "$project" ]]; then
-    args+=(--project "$project")
-  fi
-  node "$TIM_CLI" hook session-start "${args[@]}" 2>/dev/null || true
-fi
-
-jq -n --arg ctx "$directive" '{context: $ctx}'
-exit 0
+# Fallback: no recognizable payload (empty stdin) — emit Cursor-safe JSON
+# This covers: Cursor without payload, manual testing, unknown harnesses
+exec jq -n --arg ctx "$directive" \
+  '{additional_context: $ctx}'

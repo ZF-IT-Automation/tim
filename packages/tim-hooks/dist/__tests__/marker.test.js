@@ -72,6 +72,28 @@ const TEST_ROOT = '/tmp/tim-test-runs';
     (0, vitest_1.it)('detectProject returns null when no marker exists', () => {
         (0, vitest_1.expect)((0, marker_js_1.detectProject)(dir)).toBeNull();
     });
+    (0, vitest_1.it)('readMarker falls back to tim.json when no .tim-project exists', () => {
+        fs.writeFileSync(path.join(dir, 'tim.json'), JSON.stringify({ project: 'P0063' }));
+        (0, vitest_1.expect)((0, marker_js_1.readMarker)(dir)?.project).toBe('P0063');
+        (0, vitest_1.expect)((0, marker_js_1.readMarker)(dir)?.exchanges).toBe(0);
+    });
+    (0, vitest_1.it)('readMarker prefers .tim-project over tim.json', () => {
+        fs.writeFileSync(path.join(dir, 'tim.json'), JSON.stringify({ project: 'P0062' }));
+        (0, marker_js_1.writeMarker)(dir, {
+            project: 'P0063',
+            session: 's',
+            exchanges: 1,
+            batch_size: 5,
+            batches_summarized: 0,
+        });
+        (0, vitest_1.expect)((0, marker_js_1.readMarker)(dir)?.project).toBe('P0063');
+    });
+    (0, vitest_1.it)('findMarker walks up to parent tim.json when no .tim-project exists', () => {
+        fs.writeFileSync(path.join(dir, 'tim.json'), JSON.stringify({ project: 'P0063' }));
+        const sub = path.join(dir, 'a', 'b');
+        fs.mkdirSync(sub, { recursive: true });
+        (0, vitest_1.expect)((0, marker_js_1.findMarker)(sub, { maxRoot: dir, walkUp: true })?.marker.project).toBe('P0063');
+    });
     (0, vitest_1.it)('reconcileMarker overwrites cached counters with DB-derived values', async () => {
         const store = new tim_store_1.TimStore(':memory:');
         const sessions = new tim_store_1.SessionManager(store);
@@ -116,14 +138,14 @@ const TEST_ROOT = '/tmp/tim-test-runs';
         (0, marker_js_1.writeMarker)(dir, { project: 'P0002', session: 's', exchanges: 0, batch_size: 5, batches_summarized: 0 });
         const sub = path.join(dir, 'a', 'b', 'c');
         fs.mkdirSync(sub, { recursive: true });
-        (0, vitest_1.expect)((0, marker_js_1.findMarker)(sub, { maxRoot: dir })?.marker.project).toBe('P0002');
+        (0, vitest_1.expect)((0, marker_js_1.findMarker)(sub, { maxRoot: dir, walkUp: true })?.marker.project).toBe('P0002');
     });
     (0, vitest_1.it)('findMarker: nearest marker wins over an ancestor', () => {
         (0, marker_js_1.writeMarker)(dir, { project: 'P0002', session: 's', exchanges: 0, batch_size: 5, batches_summarized: 0 });
         const sub = path.join(dir, 'child');
         fs.mkdirSync(sub, { recursive: true });
         (0, marker_js_1.writeMarker)(sub, { project: 'P0003', session: 's', exchanges: 0, batch_size: 5, batches_summarized: 0 });
-        (0, vitest_1.expect)((0, marker_js_1.findMarker)(sub, { maxRoot: dir })?.marker.project).toBe('P0003');
+        (0, vitest_1.expect)((0, marker_js_1.findMarker)(sub, { maxRoot: dir, walkUp: true })?.marker.project).toBe('P0003');
     });
     (0, vitest_1.it)('findMarker: repo marker wins over ~/.tim-project on the same walk chain', () => {
         const fakeHome = path.join(dir, 'fake-home');
@@ -144,21 +166,81 @@ const TEST_ROOT = '/tmp/tim-test-runs';
             batch_size: 5,
             batches_summarized: 0,
         });
-        const found = (0, marker_js_1.findMarker)(sub, { maxRoot: fakeHome });
+        const found = (0, marker_js_1.findMarker)(sub, { maxRoot: fakeHome, walkUp: true });
         (0, vitest_1.expect)(found?.marker.project).toBe('P0063');
         (0, vitest_1.expect)(found?.dir).toBe(fs.realpathSync(repo));
     });
     (0, vitest_1.it)('findMarker returns null when no marker exists up to root (no infinite loop)', () => {
         const sub = path.join(dir, 'x', 'y');
         fs.mkdirSync(sub, { recursive: true });
-        (0, vitest_1.expect)((0, marker_js_1.findMarker)(sub, { maxRoot: dir })).toBeNull();
+        (0, vitest_1.expect)((0, marker_js_1.findMarker)(sub, { maxRoot: dir, walkUp: true })).toBeNull();
     });
     (0, vitest_1.it)('findMarker stops at a corrupt nearest marker (does not silently use an ancestor)', () => {
         (0, marker_js_1.writeMarker)(dir, { project: 'P0002', session: 's', exchanges: 0, batch_size: 5, batches_summarized: 0 });
         const sub = path.join(dir, 'child');
         fs.mkdirSync(sub, { recursive: true });
         fs.writeFileSync(path.join(sub, '.tim-project'), '{ not valid json');
-        (0, vitest_1.expect)((0, marker_js_1.findMarker)(sub, { maxRoot: dir })).toBeNull();
+        (0, vitest_1.expect)((0, marker_js_1.findMarker)(sub, { maxRoot: dir, walkUp: true })).toBeNull();
+    });
+    (0, vitest_1.it)('findMarker returns null for parent marker when walkUp is not set (cwd-only default)', () => {
+        (0, marker_js_1.writeMarker)(dir, { project: 'P0002', session: 's', exchanges: 0, batch_size: 5, batches_summarized: 0 });
+        const sub = path.join(dir, 'child');
+        fs.mkdirSync(sub, { recursive: true });
+        (0, vitest_1.expect)((0, marker_js_1.findMarker)(sub)).toBeNull();
+    });
+    (0, vitest_1.it)('findMarker returns cwd marker without walkUp option', () => {
+        (0, marker_js_1.writeMarker)(dir, { project: 'P0001', session: 's', exchanges: 0, batch_size: 5, batches_summarized: 0 });
+        (0, vitest_1.expect)((0, marker_js_1.findMarker)(dir)?.marker.project).toBe('P0001');
+    });
+    (0, vitest_1.describe)('findMarker allowHome', () => {
+        let homeDir;
+        let savedHome;
+        (0, vitest_1.beforeEach)(() => {
+            homeDir = fs.mkdtempSync(path.join(TEST_ROOT, 'fake-home-'));
+            savedHome = process.env.HOME;
+            process.env.HOME = homeDir;
+        });
+        (0, vitest_1.afterEach)(() => {
+            if (savedHome === undefined)
+                delete process.env.HOME;
+            else
+                process.env.HOME = savedHome;
+            fs.rmSync(homeDir, { recursive: true, force: true });
+        });
+        (0, vitest_1.it)('skips home ancestor when allowHome is false', () => {
+            (0, marker_js_1.writeMarker)(homeDir, {
+                project: 'P0099',
+                session: 's',
+                exchanges: 0,
+                batch_size: 5,
+                batches_summarized: 0,
+            });
+            const sub = path.join(homeDir, 'projects', 'repo');
+            fs.mkdirSync(sub, { recursive: true });
+            (0, vitest_1.expect)((0, marker_js_1.findMarker)(sub, { maxRoot: homeDir, walkUp: true, allowHome: false })).toBeNull();
+        });
+        (0, vitest_1.it)('returns home ancestor when allowHome is true', () => {
+            (0, marker_js_1.writeMarker)(homeDir, {
+                project: 'P0099',
+                session: 's',
+                exchanges: 0,
+                batch_size: 5,
+                batches_summarized: 0,
+            });
+            const sub = path.join(homeDir, 'projects', 'repo');
+            fs.mkdirSync(sub, { recursive: true });
+            (0, vitest_1.expect)((0, marker_js_1.findMarker)(sub, { maxRoot: homeDir, walkUp: true, allowHome: true })?.marker.project).toBe('P0099');
+        });
+        (0, vitest_1.it)('returns home marker when cwd is home even if allowHome is false', () => {
+            (0, marker_js_1.writeMarker)(homeDir, {
+                project: 'P0099',
+                session: 's',
+                exchanges: 0,
+                batch_size: 5,
+                batches_summarized: 0,
+            });
+            (0, vitest_1.expect)((0, marker_js_1.findMarker)(homeDir, { walkUp: true, allowHome: false })?.marker.project).toBe('P0099');
+        });
     });
     // Regression: a hand-edited or stale .tim-project with a malformed
     // project label (e.g. "notalabel", "12345", or wrong digit count)
@@ -216,7 +298,7 @@ const TEST_ROOT = '/tmp/tim-test-runs';
         fs.mkdirSync(sub, { recursive: true });
         // findMarker must reject the corrupt nearest marker — same
         // contract as for unparseable JSON.
-        (0, vitest_1.expect)((0, marker_js_1.findMarker)(sub, { maxRoot: dir })).toBeNull();
+        (0, vitest_1.expect)((0, marker_js_1.findMarker)(sub, { maxRoot: dir, walkUp: true })).toBeNull();
     });
     (0, vitest_1.it)('buildLoadDirective embeds the label and the load instruction', () => {
         const d = (0, marker_js_1.buildLoadDirective)('P0063', '/home/bbbee/projects/tim');

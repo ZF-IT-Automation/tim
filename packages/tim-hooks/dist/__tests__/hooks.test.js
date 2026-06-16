@@ -168,22 +168,48 @@ const index_js_1 = require("../index.js");
             store.close();
         }
     });
-    (0, vitest_1.it)('runSessionStart resolves a parent .tim-project from a subdirectory', async () => {
+    (0, vitest_1.it)('runSessionStart does NOT walk up to a parent .tim-project (cwd-only contract)', async () => {
+        // Auto-Load Hook contract: a session binds to a project ONLY when the
+        // .tim-project marker is in cwd. Walking up to a parent has caused
+        // repeated cross-project binding bugs (Worker A→B→C); see
+        // resolveActiveProjectFromCwd in checkpoint.ts.
         const store = new tim_store_1.TimStore(':memory:');
         await store.createProject('P0042');
         const root = fs.mkdtempSync(path.join('/home/bbbee', '.tim-test-runs', 'sess-'));
         fs.writeFileSync(path.join(root, '.tim-project'), JSON.stringify({ project: 'P0042', session: 'old', exchanges: 0, batch_size: 5, batches_summarized: 0 }));
         const sub = path.join(root, 'pkg', 'inner');
         fs.mkdirSync(sub, { recursive: true });
-        const { project } = await (0, index_js_1.runSessionStart)(store, {
-            sessionId: 'sess-sub',
-            agentName: 'a',
-            cwd: sub,
-            harness: 'test',
-        });
-        (0, vitest_1.expect)(project?.metadata.label ?? project?.id).toBe('P0042');
-        store.close();
-        fs.rmSync(root, { recursive: true, force: true });
+        // Ensure no TIM_PROJECT env / no ~/.tim/active-project pollutes the fallback path.
+        const originalEnv = process.env.TIM_PROJECT;
+        delete process.env.TIM_PROJECT;
+        const originalHome = process.env.HOME;
+        const homeBackup = originalHome
+            ? fs.existsSync(path.join(originalHome, '.tim', 'active-project'))
+                ? fs.readFileSync(path.join(originalHome, '.tim', 'active-project'), 'utf8')
+                : null
+            : null;
+        try {
+            // No marker in `sub` → cwd-only binding must NOT find parent's P0042.
+            // Falls through to Inbox (P0000) per resolveSessionProjectId contract.
+            const { project } = await (0, index_js_1.runSessionStart)(store, {
+                sessionId: 'sess-sub',
+                agentName: 'a',
+                cwd: sub,
+                harness: 'test',
+            });
+            (0, vitest_1.expect)(project?.metadata.label ?? project?.id).toBe('P0000');
+        }
+        finally {
+            if (originalEnv === undefined)
+                delete process.env.TIM_PROJECT;
+            else
+                process.env.TIM_PROJECT = originalEnv;
+            if (originalHome && homeBackup !== null) {
+                fs.writeFileSync(path.join(originalHome, '.tim', 'active-project'), homeBackup);
+            }
+            store.close();
+            fs.rmSync(root, { recursive: true, force: true });
+        }
     });
 });
 (0, vitest_1.describe)('saveConfig roundtrip', () => {

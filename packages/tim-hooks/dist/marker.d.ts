@@ -2,6 +2,13 @@ import type { TimStore } from 'tim-store';
 export declare const MARKER_FILENAME = ".tim-project";
 export declare const MARKER_LOCK = ".tim-project.lock";
 /**
+ * Committed default project label for repos that gitignore `.tim-project`.
+ * Contains only the stable `project` field; runtime counters live in the
+ * local `.tim-project` file created on session start. Override per-machine
+ * by creating `.tim-project` in the repo root (it wins over tim.json).
+ */
+export declare const CANONICAL_PROJECT_FILENAME = "tim.json";
+/**
  * Current marker schema version. Bump this when the on-disk shape changes;
  * readers detect older files by the missing/unknown `version` field and
  * normalize to the current shape.
@@ -38,6 +45,13 @@ export type ProjectMarkerInput = Omit<ProjectMarker, 'version'> & {
     version?: 2;
 };
 export declare function markerPath(cwd: string): string;
+export declare function canonicalProjectPath(cwd: string): string;
+/**
+ * Sentinel label for the Inbox project (P0000). Always treated as
+ * valid even when not present in the DB — the Inbox is a system
+ * project that tim-store.ensureInboxProject() materializes lazily.
+ */
+export declare const INBOX_LABEL = "P0000";
 /**
  * Read a marker and normalize it to the current schema version.
  *
@@ -51,14 +65,12 @@ export declare function markerPath(cwd: string): string;
  * Callers always see a v2-conformant `ProjectMarker` regardless of what's
  * on disk. This is the only safe way to evolve the schema without forcing
  * a one-shot migration.
+ *
+ * When no `.tim-project` exists, falls back to `tim.json` (committed
+ * canonical default). A real `.tim-project` always wins — even when
+ * corrupt (returns null rather than silently using tim.json).
  */
 export declare function readMarker(cwd: string): ProjectMarker | null;
-/**
- * Sentinel label for the Inbox project (P0000). Always treated as
- * valid even when not present in the DB — the Inbox is a system
- * project that tim-store.ensureInboxProject() materializes lazily.
- */
-export declare const INBOX_LABEL = "P0000";
 /**
  * Defense-in-depth check: a project label that matches the
  * pattern but is semantically bogus (e.g. `P9999` — a label that
@@ -108,16 +120,23 @@ export interface MarkerLocation {
 export interface FindMarkerOptions {
     /** Do not walk above this directory (isolates tests; ignores e.g. /tmp/.tim-project). */
     maxRoot?: string;
+    /** Walk parent directories for a marker. Default false (cwd only). */
+    walkUp?: boolean;
+    /** When walkUp is true, include ancestor markers at $HOME. Default false. */
+    allowHome?: boolean;
 }
-/** Test helper: TIM_MARKER_MAX_ROOT limits walk-up scope for spawned CLI. */
+/** Test helper: env vars override findMarker scope for spawned CLI. */
 export declare function findMarkerOptionsFromEnv(): FindMarkerOptions | undefined;
 /**
- * Walk up from `startCwd` and return the deepest `.tim-project` on that chain.
- * When both a repo marker and `~/.tim-project` exist, the home marker is skipped.
- * Pure FS — no store, no network — safe for hooks under a tight timeout.
+ * Find a project marker from `startCwd`.
  *
- * If a marker FILE exists but is unparseable, we STOP and return null rather than
- * silently binding an ancestor's project.
+ * Default (walkUp false): inspect `startCwd` only — `.tim-project` then `tim.json`.
+ *
+ * walkUp true: walk parents (optional maxRoot cap). After collection, filter out
+ * home-directory ancestors unless allowHome or the hit is startCwd itself.
+ * Deepest remaining candidate wins. Corrupt nearest marker → null (no silent skip).
+ *
+ * Pure FS — no store — safe for hooks under a tight timeout.
  */
 export declare function findMarker(startCwd: string, options?: FindMarkerOptions): MarkerLocation | null;
 /**

@@ -13,6 +13,24 @@ export interface SessionStartResult {
 }
 /** Resolve active project label from TIM_PROJECT env or ~/.tim/active-project. */
 export declare function getActiveProjectLabel(): string | null;
+/**
+ * Resolve the active project from a .tim-project marker in cwd ONLY.
+ *
+ * No walk-up. No parent traversal. This is the Auto-Load Hook contract:
+ * a session binds to a project only if the marker is in the directory the
+ * user explicitly invoked the harness from. Walking up to a parent has
+ * caused repeated cross-project binding bugs (Worker A→B→C in 2 days);
+ * cwd-only is the same pattern Hermes statusline uses after the 133c5abd
+ * fix in its-over-9k, kept consistent here.
+ *
+ * Falls back to:
+ *  - readMarker(cwd) which checks .tim-project and then tim.json
+ *  - validateMarkerAgainstStore which gates the project label against the DB
+ *
+ * Returns the project label, or null when no cwd marker exists, the marker
+ * is corrupt, or the project does not exist in the DB.
+ */
+export declare function resolveActiveProjectFromCwd(cwd: string, store: TimStore): Promise<string | null>;
 /** Load project entry by hmem-style label (e.g. P0062) when configured. */
 export declare function loadProjectContext(store: TimStore): Promise<Entry | null>;
 export declare function runCheckpoint(store: TimStore, sessionId: string, opts?: {

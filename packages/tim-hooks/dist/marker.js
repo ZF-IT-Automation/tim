@@ -33,8 +33,9 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.LOCK_TTL_MS = exports.INBOX_LABEL = exports.MARKER_VERSION = exports.MARKER_LOCK = exports.MARKER_FILENAME = void 0;
+exports.LOCK_TTL_MS = exports.INBOX_LABEL = exports.MARKER_VERSION = exports.CANONICAL_PROJECT_FILENAME = exports.MARKER_LOCK = exports.MARKER_FILENAME = void 0;
 exports.markerPath = markerPath;
+exports.canonicalProjectPath = canonicalProjectPath;
 exports.readMarker = readMarker;
 exports.validateMarkerAgainstStore = validateMarkerAgainstStore;
 exports.writeMarker = writeMarker;
@@ -55,6 +56,13 @@ const tim_store_1 = require("tim-store");
 exports.MARKER_FILENAME = '.tim-project';
 exports.MARKER_LOCK = '.tim-project.lock';
 /**
+ * Committed default project label for repos that gitignore `.tim-project`.
+ * Contains only the stable `project` field; runtime counters live in the
+ * local `.tim-project` file created on session start. Override per-machine
+ * by creating `.tim-project` in the repo root (it wins over tim.json).
+ */
+exports.CANONICAL_PROJECT_FILENAME = 'tim.json';
+/**
  * Current marker schema version. Bump this when the on-disk shape changes;
  * readers detect older files by the missing/unknown `version` field and
  * normalize to the current shape.
@@ -63,6 +71,17 @@ exports.MARKER_VERSION = 2;
 function markerPath(cwd) {
     return path.join(cwd, exports.MARKER_FILENAME);
 }
+function canonicalProjectPath(cwd) {
+    return path.join(cwd, exports.CANONICAL_PROJECT_FILENAME);
+}
+/** Valid project labels: P/L/E/N + 4 digits (P0062, L0042, …). */
+const PROJECT_LABEL_PATTERN = /^[PLEN]\d{4}$/;
+/**
+ * Sentinel label for the Inbox project (P0000). Always treated as
+ * valid even when not present in the DB — the Inbox is a system
+ * project that tim-store.ensureInboxProject() materializes lazily.
+ */
+exports.INBOX_LABEL = 'P0000';
 /**
  * Read a marker and normalize it to the current schema version.
  *
@@ -76,9 +95,31 @@ function markerPath(cwd) {
  * Callers always see a v2-conformant `ProjectMarker` regardless of what's
  * on disk. This is the only safe way to evolve the schema without forcing
  * a one-shot migration.
+ *
+ * When no `.tim-project` exists, falls back to `tim.json` (committed
+ * canonical default). A real `.tim-project` always wins — even when
+ * corrupt (returns null rather than silently using tim.json).
  */
 function readMarker(cwd) {
     const p = markerPath(cwd);
+    if (fs.existsSync(p)) {
+        let raw;
+        try {
+            raw = JSON.parse(fs.readFileSync(p, 'utf8'));
+        }
+        catch {
+            return null;
+        }
+        return normalizeMarker(raw);
+    }
+    return readCanonicalProject(cwd);
+}
+/**
+ * Read the committed default project from tim.json. Runtime fields use
+ * neutral defaults — session start overwrites them into `.tim-project`.
+ */
+function readCanonicalProject(cwd) {
+    const p = canonicalProjectPath(cwd);
     if (!fs.existsSync(p))
         return null;
     let raw;
@@ -88,22 +129,23 @@ function readMarker(cwd) {
     catch {
         return null;
     }
-    return normalizeMarker(raw);
+    if (!raw || typeof raw !== 'object')
+        return null;
+    const obj = raw;
+    if (typeof obj.project !== 'string' || !PROJECT_LABEL_PATTERN.test(obj.project)) {
+        console.warn(`[tim-hooks] ${exports.CANONICAL_PROJECT_FILENAME} has malformed project label ` +
+            `"${String(obj.project)}" — expected ^[PLEN]\\d{4}$. Ignoring.`);
+        return null;
+    }
+    return {
+        version: exports.MARKER_VERSION,
+        project: obj.project,
+        session: '',
+        exchanges: 0,
+        batch_size: 5,
+        batches_summarized: 0,
+    };
 }
-/**
- * Whitelist for valid project labels in .tim-project. P = Project,
- * L = Learning, E = Error, N = Note — same shape TIM uses everywhere
- * (P0062, L0042, E0031, N0014). A corrupt or out-of-schema label here
- * silently poisons the whole session-binding pipeline (statusline,
- * hooks, load_project), so we reject anything that doesn't match.
- */
-const PROJECT_LABEL_PATTERN = /^[PLEN]\d{4}$/;
-/**
- * Sentinel label for the Inbox project (P0000). Always treated as
- * valid even when not present in the DB — the Inbox is a system
- * project that tim-store.ensureInboxProject() materializes lazily.
- */
-exports.INBOX_LABEL = 'P0000';
 /**
  * Coerce an unknown JSON value into a v2 ProjectMarker. Strips legacy
  * fields. Returns null if the value isn't a usable marker (missing
@@ -198,7 +240,11 @@ function writeMarker(cwd, marker) {
  * Statusline and hooks read this marker — must match the loaded project label.
  */
 function syncNearestProjectMarker(startCwd, projectLabel, options) {
-    const located = findMarker(startCwd, options?.findOptions);
+    const located = findMarker(startCwd, {
+        walkUp: true,
+        allowHome: true,
+        ...options?.findOptions,
+    });
     if (!located)
         return false;
     const sessionId = options?.sessionId?.trim();
@@ -276,44 +322,86 @@ function isInsideRoot(dir, root) {
     const r = path.resolve(root);
     return d === r || d.startsWith(r + path.sep);
 }
-/** Test helper: TIM_MARKER_MAX_ROOT limits walk-up scope for spawned CLI. */
+/** Test helper: env vars override findMarker scope for spawned CLI. */
 function findMarkerOptionsFromEnv() {
     const maxRoot = process.env.TIM_MARKER_MAX_ROOT?.trim();
-    return maxRoot ? { maxRoot } : undefined;
+    const walkUp = process.env.TIM_MARKER_WALK_UP === '1';
+    const allowHome = process.env.TIM_MARKER_ALLOW_HOME === '1';
+    if (!maxRoot && !walkUp && !allowHome)
+        return undefined;
+    return {
+        ...(maxRoot ? { maxRoot } : {}),
+        ...(walkUp ? { walkUp: true } : {}),
+        ...(allowHome ? { allowHome: true } : {}),
+    };
+}
+function isHomePath(dir) {
+    return path.resolve(dir) === path.resolve(os.homedir());
 }
 function pickMarkerLocation(candidates) {
-    const homeDir = path.resolve(os.homedir());
-    const nonHome = candidates.filter((loc) => path.resolve(loc.dir) !== homeDir);
-    const pool = nonHome.length > 0 ? nonHome : candidates;
-    return pool.reduce((best, cur) => path.resolve(cur.dir).length > path.resolve(best.dir).length ? cur : best);
+    return candidates.reduce((best, cur) => path.resolve(cur.dir).length > path.resolve(best.dir).length ? cur : best);
+}
+function scanDirForMarker(dir) {
+    if (fs.existsSync(markerPath(dir))) {
+        const marker = readMarker(dir);
+        if (!marker)
+            return 'corrupt';
+        return { marker, dir };
+    }
+    const canonical = readCanonicalProject(dir);
+    if (canonical)
+        return { marker: canonical, dir };
+    return null;
 }
 /**
- * Walk up from `startCwd` and return the deepest `.tim-project` on that chain.
- * When both a repo marker and `~/.tim-project` exist, the home marker is skipped.
- * Pure FS — no store, no network — safe for hooks under a tight timeout.
+ * Find a project marker from `startCwd`.
  *
- * If a marker FILE exists but is unparseable, we STOP and return null rather than
- * silently binding an ancestor's project.
+ * Default (walkUp false): inspect `startCwd` only — `.tim-project` then `tim.json`.
+ *
+ * walkUp true: walk parents (optional maxRoot cap). After collection, filter out
+ * home-directory ancestors unless allowHome or the hit is startCwd itself.
+ * Deepest remaining candidate wins. Corrupt nearest marker → null (no silent skip).
+ *
+ * Pure FS — no store — safe for hooks under a tight timeout.
  */
 function findMarker(startCwd, options) {
+    const walkUp = options?.walkUp ?? false;
+    const allowHome = options?.allowHome ?? false;
+    const startResolved = path.resolve(startCwd);
+    if (!walkUp) {
+        const result = scanDirForMarker(startResolved);
+        if (result === 'corrupt')
+            return null;
+        return result;
+    }
     const maxRoot = options?.maxRoot ? path.resolve(options.maxRoot) : null;
-    let dir = path.resolve(startCwd);
+    let dir = startResolved;
     const found = [];
     for (let i = 0; i < 256; i++) {
-        if (fs.existsSync(markerPath(dir))) {
-            const marker = readMarker(dir); // null when corrupt
-            if (!marker)
-                return null;
-            found.push({ marker, dir });
-        }
+        const result = scanDirForMarker(dir);
+        if (result === 'corrupt')
+            return null;
+        if (result)
+            found.push(result);
         const parent = path.dirname(dir);
         if (parent === dir)
-            break; // reached the filesystem root
+            break;
         if (maxRoot && isInsideRoot(dir, maxRoot) && !isInsideRoot(parent, maxRoot))
             break;
         dir = parent;
     }
-    return found.length > 0 ? pickMarkerLocation(found) : null;
+    if (found.length === 0)
+        return null;
+    const filtered = found.filter((loc) => {
+        if (allowHome)
+            return true;
+        if (!isHomePath(loc.dir))
+            return true;
+        return path.resolve(loc.dir) === startResolved;
+    });
+    if (filtered.length === 0)
+        return null;
+    return pickMarkerLocation(filtered);
 }
 /**
  * Shared, harness-agnostic directive text. Every start hook (Hermes,
