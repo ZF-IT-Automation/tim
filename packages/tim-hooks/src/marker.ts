@@ -241,7 +241,11 @@ export function syncNearestProjectMarker(
   projectLabel: string,
   options?: { sessionId?: string; findOptions?: FindMarkerOptions },
 ): boolean {
-  const located = findMarker(startCwd, options?.findOptions);
+  const located = findMarker(startCwd, {
+    walkUp: true,
+    allowHome: true,
+    ...options?.findOptions,
+  });
   if (!located) return false;
   const sessionId = options?.sessionId?.trim();
   const { version: _v, ...rest } = located.marker;
@@ -322,6 +326,10 @@ export interface MarkerLocation {
 export interface FindMarkerOptions {
   /** Do not walk above this directory (isolates tests; ignores e.g. /tmp/.tim-project). */
   maxRoot?: string;
+  /** Walk parent directories for a marker. Default false (cwd only). */
+  walkUp?: boolean;
+  /** When walkUp is true, include ancestor markers at $HOME. Default false. */
+  allowHome?: boolean;
 }
 
 function isInsideRoot(dir: string, root: string): boolean {
@@ -330,49 +338,85 @@ function isInsideRoot(dir: string, root: string): boolean {
   return d === r || d.startsWith(r + path.sep);
 }
 
-/** Test helper: TIM_MARKER_MAX_ROOT limits walk-up scope for spawned CLI. */
+/** Test helper: env vars override findMarker scope for spawned CLI. */
 export function findMarkerOptionsFromEnv(): FindMarkerOptions | undefined {
   const maxRoot = process.env.TIM_MARKER_MAX_ROOT?.trim();
-  return maxRoot ? { maxRoot } : undefined;
+  const walkUp = process.env.TIM_MARKER_WALK_UP === '1';
+  const allowHome = process.env.TIM_MARKER_ALLOW_HOME === '1';
+  if (!maxRoot && !walkUp && !allowHome) return undefined;
+  return {
+    ...(maxRoot ? { maxRoot } : {}),
+    ...(walkUp ? { walkUp: true } : {}),
+    ...(allowHome ? { allowHome: true } : {}),
+  };
+}
+
+function isHomePath(dir: string): boolean {
+  return path.resolve(dir) === path.resolve(os.homedir());
 }
 
 function pickMarkerLocation(candidates: MarkerLocation[]): MarkerLocation {
-  const homeDir = path.resolve(os.homedir());
-  const nonHome = candidates.filter((loc) => path.resolve(loc.dir) !== homeDir);
-  const pool = nonHome.length > 0 ? nonHome : candidates;
-  return pool.reduce((best, cur) =>
+  return candidates.reduce((best, cur) =>
     path.resolve(cur.dir).length > path.resolve(best.dir).length ? cur : best,
   );
 }
 
+type ScanResult = MarkerLocation | null | 'corrupt';
+
+function scanDirForMarker(dir: string): ScanResult {
+  if (fs.existsSync(markerPath(dir))) {
+    const marker = readMarker(dir);
+    if (!marker) return 'corrupt';
+    return { marker, dir };
+  }
+  const canonical = readCanonicalProject(dir);
+  if (canonical) return { marker: canonical, dir };
+  return null;
+}
+
 /**
- * Walk up from `startCwd` and return the deepest `.tim-project` on that chain.
- * When both a repo marker and `~/.tim-project` exist, the home marker is skipped.
- * Pure FS — no store, no network — safe for hooks under a tight timeout.
+ * Find a project marker from `startCwd`.
  *
- * If a marker FILE exists but is unparseable, we STOP and return null rather than
- * silently binding an ancestor's project. When no `.tim-project` exists at a
- * directory, `tim.json` is checked as a committed fallback (deepest wins).
+ * Default (walkUp false): inspect `startCwd` only — `.tim-project` then `tim.json`.
+ *
+ * walkUp true: walk parents (optional maxRoot cap). After collection, filter out
+ * home-directory ancestors unless allowHome or the hit is startCwd itself.
+ * Deepest remaining candidate wins. Corrupt nearest marker → null (no silent skip).
+ *
+ * Pure FS — no store — safe for hooks under a tight timeout.
  */
 export function findMarker(startCwd: string, options?: FindMarkerOptions): MarkerLocation | null {
+  const walkUp = options?.walkUp ?? false;
+  const allowHome = options?.allowHome ?? false;
+  const startResolved = path.resolve(startCwd);
+
+  if (!walkUp) {
+    const result = scanDirForMarker(startResolved);
+    if (result === 'corrupt') return null;
+    return result;
+  }
+
   const maxRoot = options?.maxRoot ? path.resolve(options.maxRoot) : null;
-  let dir = path.resolve(startCwd);
+  let dir = startResolved;
   const found: MarkerLocation[] = [];
   for (let i = 0; i < 256; i++) {
-    if (fs.existsSync(markerPath(dir))) {
-      const marker = readMarker(dir); // null when corrupt
-      if (!marker) return null;
-      found.push({ marker, dir });
-    } else {
-      const canonical = readCanonicalProject(dir);
-      if (canonical) found.push({ marker: canonical, dir });
-    }
+    const result = scanDirForMarker(dir);
+    if (result === 'corrupt') return null;
+    if (result) found.push(result);
     const parent = path.dirname(dir);
-    if (parent === dir) break; // reached the filesystem root
+    if (parent === dir) break;
     if (maxRoot && isInsideRoot(dir, maxRoot) && !isInsideRoot(parent, maxRoot)) break;
     dir = parent;
   }
-  return found.length > 0 ? pickMarkerLocation(found) : null;
+  if (found.length === 0) return null;
+
+  const filtered = found.filter((loc) => {
+    if (allowHome) return true;
+    if (!isHomePath(loc.dir)) return true;
+    return path.resolve(loc.dir) === startResolved;
+  });
+  if (filtered.length === 0) return null;
+  return pickMarkerLocation(filtered);
 }
 
 /**
