@@ -423,7 +423,7 @@ type ResolveRootsResult =
 
 async function resolveRoots(store: TimStore, root?: string): Promise<ResolveRootsResult> {
   if (root === undefined) {
-    const marker = findMarker(process.cwd());
+    const marker = findMarker(process.cwd(), { walkUp: true });
     if (marker) return { labels: [marker.marker.project] };
     const active = getActiveProjectLabel();
     if (active) return { labels: [active] };
@@ -2061,7 +2061,7 @@ export async function startServer(): Promise<void> {
           const cwd = process.cwd();
           const sessionId = resolveActiveSessionId({
             sessionIdArg: sessionIdArg,
-            markerSession: findMarker(cwd)?.marker.session,
+            markerSession: findMarker(cwd, { walkUp: true })?.marker.session,
           });
 
           if (sessionId) {
