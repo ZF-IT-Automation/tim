@@ -28,10 +28,10 @@
 8. [Session-Logging — Tree + Batch-System + Summarizer](#8-session-logging--tree--batch-system--summarizer)
 9. [`.tim-project` Discovery — Streng CWD](#9-timproject-discovery--streng-cwd)
 10. [TIM-Sync — E2E-verschlüsselt mit Revocation](#10-tim-sync--e2e-verschlüsselt-mit-revocation)
-11. [Config — Alle 12 Keys selbsterklärend](#11-config--alle-12-keys-selbsterklärend)
+11. [Config — Alle 13 Keys selbsterklärend](#11-config--alle-13-keys-selbsterklärend)
 12. [Statusline — Opt-in per Feld, Privacy-First](#12-statusline--opt-in-per-feld-privacy-first)
 13. [Tools — Alle MCP-Tools im Überblick](#13-tools--alle-mcp-tools-im-überblick)
-14. [Skills — 16 Published Skills](#14-skills--16-published-skills)
+14. [Skills — 15 Published Skills](#14-skills--15-published-skills)
 15. [Roadmap — 0.6 → 1.0](#15-roadmap--06--10)
 16. [hmem-Migration — `tim-migrate` überarbeiten](#16-hmem-migration--tim-migrate-überarbeiten)
 17. [o9k-Abgrenzung — Framework vs. Memory](#17-o9k-abgrenzung--framework-vs-memory)
@@ -64,6 +64,15 @@ Prinzipien vom Projektstart. Ohne dass der User Dinge wiederholt erklären muss.
 > keine typisierten Edges, kein Embedding-Support. TIM ist Greenfield-Rewrite
 > mit klarer Architektur (10 Packages) und 101+ Tests. Siehe [§16 hm-Migration](#16-hmem-migration--tim-migrate-überarbeiten).
 
+> **Note (Review) — Namens-Widerspruch:** „**Theoretically Infinite** Memory" und
+> „REM-Sleep Decay (alte Fakten **sterben**)" beißen sich, und `TIM.md` verspricht
+> ausdrücklich „Konversationen werden im **Originalton** erhalten". Auflösen durch klare
+> Schichtentrennung: **abgeleitetes Wissen** (Summaries, Lessons, Confidence-Scores) darf
+> verfallen/komprimiert werden; **Roh-Exchanges** werden nie gelöscht, sondern nur
+> kalt-komprimiert/ausgelagert (R2 „Cold-Node-Kompression" — Mechanik fehlt noch).
+> Sonst ist „Infinite" Marketing, das das Decay-Feature direkt widerlegt. Genau hier
+> liegt das eigentliche Skalierungsproblem: unbegrenzt wachsende Exchange-Rohdaten.
+
 ---
 
 ## 2. Architektur (10 Packages)
@@ -75,22 +84,22 @@ gerichtet (siehe Graph).
 ```
 ┌──────────────────────────────────────────────────┐
 │                   tim-mcp                         │
-│  JSON-RPC MCP Server: 28 Tools, stdio transport  │
+│  JSON-RPC MCP Server: 37 Tools, stdio transport  │
 └──────────────────┬───────────────────────────────┘
                    │
-┌──────────────────▼───────────────────────────────┐
-│                  tim-cli                          │
-│  User-facing CLI: 20+ Commands, Interaktiv       │
-└──┬───┬───┬───┬───┬───┬───┬───┬───┬───┬──────────┘
-   │   │   │   │   │   │   │   │   │   │
+┌──────────────────▼──────────────────────────────┐
+│                  tim-cli                        │
+│  User-facing CLI: 20+ Commands, Interaktiv      │
+└──┬───┬─────┬─────┬─────┬─────┬─────┬─────┬─────┬┘
+   │   │     │     │     │     │     │     │     │   
 ┌──▼┐ ┌▼──┐ ┌▼──┐ ┌▼──┐ ┌▼──┐ ┌▼──┐ ┌▼──┐ ┌▼──┐ ┌▼───┐
 │co │ │st │ │sy │ │se │ │mi │ │ho │ │sk │ │su │ │cli │
 │re │ │ore│ │nc │ │arc│ │gra│ │oks│ │ill│ │mma│ │(ent│
 │   │ │   │ │   │ │h  │ │te │ │   │ │s  │ │riz│ │ry) │
 │typ│ │SQL│ │LWW│ │FTS│ │hme│ │MCP│ │TIM│ │er │ │    │
-│es,│ │ite│ │+  │ │5 +│ │m→ │ │hooks│ │-aw│ │bat│ │    │
-│int│ │   │ │Me│ │Vec│ │TIM│ │+ma│ │are│ │ch │ │    │
-│efa│ │   │ │rkl│ │tor│ │   │ │rker│ │ski│ │sum│ │    │
+│es,│ │ite│ │+  │ │5 +│ │m→ │ │hooks│-aw│ │bat│ │    │
+│int│ │   │ │Me │ │Vec│ │TIM│ │+ma│ │are│ │ch │ │    │
+│efa│ │   │ │rkl│ │tor│ │   │ │rker││ski│ │sum│ │    │
 │ces│ │   │ │e  │ │   │ │   │ │   │ │lls│ │mar│ │    │
 └───┘ └───┘ └───┘ └───┘ └───┘ └───┘ └───┘ └───┘ └────┘
 ```
@@ -103,7 +112,7 @@ gerichtet (siehe Graph).
 | **tim-store** | SQLite-Driver, CRUD, Migrationen, Staging-Ledger. | `src/store.ts`, `src/session.ts` |
 | **tim-sync** | LWW-Register + Merkle-Tree-Diff, Push/Pull/Staging. | `src/sync.ts` (geplant) |
 | **tim-sync-client** | Sync-Client: E2E-Encryption, Transport, CLI. | `src/client.ts` (geplant) |
-| **tim-mcp** | JSON-RPC MCP Server: 28 Tools, Tool-Registry. | `src/server.ts` |
+| **tim-mcp** | JSON-RPC MCP Server: 37 Tools, Tool-Registry. | `src/server.ts` |
 | **tim-cli** | User-facing CLI: 20+ Commands (init, doctor, stats, checkpoints). | `src/cli.ts` |
 | **tim-migrate** | hmem → TIM Migration. **Muss überarbeitet werden** (eigener Task). | `src/migrate.ts` |
 | **tim-search** | FTS5 Full-Text Search + Embedding-Vector-Search (Hybrid). | `src/search.ts` |
@@ -177,6 +186,25 @@ Jeder Node ist ein Entry in der `entries`-Tabelle:
 | `tombstoned_at` | TEXT | Hard-Delete-Marker |
 | `metadata` | JSON | Typ-spezifische Felder (kind, status, priority, role, seq, etc.) |
 
+> **Note (Review):** Vier offene Punkte gegenüber `TIM.md`:
+> 1. **Kein `summary`-Feld.** `TIM.md` gibt jeder Node eine Summary („Node + Subnodes"),
+>    und genau darauf beruht das Lazy-Loading-Verkaufsargument gegen OKF (nur Summaries
+>    in den Kontext, Bodies on-demand). Aktuell tragen nur Sessions/Batches Summaries.
+>    Empfehlung: `summary TEXT` in die `entries`-Tabelle, und `tim_read` liefert
+>    standardmäßig Summary + Children, Body nur per Flag (`include_body`).
+> 2. **Kein `updated_at`.** `TIM.md` fordert ein Bearbeitungsdatum; es gibt nur
+>    `created_at` + `accessed_at`. `updated_at TEXT` ergänzen (relevant für Sync-LWW).
+> 3. **ULID ↔ Kurz-ID undefiniert.** Paper nutzt `P0063`, `S-01JX…` und `01KT…` synonym,
+>    ohne die Abbildung zu definieren. Wer vergibt den Zähler `P00XX`, und ist er
+>    geräte-/sync-sicher (Kollisionen bei Multi-Device)? Festlegen: ULID = primärer
+>    Schlüssel, Kurz-ID = per-Type-Counter (im Metadata, beim Sync gemappt).
+>    Nebenbei: `TIM.md` sagt „ULID = Gerät + Zeitstempel" — real ist ULID
+>    Zeitstempel + 80 Bit Zufall, *ohne* Geräteanteil. Wenn Geräte-Herkunft gebraucht
+>    wird (Sync-Debugging), als eigenes Metadata-Feld `origin_device`.
+> 4. **`depth 1-5` widerspricht §1.** §1 nennt hmems 5-Level-Grenze als Rewrite-Grund,
+>    aber das Schema cappt weiter bei 5. Entweder Cap entfernen/erhöhen, oder die
+>    hmem-Kritik relativieren (der Hypergraph läuft über Edges, der Baum bleibt bei 5).
+
 ---
 
 ## 4. Edges — 5-Types Minimal-Set
@@ -207,6 +235,14 @@ abgebildet.
 | `weight` | REAL 0.0-1.0 | Gewichtung (optional) |
 | `metadata` | JSON | Zusatzfelder (lease_expiry, etc.) |
 
+> **Gemini Anmerkung:** Wenn eine Node per Decay verfällt oder gelöscht (soft/hard) wird, müssen verknüpfte Edges behandelt werden. Empfehlung: Datenbankseitige Foreign-Key-Kaskadierung (`ON DELETE CASCADE`) oder Filterung verwaister Verbindungen bei der Graph-Traversierung in `tim_trace`.
+
+> **Note (Review):** „5er-Minimal-Set" ist nicht konsistent durchgehalten: §16
+> (Migration) führt `leases (optional)` als sechsten Edge-Type, und es gibt das Tool
+> `tim_lease` + ein `lease_expiry` im Edge-Metadata. Entscheiden und überall gleich
+> ziehen: Ist Leasing ein **Edge-Type** (dann sind es 6) oder ein **Metadata-/Visibility-
+> Konstrukt** (dann bleibt es bei 5, und §16 muss korrigiert werden)?
+
 ---
 
 ## 5. Connections — Drei-Schichten-Graph
@@ -225,8 +261,28 @@ Beim Lesen eines Nodes werden ähnliche Nodes via Tag-Overlap gefunden.
 `tim_read(id="P0063")` zeigt neben Children auch "Related by Tags" an.
 
 ```
-Similarity(A, B) = |tags(A) ∩ tags(B)| / max(|tags(A)|, |tags(B)|)
+# Jeder Tag t bekommt ein IDF-Gewicht: w(t) = log(N / df(t))
+#   N      = Gesamtzahl Nodes
+#   df(t)  = Anzahl Nodes mit Tag t
+# → seltene Tags wiegen mehr (Bennis Anforderung aus TIM.md).
+# Similarity = Cosine über die IDF-gewichteten Tag-Vektoren von A und B:
+
+                   Σ_{t ∈ tags(A) ∩ tags(B)} w(t)²
+Similarity(A, B) = ─────────────────────────────────────────────
+                   sqrt(Σ_{t ∈ A} w(t)²) · sqrt(Σ_{t ∈ B} w(t)²)
 ```
+
+> **Note (Review):** Die ursprüngliche Formel war reines Set-Overlap
+> (`|A∩B| / max(...)`) und ignorierte, dass seltene Tags mehr aussagen — obwohl
+> der Abschnitt „TF-IDF" heißt und `TIM.md` Rare-Tag-Gewichtung explizit fordert.
+> Ersetzt durch Cosine über IDF-gewichtete Tag-Vektoren. Offen: `df(t)` muss
+> inkrementell gepflegt werden (Tag-Häufigkeitstabelle), sonst ist der On-read-Pfad
+> bei jedem Lesen O(N).
+
+> **Note (Review):** Embedding-Provider `type: api` (siehe Config) schickt
+> Node-Inhalte an einen externen Dienst (OpenAI o. ä.). Für ein E2E-verschlüsseltes
+> Memory ist das ein Datenabfluss-Pfad — der **lokale** Provider (`type: local`,
+> ONNX) sollte der dokumentierte Default für sensible DBs sein.
 
 ### Schicht 3: Embedding-Similarity (on-demand / Pro-Feature)
 
@@ -356,6 +412,21 @@ Jeder Batch wird vom **Summarizer** (externer CLI-Agent) thematisch zusammengefa
 > Summarizer läuft async nach Batch-voll. `/tim-handoff` Skill ruft Summarizer
 > on-demand. Siehe `session-system-plan.md` §4 für den Data-Flow.
 
+> **Gemini Anmerkung:** Da der Summarizer über die Config unterschiedliche Modelle (z. B. Haiku, DeepSeek-Flash) nutzen kann, besteht die Gefahr inkonsistenter Tags (z. B. `#sqlite` vs. `#database`). Ein Standardisierungs-Schritt im `tim-summarizer` (z. B. Abgleich mit existierenden Tags vor dem Schreiben) ist ratsam.
+
+> **Note (Review) — Privacy:** Der Summarizer schickt **Roh-Exchanges** an eine
+> externe CLI/ein externes Modell (Haiku, DeepSeek-Flash). Das ist derselbe Inhalt,
+> den TIM-Sync E2E-verschlüsselt — bei einem API-Modell verlässt er also unverschlüsselt
+> das Gerät (DeepSeek zusätzlich mit Datenresidenz-Frage). Für privacy-sensible Setups
+> sollte ein lokaler Summarizer der empfohlene Default sein, und die Config einen Hinweis
+> tragen, welche `cli`/`model`-Werte lokal vs. Cloud sind.
+
+> **Note (Review) — Concurrency:** Der Summarizer läuft als **separater Prozess**
+> async, während der Haupt-Agent weiter in dieselbe `tim.db` schreibt. SQLite-WAL erlaubt
+> 1 Writer + N Reader, aber zwei Writer-Prozesse brauchen Serialisierung (busy_timeout /
+> Retry). Das idempotente `tim_write_batch_summary` deckt Crash-Recovery ab — der
+> Schreibkonflikt Haupt-Agent ↔ Summarizer sollte trotzdem explizit spezifiziert werden.
+
 ---
 
 ## 9. `.tim-project` Discovery — Streng CWD
@@ -374,6 +445,8 @@ Jeder Batch wird vom **Summarizer** (externer CLI-Agent) thematisch zusammengefa
 > pragmatic Entscheidung während der Implementierung; Benni hat später auf
 > CWD-only entschieden.
 
+> **Gemini Anmerkung:** CWD-only ist sauber, erhöht aber die Reibung, wenn man in tiefen Sub-Directories eines großen Projekts arbeitet. Eine CLI-Convenience (z. B. dass die aktive Shell-Session das Projekt erbt oder ein flüchtiges Cache-File im User-Home die Zuordnung speichert) könnte den Workflow erleichtern.
+
 ### Marker-Datei
 
 ```json
@@ -388,7 +461,7 @@ Jeder Batch wird vom **Summarizer** (externer CLI-Agent) thematisch zusammengefa
 ```
 
 Der Marker wird erstellt durch:
-1. **Handoff:** Beim `/o9k-handoff` wird das aktive Project in jede berührte
+1. **Handoff:** Beim `/tim-handoff` wird das aktive Project in jede berührte
    Repo geschrieben (`tim bind-project --cwd <repo> --label P00XX`).
 2. **`tim hook session-start`:** Schreibt bei explizitem Session-Binding.
 3. **Manuell/Committed:** `tim bind-project` oder direkt in der Repo committed.
@@ -423,11 +496,30 @@ Im seltenen Konfliktfall (zwei Devices schreiben gleichzeitig denselben Node):
 > Der aktuelle Stand: o9k-Sync-Server läuft auf localhost:3100. Push/Pull
 > ist implementiert, E2E-Encryption + Revocation sind geplant.
 
+> **Gemini Anmerkung:** Bei intensiver Offline-Arbeit auf mehreren Geräten können viele Konflikte entstehen. Um den User im CLI nicht mit manuellen Entscheidungen zu überfordern, sollte standardmäßig eine Konfliktlösungs-Strategie (z. B. "Last Write Wins für Session-Logs", manuelle Auswahl nur für kritische Nodes wie Configs/Rules) konfiguriert werden können.
+
+> **Note (Review) — Per-Node-Sharing fehlt:** `TIM.md` beschreibt das Teilen
+> *einzelner* Nodes (z. B. ein Projekt) mit anderen Usern — konfigurierbar lesend/schreibend,
+> **aber nicht löschbar**, via eigener Per-Node-Passphrase unter „shared Nodes" in der Config.
+> Das Paper ersetzt das durch Visibility-Bitmask + Lease + Passphrase-Rotation; das
+> granulare Per-Node-Key-Sharing und die „nicht löschbar"-Permission fehlen. Beide
+> Modelle sind nicht deckungsgleich — klären, welches gilt (Bitmask reicht nicht für
+> „teile genau diese eine Node mit User X, ohne ihm die DB-Passphrase zu geben").
+
+> **Note (Review) — Passphrase-Speicherung:** `sync.passphrase: ""` als Klartext in
+> `~/.tim/config.json` untergräbt E2E (wer die Datei liest, hat den Schlüssel). Besser:
+> OS-Keychain (macOS Keychain, libsecret, Windows Credential Manager) oder beim ersten
+> Sync prompten und nur einen scrypt-Salt persistieren, nie die Passphrase selbst.
+
+> **Note (Review) — Branding:** Sync heißt in `TIM.md` „TIM-Sync" (eigener Bezahldienst),
+> im Paper aber „o9k-Sync-Server" (Config: `ws://localhost:3100`). §17 ordnet Sync klar
+> TIM zu. Einheitlich benennen, sonst ist unklar, ob Sync zu TIM oder o9k gehört.
+
 ---
 
-## 11. Config — Alle 12 Keys selbsterklärend
+## 11. Config — Alle 13 Keys selbsterklärend
 
-TIM Config (`~/.tim/config.json`) hat 12 Keys:
+TIM Config (`~/.tim/config.json`) hat 13 Keys:
 
 ```yaml
 # TIM Config — selbsterklärend, Defaults in Klammern
@@ -435,12 +527,10 @@ TIM Config (`~/.tim/config.json`) hat 12 Keys:
 db_path: ~/.tim/tim.db
 # Wann ändern: Custom-Pfad für Multi-User-Setup, NAS, oder portable DB
 
-node_types:
-  - project, task, session, bug, lesson, user, rule, idea, decision, commit, milestone
+node_types: [project, task, session, bug, lesson, user, rule, idea, decision, commit, milestone]
 # Wann ändern: Custom-Type hinzufügen (z.B. "note", "feature", "epic")
 
-edge_types:
-  - relates, extends, implements, blocks, contradicts
+edge_types: [relates, extends, implements, blocks, contradicts]
 # Wann ändern: Custom-Edge-Type für spezielle Domain (z.B. "depends_on", "triggers")
 
 embedding_provider:
@@ -507,7 +597,7 @@ logging:
 # Wann ändern: Debug-Modus für Fehlersuche
 ```
 
-> **Note (R15):** 12 Keys, selbsterklärend. `embedding_provider` und `sync`
+> **Note (R15):** 13 Keys, selbsterklärend. `embedding_provider` und `sync`
 > sind erst ab Phase 0.7/0.8 relevant. Alle Keys haben sinnvolle Defaults.
 
 ---
@@ -533,7 +623,7 @@ explizite Bestätigung durch den User.
 
 ## 13. Tools — Alle MCP-Tools im Überblick
 
-TIM hat **28 MCP-Tools**, gruppiert nach Phase:
+TIM hat **37 MCP-Tools**, gruppiert nach Phase:
 
 ### Read/Query-Tools
 
@@ -590,11 +680,22 @@ TIM hat **28 MCP-Tools**, gruppiert nach Phase:
 > **Note (R12):** Alle Tools sind implementiert in `~/projects/tim/packages/tim-mcp/src/server.ts`.
 > Siehe dort für die genauen Input/Output-Schemas (Zod-Schemas in `server.ts`).
 
+> **Note (Review):** Zwei Tools/Konzepte tauchen nur in der Liste auf, ohne im Fließtext
+> erklärt zu sein: `tim_suppress` („Negative Memory"/Suppress-Pattern) und `tim_lease`
+> (Agenten-Leasing). Beide sind in `TIM.md` nicht vorgesehen — kurzen Abschnitt ergänzen,
+> was „Negative Memory" ist und wie Leasing zum Visibility-Modell (§3) passt.
+
+> **Note (Review):** `tim_load_project` ist der heißeste Pfad fürs Kontext-Sparen (Bennis
+> Kernziel), kann aber bei großen Projekten selbst riesig werden. Es fehlt eine
+> Budget-/Truncation-Strategie (z. B. nur Summaries + Next Steps + offene Tasks, Rest
+> per Lazy-Load). Ohne das frisst `load_project` genau das Kontextfenster, das TIM
+> schonen soll.
+
 ---
 
-## 14. Skills — 16 Published Skills
+## 14. Skills — 15 Published Skills
 
-### TIM-Kern-Skills (11)
+### TIM-Kern-Skills (10)
 
 | Skill | Trigger | Zweck |
 |-------|---------|-------|
@@ -619,10 +720,15 @@ TIM hat **28 MCP-Tools**, gruppiert nach Phase:
 | **tim-handoff** | `/tim-handoff` | Session beenden + Summarizer + Marker schreiben |
 | **tim-usage** | "usage check" | Subscription/Balance-Check für TIM |
 
-> **Note (R13):** 11 Kern-Skills + 5 Meta-Skills = 16 published. Plus 1-2
+> **Note (R13):** 10 Kern-Skills + 5 Meta-Skills = 15 published. Plus 1-2
 > Dev-Skills (gitignored). Skills liegen in `~/.hermes/profiles/worker/skills/tim-*/`.
 > `tim-config`, `tim-update`, `tim-release`, `tim-handoff`, `tim-usage` sind
 > teilweise noch geplant (Phase 0.7+).
+
+> **Note (Review):** Im ursprünglichen Paper standen 16/11 — die Kern-Tabelle
+> listet aber nur 10 Skills. Vor dem Abnicken gegen den tatsächlichen Inhalt von
+> `~/.hermes/profiles/worker/skills/tim-*/` prüfen: Fehlt ein Kern-Skill (z. B.
+> `tim-suppress`/`tim-curate`-Variante), oder war die 11 schlicht falsch gezählt?
 
 ---
 
@@ -702,7 +808,13 @@ muss **komplett überarbeitet werden** (eigener Task in P0063).
 | O-Entries (Session-Log) | Session-Nodes (Edges: type=session_exchange) |
 | Sync (hmem-sync) | `tim sync` (kompatibles Protokoll für Transition) |
 
-### Neue Edge-Types (9 → 5)
+> **Note (Review):** Die Mapping-Zeile „`P0001` → `E0001`" widerspricht §3: dort hat
+> jeder Type seinen eigenen Prefix (project=`P`, task=`T`, …). Wenn bei der Migration
+> *alles* zu `E####` wird und der echte Type nur ins Metadata wandert, verlieren die
+> Kurz-IDs ihre menschenlesbare Type-Erkennbarkeit (gerade das Feature aus `TIM.md`
+> „Alternative ID, bei der man direkt den Typ sieht"). Vermutlich gemeint: *Entry-ID*
+> generisch, **Prefix bleibt typ-spezifisch** (`P0001`→`P0001`, hmem-Original in
+> `metadata.hmem_id`). Zeile entsprechend korrigieren.
 
 | hmem (alt) | TIM (neu) |
 |------------|-----------|
@@ -798,11 +910,12 @@ tree_template:
     - Overview: {}
     - Rules:
         children: [Agent Rules, Git Rules, Style Rules]
-    - Next Steps:
-        task_root: true
     - Log: { render_tail: true }
     - Decisions: {}
     - Codebase: {}
+      - Modules: {}
+        - Functions: {}
+      - Pipeline: {}
     - Usage: {}
     - Bugs: {}
     - Roadmap: {}
@@ -1065,18 +1178,18 @@ oder merge?"
 
 **Konsequenz:** Sync-Server broadcastet Conflict-Notification. Siehe §10.
 
-### R12 — Tools: Alle 28 Einzeln Dokumentiert
+### R12 — Tools: Alle 37 Einzeln Dokumentiert
 
-**Decision:** Alle 28 MCP-Tools einzeln mit Mini-Beschreibung. Paper wird
+**Decision:** Alle 37 MCP-Tools einzeln mit Mini-Beschreibung. Paper wird
 Tool-Reference.
 
 **Warum:** Vollständigkeit wichtiger als Kürze.
 
 **Konsequenz:** Lange Sektion §13, gruppiert nach Phase (Read/Write/Admin/Session).
 
-### R13 — Skills: 16 Published + 1-2 Dev
+### R13 — Skills: 15 Published + 1-2 Dev
 
-**Decision:** 16 published Skills (11 tim-* + 5 Meta: tim-config, tim-update,
+**Decision:** 15 published Skills (10 tim-* + 5 Meta: tim-config, tim-update,
 tim-release, tim-handoff, tim-usage). Plus 1-2 Dev-Skills (gitignored).
 
 **Warum:** Klar abgegrenzte Skill-Familie.
@@ -1091,9 +1204,9 @@ tim-release, tim-handoff, tim-usage). Plus 1-2 Dev-Skills (gitignored).
 
 **Konsequenz:** Architektur-Sektion §2 zeigt Paket-Verantwortlichkeiten.
 
-### R15 — Config: 12 Keys, Selbsterklärend
+### R15 — Config: 13 Keys, Selbsterklärend
 
-**Decision:** Alle 12 Keys mit Beschreibung + Default + "wann ändern"-Hinweis.
+**Decision:** Alle 13 Keys mit Beschreibung + Default + "wann ändern"-Hinweis.
 
 **Warum:** Benni fordert selbsterklärende Config.
 
