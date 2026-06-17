@@ -20,6 +20,7 @@ export declare const SESSION_ROLLUP_THRESHOLD = 3;
 export declare const MARKER_FILENAME = ".tim-project";
 export declare const MARKER_LOCK = ".tim-project.lock";
 export declare const INBOX_PROJECT_LABEL = "P0000";
+export declare function foldBatchSummaries(batches: Pick<Entry, 'content' | 'metadata'>[]): string;
 export interface DerivedCounters {
     exchangeCount: number;
     batchesSummarized: number;

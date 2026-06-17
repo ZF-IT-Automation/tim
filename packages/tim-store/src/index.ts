@@ -41,6 +41,7 @@ export {
   findChildByKind,
   getCurrentBatch,
   ensureInboxProject,
+  foldBatchSummaries,
   type DerivedCounters,
   type CurrentBatch,
   SESSIONS_SECTION_TITLE,

@@ -26,6 +26,13 @@ export const MARKER_LOCK = '.tim-project.lock';
 
 export const INBOX_PROJECT_LABEL = 'P0000';
 
+export function foldBatchSummaries(batches: Pick<Entry, 'content' | 'metadata'>[]): string {
+  const sorted = [...batches].sort(
+    (a, b) => (Number(a.metadata.batch_index) || 0) - (Number(b.metadata.batch_index) || 0),
+  );
+  return sorted.map(b => b.content || '').filter(Boolean).join('\n\n---\n\n');
+}
+
 export interface DerivedCounters {
   exchangeCount: number;
   batchesSummarized: number;

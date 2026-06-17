@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
-import { TimStore, SessionManager, deriveCounters, formatProjectOutput } from 'tim-store';
+import { TimStore, SessionManager, deriveCounters, formatProjectOutput, foldBatchSummaries } from 'tim-store';
 import { loadConfig } from 'tim-core';
 import type { LoadProjectResult } from 'tim-store';
 import {
@@ -185,12 +185,20 @@ describe('pipeline e2e — happy path', () => {
           a.tags as string[] | undefined,
         );
       }
+      if (tool === 'tim_rollup_session_summary') {
+        return sessions.rollUpSession(a.sessionId as string, async batches => foldBatchSummaries(batches as any));
+      }
       throw new Error(`unexpected tool: ${tool}`);
     });
 
     const count = await runSummarizerLoop(SESSION_ID);
     expect(count).toBe(1);
     expect(close).toHaveBeenCalled();
+    expect(mcpClient.callTimTool).toHaveBeenCalledWith(
+      expect.anything(),
+      'tim_rollup_session_summary',
+      { sessionId: SESSION_ID },
+    );
 
     const depth4 = (await store.loadProject(PROJECT_ID, { depth: 4, budget: 200 }))!;
     const batches = batchSummaryNodes(depth4);
@@ -261,6 +269,9 @@ describe('pipeline e2e — edge cases', () => {
           { seqFrom: a.seqFrom as number, seqTo: a.seqTo as number },
           a.tags as string[] | undefined,
         );
+      }
+      if (tool === 'tim_rollup_session_summary') {
+        return sessions.rollUpSession(a.sessionId as string, async batches => foldBatchSummaries(batches as any));
       }
       throw new Error(`unexpected tool: ${tool}`);
     });
