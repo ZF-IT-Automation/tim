@@ -15,6 +15,7 @@ import {
   formatProjectOutput,
   ensureInboxProject,
   INBOX_PROJECT_LABEL,
+  foldBatchSummaries,
   ErrorLogger,
   validateTagsDeprecated,
   type TaskRecord,
@@ -176,6 +177,10 @@ const TimWriteBatchSummarySchema = z.object({
   seqFrom: z.number().int().nonnegative(),
   seqTo: z.number().int().nonnegative(),
   tags: z.array(z.string()).optional(),
+});
+
+const TimRollupSessionSummarySchema = z.object({
+  sessionId: z.string(),
 });
 
 const TimRecordCommitSchema = z.object({
@@ -811,6 +816,7 @@ function getSessions(): SessionManager {
 const WRITE_TOOLS = new Set([
   'tim_write', 'tim_update', 'tim_rename_title', 'tim_delete', 'tim_link',
   'tim_session_start', 'tim_session_log', 'tim_checkpoint', 'tim_write_batch_summary',
+  'tim_rollup_session_summary',
   'tim_record_commit',
   'tim_rename_entry', 'tim_move_entry', 'tim_update_many',
   'tim_tag_add', 'tim_tag_remove', 'tim_tag_rename', 'tim_import',
@@ -1147,6 +1153,18 @@ export async function startServer(): Promise<void> {
             tags: { type: 'array', items: { type: 'string' } },
           },
           required: ['sessionId', 'batchIndex', 'summary', 'seqFrom', 'seqTo'],
+        },
+      },
+      {
+        name: 'tim_rollup_session_summary',
+        description:
+          'Fold batch-summary children into the session-summary-root content field. Called after tim-summarizer writes all batches.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            sessionId: { type: 'string' },
+          },
+          required: ['sessionId'],
         },
       },
       {
@@ -1972,6 +1990,14 @@ export async function startServer(): Promise<void> {
             seqFrom,
             seqTo,
           }, tags);
+          return {
+            content: [{ type: 'text', text: JSON.stringify(node, null, 2) }],
+          };
+        }
+
+        case 'tim_rollup_session_summary': {
+          const { sessionId } = TimRollupSessionSummarySchema.parse(args);
+          const node = await getSessions().rollUpSession(sessionId, async batches => foldBatchSummaries(batches));
           return {
             content: [{ type: 'text', text: JSON.stringify(node, null, 2) }],
           };

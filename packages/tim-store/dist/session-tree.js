@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.INBOX_PROJECT_LABEL = exports.MARKER_LOCK = exports.MARKER_FILENAME = exports.SESSION_ROLLUP_THRESHOLD = exports.DEFAULT_BATCH_SIZE = exports.BATCH_STRUCTURAL_TAGS = exports.BATCH_SUMMARY_TAG = exports.SESSION_SUMMARY_TAG = exports.KIND_EXCHANGE = exports.KIND_EXCHANGE_BATCH = exports.KIND_EXCHANGES_ROOT = exports.KIND_BATCH = exports.KIND_SUMMARY_ROOT = exports.KIND_SESSION = exports.KIND_SESSIONS_ROOT = exports.SESSIONS_SECTION_ORDER = exports.EXCHANGES_NODE_TITLE = exports.SUMMARY_NODE_TITLE = exports.SESSIONS_SECTION_TITLE = void 0;
+exports.foldBatchSummaries = foldBatchSummaries;
 exports.getCurrentBatch = getCurrentBatch;
 exports.findChildByKind = findChildByKind;
 exports.deriveCounters = deriveCounters;
@@ -25,6 +26,10 @@ exports.SESSION_ROLLUP_THRESHOLD = 3;
 exports.MARKER_FILENAME = '.tim-project';
 exports.MARKER_LOCK = '.tim-project.lock';
 exports.INBOX_PROJECT_LABEL = 'P0000';
+function foldBatchSummaries(batches) {
+    const sorted = [...batches].sort((a, b) => (Number(a.metadata.batch_index) || 0) - (Number(b.metadata.batch_index) || 0));
+    return sorted.map(b => b.content || '').filter(Boolean).join('\n\n---\n\n');
+}
 /** Latest exchange-batch under Exchanges; creates Batch 1 if missing. */
 async function getCurrentBatch(store, exchangesNodeId) {
     const allBatches = await store.getChildByKind(exchangesNodeId, exports.KIND_EXCHANGE_BATCH);

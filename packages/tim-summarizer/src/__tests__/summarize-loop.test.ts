@@ -34,7 +34,8 @@ describe('runSummarizerLoop', () => {
     vi.spyOn(mcpClient, 'connectTimMcp').mockResolvedValue({ close } as never);
     vi.spyOn(mcpClient, 'callTimTool')
       .mockResolvedValueOnce(batch)
-      .mockResolvedValueOnce({ id: 'written' });
+      .mockResolvedValueOnce({ id: 'written' })
+      .mockResolvedValueOnce({ id: 'summary-root', content: 'rolled' });
 
     const count = await runSummarizerLoop('loop');
     expect(count).toBe(1);
@@ -48,6 +49,11 @@ describe('runSummarizerLoop', () => {
         seqFrom: 1,
         seqTo: 1,
       }),
+    );
+    expect(mcpClient.callTimTool).toHaveBeenCalledWith(
+      expect.anything(),
+      'tim_rollup_session_summary',
+      { sessionId: 'loop' },
     );
     expect(close).toHaveBeenCalled();
   });
