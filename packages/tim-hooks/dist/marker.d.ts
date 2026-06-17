@@ -46,6 +46,7 @@ export type ProjectMarkerInput = Omit<ProjectMarker, 'version'> & {
 };
 export declare function markerPath(cwd: string): string;
 export declare function canonicalProjectPath(cwd: string): string;
+export declare function validateProjectLabel(label: string): boolean;
 /**
  * Sentinel label for the Inbox project (P0000). Always treated as
  * valid even when not present in the DB — the Inbox is a system

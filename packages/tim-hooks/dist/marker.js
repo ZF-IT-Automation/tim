@@ -36,6 +36,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.LOCK_TTL_MS = exports.INBOX_LABEL = exports.MARKER_VERSION = exports.CANONICAL_PROJECT_FILENAME = exports.MARKER_LOCK = exports.MARKER_FILENAME = void 0;
 exports.markerPath = markerPath;
 exports.canonicalProjectPath = canonicalProjectPath;
+exports.validateProjectLabel = validateProjectLabel;
 exports.readMarker = readMarker;
 exports.validateMarkerAgainstStore = validateMarkerAgainstStore;
 exports.writeMarker = writeMarker;
@@ -76,6 +77,17 @@ function canonicalProjectPath(cwd) {
 }
 /** Valid project labels: P/L/E/N + 4 digits (P0062, L0042, …). */
 const PROJECT_LABEL_PATTERN = /^[PLEN]\d{4}$/;
+/**
+ * Shape-valid label that must never be written to `.tim-project`.
+ * Used as a vitest fixture / corruption sentinel (see P9999 bug); DB
+ * validation also rejects it when the project does not exist.
+ */
+const DENIED_MARKER_LABELS = new Set(['P9999']);
+function validateProjectLabel(label) {
+    if (DENIED_MARKER_LABELS.has(label))
+        return false;
+    return PROJECT_LABEL_PATTERN.test(label);
+}
 /**
  * Sentinel label for the Inbox project (P0000). Always treated as
  * valid even when not present in the DB — the Inbox is a system
@@ -231,6 +243,11 @@ async function validateMarkerAgainstStore(marker, store) {
  *  the on-disk file becomes v2 on first write, regardless of the caller's
  *  input. This is the auto-upgrade path for v1 files. */
 function writeMarker(cwd, marker) {
+    if (!validateProjectLabel(marker.project)) {
+        console.warn(`[tim-hooks] writeMarker: refusing to write invalid project label "${marker.project}" — ` +
+            `expected ^[PLEN]\\d{4}$ (P0062, L0042, …). Marker not written.`);
+        return;
+    }
     const p = markerPath(cwd);
     const upgraded = { ...marker, version: exports.MARKER_VERSION };
     fs.writeFileSync(p, JSON.stringify(upgraded, null, 2));
@@ -240,6 +257,11 @@ function writeMarker(cwd, marker) {
  * Statusline and hooks read this marker — must match the loaded project label.
  */
 function syncNearestProjectMarker(startCwd, projectLabel, options) {
+    if (!validateProjectLabel(projectLabel)) {
+        console.warn(`[tim-hooks] syncNearestProjectMarker: refusing to sync invalid project label ` +
+            `"${projectLabel}" — expected ^[PLEN]\\d{4}$. Returning false.`);
+        return false;
+    }
     const located = findMarker(startCwd, {
         walkUp: true,
         allowHome: true,

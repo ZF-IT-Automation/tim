@@ -336,6 +336,36 @@ const TEST_ROOT = '/tmp/tim-test-runs';
         (0, vitest_1.expect)((0, marker_js_1.readMarker)(sub)?.session).toBe('20260602_155620_ee0929');
         (0, vitest_1.expect)((0, marker_js_1.readMarker)(dir)?.project).toBe('P0062');
     });
+    (0, vitest_1.it)('writeMarker refuses to write P9999 (invalid label — 5 digits)', () => {
+        (0, vitest_1.expect)((0, marker_js_1.validateProjectLabel)('P9999')).toBe(false);
+        (0, marker_js_1.writeMarker)(dir, {
+            project: 'P9999',
+            session: 's',
+            exchanges: 0,
+            batch_size: 5,
+            batches_summarized: 0,
+        });
+        const markerFile = path.join(dir, '.tim-project');
+        const exists = fs.existsSync(markerFile);
+        if (exists) {
+            const content = JSON.parse(fs.readFileSync(markerFile, 'utf8'));
+            (0, vitest_1.expect)(content.project).not.toBe('P9999');
+        }
+    });
+    (0, vitest_1.it)('syncNearestProjectMarker with P9999 returns false and does not write', () => {
+        (0, marker_js_1.writeMarker)(dir, {
+            project: 'P0062',
+            session: 'bg_old',
+            exchanges: 0,
+            batch_size: 5,
+            batches_summarized: 0,
+        });
+        const result = (0, marker_js_1.syncNearestProjectMarker)(dir, 'P9999', {
+            findOptions: { maxRoot: dir },
+        });
+        (0, vitest_1.expect)(result).toBe(false);
+        (0, vitest_1.expect)((0, marker_js_1.readMarker)(dir)?.project).toBe('P0062');
+    });
 });
 (0, vitest_1.describe)('marker v2 schema', () => {
     let dir;
