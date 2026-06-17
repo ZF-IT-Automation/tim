@@ -1085,8 +1085,7 @@ export class TimStore implements MemoryInterface {
         title = split.title;
         body = split.body;
       } else {
-        const nl = patch.content.indexOf('\n');
-        body = nl === -1 ? patch.content.trim() : patch.content.slice(nl + 1).trim();
+        body = patch.content;
       }
     }
 

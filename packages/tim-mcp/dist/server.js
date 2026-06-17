@@ -108,6 +108,10 @@ const TimUpdateSchema = zod_1.z.object({
     visibility: zod_1.z.number().optional(),
     metadata: zod_1.z.record(zod_1.z.unknown()).optional(),
 });
+const TimRenameTitleSchema = zod_1.z.object({
+    id: zod_1.z.string(),
+    title: zod_1.z.string(),
+});
 const TimDeleteSchema = zod_1.z.object({
     id: zod_1.z.string(),
     hard: zod_1.z.boolean().optional().default(false),
@@ -383,7 +387,7 @@ async function formatTasksOutput(store, tasks) {
 }
 async function resolveRoots(store, root) {
     if (root === undefined) {
-        const marker = (0, tim_hooks_1.findMarker)(process.cwd());
+        const marker = (0, tim_hooks_1.findMarker)(process.cwd(), { walkUp: true });
         if (marker)
             return { labels: [marker.marker.project] };
         const active = (0, tim_hooks_1.getActiveProjectLabel)();
@@ -729,7 +733,7 @@ function getSessions() {
     return sessions;
 }
 const WRITE_TOOLS = new Set([
-    'tim_write', 'tim_update', 'tim_delete', 'tim_link',
+    'tim_write', 'tim_update', 'tim_rename_title', 'tim_delete', 'tim_link',
     'tim_session_start', 'tim_session_log', 'tim_checkpoint', 'tim_write_batch_summary',
     'tim_record_commit',
     'tim_rename_entry', 'tim_move_entry', 'tim_update_many',
@@ -863,6 +867,7 @@ async function startServer() {
                     type: 'object',
                     properties: {
                         id: { type: 'string' },
+                        title: { type: 'string', description: 'Update entry title' },
                         content: { type: 'string' },
                         confidence: { type: 'number', minimum: 0, maximum: 1 },
                         tags: {
@@ -874,6 +879,18 @@ async function startServer() {
                         metadata: { type: 'object' },
                     },
                     required: ['id'],
+                },
+            },
+            {
+                name: 'tim_rename_title',
+                description: 'Rename/update the title of an existing entry.',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        id: { type: 'string' },
+                        title: { type: 'string' },
+                    },
+                    required: ['id', 'title'],
                 },
             },
             {
@@ -1613,6 +1630,13 @@ async function startServer() {
                         content: [{ type: 'text', text: JSON.stringify(entry, null, 2) }],
                     };
                 }
+                case 'tim_rename_title': {
+                    const { id, title } = TimRenameTitleSchema.parse(args);
+                    const entry = await s.update(id, { title });
+                    return {
+                        content: [{ type: 'text', text: JSON.stringify(entry, null, 2) }],
+                    };
+                }
                 case 'tim_delete': {
                     const { id, hard } = TimDeleteSchema.parse(args);
                     await s.delete(id, hard);
@@ -1912,7 +1936,7 @@ async function startServer() {
                     const cwd = process.cwd();
                     const sessionId = (0, tim_core_1.resolveActiveSessionId)({
                         sessionIdArg: sessionIdArg,
-                        markerSession: (0, tim_hooks_1.findMarker)(cwd)?.marker.session,
+                        markerSession: (0, tim_hooks_1.findMarker)(cwd, { walkUp: true })?.marker.session,
                     });
                     if (sessionId) {
                         const existing = await s.read(sessionId);

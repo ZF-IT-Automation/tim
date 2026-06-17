@@ -103,6 +103,11 @@ const TimUpdateSchema = z.object({
   metadata: z.record(z.unknown()).optional(),
 });
 
+const TimRenameTitleSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+});
+
 const TimDeleteSchema = z.object({
   id: z.string(),
   hard: z.boolean().optional().default(false),
@@ -804,7 +809,7 @@ function getSessions(): SessionManager {
 }
 
 const WRITE_TOOLS = new Set([
-  'tim_write', 'tim_update', 'tim_delete', 'tim_link',
+  'tim_write', 'tim_update', 'tim_rename_title', 'tim_delete', 'tim_link',
   'tim_session_start', 'tim_session_log', 'tim_checkpoint', 'tim_write_batch_summary',
   'tim_record_commit',
   'tim_rename_entry', 'tim_move_entry', 'tim_update_many',
@@ -945,6 +950,7 @@ export async function startServer(): Promise<void> {
           type: 'object',
           properties: {
             id: { type: 'string' },
+            title: { type: 'string', description: 'Update entry title' },
             content: { type: 'string' },
             confidence: { type: 'number', minimum: 0, maximum: 1 },
             tags: {
@@ -956,6 +962,18 @@ export async function startServer(): Promise<void> {
             metadata: { type: 'object' },
           },
           required: ['id'],
+        },
+      },
+      {
+        name: 'tim_rename_title',
+        description: 'Rename/update the title of an existing entry.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+            title: { type: 'string' },
+          },
+          required: ['id', 'title'],
         },
       },
       {
@@ -1729,6 +1747,14 @@ export async function startServer(): Promise<void> {
             };
           }
           const entry = await s.update(id, patch as Partial<Entry>);
+          return {
+            content: [{ type: 'text', text: JSON.stringify(entry, null, 2) }],
+          };
+        }
+
+        case 'tim_rename_title': {
+          const { id, title } = TimRenameTitleSchema.parse(args);
+          const entry = await s.update(id, { title });
           return {
             content: [{ type: 'text', text: JSON.stringify(entry, null, 2) }],
           };

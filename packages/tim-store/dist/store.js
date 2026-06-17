@@ -326,15 +326,20 @@ class TimStore {
             const entryLabel = entry.metadata.label;
             return sections.some(section => section === entry.id || section === entryLabel);
         };
-        const loadChildren = (parentId, currentDepth, filterSections) => {
+        const loadChildren = (parentId, currentDepth, filterSections, reverse) => {
             if (currentDepth > depth || truncated)
                 return;
+            // Reverse ordering when descending into sessions-root so the newest
+            // sessions survive a tight DFS budget (Recent-Sessions sort bug).
+            const orderBy = reverse
+                ? `COALESCE(CAST(json_extract(metadata, '$.order') AS INTEGER), -1) DESC, created_at DESC`
+                : `COALESCE(CAST(json_extract(metadata, '$.order') AS INTEGER), 999999) ASC, created_at ASC`;
             let childEntries = this.db.prepare(`
         SELECT * FROM entries
         WHERE parent_id = ?
           AND irrelevant = 0
           AND tombstoned_at IS NULL
-        ORDER BY COALESCE(CAST(json_extract(metadata, '$.order') AS INTEGER), 999999), created_at ASC
+        ORDER BY ${orderBy}
       `).all(parentId);
             if (filterSections && sections?.length) {
                 childEntries = childEntries.filter(row => matchesSection(rowToEntry(row)));
@@ -346,10 +351,13 @@ class TimStore {
                 }
                 const child = rowToEntry(row);
                 children.push(child);
-                loadChildren(child.id, currentDepth + 1, false);
+                // Load session subtrees newest-first so the newest sessions survive
+                // budget truncation (Recent-Sessions sort bug).
+                const childReverse = child.metadata.kind === 'sessions-root';
+                loadChildren(child.id, currentDepth + 1, false, childReverse);
             }
         };
-        loadChildren(project.id, 1, true);
+        loadChildren(project.id, 1, true, false);
         return { project, children, truncated };
     }
     /**
@@ -893,8 +901,7 @@ class TimStore {
                 body = split.body;
             }
             else {
-                const nl = patch.content.indexOf('\n');
-                body = nl === -1 ? patch.content.trim() : patch.content.slice(nl + 1).trim();
+                body = patch.content;
             }
         }
         const updated = {
