@@ -1,0 +1,1 @@
+Usage: tim export <path.hmem> [--format hmem|text]

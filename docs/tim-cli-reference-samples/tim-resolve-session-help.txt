@@ -1,0 +1,1 @@
+Usage: tim resolve-session --session <id> [--cwd <dir>] [--format label|directive|json]

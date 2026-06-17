@@ -1,0 +1,5 @@
+tim restore [--from <snapshot-path>] [--list] [--dry-run] [--force]
+
+Without --from: lists recent snapshots and refuses to overwrite recent DB (60min safety threshold).
+Use --force to override safety check (not recommended).
+Use --list to just list available snapshots without restoring.

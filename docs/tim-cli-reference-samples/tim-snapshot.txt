@@ -1,0 +1,8 @@
+snapshot: /tmp/tim-snapshots/tim-20260617-0956.db (67072000 bytes, 141ms)
+{
+  "ok": true,
+  "target": "/tmp/tim-snapshots/tim-20260617-0956.db",
+  "bytes": 67072000,
+  "durationMs": 141,
+  "pruned": 0
+}

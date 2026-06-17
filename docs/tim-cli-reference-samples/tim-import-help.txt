@@ -1,0 +1,1 @@
+Usage: tim import <path.hmem> [--dry-run] [--deduplicate]

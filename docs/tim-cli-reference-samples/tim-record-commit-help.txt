@@ -1,0 +1,3 @@
+Usage: tim record-commit --cwd <dir> --hash <sha> --message <msg> [--diff <path>]
+Note: Requires --hash and --message. Fails with "Project not found: P9999" when
+run from a directory whose .tim-project points to a missing/unknown project.

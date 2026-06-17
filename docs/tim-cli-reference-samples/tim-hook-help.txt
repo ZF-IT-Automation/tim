@@ -1,0 +1,5 @@
+tim hook <session-start|session-end|log> [options]
+
+  session-start  Start a session (--session, --agent, --cwd, --harness, --project, --tool, --model)
+  session-end    End a session and run checkpoint (--session)
+  log            Log an exchange to a session

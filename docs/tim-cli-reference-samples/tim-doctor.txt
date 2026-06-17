@@ -1,0 +1,19 @@
+═══ TIM Doctor ═══
+DB: /home/bbbee/.tim/tim.db
+Entries: 2750 | Edges: 10451
+Confidence avg: 1.00
+Broken links: 2
+Orphan entries: 7201
+FTS5: ✓
+Agents: default
+Oldest: 2026-05-25T10:16:17.080Z
+Newest: 2026-06-17T07:54:40.556Z
+Stale (>30d): 0
+
+⚠ Issues:
+  - 2 broken links
+  - 7201 orphan entries
+
+Top tags: #exchange(1258), #session-summary(448), #batch-summary(258), #session(189), #exchanges(186)
+
+Hermes statusline: ✓ installed

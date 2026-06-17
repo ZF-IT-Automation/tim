@@ -1,0 +1,100 @@
+{
+  "totalEntries": 2750,
+  "totalEdges": 10451,
+  "entriesByDepth": {
+    "1": 15,
+    "2": 62,
+    "3": 505,
+    "4": 378,
+    "5": 1790
+  },
+  "entriesByType": {
+    "text": 2750
+  },
+  "topTags": [
+    {
+      "tag": "#exchange",
+      "count": 1258
+    },
+    {
+      "tag": "#session-summary",
+      "count": 448
+    },
+    {
+      "tag": "#batch-summary",
+      "count": 258
+    },
+    {
+      "tag": "#session",
+      "count": 189
+    },
+    {
+      "tag": "#exchanges",
+      "count": 186
+    },
+    {
+      "tag": "#checkpoint",
+      "count": 158
+    },
+    {
+      "tag": "#task",
+      "count": 121
+    },
+    {
+      "tag": "#commit",
+      "count": 112
+    },
+    {
+      "tag": "#tim",
+      "count": 36
+    },
+    {
+      "tag": "#codebase",
+      "count": 28
+    },
+    {
+      "tag": "#log",
+      "count": 28
+    },
+    {
+      "tag": "#2026-06-16",
+      "count": 22
+    },
+    {
+      "tag": "#skill-management",
+      "count": 21
+    },
+    {
+      "tag": "#worker-spawn",
+      "count": 15
+    },
+    {
+      "tag": "#hermes-agent",
+      "count": 12
+    },
+    {
+      "tag": "#modules",
+      "count": 11
+    },
+    {
+      "tag": "#statusline",
+      "count": 10
+    },
+    {
+      "tag": "#skill-development",
+      "count": 10
+    },
+    {
+      "tag": "#task-management",
+      "count": 9
+    },
+    {
+      "tag": "#learning",
+      "count": 9
+    }
+  ],
+  "avgConfidence": 0.9998181818181818,
+  "oldestEntry": "2026-05-25T10:16:17.080Z",
+  "newestEntry": "2026-06-17T07:54:40.556Z",
+  "staleCount": 0
+}
