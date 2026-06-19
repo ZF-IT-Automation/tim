@@ -330,6 +330,39 @@ let store;
             (0, vitest_1.expect)(result.children.length).toBe(3);
             (0, vitest_1.expect)(result.truncated).toBe(true);
         });
+        (0, vitest_1.it)('load_project loads newest sessions first under a tight budget', async () => {
+            const project = await store.createProject('P0310');
+            const sessionsRoot = await store.write('Sessions', {
+                parentId: project.id,
+                metadata: { kind: 'sessions-root', render_depth: 0, order: 1000 },
+                tags: ['#sessions'],
+            });
+            // Write 10 sessions oldest→newest; auto-assigned order 0,1,2...
+            // Session 10 is newest (highest order)
+            const summaryIds = [];
+            for (let i = 1; i <= 10; i++) {
+                const session = await store.write(`Session ${i}`, {
+                    parentId: sessionsRoot.id,
+                    metadata: { kind: 'session', sessionId: `s${i}` },
+                    tags: ['#session'],
+                });
+                const summary = await store.write('Summary', {
+                    parentId: session.id,
+                    metadata: { kind: 'session-summary-root', exchanges: i, date: '2026-06-16', summary: `s${i}` },
+                    tags: ['#session-summary'],
+                });
+                summaryIds.push(summary.id);
+            }
+            const oldestSummary = summaryIds[0];
+            const newestSummary = summaryIds[summaryIds.length - 1];
+            // Budget tight enough to truncate before all 10 sessions load
+            const result = await store.loadProject('P0310', { depth: 4, budget: 6 });
+            (0, vitest_1.expect)(result.truncated).toBe(true);
+            const loadedIds = new Set(result.children.map(c => c.id));
+            // Newest session's summary MUST be present; oldest MUST be dropped
+            (0, vitest_1.expect)(loadedIds.has(newestSummary)).toBe(true);
+            (0, vitest_1.expect)(loadedIds.has(oldestSummary)).toBe(false);
+        });
     });
     // ─── Tasks ────────────────────────────────────────────
     (0, vitest_1.describe)('getTasks', () => {

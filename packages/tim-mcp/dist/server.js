@@ -52,6 +52,20 @@ const path = __importStar(require("path"));
 // ─── Single-Instance Lock ────────────────────────────────
 // Ensures only one tim-mcp process writes to the DB at a time.
 // Uses a PID-based lockfile at ~/.hermes/run/tim-mcp.lock
+/**
+ * Format a tool response payload to JSON.
+ * Uses compact format (no whitespace) for payloads over COMPACT_THRESHOLD bytes
+ * to reduce MCP transport overhead. Smaller payloads use pretty-print for readability.
+ */
+const COMPACT_THRESHOLD = 50_000; // 50KB — compact above this
+function formatToolResponse(payload) {
+    // Build compact first (cheap), then prettify only if small
+    const compact = JSON.stringify(payload);
+    if (compact.length <= COMPACT_THRESHOLD) {
+        return JSON.stringify(payload, null, 2);
+    }
+    return compact;
+}
 const LOCK_PATH = path.join(os.homedir(), '.hermes', 'run', 'tim-mcp.lock');
 function acquireLock() {
     try {
@@ -1412,7 +1426,7 @@ async function startServer() {
                             entries.push(entry);
                         }
                         return {
-                            content: [{ type: 'text', text: JSON.stringify({ entries, missing }, null, 2) }],
+                            content: [{ type: 'text', text: formatToolResponse({ entries, missing }) }],
                         };
                     }
                     if (section) {
@@ -1474,7 +1488,7 @@ async function startServer() {
                         return {
                             content: [{
                                     type: 'text',
-                                    text: JSON.stringify({ section: sectionEntry, children }, null, 2),
+                                    text: formatToolResponse({ section: sectionEntry, children }),
                                 }],
                         };
                     }
@@ -1501,7 +1515,7 @@ async function startServer() {
                         }
                         const edges = includeEdges ? await s.getEdges(entry.id, 'both') : [];
                         return {
-                            content: [{ type: 'text', text: JSON.stringify({ entry, edges }, null, 2) }],
+                            content: [{ type: 'text', text: formatToolResponse({ entry, edges }) }],
                         };
                     }
                     if (typeof id === 'string') {
@@ -1537,7 +1551,7 @@ async function startServer() {
                         }
                         const edges = includeEdges ? await s.getEdges(id, 'both') : [];
                         return {
-                            content: [{ type: 'text', text: JSON.stringify({ entry, edges }, null, 2) }],
+                            content: [{ type: 'text', text: formatToolResponse({ entry, edges }) }],
                         };
                     }
                     return {
@@ -1639,14 +1653,14 @@ async function startServer() {
                     const tagsValidation = (0, write_validate_js_1.validateWriteTags)(writeOpts.tags, writeOpts.metadata);
                     if (!tagsValidation.ok) {
                         return {
-                            content: [{ type: 'text', text: JSON.stringify(tagsValidation, null, 2) }],
+                            content: [{ type: 'text', text: formatToolResponse(tagsValidation) }],
                             isError: true,
                         };
                     }
                     const entry = await s.write(opts.content, writeOpts);
                     const payload = tagWarnings.length > 0 ? { entry, warnings: tagWarnings } : entry;
                     return {
-                        content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }],
+                        content: [{ type: 'text', text: formatToolResponse(payload) }],
                     };
                 }
                 case 'tim_search': {
@@ -1677,21 +1691,21 @@ async function startServer() {
                         results = results.slice(0, topK);
                     }
                     return {
-                        content: [{ type: 'text', text: JSON.stringify(results, null, 2) }],
+                        content: [{ type: 'text', text: formatToolResponse(results) }],
                     };
                 }
                 case 'tim_link': {
                     const { sourceId, targetId, type, weight, metadata } = TimLinkSchema.parse(args);
                     const edge = await s.link(sourceId, targetId, type, weight, metadata);
                     return {
-                        content: [{ type: 'text', text: JSON.stringify(edge, null, 2) }],
+                        content: [{ type: 'text', text: formatToolResponse(edge) }],
                     };
                 }
                 case 'tim_trace': {
                     const { startId, edgeType, depth } = TimTraceSchema.parse(args);
                     const chain = await s.traceChain(startId, edgeType, depth);
                     return {
-                        content: [{ type: 'text', text: JSON.stringify(chain, null, 2) }],
+                        content: [{ type: 'text', text: formatToolResponse(chain) }],
                     };
                 }
                 case 'tim_update': {
@@ -1703,19 +1717,19 @@ async function startServer() {
                         const entry = await s.update(id, patch);
                         const payload = tagWarnings.length > 0 ? { entry, warnings: tagWarnings } : entry;
                         return {
-                            content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }],
+                            content: [{ type: 'text', text: formatToolResponse(payload) }],
                         };
                     }
                     const entry = await s.update(id, patch);
                     return {
-                        content: [{ type: 'text', text: JSON.stringify(entry, null, 2) }],
+                        content: [{ type: 'text', text: formatToolResponse(entry) }],
                     };
                 }
                 case 'tim_rename_title': {
                     const { id, title } = TimRenameTitleSchema.parse(args);
                     const entry = await s.update(id, { title });
                     return {
-                        content: [{ type: 'text', text: JSON.stringify(entry, null, 2) }],
+                        content: [{ type: 'text', text: formatToolResponse(entry) }],
                     };
                 }
                 case 'tim_delete': {
@@ -1804,13 +1818,13 @@ async function startServer() {
                 case 'tim_health': {
                     const report = await s.health();
                     return {
-                        content: [{ type: 'text', text: JSON.stringify(report, null, 2) }],
+                        content: [{ type: 'text', text: formatToolResponse(report) }],
                     };
                 }
                 case 'tim_stats': {
                     const stats = await s.stats();
                     return {
-                        content: [{ type: 'text', text: JSON.stringify(stats, null, 2) }],
+                        content: [{ type: 'text', text: formatToolResponse(stats) }],
                     };
                 }
                 case 'tim_export': {
@@ -1823,7 +1837,7 @@ async function startServer() {
                     const outPath = targetPath ?? path.join(os.tmpdir(), `tim-export-${Date.now()}.hmem`);
                     const result = (0, tim_migrate_1.tim_export)(s, outPath, { format: 'hmem' });
                     return {
-                        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+                        content: [{ type: 'text', text: formatToolResponse(result) }],
                     };
                 }
                 case 'tim_import': {
@@ -1832,7 +1846,7 @@ async function startServer() {
                         return { content: [{ type: 'text', text: `Source not found: ${source}` }] };
                     }
                     const report = (0, tim_migrate_1.tim_import)(s, source, { dryRun, deduplicate });
-                    return { content: [{ type: 'text', text: JSON.stringify(report, null, 2) }] };
+                    return { content: [{ type: 'text', text: formatToolResponse(report) }] };
                 }
                 case 'tim_doctor': {
                     const report = await s.health();
@@ -1872,8 +1886,8 @@ async function startServer() {
                     });
                     const cortex = await buildCortexReadyBlock(s, entry);
                     const text = cortex
-                        ? `${cortex}\n\n${JSON.stringify(entry, null, 2)}`
-                        : JSON.stringify(entry, null, 2);
+                        ? `${cortex}\n\n${formatToolResponse(entry)}`
+                        : formatToolResponse(entry);
                     return {
                         content: [{ type: 'text', text }],
                     };
@@ -1886,26 +1900,26 @@ async function startServer() {
                         ? await getSessions().logExchange(sessionId, entries)
                         : await getSessions().sessionLog(sessionId, entries);
                     return {
-                        content: [{ type: 'text', text: JSON.stringify(written, null, 2) }],
+                        content: [{ type: 'text', text: formatToolResponse(written) }],
                     };
                 }
                 case 'tim_show_unsummarized': {
                     const { sessionId } = TimShowUnsummarizedSchema.parse(args);
                     const batch = await getSessions().showUnsummarized(sessionId);
                     return {
-                        content: [{ type: 'text', text: JSON.stringify(batch, null, 2) }],
+                        content: [{ type: 'text', text: formatToolResponse(batch) }],
                     };
                 }
                 case 'tim_show_all_unsummarized': {
                     const batches = await getSessions().showAllUnsummarized();
                     return {
-                        content: [{ type: 'text', text: JSON.stringify(batches, null, 2) }],
+                        content: [{ type: 'text', text: formatToolResponse(batches) }],
                     };
                 }
                 case 'tim_show_untagged': {
                     const untagged = await getSessions().showUntagged();
                     return {
-                        content: [{ type: 'text', text: JSON.stringify(untagged, null, 2) }],
+                        content: [{ type: 'text', text: formatToolResponse(untagged) }],
                     };
                 }
                 case 'tim_write_batch_summary': {
@@ -1915,49 +1929,49 @@ async function startServer() {
                         seqTo,
                     }, tags);
                     return {
-                        content: [{ type: 'text', text: JSON.stringify(node, null, 2) }],
+                        content: [{ type: 'text', text: formatToolResponse(node) }],
                     };
                 }
                 case 'tim_rollup_session_summary': {
                     const { sessionId } = TimRollupSessionSummarySchema.parse(args);
                     const node = await getSessions().rollUpSession(sessionId, async (batches) => (0, tim_store_1.foldBatchSummaries)(batches));
                     return {
-                        content: [{ type: 'text', text: JSON.stringify(node, null, 2) }],
+                        content: [{ type: 'text', text: formatToolResponse(node) }],
                     };
                 }
                 case 'tim_record_commit': {
                     const parsed = TimRecordCommitSchema.parse(args);
                     const entry = await getCommitManager().recordCommit(parsed);
                     return {
-                        content: [{ type: 'text', text: JSON.stringify(entry, null, 2) }],
+                        content: [{ type: 'text', text: formatToolResponse(entry) }],
                     };
                 }
                 case 'tim_checkpoint': {
                     const { sessionId } = TimCheckpointSchema.parse(args);
                     const summary = await getSessions().checkpoint(sessionId);
                     return {
-                        content: [{ type: 'text', text: JSON.stringify(summary, null, 2) }],
+                        content: [{ type: 'text', text: formatToolResponse(summary) }],
                     };
                 }
                 case 'tim_rename_entry': {
                     const { oldId, newId } = TimRenameEntrySchema.parse(args);
                     const entry = s.curate().renameEntry(oldId, newId);
                     return {
-                        content: [{ type: 'text', text: JSON.stringify(entry, null, 2) }],
+                        content: [{ type: 'text', text: formatToolResponse(entry) }],
                     };
                 }
                 case 'tim_move_entry': {
                     const { id, newParentId, order } = TimMoveEntrySchema.parse(args);
                     const entry = s.curate().moveEntry(id, newParentId, order);
                     return {
-                        content: [{ type: 'text', text: JSON.stringify(entry, null, 2) }],
+                        content: [{ type: 'text', text: formatToolResponse(entry) }],
                     };
                 }
                 case 'tim_update_many': {
                     const { ids, irrelevant, favorite } = TimUpdateManySchema.parse(args);
                     const entries = s.curate().updateMany(ids, { irrelevant, favorite });
                     return {
-                        content: [{ type: 'text', text: JSON.stringify(entries, null, 2) }],
+                        content: [{ type: 'text', text: formatToolResponse(entries) }],
                     };
                 }
                 case 'tim_tag_add': {
@@ -1975,35 +1989,35 @@ async function startServer() {
                         return {
                             content: [{
                                     type: 'text',
-                                    text: JSON.stringify({ entry: existing, warnings: tagWarnings }, null, 2),
+                                    text: formatToolResponse({ entry: existing, warnings: tagWarnings }),
                                 }],
                         };
                     }
                     const entry = s.curate().tagAdd(id, cleanTags);
                     const payload = tagWarnings.length > 0 ? { entry, warnings: tagWarnings } : entry;
                     return {
-                        content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }],
+                        content: [{ type: 'text', text: formatToolResponse(payload) }],
                     };
                 }
                 case 'tim_tag_remove': {
                     const { id, tags } = TimTagRemoveSchema.parse(args);
                     const entry = s.curate().tagRemove(id, tags);
                     return {
-                        content: [{ type: 'text', text: JSON.stringify(entry, null, 2) }],
+                        content: [{ type: 'text', text: formatToolResponse(entry) }],
                     };
                 }
                 case 'tim_tag_rename': {
                     const { oldTag, newTag } = TimTagRenameSchema.parse(args);
                     const count = s.curate().tagRename(oldTag, newTag);
                     return {
-                        content: [{ type: 'text', text: JSON.stringify({ oldTag, newTag, updatedCount: count }, null, 2) }],
+                        content: [{ type: 'text', text: formatToolResponse({ oldTag, newTag, updatedCount: count }) }],
                     };
                 }
                 case 'tim_create_project': {
                     const { label, metadata, content, aliases } = TimCreateProjectSchema.parse(args);
                     const entry = await s.createProject(label, { metadata, content, aliases });
                     return {
-                        content: [{ type: 'text', text: JSON.stringify(entry, null, 2) }],
+                        content: [{ type: 'text', text: formatToolResponse(entry) }],
                     };
                 }
                 case 'tim_load_project': {

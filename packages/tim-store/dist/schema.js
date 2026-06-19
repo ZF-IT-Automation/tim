@@ -134,6 +134,21 @@ exports.MIGRATIONS = [
       CREATE INDEX IF NOT EXISTS idx_error_log_timestamp ON error_log(timestamp);
       CREATE INDEX IF NOT EXISTS idx_error_log_tool ON error_log(tool);
     `
+    },
+    {
+        version: 6,
+        sql: `
+      CREATE INDEX IF NOT EXISTS idx_entries_meta_kind
+        ON entries(json_extract(metadata, '$.kind'));
+
+      CREATE INDEX IF NOT EXISTS idx_entries_meta_label
+        ON entries(json_extract(metadata, '$.label'));
+
+      CREATE INDEX IF NOT EXISTS idx_staging_lww
+        ON staging(lww_timestamp);
+
+      DELETE FROM staging WHERE acked = 1;
+    `
     }
 ];
 function getCurrentVersion() {
