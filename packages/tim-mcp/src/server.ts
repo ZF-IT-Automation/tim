@@ -35,6 +35,65 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
+// ─── Single-Instance Lock ────────────────────────────────
+// Ensures only one tim-mcp process writes to the DB at a time.
+// Uses a PID-based lockfile at ~/.hermes/run/tim-mcp.lock
+
+const LOCK_PATH = path.join(os.homedir(), '.hermes', 'run', 'tim-mcp.lock');
+
+function acquireLock(): boolean {
+  try {
+    const fd = fs.openSync(LOCK_PATH, 'wx');
+    const content = JSON.stringify({ pid: process.pid, time: Date.now() });
+    fs.writeSync(fd, content);
+    fs.closeSync(fd);
+    return true;
+  } catch (e: any) {
+    if (e.code !== 'EEXIST') {
+      console.error(`[tim-mcp] Lockfile error: ${e.message}`);
+      return false;
+    }
+    // File exists — check if stale
+    try {
+      const content = fs.readFileSync(LOCK_PATH, 'utf-8');
+      const lock = JSON.parse(content);
+      try {
+        process.kill(lock.pid, 0);
+        console.error(
+          `[tim-mcp] FATAL: PID ${lock.pid} already holds tim-mcp lock (${LOCK_PATH}).\n` +
+          `Multiple tim-mcp instances risk SQLite WAL journal corruption.\n` +
+          `If that process is dead, delete the lockfile and retry.`
+        );
+        return false;
+      } catch (killErr: any) {
+        if (killErr.code === 'ESRCH') {
+          console.warn(`[tim-mcp] Stale lockfile from dead PID ${lock.pid} — taking over`);
+          fs.unlinkSync(LOCK_PATH);
+          return acquireLock(); // retry
+        }
+        throw killErr;
+      }
+    } catch (readErr: any) {
+      console.error(`[tim-mcp] Cannot read lockfile: ${readErr.message}`);
+      return false;
+    }
+  }
+}
+
+function releaseLock(): void {
+  try {
+    if (fs.existsSync(LOCK_PATH)) {
+      const content = fs.readFileSync(LOCK_PATH, 'utf-8');
+      const lock = JSON.parse(content);
+      if (lock.pid === process.pid) {
+        fs.unlinkSync(LOCK_PATH);
+      }
+    }
+  } catch {
+    // Best-effort cleanup
+  }
+}
+
 // ─── Tool Schemas ───────────────────────────────────────
 
 const TimReadSchema = z.object({
@@ -746,6 +805,17 @@ async function buildCortexReadyBlock(store: TimStore, session: Entry): Promise<s
 // ─── MCP Server Setup ───────────────────────────────────
 
 const DB_PATH = process.env.TIM_DB_PATH || loadConfig().dbPath || process.env.HOME + '/.tim/tim.db';
+
+// ─── Single-Instance Lock Check ──────────────────────────
+// Acquire PID-based lockfile before any DB access.
+// Refuses to start if another tim-mcp instance holds the lock.
+
+if (!acquireLock()) {
+  process.exit(1);
+}
+process.on('exit', releaseLock);
+process.on('SIGINT', () => process.exit(0));
+process.on('SIGTERM', () => process.exit(0));
 
 // Binary-write guard: refuse to start if DB is not a valid SQLite file.
 // Catches header corruption (e.g. accidental binary patch, OOM kill mid-write).
