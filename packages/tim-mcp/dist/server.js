@@ -35,9 +35,13 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.createMcpServer = createMcpServer;
+exports.createHttpServer = createHttpServer;
 exports.startServer = startServer;
 const index_js_1 = require("@modelcontextprotocol/sdk/server/index.js");
 const stdio_js_1 = require("@modelcontextprotocol/sdk/server/stdio.js");
+const sse_js_1 = require("@modelcontextprotocol/sdk/server/sse.js");
+const express_js_1 = require("@modelcontextprotocol/sdk/server/express.js");
 const types_js_1 = require("@modelcontextprotocol/sdk/types.js");
 const zod_1 = require("zod");
 const tim_store_1 = require("tim-store");
@@ -67,6 +71,31 @@ function formatToolResponse(payload) {
     return compact;
 }
 const LOCK_PATH = path.join(os.homedir(), '.hermes', 'run', 'tim-mcp.lock');
+// ─── CLI (parsed before lockfile) ───────────────────────
+function parseCliArgs() {
+    const argv = process.argv.slice(2);
+    let http = false;
+    let port = Number.parseInt(process.env.TIM_MCP_PORT ?? '3847', 10);
+    let host = process.env.TIM_MCP_HOST ?? '127.0.0.1';
+    for (let i = 0; i < argv.length; i++) {
+        const arg = argv[i];
+        if (arg === '--http') {
+            http = true;
+        }
+        else if (arg === '--port') {
+            const next = argv[++i];
+            if (next)
+                port = Number.parseInt(next, 10);
+        }
+        else if (arg === '--host') {
+            const next = argv[++i];
+            if (next)
+                host = next;
+        }
+    }
+    return { http, port, host };
+}
+const CLI = parseCliArgs();
 function acquireLock() {
     try {
         const fd = fs.openSync(LOCK_PATH, 'wx');
@@ -744,37 +773,36 @@ async function buildCortexReadyBlock(store, session) {
 }
 // ─── MCP Server Setup ───────────────────────────────────
 const DB_PATH = process.env.TIM_DB_PATH || (0, tim_core_1.loadConfig)().dbPath || process.env.HOME + '/.tim/tim.db';
-// ─── Single-Instance Lock Check ──────────────────────────
-// Acquire PID-based lockfile before any DB access.
-// Refuses to start if another tim-mcp instance holds the lock.
-if (!acquireLock()) {
-    process.exit(1);
-}
-process.on('exit', releaseLock);
-process.on('SIGINT', () => process.exit(0));
-process.on('SIGTERM', () => process.exit(0));
-// Binary-write guard: refuse to start if DB is not a valid SQLite file.
-// Catches header corruption (e.g. accidental binary patch, OOM kill mid-write).
-// Escape hatch: HERMES_SKIP_DB_GUARD=1 bypasses the check.
-if (!process.env.HERMES_SKIP_DB_GUARD && fs.existsSync(DB_PATH)) {
-    try {
-        const fd = fs.openSync(DB_PATH, 'r');
-        const header = Buffer.alloc(16);
-        fs.readSync(fd, header, 0, 16, 0);
-        fs.closeSync(fd);
-        if (header.toString('utf8', 0, 15) !== 'SQLite format 3') {
-            const msg = `FATAL: ${DB_PATH} is not a valid SQLite database (header corruption).\n` +
-                `This can happen from accidental binary edits, disk-full mid-write, or OOM kills.\n` +
-                `To recover: run \'tim restore --list\' to see available snapshots, then \'tim restore\'.\n` +
-                `If you are certain the file is valid, set HERMES_SKIP_DB_GUARD=1 to bypass this check.`;
-            console.error(msg);
-            process.exit(1);
-        }
+// ─── Single-Instance Lock Check (stdio mode only) ───────
+// HTTP mode skips lockfile — systemd manages singleton.
+if (!CLI.http) {
+    if (!acquireLock()) {
+        process.exit(1);
     }
-    catch (e) {
-        console.error(`FATAL: cannot read DB header: ${e.message}`);
-        if (!process.env.HERMES_SKIP_DB_GUARD)
-            process.exit(1);
+    process.on('exit', releaseLock);
+    process.on('SIGINT', () => process.exit(0));
+    process.on('SIGTERM', () => process.exit(0));
+    // Binary-write guard: refuse to start if DB is not a valid SQLite file.
+    if (!process.env.HERMES_SKIP_DB_GUARD && fs.existsSync(DB_PATH)) {
+        try {
+            const fd = fs.openSync(DB_PATH, 'r');
+            const header = Buffer.alloc(16);
+            fs.readSync(fd, header, 0, 16, 0);
+            fs.closeSync(fd);
+            if (header.toString('utf8', 0, 15) !== 'SQLite format 3') {
+                const msg = `FATAL: ${DB_PATH} is not a valid SQLite database (header corruption).\n` +
+                    `This can happen from accidental binary edits, disk-full mid-write, or OOM kills.\n` +
+                    `To recover: run \'tim restore --list\' to see available snapshots, then \'tim restore\'.\n` +
+                    `If you are certain the file is valid, set HERMES_SKIP_DB_GUARD=1 to bypass this check.`;
+                console.error(msg);
+                process.exit(1);
+            }
+        }
+        catch (e) {
+            console.error(`FATAL: cannot read DB header: ${e.message}`);
+            if (!process.env.HERMES_SKIP_DB_GUARD)
+                process.exit(1);
+        }
     }
 }
 let store;
@@ -838,7 +866,40 @@ function scheduleAutoSync(toolName, s) {
         void (0, tim_sync_client_1.autoPull)(s);
     }
 }
-async function startServer() {
+let processErrorGuardsInstalled = false;
+function installProcessErrorGuards() {
+    if (processErrorGuardsInstalled)
+        return;
+    processErrorGuardsInstalled = true;
+    process.on('unhandledRejection', (reason) => {
+        const err = reason instanceof Error ? reason : new Error(String(reason));
+        console.error('[tim-mcp] unhandledRejection:', err.stack ?? err.message);
+        try {
+            getErrorLogger().logError({
+                tool: 'mcp-server',
+                error: `unhandledRejection: ${err.message}`,
+                stack: err.stack,
+            });
+        }
+        catch {
+            // ErrorLogger itself failed — stay alive.
+        }
+    });
+    process.on('uncaughtException', (err) => {
+        console.error('[tim-mcp] uncaughtException:', err.stack ?? err.message);
+        try {
+            getErrorLogger().logError({
+                tool: 'mcp-server',
+                error: `uncaughtException: ${err.message}`,
+                stack: err.stack,
+            });
+        }
+        catch {
+            // Same as above.
+        }
+    });
+}
+async function createMcpServer() {
     const server = new index_js_1.Server({
         name: 'tim-mcp',
         version: '0.1.0-alpha',
@@ -2184,45 +2245,99 @@ async function startServer() {
             };
         }
     });
-    // ─── Start ────────────────────────────────────────────
-    // BUG 4: Global error guards — keep the stdio server alive when an
-    // async tool handler or fire-and-forget promise throws OUTSIDE the
-    // dispatcher try/catch. Without these, Node 24's default behavior is
-    // to crash the process on any unhandled rejection, killing the MCP
-    // server and triggering the client's auto-retry cooldown.
-    // We log to stderr + persist via ErrorLogger + stay alive.
-    process.on('unhandledRejection', (reason, promise) => {
-        const err = reason instanceof Error ? reason : new Error(String(reason));
-        console.error('[tim-mcp] unhandledRejection:', err.stack ?? err.message);
+    return server;
+}
+async function createHttpServer(options) {
+    const host = options?.host ?? CLI.host;
+    const port = options?.port ?? CLI.port;
+    const app = (0, express_js_1.createMcpExpressApp)({ host });
+    const transports = new Map();
+    const mcpServers = [];
+    app.get('/sse', async (_req, res) => {
         try {
-            getErrorLogger().logError({
-                tool: 'mcp-server',
-                error: `unhandledRejection: ${err.message}`,
-                stack: err.stack,
+            const transport = new sse_js_1.SSEServerTransport('/messages', res);
+            transports.set(transport.sessionId, transport);
+            res.on('close', () => {
+                transports.delete(transport.sessionId);
             });
+            const mcpServer = await createMcpServer();
+            mcpServers.push(mcpServer);
+            await mcpServer.connect(transport);
         }
-        catch {
-            // ErrorLogger itself failed — nothing more we can do, stay alive.
+        catch (err) {
+            console.error('[tim-mcp] SSE connection error:', err);
+            if (!res.headersSent) {
+                res.status(500).end('Internal Server Error');
+            }
         }
     });
-    process.on('uncaughtException', (err) => {
-        console.error('[tim-mcp] uncaughtException:', err.stack ?? err.message);
-        try {
-            getErrorLogger().logError({
-                tool: 'mcp-server',
-                error: `uncaughtException: ${err.message}`,
-                stack: err.stack,
-            });
+    app.post('/messages', async (req, res) => {
+        const sessionId = req.query.sessionId;
+        if (!sessionId) {
+            res.status(400).end('Missing sessionId');
+            return;
         }
-        catch {
-            // Same as above.
+        const transport = transports.get(sessionId);
+        if (!transport) {
+            res.status(404).end('Not found');
+            return;
         }
-        // Note: we intentionally do NOT call process.exit(). The stdio pipe
-        // stays open and subsequent MCP requests continue to be served. The
-        // MCP SDK's processReadBuffer() already wraps readMessage() in
-        // try/catch (see @modelcontextprotocol/sdk/dist/esm/server/stdio.js),
-        // so a malformed input frame cannot kill the server either.
+        await transport.handlePostMessage(req, res, req.body);
     });
+    installProcessErrorGuards();
+    const httpServer = await new Promise((resolve, reject) => {
+        const listener = app.listen(port, host);
+        listener.once('listening', () => resolve(listener));
+        listener.once('error', (err) => {
+            if (err.code === 'EADDRINUSE') {
+                console.error(`[tim-mcp] FATAL: Port ${port} already in use on ${host}`);
+            }
+            reject(err);
+        });
+    });
+    const addr = httpServer.address();
+    const actualPort = typeof addr === 'object' && addr !== null ? addr.port : port;
+    const close = async () => {
+        for (const transport of transports.values()) {
+            try {
+                await transport.close();
+            }
+            catch {
+                // Best-effort cleanup.
+            }
+        }
+        transports.clear();
+        await Promise.all(mcpServers.map(s => s.close().catch(() => { })));
+        mcpServers.length = 0;
+        await new Promise((resolve, reject) => {
+            httpServer.close(err => (err ? reject(err) : resolve()));
+        });
+    };
+    return { app, httpServer, port: actualPort, close };
+}
+async function startServer() {
+    installProcessErrorGuards();
+    if (CLI.http) {
+        let handle;
+        try {
+            handle = await createHttpServer();
+        }
+        catch (err) {
+            if (err?.code === 'EADDRINUSE') {
+                process.exit(1);
+            }
+            throw err;
+        }
+        console.error(`TIM MCP server started (HTTP/SSE http://${CLI.host}:${handle.port}, DB: ${DB_PATH})`);
+        const shutdown = async () => {
+            await handle.close();
+            process.exit(0);
+        };
+        process.on('SIGINT', () => { void shutdown(); });
+        process.on('SIGTERM', () => { void shutdown(); });
+        return;
+    }
+    const server = await createMcpServer();
     const transport = new stdio_js_1.StdioServerTransport();
     await server.connect(transport);
     console.error(`TIM MCP server started (DB: ${DB_PATH})`);
