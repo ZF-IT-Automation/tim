@@ -539,6 +539,69 @@ export class TimStore implements MemoryInterface {
     return rows.map(rowToEntry);
   }
 
+  /** Return which of the given entry IDs exist in the DB (single IN-query). */
+  async entryExistsBatch(ids: string[]): Promise<Set<string>> {
+    if (ids.length === 0) return new Set();
+    const placeholders = ids.map(() => '?').join(',');
+    const rows = this.db.prepare(
+      `SELECT id FROM entries WHERE id IN (${placeholders})`,
+    ).all(...ids) as { id: string }[];
+    return new Set(rows.map(r => r.id));
+  }
+
+  /**
+   * Recent batch-summary nodes (kind=batch-summary under session Summary trees).
+   * Used by tim_remember for recency context.
+   */
+  async getRecentBatchSummaries(options: {
+    limit?: number;
+    maxAgeDays?: number;
+    sessionId?: string;
+    root?: string;
+  } = {}): Promise<Entry[]> {
+    const limit = options.limit ?? 5;
+    const maxAgeDays = options.maxAgeDays ?? 30;
+    const cutoff = new Date(Date.now() - maxAgeDays * 86400 * 1000).toISOString();
+
+    let sql = `
+      SELECT e.* FROM entries e
+      WHERE json_extract(e.metadata, '$.kind') = 'batch-summary'
+        AND e.irrelevant = 0
+        AND e.tombstoned_at IS NULL
+        AND e.created_at > ?
+    `;
+    const params: unknown[] = [cutoff];
+
+    if (options.sessionId) {
+      sql += ` AND json_extract(e.metadata, '$.sessionId') = ?`;
+      params.push(options.sessionId);
+    }
+
+    if (options.root) {
+      const resolved = await this.resolveProjectLabel(options.root);
+      if (resolved.status !== 'found') return [];
+      const project = await this.read(resolved.label);
+      if (!project) return [];
+      sql += ` AND e.id IN (
+        WITH RECURSIVE tree(id) AS (
+          SELECT id FROM entries WHERE id = ?
+          UNION ALL
+          SELECT c.id FROM entries c
+          INNER JOIN tree t ON c.parent_id = t.id
+          WHERE c.tombstoned_at IS NULL
+        )
+        SELECT id FROM tree
+      )`;
+      params.push(project.id);
+    }
+
+    sql += ` ORDER BY e.created_at DESC LIMIT ?`;
+    params.push(limit);
+
+    const rows = this.db.prepare(sql).all(...params) as RowEntry[];
+    return rows.map(rowToEntry);
+  }
+
   async getChildByKind(parentId: string, kind: string): Promise<Entry[]> {
     const rows = this.db.prepare(`
       SELECT * FROM entries
