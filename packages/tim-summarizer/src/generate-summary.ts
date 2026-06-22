@@ -157,7 +157,7 @@ function runCliProcess(
   });
 }
 
-async function tryCli(
+export async function tryCli(
   cli: string,
   model: string,
   provider: string | undefined,
