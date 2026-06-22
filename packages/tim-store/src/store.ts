@@ -1688,7 +1688,7 @@ export class TimStore implements MemoryInterface {
   async getContentStats(
     root?: string,
     kind?: string,
-    buckets: number[] = [1000, 5000, 10000, 30000, 50000, 100000],
+    buckets: number[] = [0, 100, 500, 1000, 5000, 10000, 50000],
   ): Promise<ContentStats> {
     const empty: ContentStats = {
       totalEntries: 0,

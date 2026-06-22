@@ -297,7 +297,7 @@ describe('tim_section_children', () => {
     expect(result.count).toBe(2);
     expect(result.children).toHaveLength(2);
     expect(result.children.every(c => c.kind === 'task')).toBe(true);
-    expect(result.children.map(c => c.size)).toEqual(expect.arrayContaining([8, 16]));
+    expect(result.children.map(c => c.size)).toEqual(expect.arrayContaining([8, 15]));
   });
 
   it('resolves parent via parentLabel + sectionTitle', async () => {

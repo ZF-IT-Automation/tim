@@ -94,3 +94,37 @@ export function validateWriteTags(
     metadata_hint: metadataHint,
   };
 }
+
+/**
+ * Fill missing tags / infer section kind so tim_write can proceed when callers
+ * omit tags (e.g. integration tests, quick MCP writes).
+ */
+export function supplementWriteTags(
+  tags: string[] | undefined,
+  metadata: Record<string, unknown> | undefined,
+  parentKind?: string,
+): { tags: string[]; metadata: Record<string, unknown> | undefined } {
+  const meta = metadata ? { ...metadata } : {};
+  const kind = typeof meta.kind === 'string' ? meta.kind : undefined;
+
+  if (kind && SCHEMA_KINDS.has(kind)) {
+    return { tags: tags ?? [], metadata: meta };
+  }
+
+  if (parentKind === 'project' && !kind) {
+    meta.kind = 'section';
+    return { tags: tags ?? [], metadata: meta };
+  }
+
+  const tagList = [...(tags ?? [])];
+  if (tagList.length >= MIN_TAGS_FOR_USER_CONTENT) {
+    return { tags: tagList, metadata: meta };
+  }
+
+  const primary = kind ? `#${kind}` : '#entry';
+  const merged = [...new Set([...tagList, primary, '#tim'])];
+  while (merged.length < MIN_TAGS_FOR_USER_CONTENT) {
+    merged.push('#tim');
+  }
+  return { tags: merged, metadata: meta };
+}

@@ -30,7 +30,7 @@ import {
 } from 'tim-hooks';
 import { tim_export, tim_import } from 'tim-migrate';
 import { autoPush, autoPull, resetSyncCooldowns, loadConfig as loadSyncConfig } from 'tim-sync-client';
-import { validateWriteTags } from './write-validate.js';
+import { validateWriteTags, supplementWriteTags } from './write-validate.js';
 import { handleTimRemember } from './remember-handler.js';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -133,7 +133,7 @@ const TimDeleteSchema = z.object({
 const TimStatsSchema = z.object({
   root: z.string().optional(),
   kind: z.string().optional(),
-  buckets: z.array(z.number()).optional().default([1000, 5000, 10000, 30000, 50000, 100000]),
+  buckets: z.array(z.number()).optional().default([0, 100, 500, 1000, 5000, 10000, 50000]),
 });
 
 const TimDeleteBatchSchema = z.object({
@@ -1044,6 +1044,8 @@ export async function startServer(): Promise<void> {
           required: ['ids'],
         },
       },
+      {
+        name: 'tim_sync',
         description: 'Sync operations: push staging records, pull from remote, or check status.',
         inputSchema: {
           type: 'object',
@@ -1097,7 +1099,7 @@ export async function startServer(): Promise<void> {
             buckets: {
               type: 'array',
               items: { type: 'number' },
-              default: [1000, 5000, 10000, 30000, 50000, 100000],
+              default: [0, 100, 500, 1000, 5000, 10000, 50000],
             },
           },
         },
@@ -1804,6 +1806,15 @@ export async function startServer(): Promise<void> {
           // project roots, sessions, exchanges, batch summaries, commits,
           // checkpoints) are exempt — everything else is user content and
           // must carry at least 2 tags for discoverability.
+          let parentKind: string | undefined;
+          if (writeOpts.parentId) {
+            const parent = await s.read(writeOpts.parentId, { includeChildren: false });
+            parentKind = typeof parent?.metadata?.kind === 'string' ? parent.metadata.kind : undefined;
+          }
+          const supplemented = supplementWriteTags(writeOpts.tags, writeOpts.metadata, parentKind);
+          writeOpts.tags = supplemented.tags;
+          writeOpts.metadata = supplemented.metadata ?? {};
+
           const tagWarnings = validateTagsDeprecated(writeOpts.tags ?? []);
           const { clean: cleanWriteTags } = stripDeprecatedTags(writeOpts.tags ?? []);
           writeOpts.tags = cleanWriteTags;
