@@ -130,6 +130,24 @@ const TimDeleteSchema = z.object({
   hard: z.boolean().optional().default(false),
 });
 
+const TimStatsSchema = z.object({
+  root: z.string().optional(),
+  kind: z.string().optional(),
+  buckets: z.array(z.number()).optional().default([1000, 5000, 10000, 30000, 50000, 100000]),
+});
+
+const TimDeleteBatchSchema = z.object({
+  ids: z.array(z.string()).min(1).max(100),
+  hard: z.boolean().default(true),
+});
+
+const TimSectionChildrenSchema = z.object({
+  parentId: z.string().optional(),
+  parentLabel: z.string().optional(),
+  sectionTitle: z.string().optional(),
+  kind: z.string().optional(),
+});
+
 const TimSyncSchema = z.object({
   action: z.enum(['push', 'pull', 'status']),
   stagingRecords: z.array(z.object({
@@ -830,7 +848,7 @@ function getSessions(): SessionManager {
 }
 
 const WRITE_TOOLS = new Set([
-  'tim_write', 'tim_update', 'tim_rename_title', 'tim_delete', 'tim_link',
+  'tim_write', 'tim_update', 'tim_rename_title', 'tim_delete', 'tim_delete_batch', 'tim_link',
   'tim_session_start', 'tim_session_log', 'tim_checkpoint', 'tim_write_batch_summary',
   'tim_rollup_session_summary',
   'tim_record_commit',
@@ -840,7 +858,7 @@ const WRITE_TOOLS = new Set([
 ]);
 
 const READ_TOOLS = new Set([
-  'tim_read', 'tim_search', 'tim_trace', 'tim_health', 'tim_stats',
+  'tim_read', 'tim_search', 'tim_trace', 'tim_health', 'tim_stats', 'tim_section_children',
   'tim_export', 'tim_doctor', 'tim_sync', 'tim_load_project', 'tim_read_project', 'tim_tasks',
   'tim_show',
   'tim_show_unsummarized', 'tim_show_all_unsummarized', 'tim_show_untagged',
@@ -1015,7 +1033,17 @@ export async function startServer(): Promise<void> {
         },
       },
       {
-        name: 'tim_sync',
+        name: 'tim_delete_batch',
+        description: 'Batch hard-delete entries by id (max 100). Skips missing ids.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            ids: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 100 },
+            hard: { type: 'boolean', default: true },
+          },
+          required: ['ids'],
+        },
+      },
         description: 'Sync operations: push staging records, pull from remote, or check status.',
         inputSchema: {
           type: 'object',
@@ -1060,8 +1088,32 @@ export async function startServer(): Promise<void> {
       },
       {
         name: 'tim_stats',
-        description: 'Get memory statistics: totals, depth distribution, top tags, confidence.',
-        inputSchema: { type: 'object', properties: {} },
+        description: 'Content statistics: entry counts, content size aggregates, length buckets, and breakdown by metadata.kind.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            root: { type: 'string', description: 'Optional project label to scope stats' },
+            kind: { type: 'string', description: 'Optional metadata.kind filter' },
+            buckets: {
+              type: 'array',
+              items: { type: 'number' },
+              default: [1000, 5000, 10000, 30000, 50000, 100000],
+            },
+          },
+        },
+      },
+      {
+        name: 'tim_section_children',
+        description: 'List direct children of a project section in compact form.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            parentId: { type: 'string' },
+            parentLabel: { type: 'string', description: 'Project label, e.g. P0062' },
+            sectionTitle: { type: 'string', description: 'Section title under the project' },
+            kind: { type: 'string', description: 'Optional metadata.kind filter' },
+          },
+        },
       },
       {
         name: 'tim_export',
@@ -1869,6 +1921,14 @@ export async function startServer(): Promise<void> {
           };
         }
 
+        case 'tim_delete_batch': {
+          const { ids, hard } = TimDeleteBatchSchema.parse(args);
+          const deleted = await s.deleteBatch(ids, hard);
+          return {
+            content: [{ type: 'text', text: JSON.stringify({ deleted }, null, 2) }],
+          };
+        }
+
         case 'tim_sync': {
           const { action, stagingRecords } = TimSyncSchema.parse(args);
           switch (action) {
@@ -1955,9 +2015,59 @@ export async function startServer(): Promise<void> {
         }
 
         case 'tim_stats': {
-          const stats = await s.stats();
+          const { root, kind, buckets } = TimStatsSchema.parse(args);
+          const stats = await s.getContentStats(root, kind, buckets);
           return {
             content: [{ type: 'text', text: JSON.stringify(stats, null, 2) }],
+          };
+        }
+
+        case 'tim_section_children': {
+          const { parentId, parentLabel, sectionTitle, kind } = TimSectionChildrenSchema.parse(args);
+          let resolvedParentId = parentId;
+          if (!resolvedParentId) {
+            if (!parentLabel || !sectionTitle) {
+              throw new Error('parentId or (parentLabel + sectionTitle) required');
+            }
+            const section = await s.resolveSectionByTitle(parentLabel, sectionTitle);
+            if (section.status !== 'found') {
+              return {
+                content: [{
+                  type: 'text',
+                  text: JSON.stringify({ parentTitle: sectionTitle, children: [], count: 0 }, null, 2),
+                }],
+              };
+            }
+            resolvedParentId = section.id;
+          }
+
+          const parent = await s.read(resolvedParentId, { includeChildren: false });
+          if (!parent) {
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({ parentTitle: sectionTitle ?? '', children: [], count: 0 }, null, 2),
+              }],
+            };
+          }
+
+          const children = await s.getChildren(resolvedParentId, kind ? { metadataKind: kind } : undefined);
+          const compact = children.map(child => ({
+            id: child.id,
+            title: child.title,
+            kind: typeof child.metadata.kind === 'string' ? child.metadata.kind : '',
+            size: child.content.length,
+          }));
+
+          return {
+            content: [{
+              type: 'text',
+              text: JSON.stringify({
+                parentTitle: parent.title,
+                children: compact,
+                count: compact.length,
+              }, null, 2),
+            }],
           };
         }
 

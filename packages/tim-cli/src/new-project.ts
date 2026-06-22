@@ -15,6 +15,7 @@ const STANDARD_SECTIONS = [
   { label: 'Decisions', content: 'Architecture and project decisions' },
   { label: 'Learnings', content: 'Lessons learned and pitfalls' },
   { label: 'Log', content: 'Project activity log and milestones' },
+  { label: 'Testing', content: 'Test scenarios, test plans, coverage notes, and testing methodologies' },
 ] as const;
 
 function getDbPath(): string {

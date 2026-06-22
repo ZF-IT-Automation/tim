@@ -6,7 +6,7 @@ import { ulid } from 'ulid';
 import { formatEntryId } from './entry-id.js';
 import type {
   Entry, Edge, EdgeType, ReadOptions, WriteOptions, DecayOptions,
-  SearchOptions, MemoryInterface, HealthReport, MemoryStats,
+  SearchOptions, MemoryInterface, HealthReport, MemoryStats, ContentStats,
   AgentIdentity, StagingRecord, ContentType,
   SyncEntity, SyncOperation, EventBus, EventType,
   ResolveProjectResult, ResolveSectionResult, SectionCandidate,
@@ -1192,13 +1192,50 @@ export class TimStore implements MemoryInterface {
     const existing = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(id) as RowEntry | undefined;
     if (!existing) return;
 
+    this.deleteEntrySync(existing, hard);
+
+    this.emit('memory:deleted', {
+      entry: rowToEntry(existing),
+      agentId: this.agentId,
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  /** Hard/soft delete inside a transaction; skips missing or tombstoned ids. */
+  async deleteBatch(ids: string[], hard: boolean = true): Promise<number> {
+    const uniqueIds = [...new Set(ids)];
+
+    const deletedRows = this.db.transaction(() => {
+      const rows: RowEntry[] = [];
+      for (const id of uniqueIds) {
+        const existing = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(id) as RowEntry | undefined;
+        if (!existing || existing.tombstoned_at) continue;
+        this.deleteEntrySync(existing, hard);
+        rows.push(existing);
+      }
+      return rows;
+    })();
+
+    const now = new Date().toISOString();
+    for (const existing of deletedRows) {
+      this.emit('memory:deleted', {
+        entry: rowToEntry(existing),
+        agentId: this.agentId,
+        timestamp: now,
+      });
+    }
+
+    return deletedRows.length;
+  }
+
+  private deleteEntrySync(existing: RowEntry, hard: boolean): void {
     const now = new Date().toISOString();
     if (hard) {
-      this.db.prepare('UPDATE entries SET tombstoned_at = ? WHERE id = ?').run(now, id);
+      this.db.prepare('UPDATE entries SET tombstoned_at = ? WHERE id = ?').run(now, existing.id);
       this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
         lww_timestamp, lww_device, lww_confidence)
         VALUES (?, 'entry', 'delete', ?, ?, ?, ?)`).run(
-        id, JSON.stringify({ id, tombstoned_at: now }), Date.now(), 'local', 1.0
+        existing.id, JSON.stringify({ id: existing.id, tombstoned_at: now }), Date.now(), 'local', 1.0
       );
     } else {
       const timestamp = Date.now();
@@ -1207,19 +1244,13 @@ export class TimStore implements MemoryInterface {
         irrelevant: 1,
         accessed_at: now,
       };
-      this.db.prepare('UPDATE entries SET irrelevant = 1, accessed_at = ? WHERE id = ?').run(now, id);
+      this.db.prepare('UPDATE entries SET irrelevant = 1, accessed_at = ? WHERE id = ?').run(now, existing.id);
       this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
         lww_timestamp, lww_device, lww_confidence)
         VALUES (?, 'entry', 'upsert', ?, ?, ?, ?)`).run(
-        id, JSON.stringify(updated), timestamp, 'local', updated.confidence
+        existing.id, JSON.stringify(updated), timestamp, 'local', updated.confidence
       );
     }
-
-    this.emit('memory:deleted', {
-      entry: rowToEntry(existing),
-      agentId: this.agentId,
-      timestamp: now,
-    });
   }
 
   // ─── Search ────────────────────────────────────────────
@@ -1652,6 +1683,101 @@ export class TimStore implements MemoryInterface {
     const stale = (this.db.prepare('SELECT COUNT(*) as c FROM entries WHERE irrelevant = 0 AND accessed_at < ?').get(thirtyDaysAgo) as { c: number }).c;
 
     return { totalEntries, totalEdges, entriesByDepth, entriesByType, topTags, avgConfidence: avgConf, oldestEntry: oldest, newestEntry: newest, staleCount: stale };
+  }
+
+  async getContentStats(
+    root?: string,
+    kind?: string,
+    buckets: number[] = [1000, 5000, 10000, 30000, 50000, 100000],
+  ): Promise<ContentStats> {
+    const empty: ContentStats = {
+      totalEntries: 0,
+      totalContentBytes: 0,
+      avgContentChars: 0,
+      maxContentChars: 0,
+      minContentChars: 0,
+      buckets: [],
+      byKind: [],
+    };
+
+    let scopeSql = '';
+    const scopeParams: unknown[] = [];
+
+    if (root) {
+      const resolved = await this.resolveProjectLabel(root);
+      if (resolved.status !== 'found') return empty;
+      const project = await this.read(resolved.label);
+      if (!project) return empty;
+      scopeSql = ` AND e.id IN (
+        WITH RECURSIVE tree(id) AS (
+          SELECT id FROM entries WHERE id = ?
+          UNION ALL
+          SELECT c.id FROM entries c
+          INNER JOIN tree t ON c.parent_id = t.id
+          WHERE c.tombstoned_at IS NULL
+        )
+        SELECT id FROM tree
+      )`;
+      scopeParams.push(project.id);
+    }
+
+    const kindSql = kind ? ` AND json_extract(e.metadata, '$.kind') = ?` : '';
+    const kindParams = kind ? [kind] : [];
+
+    const baseWhere = `
+      FROM entries e
+      WHERE e.irrelevant = 0
+        AND e.tombstoned_at IS NULL
+        ${scopeSql}
+        ${kindSql}
+    `;
+
+    const agg = this.db.prepare(`
+      SELECT
+        COUNT(*) AS totalEntries,
+        COALESCE(SUM(LENGTH(e.content)), 0) AS totalContentBytes,
+        COALESCE(AVG(LENGTH(e.content)), 0) AS avgContentChars,
+        COALESCE(MAX(LENGTH(e.content)), 0) AS maxContentChars,
+        COALESCE(MIN(LENGTH(e.content)), 0) AS minContentChars
+      ${baseWhere}
+    `).get(...scopeParams, ...kindParams) as {
+      totalEntries: number;
+      totalContentBytes: number;
+      avgContentChars: number;
+      maxContentChars: number;
+      minContentChars: number;
+    };
+
+    if (agg.totalEntries === 0) return empty;
+
+    const bucketRows = buckets.map(threshold => {
+      const row = this.db.prepare(`
+        SELECT COUNT(*) AS c
+        ${baseWhere}
+          AND LENGTH(e.content) <= ?
+      `).get(...scopeParams, ...kindParams, threshold) as { c: number };
+      return { threshold: String(threshold), count: row.c };
+    });
+
+    const byKindRows = this.db.prepare(`
+      SELECT
+        COALESCE(json_extract(e.metadata, '$.kind'), '') AS kind,
+        COUNT(*) AS count,
+        COALESCE(SUM(LENGTH(e.content)), 0) AS totalBytes
+      ${baseWhere}
+      GROUP BY kind
+      ORDER BY count DESC, kind ASC
+    `).all(...scopeParams, ...kindParams) as { kind: string; count: number; totalBytes: number }[];
+
+    return {
+      totalEntries: agg.totalEntries,
+      totalContentBytes: agg.totalContentBytes,
+      avgContentChars: agg.avgContentChars,
+      maxContentChars: agg.maxContentChars,
+      minContentChars: agg.minContentChars,
+      buckets: bucketRows,
+      byKind: byKindRows,
+    };
   }
 
   // ─── Suppression ───────────────────────────────────────

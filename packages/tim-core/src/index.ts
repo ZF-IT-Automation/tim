@@ -161,6 +161,8 @@ export interface MemoryInterface {
   // Health
   health(): Promise<HealthReport>;
   stats(): Promise<MemoryStats>;
+  getContentStats(root?: string, kind?: string, buckets?: number[]): Promise<ContentStats>;
+  deleteBatch(ids: string[], hard?: boolean): Promise<number>;
 
   // Suppression
   suppress(pattern: string, reason: string, ttl?: string): Promise<void>;
@@ -191,6 +193,16 @@ export interface MemoryStats {
   oldestEntry: string | null;    // ISO 8601
   newestEntry: string | null;
   staleCount: number;            // not accessed in 30d
+}
+
+export interface ContentStats {
+  totalEntries: number;
+  totalContentBytes: number;
+  avgContentChars: number;
+  maxContentChars: number;
+  minContentChars: number;
+  buckets: { threshold: string; count: number }[];
+  byKind: { kind: string; count: number; totalBytes: number }[];
 }
 
 // ─── Event Bus ────────────────────────────────────────────

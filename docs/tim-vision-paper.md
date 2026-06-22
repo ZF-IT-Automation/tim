@@ -237,6 +237,32 @@ cosine-similarity für semantische Suche.
 > **Note (R3):** Schicht 3 ist optional und Pro-Feature. Embedding-Provider
 > in der Config. Phase 0.7 implementiert dies.
 
+### Schicht 4: Hook-Filter — Noise-Abwehr vor der DB (2026-06-22)
+
+Der `o9k-log-exchange.sh` Hook (Write-Pfad von Hermes → TIM) filtert
+**systemgenerierte Noise** bevor sie als Exchange in die DB gelangen.
+Lektion aus 468 Riesen-Einträgen (Skill-Injektionen, Plugin-Cache-Dumps)
+die ~9 MB DB-Speicher verschwendeten.
+
+**7 Guard-Muster** (in Reihenfolge, früher Exit = Skip):
+
+| # | Muster | Quelle | Was es fängt |
+|---|---|---|---|
+| 1 | `cron_*` Session-ID | Cron-Bug (2026-06-22) | Alle Cron-Ticks (48 Einträge) |
+| 2 | `[IMPORTANT: user invoked "X" skill]` | Skill-Assembly | Skill-Injektionen mit Prefix |
+| 3 | `Base directory for this skill:` | Claude-Code-Plugins | Plugin-Cache-Dumps (396 Einträge) |
+| 4 | `---\nname:` YAML-Frontmatter | hmem `fe619e0` | Bare Skill-Injektionen ohne Prefix |
+| 5 | `# ` + >500 Zeichen | hmem `fe619e0` | Große Markdown-Doc-Injektionen |
+| 6 | `/mcp`, `/clear`, `Restarted` | hmem `fe619e0` | Meta-Session-Exchanges |
+| 7 | `<2 Zeichen`, Title-Gen-Prefix | Altbestand | Triviale Exchanges |
+
+> **Design-Regel (2026-06-22):** Neue Guard-Muster werden ausschließlich
+> per Content-Analyse auf `user_msg` definiert (nicht per Session-Metadaten).
+> Inspiriert durch den intelligenten Filter aus `hmem/src/mcp-server.ts`
+> (`fe619e0`, 2026-04-10, Opus 4.6), der dieselben Muster im Read-Pfad
+> komprimiert. Der Write-Pfad-Filter ist strenger: Noise wird komplett
+> abgewiesen, nicht komprimiert.
+
 ---
 
 ## 6. Schemas — Type + Tree-Template (Generator-Ansatz)
@@ -353,6 +379,10 @@ Jeder Batch wird vom **Summarizer** (externer CLI-Agent) thematisch zusammengefa
 2. **Manuell:** User ruft `/tim-handoff` → Summarizer on-demand.
 
 > **Note (R8):** Der aktuelle Stand ist: Sub-Node Sessions mit Batch-System.
+> **Note (R21, 2026-06-22):** `o9k-log-exchange.sh` filtert Noise am Hook-Eingang
+> bevor Exchanges geschrieben werden. Details in §5, Schicht 4: 7 Guard-Muster
+> (Cron, Skill-Injektionen, Plugin-Cache, YAML-Frontmatter, Large Docs, Meta).
+> Dies verhindert Budget-Sprengung durch systemgenerierte Riesen-Exchanges.
 > Summarizer läuft async nach Batch-voll. `/tim-handoff` Skill ruft Summarizer
 > on-demand. Siehe `session-system-plan.md` §4 für den Data-Flow.
 
@@ -809,6 +839,7 @@ tree_template:
     - Ideas: {}
     - Tasks:
         task_root: true
+    - Testing: {}
     - Sessions:
         kind: sessions-root
         render_depth: 0
