@@ -46,6 +46,7 @@ const tim_hooks_1 = require("tim-hooks");
 const tim_migrate_1 = require("tim-migrate");
 const tim_sync_client_1 = require("tim-sync-client");
 const write_validate_js_1 = require("./write-validate.js");
+const remember_handler_js_1 = require("./remember-handler.js");
 const fs = __importStar(require("fs"));
 const os = __importStar(require("os"));
 const path = __importStar(require("path"));
@@ -83,6 +84,20 @@ const TimSearchSchema = zod_1.z.object({
     type: zod_1.z.string().optional().describe('Filter metadata.type (rule|human|task|error)'),
     tag: zod_1.z.string().optional().describe('Filter exact tag (with or without # prefix)'),
     status: zod_1.z.string().optional().describe('Filter metadata.status'),
+});
+const TimRememberSchema = zod_1.z.object({
+    query: zod_1.z.string().min(1).max(500)
+        .describe('Vage Erinnerungs-Query. Mehrere Wortvarianten werden automatisch probiert.'),
+    topK: zod_1.z.number().int().min(1).max(20).optional().default(5)
+        .describe('Anzahl Rückgabe-Treffer. Default 5, max 20.'),
+    minConfidence: zod_1.z.number().min(0).max(1).optional().default(0.3)
+        .describe('Treffer unter diesem Confidence werden gefiltert. Default 0.3.'),
+    includeBatchSummaries: zod_1.z.boolean().optional().default(true)
+        .describe('Session-Batch-Summaries der letzten 30 Tage mit einbeziehen. Default true.'),
+    searchType: zod_1.z.enum(['fts']).optional().default('fts')
+        .describe('Nur FTS5 in Phase 1.0. "hybrid" ist für Embedding-Phase 0.7+ reserviert.'),
+    projectScope: zod_1.z.string().regex(/^P\d{4}$/).optional()
+        .describe('Optional: Suche auf ein Projekt beschränken (z.B. "P0062"). Default: alle Projekte.'),
 });
 const TimLinkSchema = zod_1.z.object({
     sourceId: zod_1.z.string(),
@@ -750,6 +765,7 @@ const READ_TOOLS = new Set([
     'tim_show',
     'tim_show_unsummarized', 'tim_show_all_unsummarized', 'tim_show_untagged',
 ]);
+const REMEMBER_TOOLS = new Set(['tim_remember']);
 function scheduleAutoSync(toolName, s) {
     if (WRITE_TOOLS.has(toolName)) {
         void (0, tim_sync_client_1.autoPush)(s);
@@ -768,541 +784,591 @@ async function startServer() {
         },
     });
     // ─── Tool Registration ──────────────────────────────
-    server.setRequestHandler(types_js_1.ListToolsRequestSchema, async () => ({
-        tools: [
-            {
-                name: 'tim_read',
-                description: 'Read an entry from TIM. Returns entry content, children, and optional edges.',
-                inputSchema: {
-                    type: 'object',
-                    properties: {
-                        id: {
-                            oneOf: [
-                                { type: 'string', description: 'Entry ID (ULID)' },
-                                { type: 'array', items: { type: 'string' }, description: 'Batch entry IDs' },
-                            ],
+    server.setRequestHandler(types_js_1.ListToolsRequestSchema, async () => {
+        const rememberEnabled = (0, tim_core_1.loadConfig)().remember?.enabled !== false;
+        return {
+            tools: [
+                {
+                    name: 'tim_read',
+                    description: 'Read an entry from TIM. Returns entry content, children, and optional edges.',
+                    inputSchema: {
+                        type: 'object',
+                        properties: {
+                            id: {
+                                oneOf: [
+                                    { type: 'string', description: 'Entry ID (ULID)' },
+                                    { type: 'array', items: { type: 'string' }, description: 'Batch entry IDs' },
+                                ],
+                            },
+                            project: { type: 'string', description: 'Project label/alias/name (auto-resolved)' },
+                            section: { type: 'string', description: 'Section title — read its children' },
+                            depth: { type: 'number', default: 2, description: 'How many levels to read (1-5)' },
+                            includeEdges: { type: 'boolean', default: false },
+                            includeChildren: { type: 'boolean', default: true, description: 'Default true: returns subtree (capped by depth). Set false for parent-only.' },
+                            showIrrelevant: { type: 'boolean', default: false },
                         },
-                        project: { type: 'string', description: 'Project label/alias/name (auto-resolved)' },
-                        section: { type: 'string', description: 'Section title — read its children' },
-                        depth: { type: 'number', default: 2, description: 'How many levels to read (1-5)' },
-                        includeEdges: { type: 'boolean', default: false },
-                        includeChildren: { type: 'boolean', default: true, description: 'Default true: returns subtree (capped by depth). Set false for parent-only.' },
-                        showIrrelevant: { type: 'boolean', default: false },
                     },
                 },
-            },
-            {
-                name: 'tim_write',
-                description: 'Write a new entry to TIM. parentId direct, or parentTitle+projectId to resolve a project section by title (section title under project root metadata.label).',
-                inputSchema: {
-                    type: 'object',
-                    properties: {
-                        content: { type: 'string' },
-                        parentId: { type: 'string' },
-                        parentTitle: { type: 'string', description: 'Section title; requires projectId' },
-                        projectId: { type: 'string', description: 'Project label, e.g. P0062' },
-                        where: {
-                            type: 'string',
-                            description: 'Shorthand P0062/Tasks → project + section parentId (parentId wins)',
+                {
+                    name: 'tim_write',
+                    description: 'Write a new entry to TIM. parentId direct, or parentTitle+projectId to resolve a project section by title (section title under project root metadata.label).',
+                    inputSchema: {
+                        type: 'object',
+                        properties: {
+                            content: { type: 'string' },
+                            parentId: { type: 'string' },
+                            parentTitle: { type: 'string', description: 'Section title; requires projectId' },
+                            projectId: { type: 'string', description: 'Project label, e.g. P0062' },
+                            where: {
+                                type: 'string',
+                                description: 'Shorthand P0062/Tasks → project + section parentId (parentId wins)',
+                            },
+                            contentType: { type: 'string', enum: ['text', 'json', 'blob'], default: 'text' },
+                            confidence: { type: 'number', minimum: 0, maximum: 1, default: 1.0 },
+                            tags: {
+                                type: 'array',
+                                items: { type: 'string' },
+                                default: [],
+                                description: 'Topic tags only (#tim, #security). Status/priority tags (#todo, #done, #priority-*) are deprecated — use metadata.task.status / metadata.task.priority.',
+                            },
+                            visibility: { type: 'number', default: 1 },
+                            metadata: { type: 'object', default: {} },
                         },
-                        contentType: { type: 'string', enum: ['text', 'json', 'blob'], default: 'text' },
-                        confidence: { type: 'number', minimum: 0, maximum: 1, default: 1.0 },
-                        tags: {
-                            type: 'array',
-                            items: { type: 'string' },
-                            default: [],
-                            description: 'Topic tags only (#tim, #security). Status/priority tags (#todo, #done, #priority-*) are deprecated — use metadata.task.status / metadata.task.priority.',
+                        required: ['content'],
+                    },
+                },
+                {
+                    name: 'tim_search',
+                    description: 'Search TIM entries using FTS5 full-text search.',
+                    inputSchema: {
+                        type: 'object',
+                        properties: {
+                            query: { type: 'string' },
+                            topK: { type: 'number', default: 10 },
+                            searchType: { type: 'string', enum: ['fts', 'vector', 'hybrid'], default: 'fts' },
+                            root: { type: 'string', description: 'Scope to project (label/alias/name)' },
+                            type: { type: 'string', description: 'Filter metadata.type' },
+                            tag: { type: 'string', description: 'Filter exact tag' },
+                            status: { type: 'string', description: 'Filter metadata.status' },
                         },
-                        visibility: { type: 'number', default: 1 },
-                        metadata: { type: 'object', default: {} },
+                        required: ['query'],
                     },
-                    required: ['content'],
                 },
-            },
-            {
-                name: 'tim_search',
-                description: 'Search TIM entries using FTS5 full-text search.',
-                inputSchema: {
-                    type: 'object',
-                    properties: {
-                        query: { type: 'string' },
-                        topK: { type: 'number', default: 10 },
-                        searchType: { type: 'string', enum: ['fts', 'vector', 'hybrid'], default: 'fts' },
-                        root: { type: 'string', description: 'Scope to project (label/alias/name)' },
-                        type: { type: 'string', description: 'Filter metadata.type' },
-                        tag: { type: 'string', description: 'Filter exact tag' },
-                        status: { type: 'string', description: 'Filter metadata.status' },
-                    },
-                    required: ['query'],
-                },
-            },
-            {
-                name: 'tim_link',
-                description: 'Create an edge (relationship) between two entries.',
-                inputSchema: {
-                    type: 'object',
-                    properties: {
-                        sourceId: { type: 'string' },
-                        targetId: { type: 'string' },
-                        type: { type: 'string', enum: ['relates', 'extends', 'contradicts', 'implements', 'blocks', 'leases', 'tagged', 'summarizes', 'contradicted_by'] },
-                        weight: { type: 'number', minimum: 0, maximum: 1, default: 1.0 },
-                        metadata: { type: 'object', default: {} },
-                    },
-                    required: ['sourceId', 'targetId', 'type'],
-                },
-            },
-            {
-                name: 'tim_trace',
-                description: 'Follow an edge chain from a starting entry (BFS traversal).',
-                inputSchema: {
-                    type: 'object',
-                    properties: {
-                        startId: { type: 'string' },
-                        edgeType: { type: 'string' },
-                        depth: { type: 'number', default: 5 },
-                    },
-                    required: ['startId'],
-                },
-            },
-            {
-                name: 'tim_update',
-                description: 'Update an existing entry. Only provided fields are changed.',
-                inputSchema: {
-                    type: 'object',
-                    properties: {
-                        id: { type: 'string' },
-                        title: { type: 'string', description: 'Update entry title' },
-                        content: { type: 'string' },
-                        confidence: { type: 'number', minimum: 0, maximum: 1 },
-                        tags: {
-                            type: 'array',
-                            items: { type: 'string' },
-                            description: 'Topic tags only. Deprecated status/priority tags are stripped — use metadata.task.status / metadata.task.priority.',
+                {
+                    name: 'tim_link',
+                    description: 'Create an edge (relationship) between two entries.',
+                    inputSchema: {
+                        type: 'object',
+                        properties: {
+                            sourceId: { type: 'string' },
+                            targetId: { type: 'string' },
+                            type: { type: 'string', enum: ['relates', 'extends', 'contradicts', 'implements', 'blocks', 'leases', 'tagged', 'summarizes', 'contradicted_by'] },
+                            weight: { type: 'number', minimum: 0, maximum: 1, default: 1.0 },
+                            metadata: { type: 'object', default: {} },
                         },
-                        visibility: { type: 'number' },
-                        metadata: { type: 'object' },
-                    },
-                    required: ['id'],
-                },
-            },
-            {
-                name: 'tim_rename_title',
-                description: 'Rename/update the title of an existing entry.',
-                inputSchema: {
-                    type: 'object',
-                    properties: {
-                        id: { type: 'string' },
-                        title: { type: 'string' },
-                    },
-                    required: ['id', 'title'],
-                },
-            },
-            {
-                name: 'tim_delete',
-                description: 'Delete an entry (soft: mark irrelevant, hard: tombstone).',
-                inputSchema: {
-                    type: 'object',
-                    properties: {
-                        id: { type: 'string' },
-                        hard: { type: 'boolean', default: false },
-                    },
-                    required: ['id'],
-                },
-            },
-            {
-                name: 'tim_sync',
-                description: 'Sync operations: push staging records, pull from remote, or check status.',
-                inputSchema: {
-                    type: 'object',
-                    properties: {
-                        action: { type: 'string', enum: ['push', 'pull', 'status'] },
-                        stagingRecords: { type: 'array' },
-                    },
-                    required: ['action'],
-                },
-            },
-            {
-                name: 'tim_lease',
-                description: 'Grant or revoke temporary agent access to a memory entry.',
-                inputSchema: {
-                    type: 'object',
-                    properties: {
-                        grant: { type: 'string' },
-                        revoke: { type: 'string' },
-                        entryId: { type: 'string' },
-                        ttl: { type: 'string' },
-                    },
-                    required: ['entryId'],
-                },
-            },
-            {
-                name: 'tim_suppress',
-                description: 'Add a pattern to negative memory. Matching entries are hidden from search results.',
-                inputSchema: {
-                    type: 'object',
-                    properties: {
-                        pattern: { type: 'string' },
-                        reason: { type: 'string', default: 'Manual suppression' },
-                        ttl: { type: 'string' },
-                    },
-                    required: ['pattern'],
-                },
-            },
-            {
-                name: 'tim_health',
-                description: 'Run health diagnostics: broken links, orphans, FTS integrity, counts.',
-                inputSchema: { type: 'object', properties: {} },
-            },
-            {
-                name: 'tim_stats',
-                description: 'Get memory statistics: totals, depth distribution, top tags, confidence.',
-                inputSchema: { type: 'object', properties: {} },
-            },
-            {
-                name: 'tim_export',
-                description: 'Export TIM database to markdown or .hmem SQLite format.',
-                inputSchema: {
-                    type: 'object',
-                    properties: {
-                        format: { type: 'string', enum: ['text', 'hmem', 'md'], default: 'text' },
-                        targetPath: { type: 'string', description: 'Output path (required for hmem format)' },
+                        required: ['sourceId', 'targetId', 'type'],
                     },
                 },
-            },
-            {
-                name: 'tim_import',
-                description: 'Import entries from a .hmem SQLite file.',
-                inputSchema: {
-                    type: 'object',
-                    properties: {
-                        source: { type: 'string' },
-                        dryRun: { type: 'boolean', default: false },
-                        deduplicate: { type: 'boolean', default: false },
+                {
+                    name: 'tim_trace',
+                    description: 'Follow an edge chain from a starting entry (BFS traversal).',
+                    inputSchema: {
+                        type: 'object',
+                        properties: {
+                            startId: { type: 'string' },
+                            edgeType: { type: 'string' },
+                            depth: { type: 'number', default: 5 },
+                        },
+                        required: ['startId'],
                     },
-                    required: ['source'],
                 },
-            },
-            {
-                name: 'tim_doctor',
-                description: 'Run comprehensive diagnostics: config, DB, API connectivity.',
-                inputSchema: { type: 'object', properties: {} },
-            },
-            {
-                name: 'tim_session_start',
-                description: 'Start a TIM session (idempotent). With projectId (or default P0000 Inbox), creates nested Sessions/Summary/Exchanges tree.',
-                inputSchema: {
-                    type: 'object',
-                    properties: {
-                        sessionId: { type: 'string' },
-                        projectId: { type: 'string', description: 'Project label, e.g. P0062' },
-                        agentName: { type: 'string', default: 'default' },
-                        cwd: { type: 'string' },
-                        harness: { type: 'string', default: 'mcp' },
-                        batchSize: { type: 'number', minimum: 1, maximum: 50 },
+                {
+                    name: 'tim_update',
+                    description: 'Update an existing entry. Only provided fields are changed.',
+                    inputSchema: {
+                        type: 'object',
+                        properties: {
+                            id: { type: 'string' },
+                            title: { type: 'string', description: 'Update entry title' },
+                            content: { type: 'string' },
+                            confidence: { type: 'number', minimum: 0, maximum: 1 },
+                            tags: {
+                                type: 'array',
+                                items: { type: 'string' },
+                                description: 'Topic tags only. Deprecated status/priority tags are stripped — use metadata.task.status / metadata.task.priority.',
+                            },
+                            visibility: { type: 'number' },
+                            metadata: { type: 'object' },
+                        },
+                        required: ['id'],
                     },
-                    required: ['sessionId'],
                 },
-            },
-            {
-                name: 'tim_session_log',
-                description: 'Append exchange entries to a session log.',
-                inputSchema: {
-                    type: 'object',
-                    properties: {
-                        sessionId: { type: 'string' },
-                        entries: {
-                            type: 'array',
-                            items: {
-                                type: 'object',
-                                properties: {
-                                    role: { type: 'string', enum: ['user', 'agent'] },
-                                    content: { type: 'string' },
+                {
+                    name: 'tim_rename_title',
+                    description: 'Rename/update the title of an existing entry.',
+                    inputSchema: {
+                        type: 'object',
+                        properties: {
+                            id: { type: 'string' },
+                            title: { type: 'string' },
+                        },
+                        required: ['id', 'title'],
+                    },
+                },
+                {
+                    name: 'tim_delete',
+                    description: 'Delete an entry (soft: mark irrelevant, hard: tombstone).',
+                    inputSchema: {
+                        type: 'object',
+                        properties: {
+                            id: { type: 'string' },
+                            hard: { type: 'boolean', default: false },
+                        },
+                        required: ['id'],
+                    },
+                },
+                {
+                    name: 'tim_sync',
+                    description: 'Sync operations: push staging records, pull from remote, or check status.',
+                    inputSchema: {
+                        type: 'object',
+                        properties: {
+                            action: { type: 'string', enum: ['push', 'pull', 'status'] },
+                            stagingRecords: { type: 'array' },
+                        },
+                        required: ['action'],
+                    },
+                },
+                {
+                    name: 'tim_lease',
+                    description: 'Grant or revoke temporary agent access to a memory entry.',
+                    inputSchema: {
+                        type: 'object',
+                        properties: {
+                            grant: { type: 'string' },
+                            revoke: { type: 'string' },
+                            entryId: { type: 'string' },
+                            ttl: { type: 'string' },
+                        },
+                        required: ['entryId'],
+                    },
+                },
+                {
+                    name: 'tim_suppress',
+                    description: 'Add a pattern to negative memory. Matching entries are hidden from search results.',
+                    inputSchema: {
+                        type: 'object',
+                        properties: {
+                            pattern: { type: 'string' },
+                            reason: { type: 'string', default: 'Manual suppression' },
+                            ttl: { type: 'string' },
+                        },
+                        required: ['pattern'],
+                    },
+                },
+                {
+                    name: 'tim_health',
+                    description: 'Run health diagnostics: broken links, orphans, FTS integrity, counts.',
+                    inputSchema: { type: 'object', properties: {} },
+                },
+                {
+                    name: 'tim_stats',
+                    description: 'Get memory statistics: totals, depth distribution, top tags, confidence.',
+                    inputSchema: { type: 'object', properties: {} },
+                },
+                {
+                    name: 'tim_export',
+                    description: 'Export TIM database to markdown or .hmem SQLite format.',
+                    inputSchema: {
+                        type: 'object',
+                        properties: {
+                            format: { type: 'string', enum: ['text', 'hmem', 'md'], default: 'text' },
+                            targetPath: { type: 'string', description: 'Output path (required for hmem format)' },
+                        },
+                    },
+                },
+                {
+                    name: 'tim_import',
+                    description: 'Import entries from a .hmem SQLite file.',
+                    inputSchema: {
+                        type: 'object',
+                        properties: {
+                            source: { type: 'string' },
+                            dryRun: { type: 'boolean', default: false },
+                            deduplicate: { type: 'boolean', default: false },
+                        },
+                        required: ['source'],
+                    },
+                },
+                {
+                    name: 'tim_doctor',
+                    description: 'Run comprehensive diagnostics: config, DB, API connectivity.',
+                    inputSchema: { type: 'object', properties: {} },
+                },
+                {
+                    name: 'tim_session_start',
+                    description: 'Start a TIM session (idempotent). With projectId (or default P0000 Inbox), creates nested Sessions/Summary/Exchanges tree.',
+                    inputSchema: {
+                        type: 'object',
+                        properties: {
+                            sessionId: { type: 'string' },
+                            projectId: { type: 'string', description: 'Project label, e.g. P0062' },
+                            agentName: { type: 'string', default: 'default' },
+                            cwd: { type: 'string' },
+                            harness: { type: 'string', default: 'mcp' },
+                            batchSize: { type: 'number', minimum: 1, maximum: 50 },
+                        },
+                        required: ['sessionId'],
+                    },
+                },
+                {
+                    name: 'tim_session_log',
+                    description: 'Append exchange entries to a session log.',
+                    inputSchema: {
+                        type: 'object',
+                        properties: {
+                            sessionId: { type: 'string' },
+                            entries: {
+                                type: 'array',
+                                items: {
+                                    type: 'object',
+                                    properties: {
+                                        role: { type: 'string', enum: ['user', 'agent'] },
+                                        content: { type: 'string' },
+                                    },
+                                    required: ['role', 'content'],
                                 },
-                                required: ['role', 'content'],
+                            },
+                        },
+                        required: ['sessionId', 'entries'],
+                    },
+                },
+                {
+                    name: 'tim_show_unsummarized',
+                    description: 'Return the next unsummarized batch of exchanges for a session (UUIDs + user/agent bodies). Summarizer reads this, writes a Batch node under Summary.',
+                    inputSchema: {
+                        type: 'object',
+                        properties: { sessionId: { type: 'string' } },
+                        required: ['sessionId'],
+                    },
+                },
+                {
+                    name: 'tim_show_all_unsummarized',
+                    description: 'Scan ALL sessions and return every unsummarized batch. Use at startup for cleanup sweep of stale batches (crashed summarizer, missed triggers). No parameters needed.',
+                    inputSchema: {
+                        type: 'object',
+                        properties: {},
+                    },
+                },
+                {
+                    name: 'tim_show_untagged',
+                    description: 'Return batch-summary nodes that have only structural tags (#session-summary, #batch-summary) and no content hashtags. Use for re-tagging failed or legacy summaries.',
+                    inputSchema: {
+                        type: 'object',
+                        properties: {},
+                    },
+                },
+                {
+                    name: 'tim_write_batch_summary',
+                    description: 'Write an idempotent Batch summary node under the session Summary tree. Used by tim-summarizer CLI.',
+                    inputSchema: {
+                        type: 'object',
+                        properties: {
+                            sessionId: { type: 'string' },
+                            batchIndex: { type: 'number', minimum: 1 },
+                            summary: { type: 'string' },
+                            seqFrom: { type: 'number', minimum: 0 },
+                            seqTo: { type: 'number', minimum: 0 },
+                            tags: { type: 'array', items: { type: 'string' } },
+                        },
+                        required: ['sessionId', 'batchIndex', 'summary', 'seqFrom', 'seqTo'],
+                    },
+                },
+                {
+                    name: 'tim_rollup_session_summary',
+                    description: 'Fold batch-summary children into the session-summary-root content field. Called after tim-summarizer writes all batches.',
+                    inputSchema: {
+                        type: 'object',
+                        properties: {
+                            sessionId: { type: 'string' },
+                        },
+                        required: ['sessionId'],
+                    },
+                },
+                {
+                    name: 'tim_record_commit',
+                    description: 'Record a git commit under the project Commits section. Idempotent by hash. Links to session via relates/implements when sessionId given.',
+                    inputSchema: {
+                        type: 'object',
+                        properties: {
+                            projectId: { type: 'string', description: 'Project label, e.g. P0063' },
+                            hash: { type: 'string', description: 'Full git commit SHA' },
+                            message: { type: 'string', description: 'Commit message' },
+                            diffSummary: { type: 'string', description: 'git show --stat output' },
+                            sessionId: { type: 'string', description: 'Session that produced this commit' },
+                            branch: { type: 'string' },
+                            author: { type: 'string' },
+                            date: { type: 'string', description: 'ISO 8601 commit date' },
+                        },
+                        required: ['projectId', 'hash', 'message'],
+                    },
+                },
+                {
+                    name: 'tim_checkpoint',
+                    description: 'Create a session checkpoint summary and run verify-before-decay.',
+                    inputSchema: {
+                        type: 'object',
+                        properties: {
+                            sessionId: { type: 'string' },
+                        },
+                        required: ['sessionId'],
+                    },
+                },
+                {
+                    name: 'tim_rename_entry',
+                    description: 'Atomically rename an entry ID and update all references (edges, parent_id, staging, metadata).',
+                    inputSchema: {
+                        type: 'object',
+                        properties: {
+                            oldId: { type: 'string', description: 'Current entry ID' },
+                            newId: { type: 'string', description: 'New entry ID (must not exist)' },
+                        },
+                        required: ['oldId', 'newId'],
+                    },
+                },
+                {
+                    name: 'tim_move_entry',
+                    description: 'Move an entry under a new parent and cascade depth updates to descendants.',
+                    inputSchema: {
+                        type: 'object',
+                        properties: {
+                            id: { type: 'string', description: 'Entry ID to move' },
+                            newParentId: { type: ['string', 'null'], description: 'New parent ID, or null for root' },
+                        },
+                        required: ['id'],
+                    },
+                },
+                {
+                    name: 'tim_update_many',
+                    description: 'Batch-update irrelevant and/or favorite flags on multiple entries (flags only, never content).',
+                    inputSchema: {
+                        type: 'object',
+                        properties: {
+                            ids: { type: 'array', items: { type: 'string' }, minItems: 1 },
+                            irrelevant: { type: 'boolean' },
+                            favorite: { type: 'boolean' },
+                        },
+                        required: ['ids'],
+                    },
+                },
+                {
+                    name: 'tim_tag_add',
+                    description: 'Add tags to an entry (deduplicated). Deprecated status/priority tags (#todo, #done, #priority-*) are skipped — use metadata.task.status / metadata.task.priority.',
+                    inputSchema: {
+                        type: 'object',
+                        properties: {
+                            id: { type: 'string' },
+                            tags: { type: 'array', items: { type: 'string' }, minItems: 1 },
+                        },
+                        required: ['id', 'tags'],
+                    },
+                },
+                {
+                    name: 'tim_tag_remove',
+                    description: 'Remove tags from an entry.',
+                    inputSchema: {
+                        type: 'object',
+                        properties: {
+                            id: { type: 'string' },
+                            tags: { type: 'array', items: { type: 'string' }, minItems: 1 },
+                        },
+                        required: ['id', 'tags'],
+                    },
+                },
+                {
+                    name: 'tim_tag_rename',
+                    description: 'Rename a tag across all entries (exact match only, safe for substring collisions).',
+                    inputSchema: {
+                        type: 'object',
+                        properties: {
+                            oldTag: { type: 'string' },
+                            newTag: { type: 'string' },
+                        },
+                        required: ['oldTag', 'newTag'],
+                    },
+                },
+                {
+                    name: 'tim_create_project',
+                    description: 'Register a project entry so load_project can find it later.',
+                    inputSchema: {
+                        type: 'object',
+                        properties: {
+                            label: { type: 'string', description: 'Project label, e.g. P0062' },
+                            metadata: { type: 'object', default: {} },
+                            content: { type: 'string' },
+                            aliases: {
+                                type: 'array',
+                                items: { type: 'string' },
+                                description: 'Short names for tim_load_project, e.g. ["o9k", "hmem"]',
+                            },
+                        },
+                        required: ['label'],
+                    },
+                },
+                {
+                    name: 'tim_load_project',
+                    description: 'Load a project by label or alias and bind the session once. Rejects a different project if the session is already bound — use tim_read_project for cross-project lookups.',
+                    inputSchema: {
+                        type: 'object',
+                        properties: {
+                            label: { type: 'string', description: 'Project label, e.g. P0062' },
+                            depth: { type: 'number', default: 3, description: 'How many child levels to load (1-5)' },
+                            budget: { type: 'number', default: 200, description: 'Max child entries to return' },
+                            sections: {
+                                type: ['array', 'null'],
+                                items: { type: 'string' },
+                                default: null,
+                                description: 'Optional section IDs/labels to filter direct children',
+                            },
+                        },
+                        required: ['label'],
+                    },
+                },
+                {
+                    name: 'tim_read_project',
+                    description: 'Read a project brief + tree WITHOUT binding the session (cross-project lookup). Use tim_load_project to start working on a project.',
+                    inputSchema: {
+                        type: 'object',
+                        properties: {
+                            label: { type: 'string', description: 'Project label, e.g. P0062' },
+                            depth: { type: 'number', default: 3, description: 'How many child levels to load (1-5)' },
+                            budget: { type: 'number', default: 200, description: 'Max child entries to return' },
+                            sections: {
+                                type: ['array', 'null'],
+                                items: { type: 'string' },
+                                default: null,
+                                description: 'Optional section IDs/labels to filter direct children',
+                            },
+                        },
+                        required: ['label'],
+                    },
+                },
+                {
+                    name: 'tim_show',
+                    description: 'Unified overview: tasks, errors, bugs, ideas, decisions, learnings, commits, sections, or all. ' +
+                        'Use root for project scope (omit=active, "all"=cross-project). ' +
+                        'Use with for comma-separated AND filters (open,done,urgent,recent,<tag>,<free text>).',
+                    inputSchema: {
+                        type: 'object',
+                        properties: {
+                            what: {
+                                type: 'string',
+                                description: 'tasks|errors|bugs|ideas|decisions|learnings|commits|all|<SectionName>',
+                            },
+                            root: {
+                                type: 'string',
+                                description: 'Project label/alias/name; "" or "all" = all projects; omit = active',
+                            },
+                            with: {
+                                type: 'string',
+                                description: 'Comma-separated AND filters: open,done,urgent,recent,<tag>,<free text>',
+                            },
+                            limit: { type: 'number', minimum: 1, maximum: 100, default: 20 },
+                        },
+                        required: ['what'],
+                    },
+                },
+                {
+                    name: 'tim_tasks',
+                    description: "[DEPRECATED — use tim_show what='tasks'] List open tasks across all projects, " +
+                        'grouped by project and sorted by status, priority, and due date.',
+                    inputSchema: {
+                        type: 'object',
+                        properties: {
+                            status: {
+                                type: 'string',
+                                enum: ['todo', 'in_progress', 'done', 'cancelled'],
+                                description: 'Filter by task status. Default: todo + in_progress.',
                             },
                         },
                     },
-                    required: ['sessionId', 'entries'],
                 },
-            },
-            {
-                name: 'tim_show_unsummarized',
-                description: 'Return the next unsummarized batch of exchanges for a session (UUIDs + user/agent bodies). Summarizer reads this, writes a Batch node under Summary.',
-                inputSchema: {
-                    type: 'object',
-                    properties: { sessionId: { type: 'string' } },
-                    required: ['sessionId'],
-                },
-            },
-            {
-                name: 'tim_show_all_unsummarized',
-                description: 'Scan ALL sessions and return every unsummarized batch. Use at startup for cleanup sweep of stale batches (crashed summarizer, missed triggers). No parameters needed.',
-                inputSchema: {
-                    type: 'object',
-                    properties: {},
-                },
-            },
-            {
-                name: 'tim_show_untagged',
-                description: 'Return batch-summary nodes that have only structural tags (#session-summary, #batch-summary) and no content hashtags. Use for re-tagging failed or legacy summaries.',
-                inputSchema: {
-                    type: 'object',
-                    properties: {},
-                },
-            },
-            {
-                name: 'tim_write_batch_summary',
-                description: 'Write an idempotent Batch summary node under the session Summary tree. Used by tim-summarizer CLI.',
-                inputSchema: {
-                    type: 'object',
-                    properties: {
-                        sessionId: { type: 'string' },
-                        batchIndex: { type: 'number', minimum: 1 },
-                        summary: { type: 'string' },
-                        seqFrom: { type: 'number', minimum: 0 },
-                        seqTo: { type: 'number', minimum: 0 },
-                        tags: { type: 'array', items: { type: 'string' } },
-                    },
-                    required: ['sessionId', 'batchIndex', 'summary', 'seqFrom', 'seqTo'],
-                },
-            },
-            {
-                name: 'tim_rollup_session_summary',
-                description: 'Fold batch-summary children into the session-summary-root content field. Called after tim-summarizer writes all batches.',
-                inputSchema: {
-                    type: 'object',
-                    properties: {
-                        sessionId: { type: 'string' },
-                    },
-                    required: ['sessionId'],
-                },
-            },
-            {
-                name: 'tim_record_commit',
-                description: 'Record a git commit under the project Commits section. Idempotent by hash. Links to session via relates/implements when sessionId given.',
-                inputSchema: {
-                    type: 'object',
-                    properties: {
-                        projectId: { type: 'string', description: 'Project label, e.g. P0063' },
-                        hash: { type: 'string', description: 'Full git commit SHA' },
-                        message: { type: 'string', description: 'Commit message' },
-                        diffSummary: { type: 'string', description: 'git show --stat output' },
-                        sessionId: { type: 'string', description: 'Session that produced this commit' },
-                        branch: { type: 'string' },
-                        author: { type: 'string' },
-                        date: { type: 'string', description: 'ISO 8601 commit date' },
-                    },
-                    required: ['projectId', 'hash', 'message'],
-                },
-            },
-            {
-                name: 'tim_checkpoint',
-                description: 'Create a session checkpoint summary and run verify-before-decay.',
-                inputSchema: {
-                    type: 'object',
-                    properties: {
-                        sessionId: { type: 'string' },
-                    },
-                    required: ['sessionId'],
-                },
-            },
-            {
-                name: 'tim_rename_entry',
-                description: 'Atomically rename an entry ID and update all references (edges, parent_id, staging, metadata).',
-                inputSchema: {
-                    type: 'object',
-                    properties: {
-                        oldId: { type: 'string', description: 'Current entry ID' },
-                        newId: { type: 'string', description: 'New entry ID (must not exist)' },
-                    },
-                    required: ['oldId', 'newId'],
-                },
-            },
-            {
-                name: 'tim_move_entry',
-                description: 'Move an entry under a new parent and cascade depth updates to descendants.',
-                inputSchema: {
-                    type: 'object',
-                    properties: {
-                        id: { type: 'string', description: 'Entry ID to move' },
-                        newParentId: { type: ['string', 'null'], description: 'New parent ID, or null for root' },
-                    },
-                    required: ['id'],
-                },
-            },
-            {
-                name: 'tim_update_many',
-                description: 'Batch-update irrelevant and/or favorite flags on multiple entries (flags only, never content).',
-                inputSchema: {
-                    type: 'object',
-                    properties: {
-                        ids: { type: 'array', items: { type: 'string' }, minItems: 1 },
-                        irrelevant: { type: 'boolean' },
-                        favorite: { type: 'boolean' },
-                    },
-                    required: ['ids'],
-                },
-            },
-            {
-                name: 'tim_tag_add',
-                description: 'Add tags to an entry (deduplicated). Deprecated status/priority tags (#todo, #done, #priority-*) are skipped — use metadata.task.status / metadata.task.priority.',
-                inputSchema: {
-                    type: 'object',
-                    properties: {
-                        id: { type: 'string' },
-                        tags: { type: 'array', items: { type: 'string' }, minItems: 1 },
-                    },
-                    required: ['id', 'tags'],
-                },
-            },
-            {
-                name: 'tim_tag_remove',
-                description: 'Remove tags from an entry.',
-                inputSchema: {
-                    type: 'object',
-                    properties: {
-                        id: { type: 'string' },
-                        tags: { type: 'array', items: { type: 'string' }, minItems: 1 },
-                    },
-                    required: ['id', 'tags'],
-                },
-            },
-            {
-                name: 'tim_tag_rename',
-                description: 'Rename a tag across all entries (exact match only, safe for substring collisions).',
-                inputSchema: {
-                    type: 'object',
-                    properties: {
-                        oldTag: { type: 'string' },
-                        newTag: { type: 'string' },
-                    },
-                    required: ['oldTag', 'newTag'],
-                },
-            },
-            {
-                name: 'tim_create_project',
-                description: 'Register a project entry so load_project can find it later.',
-                inputSchema: {
-                    type: 'object',
-                    properties: {
-                        label: { type: 'string', description: 'Project label, e.g. P0062' },
-                        metadata: { type: 'object', default: {} },
-                        content: { type: 'string' },
-                        aliases: {
-                            type: 'array',
-                            items: { type: 'string' },
-                            description: 'Short names for tim_load_project, e.g. ["o9k", "hmem"]',
-                        },
-                    },
-                    required: ['label'],
-                },
-            },
-            {
-                name: 'tim_load_project',
-                description: 'Load a project by label or alias and bind the session once. Rejects a different project if the session is already bound — use tim_read_project for cross-project lookups.',
-                inputSchema: {
-                    type: 'object',
-                    properties: {
-                        label: { type: 'string', description: 'Project label, e.g. P0062' },
-                        depth: { type: 'number', default: 3, description: 'How many child levels to load (1-5)' },
-                        budget: { type: 'number', default: 200, description: 'Max child entries to return' },
-                        sections: {
-                            type: ['array', 'null'],
-                            items: { type: 'string' },
-                            default: null,
-                            description: 'Optional section IDs/labels to filter direct children',
-                        },
-                    },
-                    required: ['label'],
-                },
-            },
-            {
-                name: 'tim_read_project',
-                description: 'Read a project brief + tree WITHOUT binding the session (cross-project lookup). Use tim_load_project to start working on a project.',
-                inputSchema: {
-                    type: 'object',
-                    properties: {
-                        label: { type: 'string', description: 'Project label, e.g. P0062' },
-                        depth: { type: 'number', default: 3, description: 'How many child levels to load (1-5)' },
-                        budget: { type: 'number', default: 200, description: 'Max child entries to return' },
-                        sections: {
-                            type: ['array', 'null'],
-                            items: { type: 'string' },
-                            default: null,
-                            description: 'Optional section IDs/labels to filter direct children',
-                        },
-                    },
-                    required: ['label'],
-                },
-            },
-            {
-                name: 'tim_show',
-                description: 'Unified overview: tasks, errors, bugs, ideas, decisions, learnings, commits, sections, or all. ' +
-                    'Use root for project scope (omit=active, "all"=cross-project). ' +
-                    'Use with for comma-separated AND filters (open,done,urgent,recent,<tag>,<free text>).',
-                inputSchema: {
-                    type: 'object',
-                    properties: {
-                        what: {
-                            type: 'string',
-                            description: 'tasks|errors|bugs|ideas|decisions|learnings|commits|all|<SectionName>',
-                        },
-                        root: {
-                            type: 'string',
-                            description: 'Project label/alias/name; "" or "all" = all projects; omit = active',
-                        },
-                        with: {
-                            type: 'string',
-                            description: 'Comma-separated AND filters: open,done,urgent,recent,<tag>,<free text>',
-                        },
-                        limit: { type: 'number', minimum: 1, maximum: 100, default: 20 },
-                    },
-                    required: ['what'],
-                },
-            },
-            {
-                name: 'tim_tasks',
-                description: "[DEPRECATED — use tim_show what='tasks'] List open tasks across all projects, " +
-                    'grouped by project and sorted by status, priority, and due date.',
-                inputSchema: {
-                    type: 'object',
-                    properties: {
-                        status: {
-                            type: 'string',
-                            enum: ['todo', 'in_progress', 'done', 'cancelled'],
-                            description: 'Filter by task status. Default: todo + in_progress.',
+                {
+                    name: 'tim_error_stats',
+                    description: 'Show error statistics: total errors, top errors, error rate, alert thresholds (>5 identical errors in 1h).',
+                    inputSchema: {
+                        type: 'object',
+                        properties: {
+                            hours: { type: 'number', default: 24, description: 'Time window in hours (1-720)' },
+                            limit: { type: 'number', default: 10, description: 'Max top errors to return' },
                         },
                     },
                 },
-            },
-            {
-                name: 'tim_error_stats',
-                description: 'Show error statistics: total errors, top errors, error rate, alert thresholds (>5 identical errors in 1h).',
-                inputSchema: {
-                    type: 'object',
-                    properties: {
-                        hours: { type: 'number', default: 24, description: 'Time window in hours (1-720)' },
-                        limit: { type: 'number', default: 10, description: 'Max top errors to return' },
+                {
+                    name: 'tim_error_log',
+                    description: 'Log an error entry. Used by CLI tools and summarizer for structured error tracking.',
+                    inputSchema: {
+                        type: 'object',
+                        properties: {
+                            tool: { type: 'string', description: 'Tool name, e.g. "summarizer/codex"' },
+                            error: { type: 'string', description: 'Error message' },
+                            stack: { type: 'string', description: 'Stack trace (optional)' },
+                            sessionId: { type: 'string', description: 'Associated session ID (optional)' },
+                            args: { type: 'object', description: 'Tool arguments (optional)' },
+                        },
+                        required: ['tool', 'error'],
                     },
                 },
-            },
-            {
-                name: 'tim_error_log',
-                description: 'Log an error entry. Used by CLI tools and summarizer for structured error tracking.',
-                inputSchema: {
-                    type: 'object',
-                    properties: {
-                        tool: { type: 'string', description: 'Tool name, e.g. "summarizer/codex"' },
-                        error: { type: 'string', description: 'Error message' },
-                        stack: { type: 'string', description: 'Stack trace (optional)' },
-                        sessionId: { type: 'string', description: 'Associated session ID (optional)' },
-                        args: { type: 'object', description: 'Tool arguments (optional)' },
-                    },
-                    required: ['tool', 'error'],
-                },
-            },
-        ],
-    }));
+                ...(rememberEnabled ? [{
+                        name: 'tim_remember',
+                        description: 'Associative memory recall for vague queries. Expands query variants, FTS5 pre-filters, ' +
+                            'then CLI-chain rerank. Read-only. Slower and costlier than tim_search — use when exact keywords are unknown.',
+                        inputSchema: {
+                            type: 'object',
+                            properties: {
+                                query: {
+                                    type: 'string',
+                                    minLength: 1,
+                                    maxLength: 500,
+                                    description: 'Vage Erinnerungs-Query. Mehrere Wortvarianten werden automatisch probiert.',
+                                },
+                                topK: {
+                                    type: 'number',
+                                    minimum: 1,
+                                    maximum: 20,
+                                    default: 5,
+                                    description: 'Anzahl Rückgabe-Treffer. Default 5, max 20.',
+                                },
+                                minConfidence: {
+                                    type: 'number',
+                                    minimum: 0,
+                                    maximum: 1,
+                                    default: 0.3,
+                                    description: 'Treffer unter diesem Confidence werden gefiltert. Default 0.3.',
+                                },
+                                includeBatchSummaries: {
+                                    type: 'boolean',
+                                    default: true,
+                                    description: 'Session-Batch-Summaries der letzten 30 Tage mit einbeziehen. Default true.',
+                                },
+                                searchType: {
+                                    type: 'string',
+                                    enum: ['fts'],
+                                    default: 'fts',
+                                    description: 'Nur FTS5 in Phase 1.0. "hybrid" ist für Embedding-Phase 0.7+ reserviert.',
+                                },
+                                projectScope: {
+                                    type: 'string',
+                                    pattern: '^P\\d{4}$',
+                                    description: 'Optional: Suche auf ein Projekt beschränken (z.B. "P0062"). Default: alle Projekte.',
+                                },
+                            },
+                            required: ['query'],
+                        },
+                    }] : []),
+            ],
+        };
+    });
     // ─── Tool Handler ────────────────────────────────────
     server.setRequestHandler(types_js_1.CallToolRequestSchema, async (request) => {
         const s = getStore();
@@ -1612,6 +1678,19 @@ async function startServer() {
                     }
                     return {
                         content: [{ type: 'text', text: JSON.stringify(results, null, 2) }],
+                    };
+                }
+                case 'tim_remember': {
+                    const parsed = TimRememberSchema.safeParse(args);
+                    if (!parsed.success) {
+                        return {
+                            content: [{ type: 'text', text: `Validation error: ${parsed.error.message}` }],
+                            isError: true,
+                        };
+                    }
+                    const result = await (0, remember_handler_js_1.handleTimRemember)(s, parsed.data);
+                    return {
+                        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
                     };
                 }
                 case 'tim_link': {

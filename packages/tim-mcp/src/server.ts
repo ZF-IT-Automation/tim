@@ -31,6 +31,7 @@ import {
 import { tim_export, tim_import } from 'tim-migrate';
 import { autoPush, autoPull, resetSyncCooldowns, loadConfig as loadSyncConfig } from 'tim-sync-client';
 import { validateWriteTags } from './write-validate.js';
+import { handleTimRemember } from './remember-handler.js';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -75,6 +76,21 @@ const TimSearchSchema = z.object({
   type: z.string().optional().describe('Filter metadata.type (rule|human|task|error)'),
   tag: z.string().optional().describe('Filter exact tag (with or without # prefix)'),
   status: z.string().optional().describe('Filter metadata.status'),
+});
+
+const TimRememberSchema = z.object({
+  query: z.string().min(1).max(500)
+    .describe('Vage Erinnerungs-Query. Mehrere Wortvarianten werden automatisch probiert.'),
+  topK: z.number().int().min(1).max(20).optional().default(5)
+    .describe('Anzahl Rückgabe-Treffer. Default 5, max 20.'),
+  minConfidence: z.number().min(0).max(1).optional().default(0.3)
+    .describe('Treffer unter diesem Confidence werden gefiltert. Default 0.3.'),
+  includeBatchSummaries: z.boolean().optional().default(true)
+    .describe('Session-Batch-Summaries der letzten 30 Tage mit einbeziehen. Default true.'),
+  searchType: z.enum(['fts']).optional().default('fts')
+    .describe('Nur FTS5 in Phase 1.0. "hybrid" ist für Embedding-Phase 0.7+ reserviert.'),
+  projectScope: z.string().regex(/^P\d{4}$/).optional()
+    .describe('Optional: Suche auf ein Projekt beschränken (z.B. "P0062"). Default: alle Projekte.'),
 });
 
 const TimLinkSchema = z.object({
@@ -830,6 +846,8 @@ const READ_TOOLS = new Set([
   'tim_show_unsummarized', 'tim_show_all_unsummarized', 'tim_show_untagged',
 ]);
 
+const REMEMBER_TOOLS = new Set(['tim_remember']);
+
 function scheduleAutoSync(toolName: string, s: TimStore): void {
   if (WRITE_TOOLS.has(toolName)) {
     void autoPush(s);
@@ -853,7 +871,9 @@ export async function startServer(): Promise<void> {
 
   // ─── Tool Registration ──────────────────────────────
 
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+  server.setRequestHandler(ListToolsRequestSchema, async () => {
+    const rememberEnabled = loadConfig().remember?.enabled !== false;
+    return {
     tools: [
       {
         name: 'tim_read',
@@ -1396,8 +1416,57 @@ export async function startServer(): Promise<void> {
           required: ['tool', 'error'],
         },
       },
+      ...(rememberEnabled ? [{
+        name: 'tim_remember',
+        description:
+          'Associative memory recall for vague queries. Expands query variants, FTS5 pre-filters, ' +
+          'then CLI-chain rerank. Read-only. Slower and costlier than tim_search — use when exact keywords are unknown.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            query: {
+              type: 'string',
+              minLength: 1,
+              maxLength: 500,
+              description: 'Vage Erinnerungs-Query. Mehrere Wortvarianten werden automatisch probiert.',
+            },
+            topK: {
+              type: 'number',
+              minimum: 1,
+              maximum: 20,
+              default: 5,
+              description: 'Anzahl Rückgabe-Treffer. Default 5, max 20.',
+            },
+            minConfidence: {
+              type: 'number',
+              minimum: 0,
+              maximum: 1,
+              default: 0.3,
+              description: 'Treffer unter diesem Confidence werden gefiltert. Default 0.3.',
+            },
+            includeBatchSummaries: {
+              type: 'boolean',
+              default: true,
+              description: 'Session-Batch-Summaries der letzten 30 Tage mit einbeziehen. Default true.',
+            },
+            searchType: {
+              type: 'string',
+              enum: ['fts'],
+              default: 'fts',
+              description: 'Nur FTS5 in Phase 1.0. "hybrid" ist für Embedding-Phase 0.7+ reserviert.',
+            },
+            projectScope: {
+              type: 'string',
+              pattern: '^P\\d{4}$',
+              description: 'Optional: Suche auf ein Projekt beschränken (z.B. "P0062"). Default: alle Projekte.',
+            },
+          },
+          required: ['query'],
+        },
+      }] : []),
     ],
-  }));
+  };
+  });
 
   // ─── Tool Handler ────────────────────────────────────
 
@@ -1733,6 +1802,20 @@ export async function startServer(): Promise<void> {
           }
           return {
             content: [{ type: 'text', text: JSON.stringify(results, null, 2) }],
+          };
+        }
+
+        case 'tim_remember': {
+          const parsed = TimRememberSchema.safeParse(args);
+          if (!parsed.success) {
+            return {
+              content: [{ type: 'text', text: `Validation error: ${parsed.error.message}` }],
+              isError: true,
+            };
+          }
+          const result = await handleTimRemember(s, parsed.data);
+          return {
+            content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
           };
         }
 

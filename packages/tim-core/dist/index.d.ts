@@ -182,10 +182,25 @@ export interface TimConfig {
         sessions_threshold?: number;
     };
     batch_size?: number;
+    remember?: {
+        enabled?: boolean;
+        chain?: Array<{
+            cli: string;
+            model: string;
+            provider?: string;
+        }>;
+        timeout_sec?: number;
+        hard_timeout_ms?: number;
+        maxCandidates?: number;
+        topK?: number;
+        minConfidence?: number;
+        includeBatchSummaries?: boolean;
+        searchType?: 'fts';
+    };
 }
 export { type ProjectMetadata, type ResolveProjectResult, type SectionCandidate, type ResolveSectionResult, } from './project.js';
 export { InProcessEventBus } from './event-bus.js';
-export { loadConfig, saveConfig, getConfigPath, getTimDir, normalizeHookScripts, hooksEnabled, type HooksConfig, type TimConfigFile, } from './config.js';
+export { loadConfig, saveConfig, getConfigPath, getTimDir, normalizeHookScripts, hooksEnabled, type HooksConfig, type RememberConfig, type TimConfigFile, } from './config.js';
 export { readTimSessionCache, resolveActiveSessionId, timSessionCachePath, type TimSessionCache, } from './session-cache.js';
 export { evaluateLoadGate } from './load-gate.js';
 //# sourceMappingURL=index.d.ts.map

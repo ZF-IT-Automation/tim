@@ -279,6 +279,17 @@ export interface TimConfig {
     sessions_threshold?: number;
   };
   batch_size?: number;
+  remember?: {
+    enabled?: boolean;
+    chain?: Array<{ cli: string; model: string; provider?: string }>;
+    timeout_sec?: number;
+    hard_timeout_ms?: number;
+    maxCandidates?: number;
+    topK?: number;
+    minConfidence?: number;
+    includeBatchSummaries?: boolean;
+    searchType?: 'fts';
+  };
 }
 
 export {
@@ -296,6 +307,7 @@ export {
   normalizeHookScripts,
   hooksEnabled,
   type HooksConfig,
+  type RememberConfig,
   type TimConfigFile,
 } from './config.js';
 export {

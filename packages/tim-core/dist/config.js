@@ -42,6 +42,11 @@ exports.hooksEnabled = hooksEnabled;
 const fs = __importStar(require("fs"));
 const os = __importStar(require("os"));
 const path = __importStar(require("path"));
+const DEFAULT_REMEMBER_CHAIN = [
+    { cli: 'opencode', model: 'claude-3-5-haiku', provider: 'anthropic' },
+    { cli: 'opencode', model: 'deepseek-v4-pro', provider: 'deepseek' },
+    { cli: 'opencode', model: 'kimi', provider: 'moonshot' },
+];
 const DEFAULT_CONFIG = {
     dbPath: path.join(os.homedir(), '.tim', 'tim.db'),
     deviceId: '',
@@ -52,6 +57,17 @@ const DEFAULT_CONFIG = {
     batch_size: 5,
     projectSummary: {
         sessions_threshold: 5,
+    },
+    remember: {
+        enabled: true,
+        chain: DEFAULT_REMEMBER_CHAIN,
+        timeout_sec: 5,
+        hard_timeout_ms: 8000,
+        maxCandidates: 30,
+        topK: 5,
+        minConfidence: 0.3,
+        includeBatchSummaries: true,
+        searchType: 'fts',
     },
 };
 function getTimDir() {
@@ -73,6 +89,11 @@ function loadConfig() {
             hooks: {
                 ...DEFAULT_CONFIG.hooks,
                 ...raw.hooks,
+            },
+            remember: {
+                ...DEFAULT_CONFIG.remember,
+                ...raw.remember,
+                chain: raw.remember?.chain ?? DEFAULT_CONFIG.remember?.chain,
             },
         };
     }

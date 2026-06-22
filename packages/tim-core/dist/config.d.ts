@@ -5,8 +5,24 @@ export interface HooksConfig {
     enabled?: boolean;
     timeoutMs?: number;
 }
+export interface RememberConfig {
+    enabled?: boolean;
+    chain?: Array<{
+        cli: string;
+        model: string;
+        provider?: string;
+    }>;
+    timeout_sec?: number;
+    hard_timeout_ms?: number;
+    maxCandidates?: number;
+    topK?: number;
+    minConfidence?: number;
+    includeBatchSummaries?: boolean;
+    searchType?: 'fts';
+}
 export interface TimConfigFile extends TimConfig {
     hooks?: HooksConfig;
+    remember?: RememberConfig;
 }
 export declare function getTimDir(): string;
 export declare function getConfigPath(): string;

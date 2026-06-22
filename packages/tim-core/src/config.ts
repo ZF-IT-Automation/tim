@@ -10,9 +10,28 @@ export interface HooksConfig {
   timeoutMs?: number;
 }
 
+export interface RememberConfig {
+  enabled?: boolean;
+  chain?: Array<{ cli: string; model: string; provider?: string }>;
+  timeout_sec?: number;
+  hard_timeout_ms?: number;
+  maxCandidates?: number;
+  topK?: number;
+  minConfidence?: number;
+  includeBatchSummaries?: boolean;
+  searchType?: 'fts';
+}
+
 export interface TimConfigFile extends TimConfig {
   hooks?: HooksConfig;
+  remember?: RememberConfig;
 }
+
+const DEFAULT_REMEMBER_CHAIN: NonNullable<RememberConfig['chain']> = [
+  { cli: 'opencode', model: 'claude-3-5-haiku', provider: 'anthropic' },
+  { cli: 'opencode', model: 'deepseek-v4-pro', provider: 'deepseek' },
+  { cli: 'opencode', model: 'kimi', provider: 'moonshot' },
+];
 
 const DEFAULT_CONFIG: TimConfigFile = {
   dbPath: path.join(os.homedir(), '.tim', 'tim.db'),
@@ -24,6 +43,17 @@ const DEFAULT_CONFIG: TimConfigFile = {
   batch_size: 5,
   projectSummary: {
     sessions_threshold: 5,
+  },
+  remember: {
+    enabled: true,
+    chain: DEFAULT_REMEMBER_CHAIN,
+    timeout_sec: 5,
+    hard_timeout_ms: 8000,
+    maxCandidates: 30,
+    topK: 5,
+    minConfidence: 0.3,
+    includeBatchSummaries: true,
+    searchType: 'fts',
   },
 };
 
@@ -49,6 +79,11 @@ export function loadConfig(): TimConfigFile {
       hooks: {
         ...DEFAULT_CONFIG.hooks,
         ...raw.hooks,
+      },
+      remember: {
+        ...DEFAULT_CONFIG.remember,
+        ...raw.remember,
+        chain: raw.remember?.chain ?? DEFAULT_CONFIG.remember?.chain,
       },
     };
   } catch {
