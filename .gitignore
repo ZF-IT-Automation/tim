@@ -13,3 +13,6 @@ node_modules/
 AGENTS.md
 CLAUDE.md
 tmp/
+
+# Vitest cache (runtime, not source)
+**/node_modules/.vite/
