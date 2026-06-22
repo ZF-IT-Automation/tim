@@ -388,23 +388,38 @@ export async function handleTimRemember(
     topK: opts.topK,
   };
 
+  const rerankStart = Date.now();
   const rerankResult = await rememberDeps.spawnRememberSubprocess(rerankInput, hardTimeoutMs);
+  const rerankMs = Date.now() - rerankStart;
+  if (rerankMs < 100) {
+    auditParts.push('suspiciously_fast=true');
+  }
 
-  if (rerankResult.fallback !== 'none' || !rerankResult.ranked) {
+  const needsFtsFallback =
+    rerankResult.fallback !== 'none' ||
+    !rerankResult.ranked ||
+    rerankResult.ranked.length === 0;
+
+  if (needsFtsFallback) {
+    const effectiveRerank: RerankResult =
+      rerankResult.fallback !== 'none'
+        ? rerankResult
+        : { ...rerankResult, fallback: 'all_chain_failed', ranked: null };
     appendRememberLog(
-      `fallback=${rerankResult.fallback} query="${opts.query.slice(0, 80)}" ${auditParts.join(' ')} latency_ms=${Date.now() - startTime}`,
+      `fallback=${effectiveRerank.fallback} query="${opts.query.slice(0, 80)}" ${auditParts.join(' ')} latency_ms=${Date.now() - startTime}`,
     );
     return buildFtsFallbackResult(
       opts,
       deduped,
       startTime,
-      rerankResult,
+      effectiveRerank,
       candidatesMap,
       deduped.length,
     );
   }
 
-  const schemaValid = filterValidRanked(rerankResult.ranked);
+  const ranked = rerankResult.ranked!;
+  const schemaValid = filterValidRanked(ranked);
   const rankedIds = schemaValid.map((item) => item.node_id);
   const existingIds = await store.entryExistsBatch(rankedIds);
   const verified = schemaValid.filter((item) => existingIds.has(item.node_id));
