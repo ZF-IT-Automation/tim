@@ -16,6 +16,7 @@
     "packages/tim-summarizer"
   ],
   "scripts": {
+    "prepare": "rm -rf packages/*/tsconfig.tsbuildinfo && npm run build",
     "build": "tsc -b",
     "test": "vitest run",
     "lint": "tsc --noEmit",

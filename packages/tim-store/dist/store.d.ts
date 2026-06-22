@@ -119,6 +119,18 @@ export declare class TimStore implements MemoryInterface {
     }): Promise<Entry[]>;
     /** Get all entries with a given metadata.kind value (no parent filter). */
     getByMetadataKind(kind: string, limit?: number): Promise<Entry[]>;
+    /** Return which of the given entry IDs exist in the DB (single IN-query). */
+    entryExistsBatch(ids: string[]): Promise<Set<string>>;
+    /**
+     * Recent batch-summary nodes (kind=batch-summary under session Summary trees).
+     * Used by tim_remember for recency context.
+     */
+    getRecentBatchSummaries(options?: {
+        limit?: number;
+        maxAgeDays?: number;
+        sessionId?: string;
+        root?: string;
+    }): Promise<Entry[]>;
     getChildByKind(parentId: string, kind: string): Promise<Entry[]>;
     getChildrenBySeq(parentId: string): Promise<Entry[]>;
     /**
