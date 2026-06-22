@@ -40,11 +40,33 @@ if [[ -z "$cwd" ]]; then
   cwd=$(pwd)
 fi
 
+# Extract session_id from payload (for marker rotation, Fix F)
+hook_session=$(printf '%s' "$payload" | jq -r '.session_id // empty' 2>/dev/null || true)
+
 # --- Resolve project marker ---
 directive=$(node "$TIM_CLI" resolve-project --walk-up --cwd "$cwd" --format directive 2>/dev/null || true)
 if [[ -z "$directive" ]]; then
   # No .tim-project marker found — silent skip (exit 0)
   exit 0
+fi
+
+# ── Session rotation: update .tim-project with current session ──
+# Prevents stale cron session IDs from persisting in the marker (PITFALLS-46).
+if [[ -n "$hook_session" ]]; then
+  node -e "
+    const fs = require('fs');
+    const path = require('path');
+    const p = path.join('$cwd', '.tim-project');
+    if (fs.existsSync(p)) {
+      try {
+        const m = JSON.parse(fs.readFileSync(p,'utf8'));
+        if (m.session !== '$hook_session') {
+          m.session = '$hook_session';
+          fs.writeFileSync(p, JSON.stringify(m, null, 2));
+        }
+      } catch(e) {}
+    }
+  " 2>/dev/null || true
 fi
 
 # --- Detect harness and format output ---
@@ -63,11 +85,11 @@ if printf '%s' "$payload" | jq -e '(.conversation_id // empty) or (.additional_c
     '{additional_context: $ctx}'
 fi
 
-# Codex sends payload with .session_id but NOT .hookSpecificOutput or .conversation_id
+# Hermes / Codex — payload has .session_id but NOT .hookSpecificOutput or .conversation_id
 if printf '%s' "$payload" | jq -e '.session_id // empty' >/dev/null 2>&1; then
-  # Codex format — plain text is auto-injected as extra developer context
-  printf '%s\n' "$directive"
-  exit 0
+  # Hermes expects JSON context (PITFALLS-45: plain-text broke session binding)
+  exec jq -n --arg ctx "$directive" \
+    '{context: $ctx}'
 fi
 
 # Fallback: no recognizable payload (empty stdin) — emit Cursor-safe JSON
