@@ -31,7 +31,7 @@ describe('sanitizeFtsQuery (BUG 1)', () => {
     expect(sanitizeFtsQuery('kind:summary')).toBe('kind summary');
     expect(sanitizeFtsQuery('a:1')).toBe('a 1');
     // tag:#important → colon becomes space, # is allowed in tokens, FTS5 tokenizes it as 'tag' + 'important'
-    expect(sanitizeFtsQuery('tag:#important')).toBe('tag #important');
+    expect(sanitizeFtsQuery('tag:#important')).toBe('tag important');
   });
 
   it('strips special chars that break FTS5 tokenization', () => {
@@ -42,6 +42,22 @@ describe('sanitizeFtsQuery (BUG 1)', () => {
     expect(sanitizeFtsQuery('foo^bar')).toBe('foo bar');
     // Apostrophe stripped → "don" and "t" (space-separated, both safe tokens)
     expect(sanitizeFtsQuery("don't")).toBe('don t');
+  });
+
+  it('strips hyphen (prevents FTS5 column:value misinterpretation)', () => {
+    // Hyphen in "post-mortem" → FTS5 splits at hyphen, interprets "mortem" as column
+    // Fix: replace hyphen with space → "post mortem"
+    expect(sanitizeFtsQuery('post-mortem')).toBe('post mortem');
+    expect(sanitizeFtsQuery('2026-06')).toBe('2026 06');
+    expect(sanitizeFtsQuery('foo-bar-baz')).toBe('foo bar baz');
+  });
+
+  it('strips # prefix (prevents FTS5 syntax error)', () => {
+    // # is an FTS5 syntax character in unicode61 tokenizer
+    // Fix: replace # with space → tags become plain words
+    expect(sanitizeFtsQuery('#error')).toBe('error');
+    expect(sanitizeFtsQuery('#error #bug')).toBe('error bug');
+    expect(sanitizeFtsQuery('tag:#important')).toBe('tag important');
   });
 
   it('handles empty / whitespace-only / operator-only inputs', () => {
