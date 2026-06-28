@@ -54,8 +54,8 @@ export function sanitizeFtsQuery(query: string): string {
     }
     return col + ' '; // "kind:summary" → "kind summary" (split, don't drop)
   });
-  // Step 2: drop chars that confuse FTS5 tokenization: " ' ( ) * ^
-  s = s.replace(/["'*()^]/g, ' ');
+  // Step 2: drop chars that confuse FTS5 tokenization: " ' ( ) * ^ # -
+  s = s.replace(/["'*()^#-]/g, ' ');
   // Step 3: split, drop operator words, trim.
   const tokens = s
     .split(/\s+/)
