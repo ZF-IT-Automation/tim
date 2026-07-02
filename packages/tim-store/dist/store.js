@@ -54,7 +54,7 @@ function sanitizeFtsQuery(query) {
         return col + ' '; // "kind:summary" → "kind summary" (split, don't drop)
     });
     // Step 2: drop chars that confuse FTS5 tokenization: " ' ( ) * ^ # -
-    s = s.replace(/["'*()^#-]/g, ' ');
+    s = s.replace(/["'*()^#~\/-]/g, ' ');
     // Step 3: split, drop operator words, trim.
     const tokens = s
         .split(/\s+/)
@@ -1013,6 +1013,52 @@ class TimStore {
             timestamp: now,
         });
     }
+    /** Hard/soft delete multiple ids in one transaction; skips missing or tombstoned ids. */
+    async deleteBatch(ids, hard = true) {
+        const uniqueIds = [...new Set(ids)];
+        const deletedRows = this.db.transaction(() => {
+            const rows = [];
+            for (const id of uniqueIds) {
+                const existing = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(id);
+                if (!existing || existing.tombstoned_at)
+                    continue;
+                this.deleteEntrySync(existing, hard);
+                rows.push(existing);
+            }
+            return rows;
+        })();
+        const now = new Date().toISOString();
+        for (const existing of deletedRows) {
+            this.emit('memory:deleted', {
+                entry: rowToEntry(existing),
+                agentId: this.agentId,
+                timestamp: now,
+            });
+        }
+        return deletedRows.length;
+    }
+    deleteEntrySync(existing, hard) {
+        const now = new Date().toISOString();
+        if (hard) {
+            this.db.prepare('UPDATE entries SET tombstoned_at = ? WHERE id = ?').run(now, existing.id);
+            this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
+        lww_timestamp, lww_device, lww_confidence)
+        VALUES (?, 'entry', 'delete', ?, ?, ?, ?)`).run(existing.id, JSON.stringify({ id: existing.id, tombstoned_at: now }), Date.now(), 'local', 1.0);
+        }
+        else {
+            const timestamp = Date.now();
+            const updated = {
+                ...existing,
+                irrelevant: 1,
+                accessed_at: now,
+                updated_at: now,
+            };
+            this.db.prepare('UPDATE entries SET irrelevant = 1, accessed_at = ?, updated_at = ? WHERE id = ?').run(now, now, existing.id);
+            this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
+        lww_timestamp, lww_device, lww_confidence)
+        VALUES (?, 'entry', 'upsert', ?, ?, ?, ?)`).run(existing.id, JSON.stringify(updated), timestamp, 'local', updated.confidence);
+        }
+    }
     // ─── Search ────────────────────────────────────────────
     async search(options) {
         const topK = options.topK ?? 10;
@@ -1355,6 +1401,84 @@ class TimStore {
         const thirtyDaysAgo = new Date(Date.now() - 30 * 86400_000).toISOString();
         const stale = this.db.prepare('SELECT COUNT(*) as c FROM entries WHERE irrelevant = 0 AND accessed_at < ?').get(thirtyDaysAgo).c;
         return { totalEntries, totalEdges, entriesByDepth, entriesByType, topTags, avgConfidence: avgConf, oldestEntry: oldest, newestEntry: newest, staleCount: stale };
+    }
+    async getContentStats(root, kind, buckets = [0, 100, 500, 1000, 5000, 10000, 50000]) {
+        const empty = {
+            totalEntries: 0,
+            totalContentBytes: 0,
+            avgContentChars: 0,
+            maxContentChars: 0,
+            minContentChars: 0,
+            buckets: [],
+            byKind: [],
+        };
+        let scopeSql = '';
+        const scopeParams = [];
+        if (root) {
+            const resolved = await this.resolveProjectLabel(root);
+            if (resolved.status !== 'found')
+                return empty;
+            const project = await this.read(resolved.label);
+            if (!project)
+                return empty;
+            scopeSql = ` AND e.id IN (
+        WITH RECURSIVE tree(id) AS (
+          SELECT id FROM entries WHERE id = ?
+          UNION ALL
+          SELECT c.id FROM entries c
+          INNER JOIN tree t ON c.parent_id = t.id
+          WHERE c.tombstoned_at IS NULL
+        )
+        SELECT id FROM tree
+      )`;
+            scopeParams.push(project.id);
+        }
+        const kindSql = kind ? ` AND json_extract(e.metadata, '$.kind') = ?` : '';
+        const kindParams = kind ? [kind] : [];
+        const baseWhere = `
+      FROM entries e
+      WHERE e.irrelevant = 0
+        AND e.tombstoned_at IS NULL
+        ${scopeSql}
+        ${kindSql}
+    `;
+        const agg = this.db.prepare(`
+      SELECT
+        COUNT(*) AS totalEntries,
+        COALESCE(SUM(LENGTH(e.content)), 0) AS totalContentBytes,
+        COALESCE(AVG(LENGTH(e.content)), 0) AS avgContentChars,
+        COALESCE(MAX(LENGTH(e.content)), 0) AS maxContentChars,
+        COALESCE(MIN(LENGTH(e.content)), 0) AS minContentChars
+      ${baseWhere}
+    `).get(...scopeParams, ...kindParams);
+        if (agg.totalEntries === 0)
+            return empty;
+        const bucketRows = buckets.map(threshold => {
+            const row = this.db.prepare(`
+        SELECT COUNT(*) AS c
+        ${baseWhere}
+          AND LENGTH(e.content) <= ?
+      `).get(...scopeParams, ...kindParams, threshold);
+            return { threshold: String(threshold), count: row.c };
+        });
+        const byKindRows = this.db.prepare(`
+      SELECT
+        COALESCE(json_extract(e.metadata, '$.kind'), '') AS kind,
+        COUNT(*) AS count,
+        COALESCE(SUM(LENGTH(e.content)), 0) AS totalBytes
+      ${baseWhere}
+      GROUP BY kind
+      ORDER BY count DESC, kind ASC
+    `).all(...scopeParams, ...kindParams);
+        return {
+            totalEntries: agg.totalEntries,
+            totalContentBytes: agg.totalContentBytes,
+            avgContentChars: agg.avgContentChars,
+            maxContentChars: agg.maxContentChars,
+            minContentChars: agg.minContentChars,
+            buckets: bucketRows,
+            byKind: byKindRows,
+        };
     }
     // ─── Suppression ───────────────────────────────────────
     async suppress(pattern, reason, ttl) {
