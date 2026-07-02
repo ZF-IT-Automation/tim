@@ -57,18 +57,21 @@ describe('session-summary rollup via MCP', () => {
     expect(close).toHaveBeenCalled();
   });
 
-  it('no rollup when written=0', async () => {
+  it('rollup is called even when written=0 (orphaned-batch coverage)', async () => {
     const close = vi.fn();
     vi.spyOn(mcpClient, 'connectTimMcp').mockResolvedValue({ close } as never);
-    vi.spyOn(mcpClient, 'callTimTool').mockResolvedValueOnce(emptyBatch);
+    vi.spyOn(mcpClient, 'callTimTool')
+      .mockResolvedValueOnce(emptyBatch)
+      .mockResolvedValueOnce({ id: 'summary-root', content: 'rolled up' });
 
     const count = await runSummarizerLoop('sess-rollup');
     expect(count).toBe(0);
-    expect(mcpClient.callTimTool).not.toHaveBeenCalledWith(
+    expect(mcpClient.callTimTool).toHaveBeenCalledWith(
       expect.anything(),
       'tim_rollup_session_summary',
-      expect.anything(),
+      { sessionId: 'sess-rollup' },
     );
+    expect(close).toHaveBeenCalled();
   });
 
   it('rollup with multiple batches', async () => {

@@ -25,6 +25,18 @@ export function ackStaging(db: Database.Database, keys: string[]): void {
   db.prepare(`UPDATE staging SET acked = 1 WHERE key IN (${placeholders})`).run(...keys);
 }
 
+export function entryLocalLwwTimestamp(row: {
+  updated_at?: string;
+  created_at: string;
+}): number {
+  return Date.parse(String(row.updated_at ?? row.created_at));
+}
+
+export function edgeLocalLwwTimestamp(row: { updated_at?: string }): number {
+  if (row.updated_at) return Date.parse(row.updated_at);
+  return 0;
+}
+
 export function recordFromPayload(
   key: string,
   entityType: 'entry' | 'edge',
@@ -79,7 +91,7 @@ export function applyRemoteEntry(
       'entry',
       existing.tombstoned_at ? 'delete' : 'upsert',
       JSON.stringify(existing),
-      Date.parse(String(existing.accessed_at ?? existing.created_at)),
+      entryLocalLwwTimestamp(existing as { updated_at?: string; created_at: string }),
       'local',
       Number(existing.confidence ?? 1),
     );
@@ -118,10 +130,11 @@ export function applyRemoteEntry(
 
   const coercedMetadata = JSON.stringify(parseAndCoerceMetadata(entry.metadata));
 
+  const updatedAt = new Date(lwwTimestamp).toISOString();
   db.prepare(`INSERT OR REPLACE INTO entries
     (id, parent_id, title, content, content_type, depth, confidence, created_at,
-     accessed_at, decay_rate, visibility, tags, irrelevant, favorite, tombstoned_at, metadata)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+     accessed_at, updated_at, decay_rate, visibility, tags, irrelevant, favorite, tombstoned_at, metadata)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
     entry.id,
     entry.parent_id ?? null,
     entry.title ?? '',
@@ -131,6 +144,7 @@ export function applyRemoteEntry(
     entry.confidence,
     entry.created_at,
     entry.accessed_at,
+    updatedAt,
     entry.decay_rate,
     entry.visibility,
     entry.tags,
@@ -183,7 +197,7 @@ export function applyRemoteEdge(
       'edge',
       'upsert',
       JSON.stringify(existing),
-      lwwTimestamp,
+      edgeLocalLwwTimestamp(existing as { updated_at?: string }),
       'local',
     );
     const { winner } = resolveLWW(local, remote);
@@ -197,14 +211,16 @@ export function applyRemoteEdge(
     return true;
   }
 
-  db.prepare(`INSERT OR REPLACE INTO edges (id, source_id, target_id, type, weight, metadata)
-    VALUES (?, ?, ?, ?, ?, ?)`).run(
+  const updatedAt = new Date(lwwTimestamp).toISOString();
+  db.prepare(`INSERT OR REPLACE INTO edges (id, source_id, target_id, type, weight, metadata, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
     edge.id,
     edge.source_id,
     edge.target_id,
     edge.type,
     edge.weight,
     edge.metadata,
+    updatedAt,
   );
   return true;
 }

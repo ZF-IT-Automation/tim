@@ -29,9 +29,13 @@ function getEntry(db, id) {
     return db.prepare('SELECT * FROM entries WHERE id = ?').get(id);
 }
 function stageEntry(db, row, device = 'local') {
+    const now = new Date().toISOString();
+    const ts = Date.now();
+    db.prepare('UPDATE entries SET updated_at = ? WHERE id = ?').run(now, row.id);
+    const staged = { ...row, updated_at: now };
     db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
     lww_timestamp, lww_device, lww_confidence)
-    VALUES (?, 'entry', 'upsert', ?, ?, ?, ?)`).run(row.id, JSON.stringify(row), Date.now(), device, row.confidence);
+    VALUES (?, 'entry', 'upsert', ?, ?, ?, ?)`).run(row.id, JSON.stringify(staged), ts, device, row.confidence);
 }
 function stageEntries(db, ids) {
     const seen = new Set();
@@ -70,10 +74,10 @@ class CurateManager {
             // Insert copy under newId so FK targets exist before repointing references
             this.db.prepare(`
         INSERT INTO entries (id, parent_id, title, content, content_type, depth, confidence,
-          created_at, accessed_at, decay_rate, visibility, tags, irrelevant, favorite,
+          created_at, accessed_at, updated_at, decay_rate, visibility, tags, irrelevant, favorite,
           tombstoned_at, metadata)
         SELECT ?, parent_id, title, content, content_type, depth, confidence,
-          created_at, accessed_at, decay_rate, visibility, tags, irrelevant, favorite,
+          created_at, accessed_at, updated_at, decay_rate, visibility, tags, irrelevant, favorite,
           tombstoned_at, metadata
         FROM entries WHERE id = ?
       `).run(newId, oldId);

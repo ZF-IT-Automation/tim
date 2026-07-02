@@ -375,22 +375,67 @@ export class SessionManager {
       : DEFAULT_BATCH_SIZE;
 
     const { batchesSummarized } = await deriveCounters(this.store, sessionId);
-    const batchIndex = batchesSummarized + 1;
 
-    const exchangeBatches = await this.store.getChildByKind(exNode.id, KIND_EXCHANGE_BATCH);
+    const exchangeBatches = (await this.store.getChildByKind(exNode.id, KIND_EXCHANGE_BATCH))
+      .sort((a, b) => Number(a.metadata.batch_index) - Number(b.metadata.batch_index));
+    const summaryBatches = await this.store.getChildByKind(summaryNode.id, KIND_BATCH);
+    const summaryByIndex = new Map(
+      summaryBatches.map(s => [Number(s.metadata.batch_index), s]),
+    );
+
+    const batchHasUncovered = async (batchNode: Entry): Promise<boolean> => {
+      const batchIdx = Number(batchNode.metadata.batch_index);
+      const summary = summaryByIndex.get(batchIdx);
+      const users = (await this.store.getChildrenBySeq(batchNode.id)).filter(
+        u => u.metadata.role === 'user',
+      );
+      if (users.length === 0) return false;
+      if (!summary) return true;
+      const maxSeq = Math.max(...users.map(u => Number(u.metadata.seq)));
+      return maxSeq > Number(summary.metadata.seq_to);
+    };
+
+    let targetBatchIndex: number | null = null;
+    let seqFloor = 0;
+    for (const batchNode of exchangeBatches) {
+      const batchIdx = Number(batchNode.metadata.batch_index);
+      const summary = summaryByIndex.get(batchIdx);
+      const users = (await this.store.getChildrenBySeq(batchNode.id)).filter(
+        u => u.metadata.role === 'user',
+      );
+      if (users.length === 0) continue;
+      if (!summary) {
+        targetBatchIndex = batchIdx;
+        seqFloor = 0;
+        break;
+      }
+      const maxSeq = Math.max(...users.map(u => Number(u.metadata.seq)));
+      const seqTo = Number(summary.metadata.seq_to);
+      if (maxSeq > seqTo) {
+        targetBatchIndex = batchIdx;
+        seqFloor = seqTo;
+        break;
+      }
+    }
+
+    const batchIndex = targetBatchIndex ?? batchesSummarized + 1;
     const batchNode =
-      exchangeBatches.find(b => b.metadata.batch_index === batchIndex) ?? null;
+      (targetBatchIndex != null
+        ? exchangeBatches.find(b => b.metadata.batch_index === targetBatchIndex)
+        : exchangeBatches.find(b => b.metadata.batch_index === batchIndex)) ?? null;
 
     const exchanges: UnsummarizedExchange[] = [];
-    if (batchNode) {
+    if (batchNode && targetBatchIndex != null) {
       const users = (await this.store.getChildrenBySeq(batchNode.id)).filter(
         u => u.metadata.role === 'user',
       );
       for (const u of users) {
+        const seq = Number(u.metadata.seq);
+        if (seq <= seqFloor) continue;
         const replies = await this.store.getChildren(u.id);
         const agent = replies.find(r => r.metadata.role === 'agent') ?? null;
         exchanges.push({
-          seq: Number(u.metadata.seq),
+          seq,
           userId: u.id,
           userContent: u.content || u.title,
           agentId: agent?.id ?? null,
@@ -399,9 +444,13 @@ export class SessionManager {
       }
     }
 
-    const hasMore = exchangeBatches.some(
-      b => b.metadata.batch_index === batchIndex + 1,
-    );
+    const hasMore = await (async () => {
+      for (const b of exchangeBatches) {
+        if (Number(b.metadata.batch_index) <= batchIndex) continue;
+        if (await batchHasUncovered(b)) return true;
+      }
+      return false;
+    })();
 
     const previousSummaries: string[] = [];
     if (summaryNode) {
@@ -445,7 +494,42 @@ export class SessionManager {
 
     const existing = (await this.store.getChildByKind(summaryNode.id, KIND_BATCH))
       .find(b => b.metadata.batch_index === batchIndex);
-    if (existing) return existing;
+    if (existing) {
+      const existingSeqFrom = Number(existing.metadata.seq_from);
+      const existingSeqTo = Number(existing.metadata.seq_to);
+      const rangeCovered =
+        range.seqFrom >= existingSeqFrom && range.seqTo <= existingSeqTo;
+      if (rangeCovered) return existing;
+
+      const mergedFrom = Math.min(existingSeqFrom, range.seqFrom);
+      const mergedTo = Math.max(existingSeqTo, range.seqTo);
+      const summarizedAt = new Date().toISOString();
+      const contentTags = tags ?? [];
+      const mergedTags = [
+        SESSION_SUMMARY_TAG,
+        BATCH_SUMMARY_TAG,
+        ...new Set([
+          ...(existing.tags ?? []).filter(t => !BATCH_STRUCTURAL_TAGS.has(t)),
+          ...contentTags,
+        ]),
+      ];
+      await this.store.update(existing.id, {
+        content: summaryText,
+        metadata: {
+          ...existing.metadata,
+          kind: KIND_BATCH,
+          batch_index: batchIndex,
+          seq_from: mergedFrom,
+          seq_to: mergedTo,
+          sessionId,
+          summarized_at: summarizedAt,
+        },
+        tags: mergedTags,
+      });
+      const updated = (await this.store.read(existing.id))!;
+      await this.aggregateSessionTags(sessionId);
+      return updated;
+    }
 
     const summarizedAt = new Date().toISOString();
     const contentTags = tags ?? [];

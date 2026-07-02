@@ -35,9 +35,13 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.createMcpServer = createMcpServer;
+exports.createHttpServer = createHttpServer;
 exports.startServer = startServer;
 const index_js_1 = require("@modelcontextprotocol/sdk/server/index.js");
 const stdio_js_1 = require("@modelcontextprotocol/sdk/server/stdio.js");
+const sse_js_1 = require("@modelcontextprotocol/sdk/server/sse.js");
+const express_js_1 = require("@modelcontextprotocol/sdk/server/express.js");
 const types_js_1 = require("@modelcontextprotocol/sdk/types.js");
 const zod_1 = require("zod");
 const tim_store_1 = require("tim-store");
@@ -50,6 +54,45 @@ const remember_handler_js_1 = require("./remember-handler.js");
 const fs = __importStar(require("fs"));
 const os = __importStar(require("os"));
 const path = __importStar(require("path"));
+/**
+ * Format a tool response payload to JSON.
+ * Uses compact format (no whitespace) for payloads over COMPACT_THRESHOLD bytes
+ * to reduce MCP transport overhead. Smaller payloads use pretty-print for readability.
+ */
+const COMPACT_THRESHOLD = 50_000; // 50KB — compact above this
+function formatToolResponse(payload) {
+    // Build compact first (cheap), then prettify only if small
+    const compact = JSON.stringify(payload);
+    if (compact.length <= COMPACT_THRESHOLD) {
+        return JSON.stringify(payload, null, 2);
+    }
+    return compact;
+}
+// ─── CLI ────────────────────────────────────────────────
+function parseCliArgs() {
+    const argv = process.argv.slice(2);
+    let http = false;
+    let port = Number.parseInt(process.env.TIM_MCP_PORT ?? '3847', 10);
+    let host = process.env.TIM_MCP_HOST ?? '127.0.0.1';
+    for (let i = 0; i < argv.length; i++) {
+        const arg = argv[i];
+        if (arg === '--http') {
+            http = true;
+        }
+        else if (arg === '--port') {
+            const next = argv[++i];
+            if (next)
+                port = Number.parseInt(next, 10);
+        }
+        else if (arg === '--host') {
+            const next = argv[++i];
+            if (next)
+                host = next;
+        }
+    }
+    return { http, port, host };
+}
+const CLI = parseCliArgs();
 // ─── Tool Schemas ───────────────────────────────────────
 const TimReadSchema = zod_1.z.object({
     id: zod_1.z.union([zod_1.z.string(), zod_1.z.array(zod_1.z.string())]).optional()
@@ -688,28 +731,35 @@ async function buildCortexReadyBlock(store, session) {
 }
 // ─── MCP Server Setup ───────────────────────────────────
 const DB_PATH = process.env.TIM_DB_PATH || (0, tim_core_1.loadConfig)().dbPath || process.env.HOME + '/.tim/tim.db';
-// Binary-write guard: refuse to start if DB is not a valid SQLite file.
-// Catches header corruption (e.g. accidental binary patch, OOM kill mid-write).
-// Escape hatch: HERMES_SKIP_DB_GUARD=1 bypasses the check.
-if (!process.env.HERMES_SKIP_DB_GUARD && fs.existsSync(DB_PATH)) {
-    try {
-        const fd = fs.openSync(DB_PATH, 'r');
-        const header = Buffer.alloc(16);
-        fs.readSync(fd, header, 0, 16, 0);
-        fs.closeSync(fd);
-        if (header.toString('utf8', 0, 15) !== 'SQLite format 3') {
-            const msg = `FATAL: ${DB_PATH} is not a valid SQLite database (header corruption).\n` +
-                `This can happen from accidental binary edits, disk-full mid-write, or OOM kills.\n` +
-                `To recover: run \'tim restore --list\' to see available snapshots, then \'tim restore\'.\n` +
-                `If you are certain the file is valid, set HERMES_SKIP_DB_GUARD=1 to bypass this check.`;
-            console.error(msg);
-            process.exit(1);
+// ─── DB concurrency (no global PID lockfile) ───────────
+// Multiple tim-mcp processes may share one DB safely:
+// - SQLite WAL mode: one writer, many readers; journal not blocked across readers
+// - tim-store sets synchronous=FULL and busy_timeout for write coordination
+// - systemd --user unit runs the single long-lived HTTP daemon (singleton)
+// - HTTP/SSE transport (7a733c5) is the cross-process path; stdio is for
+//   in-process embedding (e.g. tests, tim-summarizer child processes)
+if (!CLI.http) {
+    // Binary-write guard: refuse to start if DB is not a valid SQLite file.
+    if (!process.env.HERMES_SKIP_DB_GUARD && fs.existsSync(DB_PATH)) {
+        try {
+            const fd = fs.openSync(DB_PATH, 'r');
+            const header = Buffer.alloc(16);
+            fs.readSync(fd, header, 0, 16, 0);
+            fs.closeSync(fd);
+            if (header.toString('utf8', 0, 15) !== 'SQLite format 3') {
+                const msg = `FATAL: ${DB_PATH} is not a valid SQLite database (header corruption).\n` +
+                    `This can happen from accidental binary edits, disk-full mid-write, or OOM kills.\n` +
+                    `To recover: run \'tim restore --list\' to see available snapshots, then \'tim restore\'.\n` +
+                    `If you are certain the file is valid, set HERMES_SKIP_DB_GUARD=1 to bypass this check.`;
+                console.error(msg);
+                process.exit(1);
+            }
         }
-    }
-    catch (e) {
-        console.error(`FATAL: cannot read DB header: ${e.message}`);
-        if (!process.env.HERMES_SKIP_DB_GUARD)
-            process.exit(1);
+        catch (e) {
+            console.error(`FATAL: cannot read DB header: ${e.message}`);
+            if (!process.env.HERMES_SKIP_DB_GUARD)
+                process.exit(1);
+        }
     }
 }
 let store;
@@ -774,7 +824,40 @@ function scheduleAutoSync(toolName, s) {
         void (0, tim_sync_client_1.autoPull)(s);
     }
 }
-async function startServer() {
+let processErrorGuardsInstalled = false;
+function installProcessErrorGuards() {
+    if (processErrorGuardsInstalled)
+        return;
+    processErrorGuardsInstalled = true;
+    process.on('unhandledRejection', (reason) => {
+        const err = reason instanceof Error ? reason : new Error(String(reason));
+        console.error('[tim-mcp] unhandledRejection:', err.stack ?? err.message);
+        try {
+            getErrorLogger().logError({
+                tool: 'mcp-server',
+                error: `unhandledRejection: ${err.message}`,
+                stack: err.stack,
+            });
+        }
+        catch {
+            // ErrorLogger itself failed — stay alive.
+        }
+    });
+    process.on('uncaughtException', (err) => {
+        console.error('[tim-mcp] uncaughtException:', err.stack ?? err.message);
+        try {
+            getErrorLogger().logError({
+                tool: 'mcp-server',
+                error: `uncaughtException: ${err.message}`,
+                stack: err.stack,
+            });
+        }
+        catch {
+            // Same as above.
+        }
+    });
+}
+async function createMcpServer() {
     const server = new index_js_1.Server({
         name: 'tim-mcp',
         version: '0.1.0-alpha',
@@ -1412,7 +1495,7 @@ async function startServer() {
                             entries.push(entry);
                         }
                         return {
-                            content: [{ type: 'text', text: JSON.stringify({ entries, missing }, null, 2) }],
+                            content: [{ type: 'text', text: formatToolResponse({ entries, missing }) }],
                         };
                     }
                     if (section) {
@@ -1474,7 +1557,7 @@ async function startServer() {
                         return {
                             content: [{
                                     type: 'text',
-                                    text: JSON.stringify({ section: sectionEntry, children }, null, 2),
+                                    text: formatToolResponse({ section: sectionEntry, children }),
                                 }],
                         };
                     }
@@ -1501,7 +1584,7 @@ async function startServer() {
                         }
                         const edges = includeEdges ? await s.getEdges(entry.id, 'both') : [];
                         return {
-                            content: [{ type: 'text', text: JSON.stringify({ entry, edges }, null, 2) }],
+                            content: [{ type: 'text', text: formatToolResponse({ entry, edges }) }],
                         };
                     }
                     if (typeof id === 'string') {
@@ -1537,7 +1620,7 @@ async function startServer() {
                         }
                         const edges = includeEdges ? await s.getEdges(id, 'both') : [];
                         return {
-                            content: [{ type: 'text', text: JSON.stringify({ entry, edges }, null, 2) }],
+                            content: [{ type: 'text', text: formatToolResponse({ entry, edges }) }],
                         };
                     }
                     return {
@@ -1639,14 +1722,14 @@ async function startServer() {
                     const tagsValidation = (0, write_validate_js_1.validateWriteTags)(writeOpts.tags, writeOpts.metadata);
                     if (!tagsValidation.ok) {
                         return {
-                            content: [{ type: 'text', text: JSON.stringify(tagsValidation, null, 2) }],
+                            content: [{ type: 'text', text: formatToolResponse(tagsValidation) }],
                             isError: true,
                         };
                     }
                     const entry = await s.write(opts.content, writeOpts);
                     const payload = tagWarnings.length > 0 ? { entry, warnings: tagWarnings } : entry;
                     return {
-                        content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }],
+                        content: [{ type: 'text', text: formatToolResponse(payload) }],
                     };
                 }
                 case 'tim_search': {
@@ -1677,7 +1760,7 @@ async function startServer() {
                         results = results.slice(0, topK);
                     }
                     return {
-                        content: [{ type: 'text', text: JSON.stringify(results, null, 2) }],
+                        content: [{ type: 'text', text: formatToolResponse(results) }],
                     };
                 }
                 case 'tim_remember': {
@@ -1697,14 +1780,14 @@ async function startServer() {
                     const { sourceId, targetId, type, weight, metadata } = TimLinkSchema.parse(args);
                     const edge = await s.link(sourceId, targetId, type, weight, metadata);
                     return {
-                        content: [{ type: 'text', text: JSON.stringify(edge, null, 2) }],
+                        content: [{ type: 'text', text: formatToolResponse(edge) }],
                     };
                 }
                 case 'tim_trace': {
                     const { startId, edgeType, depth } = TimTraceSchema.parse(args);
                     const chain = await s.traceChain(startId, edgeType, depth);
                     return {
-                        content: [{ type: 'text', text: JSON.stringify(chain, null, 2) }],
+                        content: [{ type: 'text', text: formatToolResponse(chain) }],
                     };
                 }
                 case 'tim_update': {
@@ -1716,19 +1799,19 @@ async function startServer() {
                         const entry = await s.update(id, patch);
                         const payload = tagWarnings.length > 0 ? { entry, warnings: tagWarnings } : entry;
                         return {
-                            content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }],
+                            content: [{ type: 'text', text: formatToolResponse(payload) }],
                         };
                     }
                     const entry = await s.update(id, patch);
                     return {
-                        content: [{ type: 'text', text: JSON.stringify(entry, null, 2) }],
+                        content: [{ type: 'text', text: formatToolResponse(entry) }],
                     };
                 }
                 case 'tim_rename_title': {
                     const { id, title } = TimRenameTitleSchema.parse(args);
                     const entry = await s.update(id, { title });
                     return {
-                        content: [{ type: 'text', text: JSON.stringify(entry, null, 2) }],
+                        content: [{ type: 'text', text: formatToolResponse(entry) }],
                     };
                 }
                 case 'tim_delete': {
@@ -1817,13 +1900,13 @@ async function startServer() {
                 case 'tim_health': {
                     const report = await s.health();
                     return {
-                        content: [{ type: 'text', text: JSON.stringify(report, null, 2) }],
+                        content: [{ type: 'text', text: formatToolResponse(report) }],
                     };
                 }
                 case 'tim_stats': {
                     const stats = await s.stats();
                     return {
-                        content: [{ type: 'text', text: JSON.stringify(stats, null, 2) }],
+                        content: [{ type: 'text', text: formatToolResponse(stats) }],
                     };
                 }
                 case 'tim_export': {
@@ -1836,7 +1919,7 @@ async function startServer() {
                     const outPath = targetPath ?? path.join(os.tmpdir(), `tim-export-${Date.now()}.hmem`);
                     const result = (0, tim_migrate_1.tim_export)(s, outPath, { format: 'hmem' });
                     return {
-                        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+                        content: [{ type: 'text', text: formatToolResponse(result) }],
                     };
                 }
                 case 'tim_import': {
@@ -1845,7 +1928,7 @@ async function startServer() {
                         return { content: [{ type: 'text', text: `Source not found: ${source}` }] };
                     }
                     const report = (0, tim_migrate_1.tim_import)(s, source, { dryRun, deduplicate });
-                    return { content: [{ type: 'text', text: JSON.stringify(report, null, 2) }] };
+                    return { content: [{ type: 'text', text: formatToolResponse(report) }] };
                 }
                 case 'tim_doctor': {
                     const report = await s.health();
@@ -1885,8 +1968,8 @@ async function startServer() {
                     });
                     const cortex = await buildCortexReadyBlock(s, entry);
                     const text = cortex
-                        ? `${cortex}\n\n${JSON.stringify(entry, null, 2)}`
-                        : JSON.stringify(entry, null, 2);
+                        ? `${cortex}\n\n${formatToolResponse(entry)}`
+                        : formatToolResponse(entry);
                     return {
                         content: [{ type: 'text', text }],
                     };
@@ -1899,26 +1982,26 @@ async function startServer() {
                         ? await getSessions().logExchange(sessionId, entries)
                         : await getSessions().sessionLog(sessionId, entries);
                     return {
-                        content: [{ type: 'text', text: JSON.stringify(written, null, 2) }],
+                        content: [{ type: 'text', text: formatToolResponse(written) }],
                     };
                 }
                 case 'tim_show_unsummarized': {
                     const { sessionId } = TimShowUnsummarizedSchema.parse(args);
                     const batch = await getSessions().showUnsummarized(sessionId);
                     return {
-                        content: [{ type: 'text', text: JSON.stringify(batch, null, 2) }],
+                        content: [{ type: 'text', text: formatToolResponse(batch) }],
                     };
                 }
                 case 'tim_show_all_unsummarized': {
                     const batches = await getSessions().showAllUnsummarized();
                     return {
-                        content: [{ type: 'text', text: JSON.stringify(batches, null, 2) }],
+                        content: [{ type: 'text', text: formatToolResponse(batches) }],
                     };
                 }
                 case 'tim_show_untagged': {
                     const untagged = await getSessions().showUntagged();
                     return {
-                        content: [{ type: 'text', text: JSON.stringify(untagged, null, 2) }],
+                        content: [{ type: 'text', text: formatToolResponse(untagged) }],
                     };
                 }
                 case 'tim_write_batch_summary': {
@@ -1928,49 +2011,49 @@ async function startServer() {
                         seqTo,
                     }, tags);
                     return {
-                        content: [{ type: 'text', text: JSON.stringify(node, null, 2) }],
+                        content: [{ type: 'text', text: formatToolResponse(node) }],
                     };
                 }
                 case 'tim_rollup_session_summary': {
                     const { sessionId } = TimRollupSessionSummarySchema.parse(args);
                     const node = await getSessions().rollUpSession(sessionId, async (batches) => (0, tim_store_1.foldBatchSummaries)(batches));
                     return {
-                        content: [{ type: 'text', text: JSON.stringify(node, null, 2) }],
+                        content: [{ type: 'text', text: formatToolResponse(node) }],
                     };
                 }
                 case 'tim_record_commit': {
                     const parsed = TimRecordCommitSchema.parse(args);
                     const entry = await getCommitManager().recordCommit(parsed);
                     return {
-                        content: [{ type: 'text', text: JSON.stringify(entry, null, 2) }],
+                        content: [{ type: 'text', text: formatToolResponse(entry) }],
                     };
                 }
                 case 'tim_checkpoint': {
                     const { sessionId } = TimCheckpointSchema.parse(args);
                     const summary = await getSessions().checkpoint(sessionId);
                     return {
-                        content: [{ type: 'text', text: JSON.stringify(summary, null, 2) }],
+                        content: [{ type: 'text', text: formatToolResponse(summary) }],
                     };
                 }
                 case 'tim_rename_entry': {
                     const { oldId, newId } = TimRenameEntrySchema.parse(args);
                     const entry = s.curate().renameEntry(oldId, newId);
                     return {
-                        content: [{ type: 'text', text: JSON.stringify(entry, null, 2) }],
+                        content: [{ type: 'text', text: formatToolResponse(entry) }],
                     };
                 }
                 case 'tim_move_entry': {
                     const { id, newParentId, order } = TimMoveEntrySchema.parse(args);
                     const entry = s.curate().moveEntry(id, newParentId, order);
                     return {
-                        content: [{ type: 'text', text: JSON.stringify(entry, null, 2) }],
+                        content: [{ type: 'text', text: formatToolResponse(entry) }],
                     };
                 }
                 case 'tim_update_many': {
                     const { ids, irrelevant, favorite } = TimUpdateManySchema.parse(args);
                     const entries = s.curate().updateMany(ids, { irrelevant, favorite });
                     return {
-                        content: [{ type: 'text', text: JSON.stringify(entries, null, 2) }],
+                        content: [{ type: 'text', text: formatToolResponse(entries) }],
                     };
                 }
                 case 'tim_tag_add': {
@@ -1988,35 +2071,35 @@ async function startServer() {
                         return {
                             content: [{
                                     type: 'text',
-                                    text: JSON.stringify({ entry: existing, warnings: tagWarnings }, null, 2),
+                                    text: formatToolResponse({ entry: existing, warnings: tagWarnings }),
                                 }],
                         };
                     }
                     const entry = s.curate().tagAdd(id, cleanTags);
                     const payload = tagWarnings.length > 0 ? { entry, warnings: tagWarnings } : entry;
                     return {
-                        content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }],
+                        content: [{ type: 'text', text: formatToolResponse(payload) }],
                     };
                 }
                 case 'tim_tag_remove': {
                     const { id, tags } = TimTagRemoveSchema.parse(args);
                     const entry = s.curate().tagRemove(id, tags);
                     return {
-                        content: [{ type: 'text', text: JSON.stringify(entry, null, 2) }],
+                        content: [{ type: 'text', text: formatToolResponse(entry) }],
                     };
                 }
                 case 'tim_tag_rename': {
                     const { oldTag, newTag } = TimTagRenameSchema.parse(args);
                     const count = s.curate().tagRename(oldTag, newTag);
                     return {
-                        content: [{ type: 'text', text: JSON.stringify({ oldTag, newTag, updatedCount: count }, null, 2) }],
+                        content: [{ type: 'text', text: formatToolResponse({ oldTag, newTag, updatedCount: count }) }],
                     };
                 }
                 case 'tim_create_project': {
                     const { label, metadata, content, aliases } = TimCreateProjectSchema.parse(args);
                     const entry = await s.createProject(label, { metadata, content, aliases });
                     return {
-                        content: [{ type: 'text', text: JSON.stringify(entry, null, 2) }],
+                        content: [{ type: 'text', text: formatToolResponse(entry) }],
                     };
                 }
                 case 'tim_load_project': {
@@ -2183,45 +2266,99 @@ async function startServer() {
             };
         }
     });
-    // ─── Start ────────────────────────────────────────────
-    // BUG 4: Global error guards — keep the stdio server alive when an
-    // async tool handler or fire-and-forget promise throws OUTSIDE the
-    // dispatcher try/catch. Without these, Node 24's default behavior is
-    // to crash the process on any unhandled rejection, killing the MCP
-    // server and triggering the client's auto-retry cooldown.
-    // We log to stderr + persist via ErrorLogger + stay alive.
-    process.on('unhandledRejection', (reason, promise) => {
-        const err = reason instanceof Error ? reason : new Error(String(reason));
-        console.error('[tim-mcp] unhandledRejection:', err.stack ?? err.message);
+    return server;
+}
+async function createHttpServer(options) {
+    const host = options?.host ?? CLI.host;
+    const port = options?.port ?? CLI.port;
+    const app = (0, express_js_1.createMcpExpressApp)({ host });
+    const transports = new Map();
+    const mcpServers = [];
+    app.get('/sse', async (_req, res) => {
         try {
-            getErrorLogger().logError({
-                tool: 'mcp-server',
-                error: `unhandledRejection: ${err.message}`,
-                stack: err.stack,
+            const transport = new sse_js_1.SSEServerTransport('/messages', res);
+            transports.set(transport.sessionId, transport);
+            res.on('close', () => {
+                transports.delete(transport.sessionId);
             });
+            const mcpServer = await createMcpServer();
+            mcpServers.push(mcpServer);
+            await mcpServer.connect(transport);
         }
-        catch {
-            // ErrorLogger itself failed — nothing more we can do, stay alive.
+        catch (err) {
+            console.error('[tim-mcp] SSE connection error:', err);
+            if (!res.headersSent) {
+                res.status(500).end('Internal Server Error');
+            }
         }
     });
-    process.on('uncaughtException', (err) => {
-        console.error('[tim-mcp] uncaughtException:', err.stack ?? err.message);
-        try {
-            getErrorLogger().logError({
-                tool: 'mcp-server',
-                error: `uncaughtException: ${err.message}`,
-                stack: err.stack,
-            });
+    app.post('/messages', async (req, res) => {
+        const sessionId = req.query.sessionId;
+        if (!sessionId) {
+            res.status(400).end('Missing sessionId');
+            return;
         }
-        catch {
-            // Same as above.
+        const transport = transports.get(sessionId);
+        if (!transport) {
+            res.status(404).end('Not found');
+            return;
         }
-        // Note: we intentionally do NOT call process.exit(). The stdio pipe
-        // stays open and subsequent MCP requests continue to be served. The
-        // MCP SDK's processReadBuffer() already wraps readMessage() in
-        // try/catch (see @modelcontextprotocol/sdk/dist/esm/server/stdio.js),
-        // so a malformed input frame cannot kill the server either.
+        await transport.handlePostMessage(req, res, req.body);
     });
+    installProcessErrorGuards();
+    const httpServer = await new Promise((resolve, reject) => {
+        const listener = app.listen(port, host);
+        listener.once('listening', () => resolve(listener));
+        listener.once('error', (err) => {
+            if (err.code === 'EADDRINUSE') {
+                console.error(`[tim-mcp] FATAL: Port ${port} already in use on ${host}`);
+            }
+            reject(err);
+        });
+    });
+    const addr = httpServer.address();
+    const actualPort = typeof addr === 'object' && addr !== null ? addr.port : port;
+    const close = async () => {
+        for (const transport of transports.values()) {
+            try {
+                await transport.close();
+            }
+            catch {
+                // Best-effort cleanup.
+            }
+        }
+        transports.clear();
+        await Promise.all(mcpServers.map(s => s.close().catch(() => { })));
+        mcpServers.length = 0;
+        await new Promise((resolve, reject) => {
+            httpServer.close(err => (err ? reject(err) : resolve()));
+        });
+    };
+    return { app, httpServer, port: actualPort, close };
+}
+async function startServer() {
+    installProcessErrorGuards();
+    if (CLI.http) {
+        let handle;
+        try {
+            handle = await createHttpServer();
+        }
+        catch (err) {
+            if (err?.code === 'EADDRINUSE') {
+                process.exit(1);
+            }
+            throw err;
+        }
+        console.error(`TIM MCP server started (HTTP/SSE http://${CLI.host}:${handle.port}, DB: ${DB_PATH})`);
+        const shutdown = async () => {
+            await handle.close();
+            process.exit(0);
+        };
+        process.on('SIGINT', () => { void shutdown(); });
+        process.on('SIGTERM', () => { void shutdown(); });
+        return;
+    }
+    const server = await createMcpServer();
     const transport = new stdio_js_1.StdioServerTransport();
     await server.connect(transport);
     console.error(`TIM MCP server started (DB: ${DB_PATH})`);
