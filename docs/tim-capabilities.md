@@ -412,12 +412,12 @@ tim-skills       → (geplant) Skill-Integration
 
 ### Rendering / API
 
-| Problem | Impact |
-|---------|--------|
-| `tim_load_project` sections-filter matcht falschen Node | Section-Filter unzuverlässig |
-| `tim_read` respektiert `renderDepthLoad`/`renderDepthRead` | Falsche Tiefe — Codebase-Kinder unsichtbar |
-| `tim_update` unterstützt kein Title-Change | Umbenennen nur via neuer Entry + Migration |
-| Walk-up vs CWD-only | Code macht Walk-up, Vision sagt CWD-only — Tests + falsche Projekt-Erkennung |
+| Problem | Impact | Status |
+|---------|--------|--------|
+| `tim_load_project` sections-filter matcht falschen Node | Section-Filter unzuverlässig | Gefixt — Plan 1, Task 4 |
+| `tim_read` respektiert `renderDepthLoad`/`renderDepthRead` | Falsche Tiefe — Codebase-Kinder unsichtbar | |
+| `tim_update` unterstützt kein Title-Change | Umbenennen nur via neuer Entry + Migration | |
+| Walk-up vs CWD-only | Code macht Walk-up, Vision sagt CWD-only — Tests + falsche Projekt-Erkennung | |
 
 ### Vision noch nicht implementiert (Phase 0.7+)
 

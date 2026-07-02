@@ -163,6 +163,7 @@ const TimUpdateSchema = z.object({
   confidence: z.number().min(0).max(1).optional(),
   tags: z.array(z.string()).optional(),
   visibility: z.number().optional(),
+  irrelevant: z.boolean().optional(),
   metadata: z.record(z.unknown()).optional(),
 });
 
@@ -1090,6 +1091,7 @@ export async function createMcpServer(): Promise<Server> {
               description: 'Topic tags only. Deprecated status/priority tags are stripped — use metadata.task.status / metadata.task.priority.',
             },
             visibility: { type: 'number' },
+            irrelevant: { type: 'boolean', description: 'Set false to restore a soft-deleted entry, true to soft-delete' },
             metadata: { type: 'object' },
           },
           required: ['id'],
@@ -1159,7 +1161,7 @@ export async function createMcpServer(): Promise<Server> {
       },
       {
         name: 'tim_suppress',
-        description: 'Add a pattern to negative memory. Matching entries are hidden from search results.',
+        description: 'Suppress entries matching a pattern: hidden from tim_search, tim_read, and tim_load_project. Optional TTL (e.g. "24h", "7d").',
         inputSchema: {
           type: 'object',
           properties: {
@@ -1780,6 +1782,12 @@ export async function createMcpServer(): Promise<Server> {
             if (!entry) {
               return {
                 content: [{ type: 'text', text: JSON.stringify(null) }],
+                isError: true,
+              };
+            }
+            if (entry && await s.isSuppressed(`${entry.title}\n${entry.content}`)) {
+              return {
+                content: [{ type: 'text', text: `Entry suppressed: ${id}` }],
                 isError: true,
               };
             }

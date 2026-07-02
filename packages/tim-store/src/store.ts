@@ -21,50 +21,54 @@ import { recordFromPayload, entryLocalLwwTimestamp, edgeLocalLwwTimestamp } from
 /**
  * Sanitize a user-supplied query string into a safe FTS5 MATCH expression.
  *
- * Problems this guards against (verified empirically against better-sqlite3 FTS5):
- *   1. `task:true` → "no such column: task"   (token:value parsed as column filter)
- *   2. `"foo AND bar"` literal text containing AND is a valid FTS5 operator,
- *      so users searching for "AND" or "OR" as words can collide with FTS5 syntax.
- *   3. Special chars `^ * ( ) " '` in raw input can throw `fts5: syntax error`.
+ * Strategy: each whitespace-separated token is emitted as an FTS5 quoted
+ * string (`"token"`). Inside the quotes FTS5 treats operators (AND/OR/
+ * NOT/NEAR) and punctuation (`. / @ + % # -`) as literal text to
+ * tokenize — the whole blocklist arms race disappears. Column filters
+ * `title:`/`content:`/`tags:` survive as `column:"value"`.
  *
- * Strategy:
- *   - For `token:value` patterns, if `token` matches a real FTS5 column name
- *     (title, content, tags), pass through as-is. Otherwise, split into two
- *     tokens (the bogus "column" becomes a search term).
- *   - Drop FTS5 operator words (AND, OR, NOT, NEAR) case-insensitive.
- *   - Strip quotes/parens/carets/stars, replace with space.
- *   - Re-emit as `token1 token2` (implicit FTS5 AND).
- *   - Return empty string if no safe tokens survive — caller must skip the query.
+ * Trade-off: a user phrase originally quoted across spaces (`"foo bar"`)
+ * degrades to `"foo" "bar"` (AND instead of phrase) — acceptable.
+ * Tokens with no alphanumeric content are dropped (a fully-punctuation
+ * quoted string would match nothing or error).
  */
 export function sanitizeFtsQuery(query: string): string {
   if (!query) return '';
-  // FTS5 columns defined in schema.ts — these are the ONLY column names
-  // a `token:value` filter is allowed to reference. Anything else is a
-  // crash ("no such column: X").
+  // FTS5 columns defined in schema.ts — the ONLY names a `token:value`
+  // filter may reference. Anything else would crash ("no such column: X").
   const REAL_COLUMNS = new Set(['title', 'content', 'tags']);
-  // Step 1: rewrite each `token:` occurrence.
-  //   - If token is a real FTS5 column (title/content/tags), preserve the
-  //     `token:value` form (pass-through).
-  //   - If token is NOT a real column, split it: keep the token as a
-  //     search term AND keep the value as a search term.
-  //     We do this by replacing the colon with a space, NOT the whole match.
-  let s = query.replace(/([A-Za-z_][A-Za-z0-9_]*):/g, (m, col) => {
-    if (REAL_COLUMNS.has(col.toLowerCase())) {
-      return m; // keep "title:" / "content:" / "tags:" intact
+  const out: string[] = [];
+
+  const quoteTerm = (term: string): string | null => {
+    // Embedded double quotes would terminate the FTS5 string — strip them.
+    const cleaned = term.replace(/"/g, ' ').trim();
+    // A quoted string with no tokenizable content matches nothing (or errors).
+    if (!/[0-9A-Za-zÀ-￿]/.test(cleaned)) return null;
+    return `"${cleaned}"`;
+  };
+
+  for (const raw of query.split(/\s+/)) {
+    if (!raw) continue;
+    const m = raw.match(/^([A-Za-z_][A-Za-z0-9_]*):(.+)$/);
+    if (m && REAL_COLUMNS.has(m[1].toLowerCase())) {
+      const q = quoteTerm(m[2]);
+      if (q) out.push(`${m[1].toLowerCase()}:${q}`);
+      continue;
     }
-    return col + ' '; // "kind:summary" → "kind summary" (split, don't drop)
-  });
-  // Step 2: drop chars that confuse FTS5 tokenization: " ' ( ) * ^ # -
-  s = s.replace(/["'*()^#~\/-]/g, ' ');
-  // Step 3: split, drop operator words, trim.
-  const tokens = s
-    .split(/\s+/)
-    .map(t => t.trim())
-    .filter(t => t.length > 0)
-    .filter(t => !/^(AND|OR|NOT|NEAR)$/i.test(t));
-  if (tokens.length === 0) return '';
-  // Implicit FTS5 AND — each token joined by space.
-  return tokens.join(' ');
+    if (m) {
+      // Bogus column filter: keep both sides as plain search terms.
+      const a = quoteTerm(m[1]);
+      if (a) out.push(a);
+      const b = quoteTerm(m[2]);
+      if (b) out.push(b);
+      continue;
+    }
+    const q = quoteTerm(raw);
+    if (q) out.push(q);
+  }
+
+  // Implicit FTS5 AND — quoted terms joined by space.
+  return out.join(' ');
 }
 
 export interface TimStoreOptions {
@@ -423,10 +427,17 @@ export class TimStore implements MemoryInterface {
     const children: Entry[] = [];
     let truncated = false;
 
+    const suppressPatterns = this.loadActiveSuppressPatterns();
+
     const matchesSection = (entry: Entry): boolean => {
       if (!sections?.length) return true;
       const entryLabel = entry.metadata.label as string | undefined;
-      return sections.some(section => section === entry.id || section === entryLabel);
+      const entryTitle = entry.title.toLowerCase();
+      return sections.some(section =>
+        section === entry.id ||
+        section === entryLabel ||
+        section.toLowerCase() === entryTitle,
+      );
     };
 
     const loadChildren = (
@@ -462,6 +473,7 @@ export class TimStore implements MemoryInterface {
         }
 
         const child = rowToEntry(row);
+        if (TimStore.matchesSuppressed(suppressPatterns, child)) continue;
         children.push(child);
         // Load session subtrees newest-first so the newest sessions survive
         // budget truncation (Recent-Sessions sort bug).
@@ -1162,8 +1174,8 @@ export class TimStore implements MemoryInterface {
       decay_rate: patch.decayRate ?? existing.decay_rate,
       visibility: patch.visibility ?? existing.visibility,
       tags: patch.tags ? JSON.stringify(patch.tags) : existing.tags,
-      irrelevant: patch.irrelevant ? 1 : existing.irrelevant,
-      tombstoned_at: patch.tombstonedAt ?? existing.tombstoned_at,
+      irrelevant: patch.irrelevant === undefined ? existing.irrelevant : (patch.irrelevant ? 1 : 0),
+      tombstoned_at: patch.tombstonedAt === undefined ? existing.tombstoned_at : patch.tombstonedAt,
       metadata: patch.metadata ? JSON.stringify(patch.metadata) : existing.metadata,
       accessed_at: now,
       updated_at: now,
@@ -1282,7 +1294,9 @@ export class TimStore implements MemoryInterface {
 
   async search(options: SearchOptions): Promise<Entry[]> {
     const topK = options.topK ?? 10;
-    const fts = await this.searchFts(options.query, topK);
+    const patterns = this.loadActiveSuppressPatterns();
+    const fts = (await this.searchFts(options.query, topK))
+      .filter(e => !TimStore.matchesSuppressed(patterns, e));
     // Labels/aliases live in metadata, not the FTS corpus. Merge a direct project hit.
     // Broader fix: index metadata.label + aliases in fts_entries (migration + triggers).
     const resolved = await this.resolveProjectLabel(options.query);
@@ -1295,7 +1309,7 @@ export class TimStore implements MemoryInterface {
           AND tombstoned_at IS NULL
       `).get(resolved.label) as RowEntry | undefined;
       const proj = row ? rowToEntry(row) : null;
-      if (proj && !fts.some(e => e.id === proj.id)) {
+      if (proj && !TimStore.matchesSuppressed(patterns, proj) && !fts.some(e => e.id === proj.id)) {
         return [proj, ...fts].slice(0, topK);
       }
     }
@@ -1303,9 +1317,12 @@ export class TimStore implements MemoryInterface {
   }
 
   async searchFts(query: string, limit: number = 10): Promise<Entry[]> {
-    // Sanitize FTS5 query — strip operator words, escape special chars, AND-join tokens.
+    // Sanitize FTS5 query — quote tokens; drop quoted FTS operator literals before MATCH.
     // See sanitizeFtsQuery() in store-utils for rationale.
-    const sanitized = sanitizeFtsQuery(query);
+    const sanitized = sanitizeFtsQuery(query)
+      .replace(/"(?:AND|OR|NOT|NEAR)"/gi, '')
+      .replace(/\s+/g, ' ')
+      .trim();
     if (!sanitized) return [];
     const rows = this.db.prepare(`
       SELECT e.* FROM entries e
@@ -1836,6 +1853,24 @@ export class TimStore implements MemoryInterface {
     ).all(now) as { pattern: string }[];
 
     return patterns.some(p => content.toLowerCase().includes(p.pattern.toLowerCase()));
+  }
+
+  /** Active (non-expired) suppress patterns, lowercased. Loaded once per retrieval call. */
+  private loadActiveSuppressPatterns(): string[] {
+    const now = new Date().toISOString();
+    const rows = this.db.prepare(
+      'SELECT pattern FROM suppressed WHERE expires_at IS NULL OR expires_at > ?',
+    ).all(now) as { pattern: string }[];
+    return rows.map(r => r.pattern.toLowerCase());
+  }
+
+  private static matchesSuppressed(
+    patterns: string[],
+    entry: { title: string; content: string },
+  ): boolean {
+    if (patterns.length === 0) return false;
+    const text = `${entry.title}\n${entry.content}`.toLowerCase();
+    return patterns.some(p => text.includes(p));
   }
 
   async runDecay(options: DecayOptions): Promise<number> {
