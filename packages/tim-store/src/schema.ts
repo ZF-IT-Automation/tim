@@ -1,6 +1,7 @@
 // TIM Store Schema — v0.1.0-alpha
 // SQLite table definitions and migrations.
 
+import fs from 'node:fs';
 import Database from 'better-sqlite3';
 
 export const MIGRATIONS: { version: number; sql: string }[] = [
@@ -171,29 +172,58 @@ export function getCurrentVersion(): number {
   return MIGRATIONS[MIGRATIONS.length - 1].version;
 }
 
-export function runMigrations(db: Database.Database): void {
+export function runMigrations(
+  db: Database.Database,
+  migrations: { version: number; sql: string }[] = MIGRATIONS,
+): void {
   db.pragma('journal_mode = WAL');
   db.pragma('busy_timeout = 5000');
   db.pragma('foreign_keys = ON');
 
-  // Create version table if not exists
   db.exec(`CREATE TABLE IF NOT EXISTS _schema_version (version INTEGER NOT NULL)`);
 
   const current = db.prepare('SELECT version FROM _schema_version').get() as
     { version: number } | undefined;
   const currentVersion = current?.version ?? 0;
 
-  for (const migration of MIGRATIONS) {
-    if (migration.version > currentVersion) {
-      db.exec(migration.sql);
-    }
-  }
+  const pending = migrations.filter(m => m.version > currentVersion);
+  if (pending.length === 0) return;
 
-  // Update version
-  if (current) {
-    db.prepare('UPDATE _schema_version SET version = ?').run(getCurrentVersion());
-  } else {
-    db.prepare('INSERT INTO _schema_version (version) VALUES (?)').run(getCurrentVersion());
+  backupBeforeMigration(db, currentVersion);
+
+  for (const migration of pending) {
+    // One transaction per migration: SQLite DDL is transactional, so a crash
+    // or SQL error rolls back both the DDL and the version bump — the DB
+    // stays at the previous version and the migration is safely retryable.
+    db.transaction(() => {
+      db.exec(migration.sql);
+      const row = db.prepare('SELECT version FROM _schema_version').get();
+      if (row) {
+        db.prepare('UPDATE _schema_version SET version = ?').run(migration.version);
+      } else {
+        db.prepare('INSERT INTO _schema_version (version) VALUES (?)').run(migration.version);
+      }
+    })();
+  }
+}
+
+function backupBeforeMigration(db: Database.Database, fromVersion: number): void {
+  // Fresh DB (version 0) has nothing to lose; in-memory DBs have no file.
+  if (fromVersion === 0) return;
+  const dbPath = db.name;
+  if (!dbPath || dbPath === ':memory:') return;
+  if (process.env.TIM_SKIP_MIGRATION_BACKUP === '1') return;
+
+  const backupPath = `${dbPath}.pre-migration-v${fromVersion}.bak`;
+  try {
+    // Fold WAL into the main file so the copy is complete on its own.
+    db.pragma('wal_checkpoint(TRUNCATE)');
+    fs.copyFileSync(dbPath, backupPath);
+  } catch (err) {
+    throw new Error(
+      `Pre-migration backup failed (${backupPath}): ${(err as Error).message}. ` +
+      'Refusing to migrate without a backup. Set TIM_SKIP_MIGRATION_BACKUP=1 to override.',
+    );
   }
 }
 
