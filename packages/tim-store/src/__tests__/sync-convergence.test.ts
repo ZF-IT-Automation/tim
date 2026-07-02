@@ -96,4 +96,38 @@ describe('sync convergence', () => {
     expect(rowA?.content ?? null).toEqual(rowB?.content ?? null);
     expect(rowB!.content).toBe('Victim\nsurvives');
   });
+
+  it('identical timestamps converge via device-id tiebreak on both replicas', async () => {
+    const shared = 'SHARED000000000000000TIEBRK';
+    const ts = Date.now();
+    const iso = new Date(ts).toISOString();
+    const mkRecord = (device: string, title: string) => ({
+      key: shared,
+      entityType: 'entry' as const,
+      operation: 'upsert' as const,
+      payload: JSON.stringify({
+        id: shared, parent_id: null, title, content: '',
+        content_type: 'text', depth: 1, confidence: 1,
+        created_at: iso, accessed_at: iso, updated_at: iso,
+        decay_rate: 0, visibility: 1, tags: '[]',
+        irrelevant: 0, favorite: 0, tombstoned_at: null, metadata: '{}',
+        lww_device: device,
+      }),
+      lwwTimestamp: ts,
+      lwwDevice: device,
+      lwwConfidence: 1,
+      acked: false,
+    });
+
+    // Opposite arrival orders on the two replicas.
+    await a.applyStaging([mkRecord('device-aaa', 'A version')]);
+    await a.applyStaging([mkRecord('device-zzz', 'Z version')]);
+    await b.applyStaging([mkRecord('device-zzz', 'Z version')]);
+    await b.applyStaging([mkRecord('device-aaa', 'A version')]);
+
+    const rowA = entryRow(a, shared);
+    const rowB = entryRow(b, shared);
+    expect(rowA!.title).toEqual(rowB!.title);
+    expect(rowA!.title).toBe('Z version'); // device-zzz > device-aaa, deterministically
+  });
 });

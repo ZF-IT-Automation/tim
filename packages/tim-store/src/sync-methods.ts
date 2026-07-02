@@ -92,7 +92,7 @@ export function applyRemoteEntry(
       existing.tombstoned_at ? 'delete' : 'upsert',
       JSON.stringify(existing),
       entryLocalLwwTimestamp(existing as { updated_at?: string; created_at: string }),
-      'local',
+      String(existing.lww_device ?? 'local'),
       Number(existing.confidence ?? 1),
     );
     const { winner } = resolveLWW(local, remote);
@@ -133,8 +133,8 @@ export function applyRemoteEntry(
   const updatedAt = new Date(lwwTimestamp).toISOString();
   db.prepare(`INSERT OR REPLACE INTO entries
     (id, parent_id, title, content, content_type, depth, confidence, created_at,
-     accessed_at, updated_at, decay_rate, visibility, tags, irrelevant, favorite, tombstoned_at, metadata)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+     accessed_at, updated_at, decay_rate, visibility, tags, irrelevant, favorite, tombstoned_at, metadata, lww_device)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
     entry.id,
     entry.parent_id ?? null,
     entry.title ?? '',
@@ -152,6 +152,7 @@ export function applyRemoteEntry(
     entry.favorite ?? 0,
     entry.tombstoned_at,
     coercedMetadata,
+    lwwDevice,
   );
   return true;
 }

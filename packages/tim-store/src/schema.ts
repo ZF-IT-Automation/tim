@@ -165,7 +165,11 @@ export const MIGRATIONS: { version: number; sql: string }[] = [
         datetime('now')
       );
     `
-  }
+  },
+  {
+    version: 8,
+    sql: `ALTER TABLE entries ADD COLUMN lww_device TEXT NOT NULL DEFAULT 'local';`,
+  },
 ];
 
 export function getCurrentVersion(): number {

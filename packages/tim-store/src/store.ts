@@ -74,6 +74,8 @@ export function sanitizeFtsQuery(query: string): string {
 export interface TimStoreOptions {
   emitter?: Pick<EventBus, 'emit'>;
   agentId?: string;
+  /** Stable device id for LWW tiebreaks. Default 'local'. */
+  deviceId?: string;
 }
 
 export interface CreateProjectOptions {
@@ -138,11 +140,13 @@ export class TimStore implements MemoryInterface {
   private db: Database.Database;
   private emitter?: Pick<EventBus, 'emit'>;
   private agentId: string;
+  private deviceId: string;
 
   constructor(dbPath: string, options: TimStoreOptions = {}) {
     this.db = new Database(dbPath);
     this.emitter = options.emitter;
     this.agentId = options.agentId ?? 'system';
+    this.deviceId = options.deviceId ?? 'local';
     runMigrations(this.db);
     createTriggers(this.db);
   }
@@ -1086,6 +1090,7 @@ export class TimStore implements MemoryInterface {
       favorite: 0,
       tombstoned_at: null,
       metadata: JSON.stringify(metadata),
+      lww_device: this.deviceId,
     };
 
     return { entry, now, timestamp };
@@ -1094,10 +1099,11 @@ export class TimStore implements MemoryInterface {
   private insertEntrySync(entry: RowEntry): void {
     this.db.prepare(`INSERT INTO entries (id, parent_id, title, content, content_type, depth,
       confidence, created_at, accessed_at, updated_at, decay_rate, visibility, tags, irrelevant,
-      favorite, tombstoned_at, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      favorite, tombstoned_at, metadata, lww_device) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
       entry.id, entry.parent_id, entry.title, entry.content, entry.content_type, entry.depth,
       entry.confidence, entry.created_at, entry.accessed_at, entry.updated_at, entry.decay_rate,
-      entry.visibility, entry.tags, entry.irrelevant, entry.favorite, entry.tombstoned_at, entry.metadata
+      entry.visibility, entry.tags, entry.irrelevant, entry.favorite, entry.tombstoned_at, entry.metadata,
+      entry.lww_device,
     );
   }
 
@@ -1105,7 +1111,7 @@ export class TimStore implements MemoryInterface {
     this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
       lww_timestamp, lww_device, lww_confidence)
       VALUES (?, 'entry', 'upsert', ?, ?, ?, ?)`).run(
-      entry.id, JSON.stringify(entry), timestamp, 'local', confidence
+      entry.id, JSON.stringify(entry), timestamp, this.deviceId, confidence
     );
   }
 
@@ -1179,22 +1185,23 @@ export class TimStore implements MemoryInterface {
       metadata: patch.metadata ? JSON.stringify(patch.metadata) : existing.metadata,
       accessed_at: now,
       updated_at: now,
+      lww_device: this.deviceId,
     };
 
     this.db.prepare(`UPDATE entries SET title=?, content=?, content_type=?, confidence=?,
       decay_rate=?, visibility=?, tags=?, irrelevant=?, tombstoned_at=?, metadata=?,
-      accessed_at=?, updated_at=? WHERE id=?`).run(
+      accessed_at=?, updated_at=?, lww_device=? WHERE id=?`).run(
       updated.title, updated.content, updated.content_type, updated.confidence,
       updated.decay_rate, updated.visibility, updated.tags,
       updated.irrelevant, updated.tombstoned_at, updated.metadata,
-      updated.accessed_at, updated.updated_at, id
+      updated.accessed_at, updated.updated_at, updated.lww_device, id
     );
 
     // Write to staging
     this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
       lww_timestamp, lww_device, lww_confidence)
       VALUES (?, 'entry', 'upsert', ?, ?, ?, ?)`).run(
-      id, JSON.stringify(updated), timestamp, 'local', updated.confidence
+      id, JSON.stringify(updated), timestamp, this.deviceId, updated.confidence
     );
 
     const result = rowToEntry(updated);
@@ -1212,7 +1219,7 @@ export class TimStore implements MemoryInterface {
       this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
         lww_timestamp, lww_device, lww_confidence)
         VALUES (?, 'entry', 'delete', ?, ?, ?, ?)`).run(
-        id, JSON.stringify({ id, tombstoned_at: now }), Date.now(), 'local', 1.0
+        id, JSON.stringify({ id, tombstoned_at: now, lww_device: this.deviceId }), Date.now(), this.deviceId, 1.0
       );
     } else {
       const timestamp = Date.now();
@@ -1221,12 +1228,13 @@ export class TimStore implements MemoryInterface {
         irrelevant: 1,
         accessed_at: now,
         updated_at: now,
+        lww_device: this.deviceId,
       };
-      this.db.prepare('UPDATE entries SET irrelevant = 1, accessed_at = ?, updated_at = ? WHERE id = ?').run(now, now, id);
+      this.db.prepare('UPDATE entries SET irrelevant = 1, accessed_at = ?, updated_at = ?, lww_device = ? WHERE id = ?').run(now, now, this.deviceId, id);
       this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
         lww_timestamp, lww_device, lww_confidence)
         VALUES (?, 'entry', 'upsert', ?, ?, ?, ?)`).run(
-        id, JSON.stringify(updated), timestamp, 'local', updated.confidence
+        id, JSON.stringify(updated), timestamp, this.deviceId, updated.confidence
       );
     }
 
@@ -1271,7 +1279,7 @@ export class TimStore implements MemoryInterface {
       this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
         lww_timestamp, lww_device, lww_confidence)
         VALUES (?, 'entry', 'delete', ?, ?, ?, ?)`).run(
-        existing.id, JSON.stringify({ id: existing.id, tombstoned_at: now }), Date.now(), 'local', 1.0
+        existing.id, JSON.stringify({ id: existing.id, tombstoned_at: now, lww_device: this.deviceId }), Date.now(), this.deviceId, 1.0
       );
     } else {
       const timestamp = Date.now();
@@ -1280,12 +1288,13 @@ export class TimStore implements MemoryInterface {
         irrelevant: 1,
         accessed_at: now,
         updated_at: now,
+        lww_device: this.deviceId,
       };
-      this.db.prepare('UPDATE entries SET irrelevant = 1, accessed_at = ?, updated_at = ? WHERE id = ?').run(now, now, existing.id);
+      this.db.prepare('UPDATE entries SET irrelevant = 1, accessed_at = ?, updated_at = ?, lww_device = ? WHERE id = ?').run(now, now, this.deviceId, existing.id);
       this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
         lww_timestamp, lww_device, lww_confidence)
         VALUES (?, 'entry', 'upsert', ?, ?, ?, ?)`).run(
-        existing.id, JSON.stringify(updated), timestamp, 'local', updated.confidence
+        existing.id, JSON.stringify(updated), timestamp, this.deviceId, updated.confidence
       );
     }
   }
@@ -1503,8 +1512,8 @@ export class TimStore implements MemoryInterface {
   async applyStaging(records: StagingRecord[]): Promise<void> {
     const upsertEntry = this.db.prepare(`INSERT OR REPLACE INTO entries
       (id, parent_id, title, content, content_type, depth, confidence, created_at,
-       accessed_at, updated_at, decay_rate, visibility, tags, irrelevant, favorite, tombstoned_at, metadata)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+       accessed_at, updated_at, decay_rate, visibility, tags, irrelevant, favorite, tombstoned_at, metadata, lww_device)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
 
     const upsertEdge = this.db.prepare(`INSERT OR REPLACE INTO edges
       (id, source_id, target_id, type, weight, metadata, updated_at)
@@ -1527,7 +1536,7 @@ export class TimStore implements MemoryInterface {
                 existing.tombstoned_at ? 'delete' : 'upsert',
                 JSON.stringify(existing),
                 entryLocalLwwTimestamp(existing),
-                'local',
+                String(existing.lww_device ?? 'local'),
                 Number(existing.confidence ?? 1),
               );
               const { winner } = resolveLWW(local, record);
@@ -1545,7 +1554,7 @@ export class TimStore implements MemoryInterface {
                 existing.tombstoned_at ? 'delete' : 'upsert',
                 JSON.stringify(existing),
                 entryLocalLwwTimestamp(existing),
-                'local',
+                String(existing.lww_device ?? 'local'),
                 Number(existing.confidence ?? 1),
               );
               const { winner } = resolveLWW(local, record);
@@ -1557,7 +1566,8 @@ export class TimStore implements MemoryInterface {
               entry.depth, entry.confidence, entry.created_at, entry.accessed_at,
               appliedUpdatedAt,
               entry.decay_rate, entry.visibility, entry.tags,
-              entry.irrelevant, entry.favorite ?? 0, entry.tombstoned_at, entry.metadata
+              entry.irrelevant, entry.favorite ?? 0, entry.tombstoned_at, entry.metadata,
+              record.lwwDevice,
             );
           }
         } else if (record.entityType === 'edge') {
@@ -1918,6 +1928,7 @@ interface RowEntry {
   favorite: number;
   tombstoned_at: string | null;
   metadata: string;
+  lww_device: string;
 }
 
 interface RowEdge {
