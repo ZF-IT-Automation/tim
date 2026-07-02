@@ -1,5 +1,9 @@
-// TIM Store — FTS5 query sanitization tests (BUG 1)
-// Regression tests: searchFts must not crash on FTS5 operators or column-filter notation.
+// TIM Store — FTS5 query sanitization tests (Plan 1, Task 3)
+//
+// Strategy: each whitespace-separated token is emitted as an FTS5 quoted
+// string ("token"). Operators (AND/OR/NOT/NEAR) and punctuation (`. / @
+// + % # -`) become literal inside quotes. Real column filters
+// (title/content/tags) survive as `column:"value"`.
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { TimStore, sanitizeFtsQuery } from '../store.js';
@@ -14,81 +18,45 @@ afterEach(() => {
   store.close();
 });
 
-describe('sanitizeFtsQuery (BUG 1)', () => {
-  it('strips FTS5 operator words (AND, OR, NOT, NEAR) case-insensitive', () => {
-    expect(sanitizeFtsQuery('foo AND bar')).toBe('foo bar');
-    expect(sanitizeFtsQuery('foo and bar')).toBe('foo bar');
-    expect(sanitizeFtsQuery('foo OR bar')).toBe('foo bar');
-    expect(sanitizeFtsQuery('foo NOT bar')).toBe('foo bar');
-    expect(sanitizeFtsQuery('foo NEAR bar')).toBe('foo bar');
-    expect(sanitizeFtsQuery('AND OR NOT NEAR')).toBe(''); // all stripped
+describe('sanitizeFtsQuery (quoting strategy)', () => {
+  it('quotes plain tokens', () => {
+    expect(sanitizeFtsQuery('hello world')).toBe('"hello" "world"');
   });
 
-  it('escapes column-filter colon (task:true → task true)', () => {
-    // This is the BUG 1 crash: FTS5 parses "task:true" as column filter.
-    // Sanitized result must NOT contain a colon.
-    expect(sanitizeFtsQuery('task:true')).toBe('task true');
-    expect(sanitizeFtsQuery('kind:summary')).toBe('kind summary');
-    expect(sanitizeFtsQuery('a:1')).toBe('a 1');
-    // tag:#important → colon becomes space, # is allowed in tokens, FTS5 tokenizes it as 'tag' + 'important'
-    expect(sanitizeFtsQuery('tag:#important')).toBe('tag important');
+  it('handles dots, slashes, plus, at, percent without crashing FTS5', () => {
+    expect(sanitizeFtsQuery('store.ts')).toBe('"store.ts"');
+    expect(sanitizeFtsQuery('src/store.ts')).toBe('"src/store.ts"');
+    expect(sanitizeFtsQuery('C++')).toBe('"C++"');
+    expect(sanitizeFtsQuery('user@example.com')).toBe('"user@example.com"');
+    expect(sanitizeFtsQuery('100%')).toBe('"100%"');
   });
 
-  it('strips special chars that break FTS5 tokenization', () => {
-    expect(sanitizeFtsQuery('"hello"')).toBe('hello');
-    expect(sanitizeFtsQuery('(foo)')).toBe('foo');
-    expect(sanitizeFtsQuery('foo*')).toBe('foo');
-    // ^ is stripped (space), so "foo^bar" becomes two safe tokens
-    expect(sanitizeFtsQuery('foo^bar')).toBe('foo bar');
-    // Apostrophe stripped → "don" and "t" (space-separated, both safe tokens)
-    expect(sanitizeFtsQuery("don't")).toBe('don t');
+  it('keeps real column filters, quotes the value', () => {
+    expect(sanitizeFtsQuery('title:fix')).toBe('title:"fix"');
+    expect(sanitizeFtsQuery('content:store.ts')).toBe('content:"store.ts"');
   });
 
-  it('strips hyphen (prevents FTS5 column:value misinterpretation)', () => {
-    // Hyphen in "post-mortem" → FTS5 splits at hyphen, interprets "mortem" as column
-    // Fix: replace hyphen with space → "post mortem"
-    expect(sanitizeFtsQuery('post-mortem')).toBe('post mortem');
-    expect(sanitizeFtsQuery('2026-06')).toBe('2026 06');
-    expect(sanitizeFtsQuery('foo-bar-baz')).toBe('foo bar baz');
+  it('splits bogus column filters into two terms', () => {
+    expect(sanitizeFtsQuery('kind:summary')).toBe('"kind" "summary"');
+    expect(sanitizeFtsQuery('task:true')).toBe('"task" "true"');
   });
 
-  it('strips # prefix (prevents FTS5 syntax error)', () => {
-    // # is an FTS5 syntax character in unicode61 tokenizer
-    // Fix: replace # with space → tags become plain words
-    expect(sanitizeFtsQuery('#error')).toBe('error');
-    expect(sanitizeFtsQuery('#error #bug')).toBe('error bug');
-    expect(sanitizeFtsQuery('tag:#important')).toBe('tag important');
+  it('treats operator words as literal terms (quoted)', () => {
+    expect(sanitizeFtsQuery('foo AND bar')).toBe('"foo" "AND" "bar"');
   });
 
-  it('handles empty / whitespace-only / operator-only inputs', () => {
+  it('strips embedded double quotes', () => {
+    expect(sanitizeFtsQuery('say "hello"')).toBe('"say" "hello"');
+  });
+
+  it('drops tokens with no alphanumeric content, returns empty for pure noise', () => {
+    expect(sanitizeFtsQuery('--- *** ^^')).toBe('');
     expect(sanitizeFtsQuery('')).toBe('');
-    expect(sanitizeFtsQuery('   ')).toBe('');
-    expect(sanitizeFtsQuery('AND')).toBe('');
-    expect(sanitizeFtsQuery('   AND OR   ')).toBe('');
-  });
-
-  it('preserves legitimate FTS5 column filters (title:Doc passes through)', () => {
-    // title/content/tags are the real FTS5 column names — these colons
-    // must be preserved so the column-filter still works.
-    expect(sanitizeFtsQuery('title:Doc')).toBe('title:Doc');
-    expect(sanitizeFtsQuery('content:hello')).toBe('content:hello');
-    expect(sanitizeFtsQuery('tags:important')).toBe('tags:important');
-  });
-
-  it('strips bogus "column" filters but keeps the words as tokens', () => {
-    // kind/summary/task/a are NOT real FTS5 columns — sanitizer must
-    // split them into two safe tokens.
-    expect(sanitizeFtsQuery('kind:summary')).toBe('kind summary');
-    expect(sanitizeFtsQuery('task:true')).toBe('task true');
-    expect(sanitizeFtsQuery('a:1')).toBe('a 1');
   });
 });
 
-describe('searchFts resilience (BUG 1)', () => {
-  // Seed entries so we can prove the search returns results, not just "no crash".
+describe('searchFts resilience (quoting strategy)', () => {
   beforeEach(async () => {
-    // store.write(title, opts) — content goes via the \n separator in the title arg
-    // OR via update(). Use the \n form to seed title+content in one call.
     await store.write('Task management notes\nA list of tasks for the project.', {
       tags: ['#task', '#note'],
     });
@@ -101,20 +69,13 @@ describe('searchFts resilience (BUG 1)', () => {
   });
 
   it('does not crash on FTS5 operator words in query', async () => {
-    // "foo AND bar" used to crash. Now: AND stripped, search runs on tokens.
     const results = await store.searchFts('foo AND bar', 10);
     expect(Array.isArray(results)).toBe(true);
   });
 
   it('does not crash on column-filter notation (task:true)', async () => {
-    // This was the BUG 1 crash: "no such column: task".
-    // Sanitized to "task true" — but "true" isn't in our seed docs, so this
-    // returns 0 results. What matters: no crash, no "no such column" error.
-    // Use the "AND" form (BUG 1.1) where BOTH tokens exist in the doc:
     const results = await store.searchFts('task:true', 10);
     expect(Array.isArray(results)).toBe(true);
-    // 0 results is fine — the bug was the crash, not empty results.
-    // Verify a no-crash with a known-good multi-token sanitized query:
     const good = await store.searchFts('task AND notes', 10);
     expect(good.length).toBeGreaterThan(0);
     expect(good.map(r => r.title)).toContain('Task management notes');
@@ -127,8 +88,6 @@ describe('searchFts resilience (BUG 1)', () => {
   });
 
   it('does not crash on FTS5 column name in query (kind:summary)', async () => {
-    // "kind:summary" triggers "no such column: kind" pre-fix.
-    // Sanitized to "kind summary" → both tokens searched literally.
     const results = await store.searchFts('kind:summary', 10);
     expect(Array.isArray(results)).toBe(true);
   });
@@ -139,8 +98,24 @@ describe('searchFts resilience (BUG 1)', () => {
     await expect(store.searchFts('foo^bar', 10)).resolves.toBeDefined();
   });
 
+  it('does not crash on everyday tokens with dots, slashes, @, %, +', async () => {
+    // Regression: pre-fix these all threw "fts5: syntax error"
+    await expect(store.searchFts('store.ts', 10)).resolves.toBeDefined();
+    await expect(store.searchFts('src/store.ts', 10)).resolves.toBeDefined();
+    await expect(store.searchFts('user@example.com', 10)).resolves.toBeDefined();
+    await expect(store.searchFts('100%', 10)).resolves.toBeDefined();
+    await expect(store.searchFts('C++', 10)).resolves.toBeDefined();
+  });
+
+  it('end-to-end: searching store.ts returns an entry that contains the literal', async () => {
+    await store.write('A note about store.ts\nWe refactored the store implementation today.');
+    const results = await store.searchFts('store.ts', 10);
+    expect(results.length).toBeGreaterThan(0);
+    expect(results.map(r => r.title)).toContain('A note about store.ts');
+  });
+
   it('returns matching entries for a sanitized multi-token query', async () => {
-    // "task AND management" → sanitized to "task management" → matches entry #1.
+    // "task AND management" → both tokens searched literally via quotes.
     const results = await store.searchFts('task AND management', 10);
     expect(results.length).toBeGreaterThan(0);
     expect(results[0].title).toBe('Task management notes');
@@ -148,7 +123,9 @@ describe('searchFts resilience (BUG 1)', () => {
 
   it('returns empty array for pure-operator / empty input (not crash)', async () => {
     expect(await store.searchFts('', 10)).toEqual([]);
-    expect(await store.searchFts('AND OR NOT', 10)).toEqual([]);
+    // "AND OR NOT" no longer becomes empty — tokens are quoted literals.
+    // Each token (AND, OR, NOT) survives as a quoted literal; if no doc
+    // contains those words, result is empty.
     expect(await store.searchFts('   ', 10)).toEqual([]);
   });
 });
