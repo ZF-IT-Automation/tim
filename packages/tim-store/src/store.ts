@@ -432,7 +432,12 @@ export class TimStore implements MemoryInterface {
     const matchesSection = (entry: Entry): boolean => {
       if (!sections?.length) return true;
       const entryLabel = entry.metadata.label as string | undefined;
-      return sections.some(section => section === entry.id || section === entryLabel);
+      const entryTitle = entry.title.toLowerCase();
+      return sections.some(section =>
+        section === entry.id ||
+        section === entryLabel ||
+        section.toLowerCase() === entryTitle,
+      );
     };
 
     const loadChildren = (
