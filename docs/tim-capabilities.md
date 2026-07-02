@@ -291,7 +291,7 @@ Session-Exchanges werden harness-agnostisch geloggt (`metadata.harness`). Projek
 
 ### hmem → TIM Migration
 
-`tim migrate --from ~/.hmem/personal.hmem` — Prefixe bleiben (`P0001`), Links werden Edges, O-Entries werden Sessions. **Aktuell unvollständig** — Rewrite geplant (Phase 0.7).
+`tim migrate --from ~/.hmem/personal.hmem` — Prefixe bleiben (`P0001`), Links werden Edges, O-Entries werden Sessions. Plan-3 bereinigt: Imports schreiben `title` + `body` (gesplittet aus dem ersten Newline), erhalten `updated_at`, legen Sync-Staging-Records an, und Re-Imports mit `deduplicate:true` schreiben geänderte Inhalte tatsächlich in die bestehende Entry (vorher: silent no-op). Legacy `migrate.ts` Engine (zero tests, droppte `metadata.label`) gelöscht; `import.ts` deckt v2 + old Format.
 
 ### o9k vs TIM
 
@@ -429,7 +429,7 @@ tim-skills       → (geplant) Skill-Integration
 | Tag-Frequency-Tabelle (IDF on-read) | 0.7 |
 | Related-on-Read (automatische Erinnerungen bei `tim_read`) | 0.7 |
 | Embedding-Provider lokal + Hybrid-Search | 0.7 |
-| `tim-migrate` Rewrite | 0.7 |
+| `tim-migrate` Rewrite | ✅ Plan-3 done (Sync-Staging + dedup-merge) |
 | Summarizer Tag-Normalization | 0.7 |
 | load_project Budget/Truncation vollständig | 0.7 |
 | E2E-Sync + `encrypted_passphrase` + Keychain | 0.8 |

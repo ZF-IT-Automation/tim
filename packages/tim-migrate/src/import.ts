@@ -234,7 +234,6 @@ function importV2(
   `).all() as V2Link[];
 
   const idMap = new Map<string, string>();
-  const mergedRoots = new Set<string>();
 
   const planRoots = () => {
     for (const e of hmemEntries) {
@@ -252,9 +251,15 @@ function importV2(
 
       if (existingLabel && options.deduplicate) {
         idMap.set(e.uid, existingLabel);
-        mergedRoots.add(e.uid);
-        if (contentChanged(store, existingLabel, e.level_1)) {
+        const { title, body } = splitTitleBody(e.level_1);
+        if (contentChanged(store, existingLabel, body)) {
           changedCount++;
+          if (!options.dryRun) {
+            store.getDb().prepare(
+              'UPDATE entries SET title = ?, content = ?, updated_at = ? WHERE id = ?',
+            ).run(title, body, new Date().toISOString(), existingLabel);
+            stageEntryRow(store.getDb(), existingLabel);
+          }
         } else {
           skipped++;
         }
