@@ -1,5 +1,5 @@
 // TIM Sync Engine — v0.1.0-alpha
-// Confidence-weighted LWW + Merkle tree delta detection.
+// Deterministic write-timestamp LWW + Merkle tree delta detection.
 
 import { createHash } from 'crypto';
 import type { StagingRecord, Entry, Edge } from 'tim-core';
@@ -43,7 +43,7 @@ export function getMerkleRoot(records: StagingRecord[]): string | null {
   return tree?.hash ?? null;
 }
 
-// ─── Confidence-Weighted LWW ─────────────────────────────
+// ─── Deterministic LWW ───────────────────────────────────
 
 export interface ConflictResolution {
   winner: StagingRecord;
@@ -53,33 +53,23 @@ export interface ConflictResolution {
 
 /**
  * Resolve conflict between two staging records for the same key.
- * Strategy: confidence * time_decay → highest score wins.
+ * Strategy: higher lwwTimestamp wins; on tie, lexicographically higher lwwDevice wins.
+ * Purely deterministic — no wall-clock decay or confidence weighting.
  */
 export function resolveLWW(a: StagingRecord, b: StagingRecord): ConflictResolution {
-  const now = Date.now();
-
-  // Time decay: entries older than 7 days lose weight
-  function decay(ts: number): number {
-    const ageHours = (now - ts) / 3600_000;
-    if (ageHours < 1) return 1.0;
-    if (ageHours > 168) return 0.1; // 7 days → 10% weight
-    return 1.0 - (ageHours / 168) * 0.9; // linear decay
-  }
-
-  const scoreA = a.lwwConfidence * decay(a.lwwTimestamp);
-  const scoreB = b.lwwConfidence * decay(b.lwwTimestamp);
-
-  if (scoreA > scoreB) {
-    return { winner: a, loser: b, reason: 'higher_confidence' };
-  } else if (scoreB > scoreA) {
-    return { winner: b, loser: a, reason: 'higher_confidence' };
-  }
-
-  // Tiebreaker: newer timestamp
   if (a.lwwTimestamp > b.lwwTimestamp) {
     return { winner: a, loser: b, reason: 'newer_timestamp' };
   }
-  return { winner: b, loser: a, reason: 'newer_timestamp' };
+  if (b.lwwTimestamp > a.lwwTimestamp) {
+    return { winner: b, loser: a, reason: 'newer_timestamp' };
+  }
+  if (a.lwwDevice > b.lwwDevice) {
+    return { winner: a, loser: b, reason: 'only_one' };
+  }
+  if (b.lwwDevice > a.lwwDevice) {
+    return { winner: b, loser: a, reason: 'only_one' };
+  }
+  return { winner: a, loser: b, reason: 'only_one' };
 }
 
 /**

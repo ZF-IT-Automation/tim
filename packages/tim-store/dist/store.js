@@ -53,8 +53,8 @@ function sanitizeFtsQuery(query) {
         }
         return col + ' '; // "kind:summary" → "kind summary" (split, don't drop)
     });
-    // Step 2: drop chars that confuse FTS5 tokenization: " ' ( ) * ^
-    s = s.replace(/["'*()^]/g, ' ');
+    // Step 2: drop chars that confuse FTS5 tokenization: " ' ( ) * ^ # -
+    s = s.replace(/["'*()^#-]/g, ' ');
     // Step 3: split, drop operator words, trim.
     const tokens = s
         .split(/\s+/)
@@ -835,6 +835,7 @@ class TimStore {
             confidence: options.confidence ?? 1.0,
             created_at: now,
             accessed_at: now,
+            updated_at: now,
             decay_rate: options.decayRate ?? 0.0,
             visibility: options.visibility ?? 1,
             tags: JSON.stringify(options.tags ?? []),
@@ -847,8 +848,8 @@ class TimStore {
     }
     insertEntrySync(entry) {
         this.db.prepare(`INSERT INTO entries (id, parent_id, title, content, content_type, depth,
-      confidence, created_at, accessed_at, decay_rate, visibility, tags, irrelevant,
-      favorite, tombstoned_at, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(entry.id, entry.parent_id, entry.title, entry.content, entry.content_type, entry.depth, entry.confidence, entry.created_at, entry.accessed_at, entry.decay_rate, entry.visibility, entry.tags, entry.irrelevant, entry.favorite, entry.tombstoned_at, entry.metadata);
+      confidence, created_at, accessed_at, updated_at, decay_rate, visibility, tags, irrelevant,
+      favorite, tombstoned_at, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(entry.id, entry.parent_id, entry.title, entry.content, entry.content_type, entry.depth, entry.confidence, entry.created_at, entry.accessed_at, entry.updated_at, entry.decay_rate, entry.visibility, entry.tags, entry.irrelevant, entry.favorite, entry.tombstoned_at, entry.metadata);
     }
     insertStagingSync(entry, timestamp, confidence) {
         this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
@@ -917,10 +918,11 @@ class TimStore {
             tombstoned_at: patch.tombstonedAt ?? existing.tombstoned_at,
             metadata: patch.metadata ? JSON.stringify(patch.metadata) : existing.metadata,
             accessed_at: now,
+            updated_at: now,
         };
         this.db.prepare(`UPDATE entries SET title=?, content=?, content_type=?, confidence=?,
       decay_rate=?, visibility=?, tags=?, irrelevant=?, tombstoned_at=?, metadata=?,
-      accessed_at=? WHERE id=?`).run(updated.title, updated.content, updated.content_type, updated.confidence, updated.decay_rate, updated.visibility, updated.tags, updated.irrelevant, updated.tombstoned_at, updated.metadata, updated.accessed_at, id);
+      accessed_at=?, updated_at=? WHERE id=?`).run(updated.title, updated.content, updated.content_type, updated.confidence, updated.decay_rate, updated.visibility, updated.tags, updated.irrelevant, updated.tombstoned_at, updated.metadata, updated.accessed_at, updated.updated_at, id);
         // Write to staging
         this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
       lww_timestamp, lww_device, lww_confidence)
@@ -946,8 +948,9 @@ class TimStore {
                 ...existing,
                 irrelevant: 1,
                 accessed_at: now,
+                updated_at: now,
             };
-            this.db.prepare('UPDATE entries SET irrelevant = 1, accessed_at = ? WHERE id = ?').run(now, id);
+            this.db.prepare('UPDATE entries SET irrelevant = 1, accessed_at = ?, updated_at = ? WHERE id = ?').run(now, now, id);
             this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
         lww_timestamp, lww_device, lww_confidence)
         VALUES (?, 'entry', 'upsert', ?, ?, ?, ?)`).run(id, JSON.stringify(updated), timestamp, 'local', updated.confidence);
@@ -1000,6 +1003,7 @@ class TimStore {
     // ─── Edges ─────────────────────────────────────────────
     async link(sourceId, targetId, type, weight = 1.0, metadata = {}) {
         const id = (0, ulid_1.ulid)();
+        const ts = Date.now();
         const edgeRow = {
             id,
             source_id: sourceId,
@@ -1007,11 +1011,11 @@ class TimStore {
             type,
             weight,
             metadata: JSON.stringify(metadata),
+            updated_at: new Date(ts).toISOString(),
         };
-        this.db.prepare(`INSERT INTO edges (id, source_id, target_id, type, weight, metadata)
-      VALUES (?, ?, ?, ?, ?, ?)`).run(edgeRow.id, edgeRow.source_id, edgeRow.target_id, edgeRow.type, edgeRow.weight, edgeRow.metadata);
+        this.db.prepare(`INSERT INTO edges (id, source_id, target_id, type, weight, metadata, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)`).run(edgeRow.id, edgeRow.source_id, edgeRow.target_id, edgeRow.type, edgeRow.weight, edgeRow.metadata, edgeRow.updated_at);
         const edgeKey = `${sourceId}|${targetId}|${type}`;
-        const ts = Date.now();
         this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
       lww_timestamp, lww_device, lww_confidence)
       VALUES (?, 'edge', 'upsert', ?, ?, ?, ?)`).run(edgeKey, JSON.stringify(edgeRow), ts, this.agentId, 1.0);
@@ -1131,11 +1135,11 @@ class TimStore {
     async applyStaging(records) {
         const upsertEntry = this.db.prepare(`INSERT OR REPLACE INTO entries
       (id, parent_id, title, content, content_type, depth, confidence, created_at,
-       accessed_at, decay_rate, visibility, tags, irrelevant, favorite, tombstoned_at, metadata)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+       accessed_at, updated_at, decay_rate, visibility, tags, irrelevant, favorite, tombstoned_at, metadata)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
         const upsertEdge = this.db.prepare(`INSERT OR REPLACE INTO edges
-      (id, source_id, target_id, type, weight, metadata)
-      VALUES (?, ?, ?, ?, ?, ?)`);
+      (id, source_id, target_id, type, weight, metadata, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)`);
         const deleteEntry = this.db.prepare('DELETE FROM entries WHERE id = ?');
         const deleteEdge = this.db.prepare('DELETE FROM edges WHERE id = ?');
         const transaction = this.db.transaction(() => {
@@ -1145,7 +1149,7 @@ class TimStore {
                         const payload = JSON.parse(record.payload);
                         const existing = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(payload.id);
                         if (existing) {
-                            const local = (0, sync_methods_js_1.recordFromPayload)(payload.id, 'entry', existing.tombstoned_at ? 'delete' : 'upsert', JSON.stringify(existing), Date.parse(existing.accessed_at ?? existing.created_at), 'local', Number(existing.confidence ?? 1));
+                            const local = (0, sync_methods_js_1.recordFromPayload)(payload.id, 'entry', existing.tombstoned_at ? 'delete' : 'upsert', JSON.stringify(existing), (0, sync_methods_js_1.entryLocalLwwTimestamp)(existing), 'local', Number(existing.confidence ?? 1));
                             const { winner } = (0, tim_sync_1.resolveLWW)(local, record);
                             if (winner !== record)
                                 continue;
@@ -1156,12 +1160,13 @@ class TimStore {
                         const entry = JSON.parse(record.payload);
                         const existing = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(entry.id);
                         if (existing) {
-                            const local = (0, sync_methods_js_1.recordFromPayload)(entry.id, 'entry', existing.tombstoned_at ? 'delete' : 'upsert', JSON.stringify(existing), Date.parse(existing.accessed_at ?? existing.created_at), 'local', Number(existing.confidence ?? 1));
+                            const local = (0, sync_methods_js_1.recordFromPayload)(entry.id, 'entry', existing.tombstoned_at ? 'delete' : 'upsert', JSON.stringify(existing), (0, sync_methods_js_1.entryLocalLwwTimestamp)(existing), 'local', Number(existing.confidence ?? 1));
                             const { winner } = (0, tim_sync_1.resolveLWW)(local, record);
                             if (winner !== record)
                                 continue;
                         }
-                        upsertEntry.run(entry.id, entry.parent_id, entry.title ?? '', entry.content, entry.content_type, entry.depth, entry.confidence, entry.created_at, entry.accessed_at, entry.decay_rate, entry.visibility, entry.tags, entry.irrelevant, entry.favorite ?? 0, entry.tombstoned_at, entry.metadata);
+                        const appliedUpdatedAt = new Date(record.lwwTimestamp).toISOString();
+                        upsertEntry.run(entry.id, entry.parent_id, entry.title ?? '', entry.content, entry.content_type, entry.depth, entry.confidence, entry.created_at, entry.accessed_at, appliedUpdatedAt, entry.decay_rate, entry.visibility, entry.tags, entry.irrelevant, entry.favorite ?? 0, entry.tombstoned_at, entry.metadata);
                     }
                 }
                 else if (record.entityType === 'edge') {
@@ -1170,7 +1175,7 @@ class TimStore {
                     const existing = this.db.prepare('SELECT * FROM edges WHERE source_id = ? AND target_id = ? AND type = ?').get(edge.source_id, edge.target_id, edge.type);
                     if (record.operation === 'delete') {
                         if (existing) {
-                            const local = (0, sync_methods_js_1.recordFromPayload)(compositeKey, 'edge', 'upsert', JSON.stringify(existing), record.lwwTimestamp, 'local');
+                            const local = (0, sync_methods_js_1.recordFromPayload)(compositeKey, 'edge', 'upsert', JSON.stringify(existing), (0, sync_methods_js_1.edgeLocalLwwTimestamp)(existing), 'local');
                             const { winner } = (0, tim_sync_1.resolveLWW)(local, record);
                             if (winner !== record)
                                 continue;
@@ -1179,12 +1184,12 @@ class TimStore {
                     }
                     else {
                         if (existing) {
-                            const local = (0, sync_methods_js_1.recordFromPayload)(compositeKey, 'edge', 'upsert', JSON.stringify(existing), record.lwwTimestamp, 'local');
+                            const local = (0, sync_methods_js_1.recordFromPayload)(compositeKey, 'edge', 'upsert', JSON.stringify(existing), (0, sync_methods_js_1.edgeLocalLwwTimestamp)(existing), 'local');
                             const { winner } = (0, tim_sync_1.resolveLWW)(local, record);
                             if (winner !== record)
                                 continue;
                         }
-                        upsertEdge.run(edge.id, edge.source_id, edge.target_id, edge.type, edge.weight, edge.metadata);
+                        upsertEdge.run(edge.id, edge.source_id, edge.target_id, edge.type, edge.weight, edge.metadata, new Date(record.lwwTimestamp).toISOString());
                     }
                 }
             }

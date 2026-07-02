@@ -16,7 +16,7 @@ import { resolveLWW } from 'tim-sync';
 import { runMigrations, createTriggers, getCurrentVersion } from './schema.js';
 import { CurateManager } from './curate.js';
 import { metadataNeedsCoercion, parseAndCoerceMetadata } from './metadata-coerce.js';
-import { recordFromPayload } from './sync-methods.js';
+import { recordFromPayload, entryLocalLwwTimestamp, edgeLocalLwwTimestamp } from './sync-methods.js';
 
 /**
  * Sanitize a user-supplied query string into a safe FTS5 MATCH expression.
@@ -1003,6 +1003,7 @@ export class TimStore implements MemoryInterface {
       confidence: options.confidence ?? 1.0,
       created_at: now,
       accessed_at: now,
+      updated_at: now,
       decay_rate: options.decayRate ?? 0.0,
       visibility: options.visibility ?? 1,
       tags: JSON.stringify(options.tags ?? []),
@@ -1017,10 +1018,10 @@ export class TimStore implements MemoryInterface {
 
   private insertEntrySync(entry: RowEntry): void {
     this.db.prepare(`INSERT INTO entries (id, parent_id, title, content, content_type, depth,
-      confidence, created_at, accessed_at, decay_rate, visibility, tags, irrelevant,
-      favorite, tombstoned_at, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      confidence, created_at, accessed_at, updated_at, decay_rate, visibility, tags, irrelevant,
+      favorite, tombstoned_at, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
       entry.id, entry.parent_id, entry.title, entry.content, entry.content_type, entry.depth,
-      entry.confidence, entry.created_at, entry.accessed_at, entry.decay_rate,
+      entry.confidence, entry.created_at, entry.accessed_at, entry.updated_at, entry.decay_rate,
       entry.visibility, entry.tags, entry.irrelevant, entry.favorite, entry.tombstoned_at, entry.metadata
     );
   }
@@ -1102,15 +1103,16 @@ export class TimStore implements MemoryInterface {
       tombstoned_at: patch.tombstonedAt ?? existing.tombstoned_at,
       metadata: patch.metadata ? JSON.stringify(patch.metadata) : existing.metadata,
       accessed_at: now,
+      updated_at: now,
     };
 
     this.db.prepare(`UPDATE entries SET title=?, content=?, content_type=?, confidence=?,
       decay_rate=?, visibility=?, tags=?, irrelevant=?, tombstoned_at=?, metadata=?,
-      accessed_at=? WHERE id=?`).run(
+      accessed_at=?, updated_at=? WHERE id=?`).run(
       updated.title, updated.content, updated.content_type, updated.confidence,
       updated.decay_rate, updated.visibility, updated.tags,
       updated.irrelevant, updated.tombstoned_at, updated.metadata,
-      updated.accessed_at, id
+      updated.accessed_at, updated.updated_at, id
     );
 
     // Write to staging
@@ -1143,8 +1145,9 @@ export class TimStore implements MemoryInterface {
         ...existing,
         irrelevant: 1,
         accessed_at: now,
+        updated_at: now,
       };
-      this.db.prepare('UPDATE entries SET irrelevant = 1, accessed_at = ? WHERE id = ?').run(now, id);
+      this.db.prepare('UPDATE entries SET irrelevant = 1, accessed_at = ?, updated_at = ? WHERE id = ?').run(now, now, id);
       this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
         lww_timestamp, lww_device, lww_confidence)
         VALUES (?, 'entry', 'upsert', ?, ?, ?, ?)`).run(
@@ -1208,6 +1211,7 @@ export class TimStore implements MemoryInterface {
     weight: number = 1.0, metadata: Record<string, unknown> = {}
   ): Promise<Edge> {
     const id = ulid();
+    const ts = Date.now();
 
     const edgeRow = {
       id,
@@ -1216,16 +1220,16 @@ export class TimStore implements MemoryInterface {
       type,
       weight,
       metadata: JSON.stringify(metadata),
+      updated_at: new Date(ts).toISOString(),
     };
 
-    this.db.prepare(`INSERT INTO edges (id, source_id, target_id, type, weight, metadata)
-      VALUES (?, ?, ?, ?, ?, ?)`).run(
+    this.db.prepare(`INSERT INTO edges (id, source_id, target_id, type, weight, metadata, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
       edgeRow.id, edgeRow.source_id, edgeRow.target_id,
-      edgeRow.type, edgeRow.weight, edgeRow.metadata,
+      edgeRow.type, edgeRow.weight, edgeRow.metadata, edgeRow.updated_at,
     );
 
     const edgeKey = `${sourceId}|${targetId}|${type}`;
-    const ts = Date.now();
     this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
       lww_timestamp, lww_device, lww_confidence)
       VALUES (?, 'edge', 'upsert', ?, ?, ?, ?)`).run(
@@ -1366,12 +1370,12 @@ export class TimStore implements MemoryInterface {
   async applyStaging(records: StagingRecord[]): Promise<void> {
     const upsertEntry = this.db.prepare(`INSERT OR REPLACE INTO entries
       (id, parent_id, title, content, content_type, depth, confidence, created_at,
-       accessed_at, decay_rate, visibility, tags, irrelevant, favorite, tombstoned_at, metadata)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+       accessed_at, updated_at, decay_rate, visibility, tags, irrelevant, favorite, tombstoned_at, metadata)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
 
     const upsertEdge = this.db.prepare(`INSERT OR REPLACE INTO edges
-      (id, source_id, target_id, type, weight, metadata)
-      VALUES (?, ?, ?, ?, ?, ?)`);
+      (id, source_id, target_id, type, weight, metadata, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)`);
 
     const deleteEntry = this.db.prepare('DELETE FROM entries WHERE id = ?');
     const deleteEdge = this.db.prepare('DELETE FROM edges WHERE id = ?');
@@ -1389,7 +1393,7 @@ export class TimStore implements MemoryInterface {
                 'entry',
                 existing.tombstoned_at ? 'delete' : 'upsert',
                 JSON.stringify(existing),
-                Date.parse(existing.accessed_at ?? existing.created_at),
+                entryLocalLwwTimestamp(existing),
                 'local',
                 Number(existing.confidence ?? 1),
               );
@@ -1407,16 +1411,18 @@ export class TimStore implements MemoryInterface {
                 'entry',
                 existing.tombstoned_at ? 'delete' : 'upsert',
                 JSON.stringify(existing),
-                Date.parse(existing.accessed_at ?? existing.created_at),
+                entryLocalLwwTimestamp(existing),
                 'local',
                 Number(existing.confidence ?? 1),
               );
               const { winner } = resolveLWW(local, record);
               if (winner !== record) continue;
             }
+            const appliedUpdatedAt = new Date(record.lwwTimestamp).toISOString();
             upsertEntry.run(
               entry.id, entry.parent_id, entry.title ?? '', entry.content, entry.content_type,
               entry.depth, entry.confidence, entry.created_at, entry.accessed_at,
+              appliedUpdatedAt,
               entry.decay_rate, entry.visibility, entry.tags,
               entry.irrelevant, entry.favorite ?? 0, entry.tombstoned_at, entry.metadata
             );
@@ -1435,7 +1441,7 @@ export class TimStore implements MemoryInterface {
                 'edge',
                 'upsert',
                 JSON.stringify(existing),
-                record.lwwTimestamp,
+                edgeLocalLwwTimestamp(existing),
                 'local',
               );
               const { winner } = resolveLWW(local, record);
@@ -1449,7 +1455,7 @@ export class TimStore implements MemoryInterface {
                 'edge',
                 'upsert',
                 JSON.stringify(existing),
-                record.lwwTimestamp,
+                edgeLocalLwwTimestamp(existing),
                 'local',
               );
               const { winner } = resolveLWW(local, record);
@@ -1457,7 +1463,8 @@ export class TimStore implements MemoryInterface {
             }
             upsertEdge.run(
               edge.id, edge.source_id, edge.target_id,
-              edge.type, edge.weight, edge.metadata
+              edge.type, edge.weight, edge.metadata,
+              new Date(record.lwwTimestamp).toISOString(),
             );
           }
         }
@@ -1652,6 +1659,7 @@ interface RowEntry {
   confidence: number;
   created_at: string;
   accessed_at: string;
+  updated_at: string;
   decay_rate: number;
   visibility: number;
   tags: string;
@@ -1668,6 +1676,7 @@ interface RowEdge {
   type: string;
   weight: number;
   metadata: string;
+  updated_at: string;
 }
 
 interface RowAgent {

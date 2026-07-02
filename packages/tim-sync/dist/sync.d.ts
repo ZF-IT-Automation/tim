@@ -13,7 +13,8 @@ export interface ConflictResolution {
 }
 /**
  * Resolve conflict between two staging records for the same key.
- * Strategy: confidence * time_decay → highest score wins.
+ * Strategy: higher lwwTimestamp wins; on tie, lexicographically higher lwwDevice wins.
+ * Purely deterministic — no wall-clock decay or confidence weighting.
  */
 export declare function resolveLWW(a: StagingRecord, b: StagingRecord): ConflictResolution;
 /**

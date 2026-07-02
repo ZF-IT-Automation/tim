@@ -149,6 +149,24 @@ exports.MIGRATIONS = [
 
       DELETE FROM staging WHERE acked = 1;
     `
+    },
+    {
+        version: 7,
+        sql: `
+      ALTER TABLE entries ADD COLUMN updated_at TEXT NOT NULL DEFAULT '';
+      UPDATE entries SET updated_at = created_at;
+
+      ALTER TABLE edges ADD COLUMN updated_at TEXT NOT NULL DEFAULT '';
+      UPDATE edges SET updated_at = COALESCE(
+        (SELECT datetime(s.lww_timestamp / 1000, 'unixepoch')
+         FROM staging s
+         WHERE s.entity_type = 'edge'
+           AND s.key = (edges.source_id || '|' || edges.target_id || '|' || edges.type)
+         ORDER BY s.lww_timestamp DESC
+         LIMIT 1),
+        datetime('now')
+      );
+    `
     }
 ];
 function getCurrentVersion() {

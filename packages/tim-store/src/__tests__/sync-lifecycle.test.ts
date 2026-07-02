@@ -42,7 +42,7 @@ describe('sync lifecycle (F-STORE-002/004/005)', () => {
       string,
       unknown
     >;
-    store.getDb().prepare("UPDATE entries SET accessed_at = '2099-01-01T00:00:00Z' WHERE id = ?").run(
+    store.getDb().prepare("UPDATE entries SET updated_at = '2099-01-01T00:00:00Z' WHERE id = ?").run(
       entry.id,
     );
     const remote: StagingRecord = {
