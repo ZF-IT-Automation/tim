@@ -423,6 +423,8 @@ export class TimStore implements MemoryInterface {
     const children: Entry[] = [];
     let truncated = false;
 
+    const suppressPatterns = this.loadActiveSuppressPatterns();
+
     const matchesSection = (entry: Entry): boolean => {
       if (!sections?.length) return true;
       const entryLabel = entry.metadata.label as string | undefined;
@@ -462,6 +464,7 @@ export class TimStore implements MemoryInterface {
         }
 
         const child = rowToEntry(row);
+        if (TimStore.matchesSuppressed(suppressPatterns, child)) continue;
         children.push(child);
         // Load session subtrees newest-first so the newest sessions survive
         // budget truncation (Recent-Sessions sort bug).
@@ -1282,7 +1285,9 @@ export class TimStore implements MemoryInterface {
 
   async search(options: SearchOptions): Promise<Entry[]> {
     const topK = options.topK ?? 10;
-    const fts = await this.searchFts(options.query, topK);
+    const patterns = this.loadActiveSuppressPatterns();
+    const fts = (await this.searchFts(options.query, topK))
+      .filter(e => !TimStore.matchesSuppressed(patterns, e));
     // Labels/aliases live in metadata, not the FTS corpus. Merge a direct project hit.
     // Broader fix: index metadata.label + aliases in fts_entries (migration + triggers).
     const resolved = await this.resolveProjectLabel(options.query);
@@ -1295,7 +1300,7 @@ export class TimStore implements MemoryInterface {
           AND tombstoned_at IS NULL
       `).get(resolved.label) as RowEntry | undefined;
       const proj = row ? rowToEntry(row) : null;
-      if (proj && !fts.some(e => e.id === proj.id)) {
+      if (proj && !TimStore.matchesSuppressed(patterns, proj) && !fts.some(e => e.id === proj.id)) {
         return [proj, ...fts].slice(0, topK);
       }
     }
@@ -1836,6 +1841,24 @@ export class TimStore implements MemoryInterface {
     ).all(now) as { pattern: string }[];
 
     return patterns.some(p => content.toLowerCase().includes(p.pattern.toLowerCase()));
+  }
+
+  /** Active (non-expired) suppress patterns, lowercased. Loaded once per retrieval call. */
+  private loadActiveSuppressPatterns(): string[] {
+    const now = new Date().toISOString();
+    const rows = this.db.prepare(
+      'SELECT pattern FROM suppressed WHERE expires_at IS NULL OR expires_at > ?',
+    ).all(now) as { pattern: string }[];
+    return rows.map(r => r.pattern.toLowerCase());
+  }
+
+  private static matchesSuppressed(
+    patterns: string[],
+    entry: { title: string; content: string },
+  ): boolean {
+    if (patterns.length === 0) return false;
+    const text = `${entry.title}\n${entry.content}`.toLowerCase();
+    return patterns.some(p => text.includes(p));
   }
 
   async runDecay(options: DecayOptions): Promise<number> {
