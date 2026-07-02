@@ -3,6 +3,7 @@
 import Database from 'better-sqlite3';
 import { ulid } from 'ulid';
 import type { TimStore } from 'tim-store';
+import { splitTitleBody } from 'tim-store';
 import { detectHmemFormat, inspectHmemFile, parseLabel } from './hmem-format.js';
 
 export interface ImportOptions {
@@ -118,6 +119,18 @@ function hmemUidExists(store: TimStore, hmemUid: string): { id: string } | undef
   ).get(hmemUid) as { id: string } | undefined;
 }
 
+/** Re-read the row and enqueue an upsert staging record so imports sync. */
+function stageEntryRow(db: Database.Database, id: string): void {
+  const row = db.prepare('SELECT * FROM entries WHERE id = ?').get(id) as
+    Record<string, unknown> | undefined;
+  if (!row) return;
+  db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
+    lww_timestamp, lww_device, lww_confidence)
+    VALUES (?, 'entry', 'upsert', ?, ?, 'local', ?)`).run(
+    id, JSON.stringify(row), Date.now(), Number(row.confidence ?? 1),
+  );
+}
+
 function insertEntryDirect(
   db: Database.Database,
   params: {
@@ -134,24 +147,29 @@ function insertEntryDirect(
     metadata: Record<string, unknown>;
   },
 ): void {
+  const { title, body } = splitTitleBody(params.content);
   db.prepare(`
     INSERT INTO entries (
-      id, parent_id, content, content_type, depth, confidence, created_at, accessed_at,
+      id, parent_id, title, content, content_type, depth, confidence,
+      created_at, accessed_at, updated_at,
       decay_rate, visibility, tags, irrelevant, favorite, tombstoned_at, metadata
-    ) VALUES (?, ?, ?, 'text', ?, ?, ?, ?, 0.0, 1, ?, ?, ?, NULL, ?)
+    ) VALUES (?, ?, ?, ?, 'text', ?, ?, ?, ?, ?, 0.0, 1, ?, ?, ?, NULL, ?)
   `).run(
     params.id,
     params.parentId,
-    params.content,
+    title,
+    body,
     params.depth,
     params.confidence,
     params.createdAt,
     params.accessedAt,
+    params.accessedAt, // updated_at: best available signal from the source
     JSON.stringify(params.tags),
     params.irrelevant ? 1 : 0,
     params.favorite ? 1 : 0,
     JSON.stringify(params.metadata),
   );
+  stageEntryRow(db, params.id);
 }
 
 function insertEdgeDirect(
@@ -160,10 +178,24 @@ function insertEdgeDirect(
   targetId: string,
   type: string,
 ): void {
-  db.prepare(`
-    INSERT OR IGNORE INTO edges (id, source_id, target_id, type, weight, metadata)
-    VALUES (?, ?, ?, ?, 1.0, '{}')
-  `).run(ulid(), sourceId, targetId, type);
+  const id = ulid();
+  const ts = Date.now();
+  const updatedAt = new Date(ts).toISOString();
+  const result = db.prepare(`
+    INSERT OR IGNORE INTO edges (id, source_id, target_id, type, weight, metadata, updated_at)
+    VALUES (?, ?, ?, ?, 1.0, '{}', ?)
+  `).run(id, sourceId, targetId, type, updatedAt);
+  if (result.changes === 0) return; // duplicate — nothing new to sync
+
+  const edgeRow = {
+    id, source_id: sourceId, target_id: targetId,
+    type, weight: 1.0, metadata: '{}', updated_at: updatedAt,
+  };
+  db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
+    lww_timestamp, lww_device, lww_confidence)
+    VALUES (?, 'edge', 'upsert', ?, ?, 'local', 1.0)`).run(
+    `${sourceId}|${targetId}|${type}`, JSON.stringify(edgeRow), ts,
+  );
 }
 
 function importV2(

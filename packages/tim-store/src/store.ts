@@ -1963,7 +1963,7 @@ function normalizeProjectAliases(aliases?: string[]): string[] {
   return out;
 }
 
-function splitTitleBody(content: string, explicitTitle?: string): { title: string; body: string } {
+export function splitTitleBody(content: string, explicitTitle?: string): { title: string; body: string } {
   if (explicitTitle !== undefined) {
     return { title: explicitTitle.trim(), body: content };
   }

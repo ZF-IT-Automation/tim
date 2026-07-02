@@ -105,10 +105,12 @@ describe('tim_import', () => {
     expect(report.edgesImported).toBe(1);
 
     const root = store.getDb().prepare('SELECT * FROM entries WHERE id = ?').get(rootUid) as {
+      title: string;
       content: string;
       metadata: string;
     };
-    expect(root.content).toBe('Imported root');
+    expect(root.title).toBe('Imported root');
+    expect(root.content).toBe('');
 
     const meta = JSON.parse(root.metadata);
     expect(meta.label).toBe('P0001');
@@ -116,10 +118,12 @@ describe('tim_import', () => {
 
     const child = store.getDb().prepare('SELECT * FROM entries WHERE id = ?').get(childUid) as {
       parent_id: string;
+      title: string;
       content: string;
     };
     expect(child.parent_id).toBe(rootUid);
-    expect(child.content).toBe('Imported child');
+    expect(child.title).toBe('Imported child');
+    expect(child.content).toBe('');
   });
 
   it('imports old hmem format with level hierarchy and links', () => {
@@ -138,9 +142,10 @@ describe('tim_import', () => {
     expect(root.id).toBe('P0042');
 
     const children = store.getDb().prepare(
-      'SELECT content FROM entries WHERE parent_id = ?',
-    ).all(root.id) as { content: string }[];
-    expect(children[0].content).toBe('Old child');
+      'SELECT title, content FROM entries WHERE parent_id = ?',
+    ).all(root.id) as { title: string; content: string }[];
+    expect(children[0].title).toBe('Old child');
+    expect(children[0].content).toBe('');
   });
 
   it('dry run reports counts without writing', async () => {

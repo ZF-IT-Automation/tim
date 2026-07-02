@@ -2,6 +2,7 @@
 
 export {
   TimStore,
+  splitTitleBody,
   type TimStoreOptions,
   type CreateProjectOptions,
   type LoadProjectOptions,

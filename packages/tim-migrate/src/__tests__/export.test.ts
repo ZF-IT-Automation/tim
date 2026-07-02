@@ -116,13 +116,13 @@ describe('tim_export', () => {
 
       const importedRoot = await fresh.read(root.id);
       expect(importedRoot).not.toBeNull();
-      expect(importedRoot!.content).toBe('Roundtrip root');
+      expect(importedRoot!.title).toBe('Roundtrip root');
       expect(importedRoot!.metadata.label).toBe('P0099');
       expect(importedRoot!.tags).toEqual(['#test']);
 
       const children = await fresh.getChildren(root.id);
       expect(children).toHaveLength(1);
-      expect(children[0].content).toBe('Roundtrip child');
+      expect(children[0].title).toBe('Roundtrip child');
       expect(children[0].tags).toEqual(['#child']);
 
       const edges = await fresh.getEdges(root.id, 'outgoing');
