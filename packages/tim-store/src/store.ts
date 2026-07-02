@@ -1638,13 +1638,18 @@ export class TimStore implements MemoryInterface {
       issues.push(`${brokenLinks.count} broken links`);
     }
 
-    // Orphan entries: no edges, no children, not root
+    // Orphan entries: live entries whose parent_id references a missing or
+    // tombstoned parent. Leaves without edges are normal tree nodes, NOT
+    // orphans — the old metric counted those and produced numbers larger
+    // than the entry count.
     const orphans = this.db.prepare(`
       SELECT COUNT(*) as count FROM entries e
-      WHERE e.parent_id IS NOT NULL
-        AND e.id NOT IN (SELECT DISTINCT parent_id FROM entries WHERE parent_id IS NOT NULL)
-        AND e.id NOT IN (SELECT source_id FROM edges)
-        AND e.id NOT IN (SELECT target_id FROM edges)
+      WHERE e.tombstoned_at IS NULL
+        AND e.parent_id IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM entries p
+          WHERE p.id = e.parent_id AND p.tombstoned_at IS NULL
+        )
     `).get() as { count: number };
     if (orphans.count > 0) {
       issues.push(`${orphans.count} orphan entries`);

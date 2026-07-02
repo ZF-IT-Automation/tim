@@ -404,7 +404,7 @@ tim-skills       → (geplant) Skill-Integration
 |---------|--------|--------|
 | **Session-Summary-Rollup** ✅ | Rollup jetzt konvergent — feuert unbedingt bei jedem Summarizer-Exit (auch wenn Run nach write crasht); partial-batch race fixed (späte Exchanges in bereits summarisierten Batches werden neu zusammengeführt) | Gefixt — `9db846e` |
 | **Summarizer All-Fail (Heuristic Fallback)** | Wenn alle CLI-Tools der Chain scheitern, schreibt die Heuristic-Fallback einen Q/A-Dump und MARKIERT den Batch als summarisiert — Retry ist damit UNMÖGLICH, schlimmer als ursprünglich dokumentiert. Workaround: Batch-Node manuell löschen oder `update(irrelevant:false)` auf dem parent-Batch | Offen |
-| **Doctor Orphan-Metrik** ⚠️ | `tim_health` zählt JEDES entry ohne ausgehende Edges als "orphan" — 7381 "Orphans" bei 2916 echten Einträgen = Metrik-Bug, nicht Daten-Korruption. Reale Dangling-Parent-Detection fehlt. Cleanup-Tool basierend auf den Zahlen wäre destruktiv | Offen (P2 in REVIEW-fable5) |
+| **Doctor Orphan-Metrik** ✅ | Alte Metrik zählte jedes edge-lose Leaf als "orphan" — Live-DB zeigte 7390 "Orphans" bei ~2934 Einträgen (mehr Orphans als Entries = Metrik-Bug). Neu: live Entries deren `parent_id` auf fehlenden oder tombstoned Parent zeigt. Echte Dangling-Parent-Links, keine normalen Tree-Leaves. | Gefixt — Plan 2, Task 2 |
 | **Doppelte P0063-Einträge** | `createProject` prüft keine Label-Uniqueness → `read("P0063")` kann falschen Baum laden | Offen |
 | **FTS findet Labels nicht** | `tim_search("P0063")` leer — `metadata.label` nicht im FTS-Corpus | Offen |
 | **Alias-Validierung** | `recordCommit("o9k")` wirft obwohl Alias existiert — Validation nutzt nicht `resolveProjectLabel` | Offen |
