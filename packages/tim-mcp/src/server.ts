@@ -163,6 +163,7 @@ const TimUpdateSchema = z.object({
   confidence: z.number().min(0).max(1).optional(),
   tags: z.array(z.string()).optional(),
   visibility: z.number().optional(),
+  irrelevant: z.boolean().optional(),
   metadata: z.record(z.unknown()).optional(),
 });
 
@@ -1090,6 +1091,7 @@ export async function createMcpServer(): Promise<Server> {
               description: 'Topic tags only. Deprecated status/priority tags are stripped — use metadata.task.status / metadata.task.priority.',
             },
             visibility: { type: 'number' },
+            irrelevant: { type: 'boolean', description: 'Set false to restore a soft-deleted entry, true to soft-delete' },
             metadata: { type: 'object' },
           },
           required: ['id'],
