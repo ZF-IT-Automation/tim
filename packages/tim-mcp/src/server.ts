@@ -978,10 +978,23 @@ export async function createMcpServer(): Promise<Server> {
     isError: true as const,
   });
 
+  // Plumbing tools called by the summarizer / hooks via MCP — handlers must
+  // remain fully functional, but ListTools hides them by default so agents
+  // don't see internal-only entries. Set TIM_EXPOSE_INTERNAL_TOOLS=1 to reveal.
+  const INTERNAL_TOOLS = new Set([
+    'tim_write_batch_summary',
+    'tim_rollup_session_summary',
+    'tim_show_unsummarized',
+    'tim_show_all_unsummarized',
+    'tim_show_untagged',
+    'tim_error_log',
+    'tim_session_log',
+    'tim_checkpoint',
+  ]);
+
   server.setRequestHandler(ListToolsRequestSchema, async () => {
     const rememberEnabled = loadConfig().remember?.enabled !== false;
-    return {
-    tools: [
+    const allTools = [
       {
         name: 'tim_read',
         description: 'Read an entry from TIM. Returns entry content, children, and optional edges.',
@@ -1582,8 +1595,10 @@ export async function createMcpServer(): Promise<Server> {
           required: ['query'],
         },
       }] : []),
-    ],
-  };
+    ];
+    const exposeInternal = process.env.TIM_EXPOSE_INTERNAL_TOOLS === '1';
+    const tools = exposeInternal ? allTools : allTools.filter(t => !INTERNAL_TOOLS.has(t.name));
+    return { tools };
   });
 
   // ─── Tool Handler ────────────────────────────────────
