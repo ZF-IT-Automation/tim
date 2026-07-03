@@ -977,6 +977,14 @@ export async function createMcpServer(): Promise<Server> {
 
   // ─── Tool Registration ──────────────────────────────
 
+  // Consistent error contract: every failure path returns isError:true with a
+  // helpful text payload. Replaces the old "null" string and the silent
+  // text-only returns that some load/read handlers used to produce.
+  const errorResult = (text: string) => ({
+    content: [{ type: 'text' as const, text }],
+    isError: true as const,
+  });
+
   server.setRequestHandler(ListToolsRequestSchema, async () => {
     const rememberEnabled = loadConfig().remember?.enabled !== false;
     return {
@@ -1749,10 +1757,7 @@ export async function createMcpServer(): Promise<Server> {
             }
             const entry = await s.read(pr.label, readOpts);
             if (!entry) {
-              return {
-                content: [{ type: 'text', text: JSON.stringify(null) }],
-                isError: true,
-              };
+              return errorResult(`Project not found: ${project}`);
             }
             const edges = includeEdges ? await s.getEdges(entry.id, 'both') : [];
             return {
@@ -1780,10 +1785,7 @@ export async function createMcpServer(): Promise<Server> {
             }
             const entry = await s.read(id, readOpts);
             if (!entry) {
-              return {
-                content: [{ type: 'text', text: JSON.stringify(null) }],
-                isError: true,
-              };
+              return errorResult(`Entry not found: ${id}`);
             }
             if (entry && await s.isSuppressed(`${entry.title}\n${entry.content}`)) {
               return {
@@ -1792,10 +1794,7 @@ export async function createMcpServer(): Promise<Server> {
               };
             }
             if (projectLabel && s.getProjectLabel(entry.id) !== projectLabel) {
-              return {
-                content: [{ type: 'text', text: JSON.stringify(null) }],
-                isError: true,
-              };
+              return errorResult(`Entry ${id} not found in project ${projectLabel}`);
             }
             const edges = includeEdges ? await s.getEdges(id, 'both') : [];
             return {
@@ -2064,7 +2063,9 @@ export async function createMcpServer(): Promise<Server> {
             case 'pull': {
               const config = loadSyncConfig();
               if (!config) {
-                return { content: [{ type: 'text', text: 'Sync not configured (set TIM_SYNC_PASSPHRASE and tim-sync config)' }] };
+                return errorResult(
+                  'Sync not configured (set TIM_SYNC_PASSPHRASE and tim-sync config)'
+                );
               }
               // Force re-arm: manual pull bypasses cooldown + in-flight guard
               resetSyncCooldowns();
@@ -2080,7 +2081,7 @@ export async function createMcpServer(): Promise<Server> {
               };
             }
             default:
-              return { content: [{ type: 'text', text: `Sync action '${action}' not yet implemented` }] };
+              return errorResult(`Sync action '${action}' not yet implemented`);
           }
         }
 
@@ -2089,7 +2090,7 @@ export async function createMcpServer(): Promise<Server> {
           if (grant) {
             const agents = await s.getAgents();
             const agent = agents.find(a => a.label === grant);
-            if (!agent) return { content: [{ type: 'text', text: `Agent "${grant}" not registered` }] };
+            if (!agent) return errorResult(`Agent "${grant}" not registered`);
             await s.link(entryId, agent.id, 'leases', 1.0, ttl ? { ttl } : {});
             return { content: [{ type: 'text', text: `Leased entry ${entryId} to ${grant}` + (ttl ? ` (TTL: ${ttl})` : '') }] };
           }
@@ -2102,7 +2103,7 @@ export async function createMcpServer(): Promise<Server> {
             }
             return { content: [{ type: 'text', text: `No active lease found for ${entryId}` }] };
           }
-          return { content: [{ type: 'text', text: 'Specify grant= or revoke=' }] };
+          return errorResult('Specify grant= or revoke=');
         }
 
         case 'tim_suppress': {
@@ -2194,7 +2195,7 @@ export async function createMcpServer(): Promise<Server> {
         case 'tim_import': {
           const { source, dryRun, deduplicate } = TimImportSchema.parse(args);
           if (!fs.existsSync(source)) {
-            return { content: [{ type: 'text', text: `Source not found: ${source}` }] };
+            return errorResult(`Source not found: ${source}`);
           }
           const report = tim_import(s, source, { dryRun, deduplicate });
           return { content: [{ type: 'text', text: formatToolResponse(report) }] };
@@ -2397,15 +2398,12 @@ export async function createMcpServer(): Promise<Server> {
             TimLoadProjectSchema.parse(args);
           const resolved = await s.resolveProjectLabel(label);
           if (resolved.status === 'ambiguous') {
-            return {
-              content: [{
-                type: 'text',
-                text: `Ambiguous alias: matches ${resolved.labels.join(', ')}. Use label.`,
-              }],
-            };
+            return errorResult(
+              `Ambiguous alias: matches ${resolved.labels.join(', ')}. Use label.`
+            );
           }
           if (resolved.status === 'not_found') {
-            return { content: [{ type: 'text', text: `Project not found: ${label}` }] };
+            return errorResult(`Project not found: ${label}`);
           }
 
           const projectLabel = resolved.label;
@@ -2423,21 +2421,17 @@ export async function createMcpServer(): Promise<Server> {
                   ? existing.metadata.project_ref
                   : undefined;
               if (evaluateLoadGate(existingRef, projectLabel) === 'reject') {
-                return {
-                  content: [{
-                    type: 'text',
-                    text:
-                      `Session already bound to ${existingRef}. tim_load_project binds once per session. ` +
-                      'Use tim_read_project for cross-project access.',
-                  }],
-                };
+                return errorResult(
+                  `Session already bound to ${existingRef}. tim_load_project binds once per session. ` +
+                    'Use tim_read_project for cross-project access.'
+                );
               }
             }
           }
 
           const result = await s.loadProject(projectLabel, { depth, budget, sections });
           if (!result) {
-            return { content: [{ type: 'text', text: `Project not found: ${label}` }] };
+            return errorResult(`Project not found: ${label}`);
           }
 
           if (sessionId) {
@@ -2473,20 +2467,17 @@ export async function createMcpServer(): Promise<Server> {
           const { label, depth, budget, sections } = TimReadProjectSchema.parse(args);
           const resolved = await s.resolveProjectLabel(label);
           if (resolved.status === 'ambiguous') {
-            return {
-              content: [{
-                type: 'text',
-                text: `Ambiguous alias: matches ${resolved.labels.join(', ')}. Use label.`,
-              }],
-            };
+            return errorResult(
+              `Ambiguous alias: matches ${resolved.labels.join(', ')}. Use label.`
+            );
           }
           if (resolved.status === 'not_found') {
-            return { content: [{ type: 'text', text: `Project not found: ${label}` }] };
+            return errorResult(`Project not found: ${label}`);
           }
 
           const result = await s.loadProject(resolved.label, { depth, budget, sections });
           if (!result) {
-            return { content: [{ type: 'text', text: `Project not found: ${label}` }] };
+            return errorResult(`Project not found: ${label}`);
           }
 
           const formatted = formatProjectOutput(result, budget, loadProjectSchema(), 'read');
