@@ -1137,7 +1137,7 @@ case 'tim_show_unsummarized': {
 ```typescript
 const READ_TOOLS = new Set([
   'tim_read', 'tim_search', 'tim_trace', 'tim_health', 'tim_stats',
-  'tim_export', 'tim_doctor', 'tim_sync', 'tim_load_project', 'tim_tasks',
+  'tim_export', 'tim_doctor', 'tim_sync', 'tim_load_project',
   'tim_show_unsummarized',   // ← new
 ]);
 ```

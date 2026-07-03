@@ -887,9 +887,8 @@ Agent weiß: mehr da, gezielt nachladen.
 | Tool | Beschreibung |
 |------|-------------|
 | `tim_write` | Entry schreiben (parentId oder parentTitle+projectId) |
-| `tim_update` | Entry aktualisieren — setzt `updated_at` |
+| `tim_update` | Entry aktualisieren — setzt `updated_at` (auch Titel-Rename: `tim_update(id, title)`) |
 | `tim_link` | Edge zwischen zwei Entries |
-| `tim_rename_title` | Titel umbenennen |
 | `tim_delete` | Soft (irrelevant) oder hard (tombstone) |
 | `tim_update_many` | Batch-Update flags: irrelevant, favorite |
 | `tim_rename_entry` | Entry-ID atomar umbenennen + References |
