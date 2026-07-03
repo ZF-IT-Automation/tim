@@ -23,6 +23,11 @@ All notable changes to TIM are documented in this file.
 
 - **`tim_read_project`** — superseded by `tim_load_project(label, bind:false)`. Will be removed in a future release.
 
+### Removed
+
+- **`tim_rename_title`** — outright removal (breaking). Use `tim_update(id, title)` for title-only edits. The handler was a thin wrapper over `s.update(id, { title })` so all clients have a drop-in replacement.
+- **`tim_tasks`** — outright removal (breaking). Use `tim_show(what="tasks", with="open,done,...")` for the same overview; status filtering moves from `status=` to `with=`.
+
 ### Changed
 
 - **`tim_tasks`** — description marked `[DEPRECATED — use tim_show what='tasks']`; handler unchanged for backward compatibility.

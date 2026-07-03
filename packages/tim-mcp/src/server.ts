@@ -167,11 +167,6 @@ const TimUpdateSchema = z.object({
   metadata: z.record(z.unknown()).optional(),
 });
 
-const TimRenameTitleSchema = z.object({
-  id: z.string(),
-  title: z.string(),
-});
-
 const TimDeleteSchema = z.object({
   id: z.string(),
   hard: z.boolean().optional().default(false),
@@ -341,10 +336,6 @@ const TimReadProjectSchema = z.object({
   depth: z.number().min(1).max(5).optional().default(3),
   budget: z.number().min(1).max(1000).optional().default(200),
   sections: z.array(z.string()).nullable().optional().default(null),
-});
-
-const TimTasksSchema = z.object({
-  status: z.enum(['todo', 'in_progress', 'done', 'cancelled']).optional(),
 });
 
 const TimShowSchema = z.object({
@@ -905,7 +896,7 @@ function getSessions(): SessionManager {
 }
 
 const WRITE_TOOLS = new Set([
-  'tim_write', 'tim_update', 'tim_rename_title', 'tim_delete', 'tim_delete_batch', 'tim_link',
+  'tim_write', 'tim_update', 'tim_delete', 'tim_delete_batch', 'tim_link',
   'tim_session_start', 'tim_session_log', 'tim_checkpoint', 'tim_write_batch_summary',
   'tim_rollup_session_summary',
   'tim_record_commit',
@@ -916,7 +907,7 @@ const WRITE_TOOLS = new Set([
 
 const READ_TOOLS = new Set([
   'tim_read', 'tim_search', 'tim_trace', 'tim_health', 'tim_stats', 'tim_section_children',
-  'tim_export', 'tim_doctor', 'tim_sync', 'tim_load_project', 'tim_read_project', 'tim_tasks',
+  'tim_export', 'tim_doctor', 'tim_sync', 'tim_load_project', 'tim_read_project',
   'tim_show',
   'tim_show_unsummarized', 'tim_show_all_unsummarized', 'tim_show_untagged',
 ]);
@@ -1105,18 +1096,6 @@ export async function createMcpServer(): Promise<Server> {
             metadata: { type: 'object' },
           },
           required: ['id'],
-        },
-      },
-      {
-        name: 'tim_rename_title',
-        description: 'Rename/update the title of an existing entry.',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            id: { type: 'string' },
-            title: { type: 'string' },
-          },
-          required: ['id', 'title'],
         },
       },
       {
@@ -1527,22 +1506,6 @@ export async function createMcpServer(): Promise<Server> {
             limit: { type: 'number', minimum: 1, maximum: 100, default: 20 },
           },
           required: ['what'],
-        },
-      },
-      {
-        name: 'tim_tasks',
-        description:
-          "[DEPRECATED — use tim_show what='tasks'] List open tasks across all projects, " +
-          'grouped by project and sorted by status, priority, and due date.',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            status: {
-              type: 'string',
-              enum: ['todo', 'in_progress', 'done', 'cancelled'],
-              description: 'Filter by task status. Default: todo + in_progress.',
-            },
-          },
         },
       },
       {
@@ -2009,14 +1972,6 @@ export async function createMcpServer(): Promise<Server> {
             };
           }
           const entry = await s.update(id, patch as Partial<Entry>);
-          return {
-            content: [{ type: 'text', text: formatToolResponse(entry) }],
-          };
-        }
-
-        case 'tim_rename_title': {
-          const { id, title } = TimRenameTitleSchema.parse(args);
-          const entry = await s.update(id, { title });
           return {
             content: [{ type: 'text', text: formatToolResponse(entry) }],
           };
@@ -2507,20 +2462,6 @@ export async function createMcpServer(): Promise<Server> {
           entries = sortForShow(entries);
           entries = entries.slice(0, limit);
           const formatted = await formatShowOutput(s, entries);
-          return {
-            content: [{ type: 'text', text: formatted }],
-          };
-        }
-
-        case 'tim_tasks': {
-          const { status } = TimTasksSchema.parse(args);
-          let tasks = await s.getTasks(status ? { status } : undefined);
-          if (!status) {
-            tasks = tasks.filter(t =>
-              t.status === 'todo' || t.status === 'in_progress' || t.status == null,
-            );
-          }
-          const formatted = await formatTasksOutput(s, tasks);
           return {
             content: [{ type: 'text', text: formatted }],
           };

@@ -94,12 +94,12 @@ function parseEntry(text: string): { id: string; title: string; content: string 
   return parsed.entry ?? parsed;
 }
 
-describe('tim_rename_title', () => {
+describe('tim_update (renamed entry title)', () => {
   let client: McpClient;
   let dbPath: string;
 
   beforeEach(async () => {
-    dbPath = `/tmp/tim-rename-title-${Date.now()}-${Math.random().toString(36).slice(2)}.db`;
+    dbPath = `/tmp/tim-update-title-${Date.now()}-${Math.random().toString(36).slice(2)}.db`;
     if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath);
     client = new McpClient(dbPath);
     await client.init();
@@ -110,7 +110,7 @@ describe('tim_rename_title', () => {
     if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath);
   });
 
-  it('renames entry title and FTS5 finds new title', async () => {
+  it('renames entry title via tim_update and FTS5 finds new title', async () => {
     const writeResp = await client.callTool('tim_write', {
       content: 'Some body',
       title: 'Original',
@@ -118,16 +118,25 @@ describe('tim_rename_title', () => {
     });
     const written = parseEntry(writeResp.result!.content[0].text);
 
-    const renameResp = await client.callTool('tim_rename_title', {
+    // Plan 4 Task 3: tim_rename_title was removed outright; tim_update is the
+    // drop-in replacement for title-only updates.
+    const updateResp = await client.callTool('tim_update', {
       id: written.id,
       title: 'Renamed',
     });
-    expect(renameResp.error).toBeUndefined();
-    const renamed = parseEntry(renameResp.result!.content[0].text);
+    expect(updateResp.error).toBeUndefined();
+    const renamed = parseEntry(updateResp.result!.content[0].text);
     expect(renamed.title).toBe('Renamed');
 
     const searchResp = await client.callTool('tim_search', { query: 'Renamed' });
     const results = JSON.parse(searchResp.result!.content[0].text);
     expect(results.some((r: { id: string }) => r.id === written.id)).toBe(true);
+  });
+
+  it('tim_rename_title is removed — call returns Unknown tool error', async () => {
+    const resp = await client.callTool('tim_rename_title', { id: 'X', title: 'Y' });
+    expect(resp.error).toBeUndefined();
+    expect(resp.result!.isError).toBe(true);
+    expect(resp.result!.content[0].text).toContain('Unknown tool');
   });
 });
