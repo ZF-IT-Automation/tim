@@ -332,6 +332,8 @@ const TimLoadProjectSchema = z.object({
   budget: z.number().min(1).max(1000).optional().default(200),
   sections: z.array(z.string()).nullable().optional().default(null),
   sessionId: z.string().optional().describe('Harness session id; binds TIM session project_ref on first load only'),
+  bind: z.boolean().optional().default(true)
+    .describe('false = cross-project read without binding the session (replaces tim_read_project)'),
 });
 
 const TimReadProjectSchema = z.object({
@@ -1462,7 +1464,7 @@ export async function createMcpServer(): Promise<Server> {
       {
         name: 'tim_load_project',
         description:
-          'Load a project by label or alias and bind the session once. Rejects a different project if the session is already bound — use tim_read_project for cross-project lookups.',
+          'Load a project by label or alias and bind the session once. Rejects a different project if the session is already bound — pass bind:false for cross-project reads (replaces tim_read_project).',
         inputSchema: {
           type: 'object',
           properties: {
@@ -1475,6 +1477,8 @@ export async function createMcpServer(): Promise<Server> {
               default: null,
               description: 'Optional section IDs/labels to filter direct children',
             },
+            sessionId: { type: 'string', description: 'Harness session id; binds TIM session project_ref on first load only' },
+            bind: { type: 'boolean', default: true, description: 'false = cross-project read without binding the session (replaces tim_read_project)' },
           },
           required: ['label'],
         },
@@ -1482,7 +1486,7 @@ export async function createMcpServer(): Promise<Server> {
       {
         name: 'tim_read_project',
         description:
-          'Read a project brief + tree WITHOUT binding the session (cross-project lookup). Use tim_load_project to start working on a project.',
+          '[DEPRECATED — use tim_load_project with bind:false] Read a project brief + tree WITHOUT binding the session (cross-project lookup). Use tim_load_project to start working on a project.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -2394,7 +2398,7 @@ export async function createMcpServer(): Promise<Server> {
         }
 
         case 'tim_load_project': {
-          const { label, depth, budget, sections, sessionId: sessionIdArg } =
+          const { label, depth, budget, sections, sessionId: sessionIdArg, bind } =
             TimLoadProjectSchema.parse(args);
           const resolved = await s.resolveProjectLabel(label);
           if (resolved.status === 'ambiguous') {
@@ -2413,7 +2417,7 @@ export async function createMcpServer(): Promise<Server> {
             markerSession: findMarker(cwd, { walkUp: true })?.marker.session,
           });
 
-          if (sessionId) {
+          if (bind && sessionId) {
             const existing = await s.read(sessionId);
             if (existing?.metadata.kind === 'session') {
               const existingRef =
@@ -2423,7 +2427,7 @@ export async function createMcpServer(): Promise<Server> {
               if (evaluateLoadGate(existingRef, projectLabel) === 'reject') {
                 return errorResult(
                   `Session already bound to ${existingRef}. tim_load_project binds once per session. ` +
-                    'Use tim_read_project for cross-project access.'
+                    'Use tim_load_project with bind:false for cross-project access.'
                 );
               }
             }
@@ -2434,7 +2438,7 @@ export async function createMcpServer(): Promise<Server> {
             return errorResult(`Project not found: ${label}`);
           }
 
-          if (sessionId) {
+          if (bind && sessionId) {
             try {
               await getSessions().startProjectSession({
                 sessionId,
@@ -2454,7 +2458,7 @@ export async function createMcpServer(): Promise<Server> {
             // Non-critical — brief still returned
           }
 
-          const formatted = formatProjectOutput(result, budget, loadProjectSchema(), 'load');
+          const formatted = formatProjectOutput(result, budget, loadProjectSchema(), bind ? 'load' : 'read');
           return {
             content: [{
               type: 'text',

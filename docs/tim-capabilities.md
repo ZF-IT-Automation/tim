@@ -221,7 +221,7 @@ Das ist gleichzeitig **Briefing** (beim Session-Start) und **Handbuch** (Codebas
    - Next Steps
    - Truncation-Hinweis wenn Budget erreicht (`_truncated: true`)
 
-**Cross-Project-Lookup** ohne Re-Binding: `tim_read_project(label="P0048")` — wirft keinen „session already bound"-Fehler.
+**Cross-Project-Lookup** ohne Re-Binding: `tim_load_project(label="P0048", bind:false)` (ersetzt das deprecated `tim_read_project`) — wirft keinen „session already bound"-Fehler.
 
 ### `tim_show` — Unified Overview
 
@@ -327,7 +327,7 @@ Session starten     → tim_load_project(label="P0063")
 Etwas nachschlagen  → tim_search(query="sync passphrase")
 Schnellüberblick    → tim_show(what="all", with="open")
 Tief einsteigen     → tim_read(id="P0063.12", depth=2)
-Cross-Project       → tim_read_project(label="P0048")
+Cross-Project       → tim_load_project(label="P0048", bind=false)
 Neues Wissen        → tim_write(where="P0063/Learnings", content="...", tags=["#lesson"])
 Task anlegen        → tim_write(where="P0063/Tasks", metadata={task:{status:"todo"}})
 Verknüpfen          → tim_link(sourceId, targetId, type="implements")
