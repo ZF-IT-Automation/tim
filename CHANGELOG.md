@@ -11,6 +11,7 @@ All notable changes to TIM are documented in this file.
 
 ### Changed
 
+- **ListTools inputSchemas** — now derived from zod via `zod-to-json-schema`. Param descriptions ported verbatim; previously-invisible zod params (`tim_write.title`, `tim_session_start.tool`/`model`/`taskSummary`, `tim_move_entry.order`) are now visible.
 - **`tim_read_project`** — description marked `[DEPRECATED — use tim_load_project with bind:false]`; handler unchanged for backward compatibility (still works as alias).
 
 ### Fixed

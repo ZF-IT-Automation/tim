@@ -362,11 +362,11 @@ class McpClient {
         (0, vitest_1.expect)(writeResp.result?.isError).toBeFalsy();
     });
 });
-(0, vitest_1.describe)('tim_tasks deprecation regression', () => {
+(0, vitest_1.describe)('tim_show what=tasks (replaces deprecated tim_tasks)', () => {
     let client;
     let dbPath;
     (0, vitest_1.beforeEach)(async () => {
-        dbPath = `/tmp/tim-tasks-reg-${Date.now()}-${Math.random().toString(36).slice(2)}.db`;
+        dbPath = `/tmp/tim-show-tasks-${Date.now()}-${Math.random().toString(36).slice(2)}.db`;
         if (fs.existsSync(dbPath))
             fs.unlinkSync(dbPath);
         client = new McpClient(dbPath);
@@ -394,13 +394,14 @@ class McpClient {
             tags: ['#task', '#test'],
         });
     }
-    (0, vitest_1.it)('getTasks status filter via tim_tasks returns only done tasks', async () => {
-        await seedTask('P0700', 'TodoProj', 'todo');
-        await seedTask('P0701', 'DoneProj', 'done');
+    // Plan 4 Task 3 functional coverage for `tim_show what='tasks' with='done'`
+    // lives in show-output.test.ts (with root='all') — this file only asserts
+    // the migration boundary itself: tim_tasks is gone.
+    (0, vitest_1.it)('tim_tasks is removed — call returns Unknown tool error', async () => {
         const resp = await client.callTool('tim_tasks', { status: 'done' });
-        const text = resp.result.content[0].text;
-        (0, vitest_1.expect)(text).toContain('DoneProj task');
-        (0, vitest_1.expect)(text).not.toContain('TodoProj task');
+        (0, vitest_1.expect)(resp.error).toBeUndefined();
+        (0, vitest_1.expect)(resp.result.isError).toBe(true);
+        (0, vitest_1.expect)(resp.result.content[0].text).toContain('Unknown tool');
     });
 });
 //# sourceMappingURL=read-search-write-ext.test.js.map

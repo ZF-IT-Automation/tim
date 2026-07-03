@@ -222,7 +222,7 @@ class McpClient {
             { name: 'tim_stats' },
             { name: 'tim_health' },
             { name: 'tim_search', args: { query: 'nothing-matches' } },
-            { name: 'tim_read', args: { id: 'NONEXISTENT' } }, // text "Error: ..."
+            { name: 'tim_read', args: { id: 'NONEXISTENT' } }, // errorResult text per Plan 4 Task 1
         ];
         for (const t of tools) {
             const resp = await client.callTool(t.name, t.args);
@@ -234,11 +234,10 @@ class McpClient {
             const text = resp.result.content[0].text;
             const isError = resp.result.isError === true;
             if (isError) {
-                // Text or JSON error — must NOT be silently misparseable as success.
-                // Pre-fix BUG 2: "Entry not found" was returned as plain text WITHOUT
-                // isError:true, which broke JSON clients. After the BUG 2 fix, all
-                // error responses are either JSON (parseable to null/error obj) or
-                // start with "Error: ".
+                // Plan 4 Task 1 — error contract: isError:true with helpful text.
+                // Old contract required "Error: ..." prefix or JSON body. New contract:
+                // any non-empty, non-"null" text is valid (the whole point is that
+                // "null" is gone, replaced by a message that names what failed).
                 const looksLikeJson = (() => { try {
                     JSON.parse(text);
                     return true;
@@ -246,7 +245,7 @@ class McpClient {
                 catch {
                     return false;
                 } })();
-                (0, vitest_1.expect)(looksLikeJson || text.startsWith('Error'), `tool ${t.name} returned isError:true but text is neither JSON nor "Error: ...": ${text.slice(0, 80)}`).toBe(true);
+                (0, vitest_1.expect)(looksLikeJson || (text.length > 0 && text !== 'null'), `tool ${t.name} returned isError:true with empty or "null" text: ${text.slice(0, 80)}`).toBe(true);
             }
             else {
                 // Success — must be valid JSON.

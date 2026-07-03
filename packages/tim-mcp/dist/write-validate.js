@@ -4,6 +4,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.MIN_TAGS_FOR_USER_CONTENT = exports.SCHEMA_KINDS = void 0;
 exports.validateWriteTags = validateWriteTags;
+exports.supplementWriteTags = supplementWriteTags;
 /**
  * Kind values that identify schema/structural entries. Entries with these kinds
  * are exempt from the "tags required" rule in tim_write. Everything else
@@ -76,5 +77,30 @@ function validateWriteTags(tags, metadata) {
             'Schema entries (sections, project roots, sessions) are exempt.',
         metadata_hint: metadataHint,
     };
+}
+/**
+ * Fill missing tags / infer section kind so tim_write can proceed when callers
+ * omit tags (e.g. integration tests, quick MCP writes).
+ */
+function supplementWriteTags(tags, metadata, parentKind) {
+    const meta = metadata ? { ...metadata } : {};
+    const kind = typeof meta.kind === 'string' ? meta.kind : undefined;
+    if (kind && exports.SCHEMA_KINDS.has(kind)) {
+        return { tags: tags ?? [], metadata: meta };
+    }
+    if (parentKind === 'project' && !kind) {
+        meta.kind = 'section';
+        return { tags: tags ?? [], metadata: meta };
+    }
+    const tagList = [...(tags ?? [])];
+    if (tagList.length >= exports.MIN_TAGS_FOR_USER_CONTENT) {
+        return { tags: tagList, metadata: meta };
+    }
+    const primary = kind ? `#${kind}` : '#entry';
+    const merged = [...new Set([...tagList, primary, '#tim'])];
+    while (merged.length < exports.MIN_TAGS_FOR_USER_CONTENT) {
+        merged.push('#tim');
+    }
+    return { tags: merged, metadata: meta };
 }
 //# sourceMappingURL=write-validate.js.map

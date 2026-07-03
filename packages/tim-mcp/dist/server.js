@@ -35,6 +35,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.TOOL_DEFS = void 0;
 exports.createMcpServer = createMcpServer;
 exports.createHttpServer = createHttpServer;
 exports.startServer = startServer;
@@ -44,6 +45,7 @@ const sse_js_1 = require("@modelcontextprotocol/sdk/server/sse.js");
 const express_js_1 = require("@modelcontextprotocol/sdk/server/express.js");
 const types_js_1 = require("@modelcontextprotocol/sdk/types.js");
 const zod_1 = require("zod");
+const zod_to_json_schema_1 = require("zod-to-json-schema");
 const tim_store_1 = require("tim-store");
 const tim_core_1 = require("tim-core");
 const tim_hooks_1 = require("tim-hooks");
@@ -94,28 +96,30 @@ function parseCliArgs() {
 }
 const CLI = parseCliArgs();
 // ─── Tool Schemas ───────────────────────────────────────
-const TimReadSchema = zod_1.z.object({
+const TimReadSchemaBase = zod_1.z.object({
     id: zod_1.z.union([zod_1.z.string(), zod_1.z.array(zod_1.z.string())]).optional()
         .describe('Entry ID (ULID), or array of IDs for batch read'),
     project: zod_1.z.string().optional().describe('Project label/alias/name (auto-resolved)'),
     section: zod_1.z.string().optional().describe('Section title — read its children'),
-    depth: zod_1.z.number().min(1).max(5).optional().default(2),
+    depth: zod_1.z.number().min(1).max(5).optional().default(2)
+        .describe('How many levels to read (1-5)'),
     includeEdges: zod_1.z.boolean().optional().default(false),
     includeChildren: zod_1.z.boolean().optional().default(true).describe('Default true: returns subtree (capped by depth). Set false for parent-only.'),
     showIrrelevant: zod_1.z.boolean().optional().default(false),
-}).refine(d => d.id !== undefined || d.project !== undefined || d.section !== undefined, { message: 'tim_read requires one of: id, project, section' });
+});
+const TimReadSchema = TimReadSchemaBase.refine(d => d.id !== undefined || d.project !== undefined || d.section !== undefined, { message: 'tim_read requires one of: id, project, section' });
 const TimWriteSchema = zod_1.z.object({
     content: zod_1.z.string().describe('Entry body content'),
     title: zod_1.z.string().optional(),
     parentId: zod_1.z.string().optional(),
-    parentTitle: zod_1.z.string().optional().describe('Resolve parent by title within a project'),
-    projectId: zod_1.z.string().optional().describe('Project label for parentTitle resolution, e.g. P0062'),
+    parentTitle: zod_1.z.string().optional().describe('Section title; requires projectId'),
+    projectId: zod_1.z.string().optional().describe('Project label, e.g. P0062'),
     where: zod_1.z.string().optional()
-        .describe('Shorthand "P0062/Tasks" → resolves project + section to parentId. ' +
-        'Loses to explicit parentId. Project part accepts label/alias/name.'),
+        .describe('Shorthand P0062/Tasks → project + section parentId (parentId wins)'),
     contentType: zod_1.z.enum(['text', 'json', 'blob']).optional().default('text'),
     confidence: zod_1.z.number().min(0).max(1).optional().default(1.0),
-    tags: zod_1.z.array(zod_1.z.string()).optional().default([]),
+    tags: zod_1.z.array(zod_1.z.string()).optional().default([])
+        .describe('Topic tags only (#tim, #security). Status/priority tags (#todo, #done, #priority-*) are deprecated — use metadata.task.status / metadata.task.priority.'),
     visibility: zod_1.z.number().optional().default(1),
     metadata: zod_1.z.record(zod_1.z.unknown()).optional().default({}),
 });
@@ -124,8 +128,8 @@ const TimSearchSchema = zod_1.z.object({
     topK: zod_1.z.number().min(1).max(100).optional().default(10),
     searchType: zod_1.z.enum(['fts', 'vector', 'hybrid']).optional().default('fts'),
     root: zod_1.z.string().optional().describe('Scope to project (label/alias/name)'),
-    type: zod_1.z.string().optional().describe('Filter metadata.type (rule|human|task|error)'),
-    tag: zod_1.z.string().optional().describe('Filter exact tag (with or without # prefix)'),
+    type: zod_1.z.string().optional().describe('Filter metadata.type'),
+    tag: zod_1.z.string().optional().describe('Filter exact tag'),
     status: zod_1.z.string().optional().describe('Filter metadata.status'),
 });
 const TimRememberSchema = zod_1.z.object({
@@ -159,20 +163,34 @@ const TimTraceSchema = zod_1.z.object({
 });
 const TimUpdateSchema = zod_1.z.object({
     id: zod_1.z.string(),
-    title: zod_1.z.string().optional(),
+    title: zod_1.z.string().optional().describe('Update entry title'),
     content: zod_1.z.string().optional(),
     confidence: zod_1.z.number().min(0).max(1).optional(),
-    tags: zod_1.z.array(zod_1.z.string()).optional(),
+    tags: zod_1.z.array(zod_1.z.string()).optional()
+        .describe('Topic tags only. Deprecated status/priority tags are stripped — use metadata.task.status / metadata.task.priority.'),
     visibility: zod_1.z.number().optional(),
+    irrelevant: zod_1.z.boolean().optional()
+        .describe('Set false to restore a soft-deleted entry, true to soft-delete'),
     metadata: zod_1.z.record(zod_1.z.unknown()).optional(),
-});
-const TimRenameTitleSchema = zod_1.z.object({
-    id: zod_1.z.string(),
-    title: zod_1.z.string(),
 });
 const TimDeleteSchema = zod_1.z.object({
     id: zod_1.z.string(),
     hard: zod_1.z.boolean().optional().default(false),
+});
+const TimStatsSchema = zod_1.z.object({
+    root: zod_1.z.string().optional().describe('Optional project label to scope stats'),
+    kind: zod_1.z.string().optional().describe('Optional metadata.kind filter'),
+    buckets: zod_1.z.array(zod_1.z.number()).optional().default([0, 100, 500, 1000, 5000, 10000, 50000]),
+});
+const TimDeleteBatchSchema = zod_1.z.object({
+    ids: zod_1.z.array(zod_1.z.string()).min(1).max(100),
+    hard: zod_1.z.boolean().default(true),
+});
+const TimSectionChildrenSchema = zod_1.z.object({
+    parentId: zod_1.z.string().optional(),
+    parentLabel: zod_1.z.string().optional().describe('Project label, e.g. P0062'),
+    sectionTitle: zod_1.z.string().optional().describe('Section title under the project'),
+    kind: zod_1.z.string().optional().describe('Optional metadata.kind filter'),
 });
 const TimSyncSchema = zod_1.z.object({
     action: zod_1.z.enum(['push', 'pull', 'status']),
@@ -200,7 +218,7 @@ const TimSuppressSchema = zod_1.z.object({
 });
 const TimExportSchema = zod_1.z.object({
     format: zod_1.z.enum(['text', 'hmem', 'md']).optional().default('text'),
-    targetPath: zod_1.z.string().optional().describe('Output path for hmem export'),
+    targetPath: zod_1.z.string().optional().describe('Output path (required for hmem format)'),
 });
 const TimImportSchema = zod_1.z.object({
     source: zod_1.z.string().describe('Path to .hmem file'),
@@ -210,7 +228,7 @@ const TimImportSchema = zod_1.z.object({
 const TimDoctorSchema = zod_1.z.object({});
 const TimSessionStartSchema = zod_1.z.object({
     sessionId: zod_1.z.string(),
-    projectId: zod_1.z.string().optional().describe('Project label, e.g. P0062 — enables nested session tree'),
+    projectId: zod_1.z.string().optional().describe('Project label, e.g. P0062'),
     agentName: zod_1.z.string().optional().default('default'),
     cwd: zod_1.z.string().optional(),
     harness: zod_1.z.string().optional().default('mcp'),
@@ -254,12 +272,13 @@ const TimCheckpointSchema = zod_1.z.object({
     sessionId: zod_1.z.string(),
 });
 const TimRenameEntrySchema = zod_1.z.object({
-    oldId: zod_1.z.string(),
-    newId: zod_1.z.string(),
+    oldId: zod_1.z.string().describe('Current entry ID'),
+    newId: zod_1.z.string().describe('New entry ID (must not exist)'),
 });
 const TimMoveEntrySchema = zod_1.z.object({
-    id: zod_1.z.string(),
-    newParentId: zod_1.z.string().nullable().optional().default(null),
+    id: zod_1.z.string().describe('Entry ID to move'),
+    newParentId: zod_1.z.string().nullable().optional().default(null)
+        .describe('New parent ID, or null for root'),
     order: zod_1.z.number().optional(),
 });
 const TimUpdateManySchema = zod_1.z.object({
@@ -287,37 +306,256 @@ const TimCreateProjectSchema = zod_1.z.object({
 });
 const TimLoadProjectSchema = zod_1.z.object({
     label: zod_1.z.string().describe('Project label, e.g. P0062'),
-    depth: zod_1.z.number().min(1).max(5).optional().default(3),
-    budget: zod_1.z.number().min(1).max(1000).optional().default(200),
-    sections: zod_1.z.array(zod_1.z.string()).nullable().optional().default(null),
+    depth: zod_1.z.number().min(1).max(5).optional().default(3)
+        .describe('How many child levels to load (1-5)'),
+    budget: zod_1.z.number().min(1).max(1000).optional().default(200)
+        .describe('Max child entries to return'),
+    sections: zod_1.z.array(zod_1.z.string()).nullable().optional().default(null)
+        .describe('Optional section IDs/labels to filter direct children'),
     sessionId: zod_1.z.string().optional().describe('Harness session id; binds TIM session project_ref on first load only'),
+    bind: zod_1.z.boolean().optional().default(true)
+        .describe('false = cross-project read without binding the session (replaces tim_read_project)'),
 });
 const TimReadProjectSchema = zod_1.z.object({
     label: zod_1.z.string().describe('Project label, e.g. P0062'),
-    depth: zod_1.z.number().min(1).max(5).optional().default(3),
-    budget: zod_1.z.number().min(1).max(1000).optional().default(200),
-    sections: zod_1.z.array(zod_1.z.string()).nullable().optional().default(null),
-});
-const TimTasksSchema = zod_1.z.object({
-    status: zod_1.z.enum(['todo', 'in_progress', 'done', 'cancelled']).optional(),
+    depth: zod_1.z.number().min(1).max(5).optional().default(3)
+        .describe('How many child levels to load (1-5)'),
+    budget: zod_1.z.number().min(1).max(1000).optional().default(200)
+        .describe('Max child entries to return'),
+    sections: zod_1.z.array(zod_1.z.string()).nullable().optional().default(null)
+        .describe('Optional section IDs/labels to filter direct children'),
 });
 const TimShowSchema = zod_1.z.object({
     what: zod_1.z.string().describe('tasks|errors|bugs|ideas|decisions|learnings|commits|all|<SectionName>'),
-    root: zod_1.z.string().optional().describe('project label/alias/name; "" or "all" = ALL projects; omit = active project'),
+    root: zod_1.z.string().optional().describe('Project label/alias/name; "" or "all" = all projects; omit = active'),
     with: zod_1.z.string().optional().describe('comma-separated AND filters: open,done,urgent,recent,<tagname>,<free text>'),
     limit: zod_1.z.number().min(1).max(100).optional().default(20),
 });
 const TimErrorStatsSchema = zod_1.z.object({
-    hours: zod_1.z.number().min(1).max(720).optional().default(24),
-    limit: zod_1.z.number().min(1).max(100).optional().default(10),
+    hours: zod_1.z.number().min(1).max(720).optional().default(24)
+        .describe('Time window in hours (1-720)'),
+    limit: zod_1.z.number().min(1).max(100).optional().default(10)
+        .describe('Max top errors to return'),
 });
 const TimErrorLogSchema = zod_1.z.object({
-    tool: zod_1.z.string(),
-    error: zod_1.z.string(),
-    stack: zod_1.z.string().optional(),
-    sessionId: zod_1.z.string().optional(),
-    args: zod_1.z.record(zod_1.z.unknown()).optional(),
+    tool: zod_1.z.string().describe('Tool name, e.g. "summarizer/codex"'),
+    error: zod_1.z.string().describe('Error message'),
+    stack: zod_1.z.string().optional().describe('Stack trace (optional)'),
+    sessionId: zod_1.z.string().optional().describe('Associated session ID (optional)'),
+    args: zod_1.z.record(zod_1.z.unknown()).optional().describe('Tool arguments (optional)'),
 });
+const TimHealthSchema = zod_1.z.object({});
+const TimShowAllUnsummarizedSchema = zod_1.z.object({});
+const TimShowUntaggedSchema = zod_1.z.object({});
+// ─── ListTools registry (single source of truth) ────────
+exports.TOOL_DEFS = [
+    {
+        name: 'tim_read',
+        description: 'Read an entry from TIM. Returns entry content, children, and optional edges.',
+        schema: TimReadSchemaBase,
+    },
+    {
+        name: 'tim_write',
+        description: 'Write a new entry to TIM. parentId direct, or parentTitle+projectId to resolve a project section by title (section title under project root metadata.label).',
+        schema: TimWriteSchema,
+    },
+    {
+        name: 'tim_search',
+        description: 'Search TIM entries using FTS5 full-text search.',
+        schema: TimSearchSchema,
+    },
+    {
+        name: 'tim_link',
+        description: 'Create an edge (relationship) between two entries.',
+        schema: TimLinkSchema,
+    },
+    {
+        name: 'tim_trace',
+        description: 'Follow an edge chain from a starting entry (BFS traversal).',
+        schema: TimTraceSchema,
+    },
+    {
+        name: 'tim_update',
+        description: 'Update an existing entry. Only provided fields are changed.',
+        schema: TimUpdateSchema,
+    },
+    {
+        name: 'tim_delete',
+        description: 'Delete an entry (soft: mark irrelevant, hard: tombstone).',
+        schema: TimDeleteSchema,
+    },
+    {
+        name: 'tim_delete_batch',
+        description: 'Batch hard-delete entries by id (max 100). Skips missing ids.',
+        schema: TimDeleteBatchSchema,
+    },
+    {
+        name: 'tim_sync',
+        description: 'Sync operations: push staging records, pull from remote, or check status.',
+        schema: TimSyncSchema,
+    },
+    {
+        name: 'tim_lease',
+        description: 'Grant or revoke temporary agent access to a memory entry.',
+        schema: TimLeaseSchema,
+    },
+    {
+        name: 'tim_suppress',
+        description: 'Suppress entries matching a pattern: hidden from tim_search, tim_read, and tim_load_project. Optional TTL (e.g. "24h", "7d").',
+        schema: TimSuppressSchema,
+    },
+    {
+        name: 'tim_health',
+        description: 'Run health diagnostics: broken links, orphans, FTS integrity, counts.',
+        schema: TimHealthSchema,
+    },
+    {
+        name: 'tim_stats',
+        description: 'Content statistics: entry counts, content size aggregates, length buckets, and breakdown by metadata.kind.',
+        schema: TimStatsSchema,
+    },
+    {
+        name: 'tim_section_children',
+        description: 'List direct children of a project section in compact form.',
+        schema: TimSectionChildrenSchema,
+    },
+    {
+        name: 'tim_export',
+        description: 'Export TIM database to markdown or .hmem SQLite format.',
+        schema: TimExportSchema,
+    },
+    {
+        name: 'tim_import',
+        description: 'Import entries from a .hmem SQLite file.',
+        schema: TimImportSchema,
+    },
+    {
+        name: 'tim_doctor',
+        description: 'Run comprehensive diagnostics: config, DB, API connectivity.',
+        schema: TimDoctorSchema,
+    },
+    {
+        name: 'tim_session_start',
+        description: 'Start a TIM session (idempotent). With projectId (or default P0000 Inbox), creates nested Sessions/Summary/Exchanges tree.',
+        schema: TimSessionStartSchema,
+    },
+    {
+        name: 'tim_session_log',
+        description: 'Append exchange entries to a session log.',
+        schema: TimSessionLogSchema,
+        internal: true,
+    },
+    {
+        name: 'tim_show_unsummarized',
+        description: 'Return the next unsummarized batch of exchanges for a session (UUIDs + user/agent bodies). Summarizer reads this, writes a Batch node under Summary.',
+        schema: TimShowUnsummarizedSchema,
+        internal: true,
+    },
+    {
+        name: 'tim_show_all_unsummarized',
+        description: 'Scan ALL sessions and return every unsummarized batch. Use at startup for cleanup sweep of stale batches (crashed summarizer, missed triggers). No parameters needed.',
+        schema: TimShowAllUnsummarizedSchema,
+        internal: true,
+    },
+    {
+        name: 'tim_show_untagged',
+        description: 'Return batch-summary nodes that have only structural tags (#session-summary, #batch-summary) and no content hashtags. Use for re-tagging failed or legacy summaries.',
+        schema: TimShowUntaggedSchema,
+        internal: true,
+    },
+    {
+        name: 'tim_write_batch_summary',
+        description: 'Write an idempotent Batch summary node under the session Summary tree. Used by tim-summarizer CLI.',
+        schema: TimWriteBatchSummarySchema,
+        internal: true,
+    },
+    {
+        name: 'tim_rollup_session_summary',
+        description: 'Fold batch-summary children into the session-summary-root content field. Called after tim-summarizer writes all batches.',
+        schema: TimRollupSessionSummarySchema,
+        internal: true,
+    },
+    {
+        name: 'tim_record_commit',
+        description: 'Record a git commit under the project Commits section. Idempotent by hash. Links to session via relates/implements when sessionId given.',
+        schema: TimRecordCommitSchema,
+    },
+    {
+        name: 'tim_checkpoint',
+        description: 'Create a session checkpoint summary and run verify-before-decay.',
+        schema: TimCheckpointSchema,
+        internal: true,
+    },
+    {
+        name: 'tim_rename_entry',
+        description: 'Atomically rename an entry ID and update all references (edges, parent_id, staging, metadata).',
+        schema: TimRenameEntrySchema,
+    },
+    {
+        name: 'tim_move_entry',
+        description: 'Move an entry under a new parent and cascade depth updates to descendants.',
+        schema: TimMoveEntrySchema,
+    },
+    {
+        name: 'tim_update_many',
+        description: 'Batch-update irrelevant and/or favorite flags on multiple entries (flags only, never content).',
+        schema: TimUpdateManySchema,
+    },
+    {
+        name: 'tim_tag_add',
+        description: 'Add tags to an entry (deduplicated). Deprecated status/priority tags (#todo, #done, #priority-*) are skipped — use metadata.task.status / metadata.task.priority.',
+        schema: TimTagAddSchema,
+    },
+    {
+        name: 'tim_tag_remove',
+        description: 'Remove tags from an entry.',
+        schema: TimTagRemoveSchema,
+    },
+    {
+        name: 'tim_tag_rename',
+        description: 'Rename a tag across all entries (exact match only, safe for substring collisions).',
+        schema: TimTagRenameSchema,
+    },
+    {
+        name: 'tim_create_project',
+        description: 'Register a project entry so load_project can find it later.',
+        schema: TimCreateProjectSchema,
+    },
+    {
+        name: 'tim_load_project',
+        description: 'Load a project by label or alias and bind the session once. Rejects a different project if the session is already bound — pass bind:false for cross-project reads (replaces tim_read_project).',
+        schema: TimLoadProjectSchema,
+    },
+    {
+        name: 'tim_read_project',
+        description: '[DEPRECATED — use tim_load_project with bind:false] Read a project brief + tree WITHOUT binding the session (cross-project lookup). Use tim_load_project to start working on a project.',
+        schema: TimReadProjectSchema,
+    },
+    {
+        name: 'tim_show',
+        description: 'Unified overview: tasks, errors, bugs, ideas, decisions, learnings, commits, sections, or all. ' +
+            'Use root for project scope (omit=active, "all"=cross-project). ' +
+            'Use with for comma-separated AND filters (open,done,urgent,recent,<tag>,<free text>).',
+        schema: TimShowSchema,
+    },
+    {
+        name: 'tim_error_stats',
+        description: 'Show error statistics: total errors, top errors, error rate, alert thresholds (>5 identical errors in 1h).',
+        schema: TimErrorStatsSchema,
+    },
+    {
+        name: 'tim_error_log',
+        description: 'Log an error entry. Used by CLI tools and summarizer for structured error tracking.',
+        schema: TimErrorLogSchema,
+        internal: true,
+    },
+    {
+        name: 'tim_remember',
+        description: 'Associative memory recall for vague queries. Expands query variants, FTS5 pre-filters, ' +
+            'then CLI-chain rerank. Read-only. Slower and costlier than tim_search — use when exact keywords are unknown.',
+        schema: TimRememberSchema,
+    },
+];
 // ─── Project output formatting ──────────────────────────
 function loadProjectSchema() {
     const schemaPath = path.join(process.cwd(), 'docs/project-schema.json');
@@ -801,7 +1039,7 @@ function getSessions() {
     return sessions;
 }
 const WRITE_TOOLS = new Set([
-    'tim_write', 'tim_update', 'tim_rename_title', 'tim_delete', 'tim_link',
+    'tim_write', 'tim_update', 'tim_delete', 'tim_delete_batch', 'tim_link',
     'tim_session_start', 'tim_session_log', 'tim_checkpoint', 'tim_write_batch_summary',
     'tim_rollup_session_summary',
     'tim_record_commit',
@@ -810,8 +1048,8 @@ const WRITE_TOOLS = new Set([
     'tim_create_project', 'tim_error_log',
 ]);
 const READ_TOOLS = new Set([
-    'tim_read', 'tim_search', 'tim_trace', 'tim_health', 'tim_stats',
-    'tim_export', 'tim_doctor', 'tim_sync', 'tim_load_project', 'tim_read_project', 'tim_tasks',
+    'tim_read', 'tim_search', 'tim_trace', 'tim_health', 'tim_stats', 'tim_section_children',
+    'tim_export', 'tim_doctor', 'tim_sync', 'tim_load_project', 'tim_read_project',
     'tim_show',
     'tim_show_unsummarized', 'tim_show_all_unsummarized', 'tim_show_untagged',
 ]);
@@ -867,590 +1105,30 @@ async function createMcpServer() {
         },
     });
     // ─── Tool Registration ──────────────────────────────
+    // Consistent error contract: every failure path returns isError:true with a
+    // helpful text payload. Replaces the old "null" string and the silent
+    // text-only returns that some load/read handlers used to produce.
+    const errorResult = (text) => ({
+        content: [{ type: 'text', text }],
+        isError: true,
+    });
+    // Plumbing tools called by the summarizer / hooks via MCP — handlers must
+    // remain fully functional, but ListTools hides them by default so agents
+    // don't see internal-only entries. Set TIM_EXPOSE_INTERNAL_TOOLS=1 to reveal.
     server.setRequestHandler(types_js_1.ListToolsRequestSchema, async () => {
         const rememberEnabled = (0, tim_core_1.loadConfig)().remember?.enabled !== false;
-        return {
-            tools: [
-                {
-                    name: 'tim_read',
-                    description: 'Read an entry from TIM. Returns entry content, children, and optional edges.',
-                    inputSchema: {
-                        type: 'object',
-                        properties: {
-                            id: {
-                                oneOf: [
-                                    { type: 'string', description: 'Entry ID (ULID)' },
-                                    { type: 'array', items: { type: 'string' }, description: 'Batch entry IDs' },
-                                ],
-                            },
-                            project: { type: 'string', description: 'Project label/alias/name (auto-resolved)' },
-                            section: { type: 'string', description: 'Section title — read its children' },
-                            depth: { type: 'number', default: 2, description: 'How many levels to read (1-5)' },
-                            includeEdges: { type: 'boolean', default: false },
-                            includeChildren: { type: 'boolean', default: true, description: 'Default true: returns subtree (capped by depth). Set false for parent-only.' },
-                            showIrrelevant: { type: 'boolean', default: false },
-                        },
-                    },
-                },
-                {
-                    name: 'tim_write',
-                    description: 'Write a new entry to TIM. parentId direct, or parentTitle+projectId to resolve a project section by title (section title under project root metadata.label).',
-                    inputSchema: {
-                        type: 'object',
-                        properties: {
-                            content: { type: 'string' },
-                            parentId: { type: 'string' },
-                            parentTitle: { type: 'string', description: 'Section title; requires projectId' },
-                            projectId: { type: 'string', description: 'Project label, e.g. P0062' },
-                            where: {
-                                type: 'string',
-                                description: 'Shorthand P0062/Tasks → project + section parentId (parentId wins)',
-                            },
-                            contentType: { type: 'string', enum: ['text', 'json', 'blob'], default: 'text' },
-                            confidence: { type: 'number', minimum: 0, maximum: 1, default: 1.0 },
-                            tags: {
-                                type: 'array',
-                                items: { type: 'string' },
-                                default: [],
-                                description: 'Topic tags only (#tim, #security). Status/priority tags (#todo, #done, #priority-*) are deprecated — use metadata.task.status / metadata.task.priority.',
-                            },
-                            visibility: { type: 'number', default: 1 },
-                            metadata: { type: 'object', default: {} },
-                        },
-                        required: ['content'],
-                    },
-                },
-                {
-                    name: 'tim_search',
-                    description: 'Search TIM entries using FTS5 full-text search.',
-                    inputSchema: {
-                        type: 'object',
-                        properties: {
-                            query: { type: 'string' },
-                            topK: { type: 'number', default: 10 },
-                            searchType: { type: 'string', enum: ['fts', 'vector', 'hybrid'], default: 'fts' },
-                            root: { type: 'string', description: 'Scope to project (label/alias/name)' },
-                            type: { type: 'string', description: 'Filter metadata.type' },
-                            tag: { type: 'string', description: 'Filter exact tag' },
-                            status: { type: 'string', description: 'Filter metadata.status' },
-                        },
-                        required: ['query'],
-                    },
-                },
-                {
-                    name: 'tim_link',
-                    description: 'Create an edge (relationship) between two entries.',
-                    inputSchema: {
-                        type: 'object',
-                        properties: {
-                            sourceId: { type: 'string' },
-                            targetId: { type: 'string' },
-                            type: { type: 'string', enum: ['relates', 'extends', 'contradicts', 'implements', 'blocks', 'leases', 'tagged', 'summarizes', 'contradicted_by'] },
-                            weight: { type: 'number', minimum: 0, maximum: 1, default: 1.0 },
-                            metadata: { type: 'object', default: {} },
-                        },
-                        required: ['sourceId', 'targetId', 'type'],
-                    },
-                },
-                {
-                    name: 'tim_trace',
-                    description: 'Follow an edge chain from a starting entry (BFS traversal).',
-                    inputSchema: {
-                        type: 'object',
-                        properties: {
-                            startId: { type: 'string' },
-                            edgeType: { type: 'string' },
-                            depth: { type: 'number', default: 5 },
-                        },
-                        required: ['startId'],
-                    },
-                },
-                {
-                    name: 'tim_update',
-                    description: 'Update an existing entry. Only provided fields are changed.',
-                    inputSchema: {
-                        type: 'object',
-                        properties: {
-                            id: { type: 'string' },
-                            title: { type: 'string', description: 'Update entry title' },
-                            content: { type: 'string' },
-                            confidence: { type: 'number', minimum: 0, maximum: 1 },
-                            tags: {
-                                type: 'array',
-                                items: { type: 'string' },
-                                description: 'Topic tags only. Deprecated status/priority tags are stripped — use metadata.task.status / metadata.task.priority.',
-                            },
-                            visibility: { type: 'number' },
-                            metadata: { type: 'object' },
-                        },
-                        required: ['id'],
-                    },
-                },
-                {
-                    name: 'tim_rename_title',
-                    description: 'Rename/update the title of an existing entry.',
-                    inputSchema: {
-                        type: 'object',
-                        properties: {
-                            id: { type: 'string' },
-                            title: { type: 'string' },
-                        },
-                        required: ['id', 'title'],
-                    },
-                },
-                {
-                    name: 'tim_delete',
-                    description: 'Delete an entry (soft: mark irrelevant, hard: tombstone).',
-                    inputSchema: {
-                        type: 'object',
-                        properties: {
-                            id: { type: 'string' },
-                            hard: { type: 'boolean', default: false },
-                        },
-                        required: ['id'],
-                    },
-                },
-                {
-                    name: 'tim_sync',
-                    description: 'Sync operations: push staging records, pull from remote, or check status.',
-                    inputSchema: {
-                        type: 'object',
-                        properties: {
-                            action: { type: 'string', enum: ['push', 'pull', 'status'] },
-                            stagingRecords: { type: 'array' },
-                        },
-                        required: ['action'],
-                    },
-                },
-                {
-                    name: 'tim_lease',
-                    description: 'Grant or revoke temporary agent access to a memory entry.',
-                    inputSchema: {
-                        type: 'object',
-                        properties: {
-                            grant: { type: 'string' },
-                            revoke: { type: 'string' },
-                            entryId: { type: 'string' },
-                            ttl: { type: 'string' },
-                        },
-                        required: ['entryId'],
-                    },
-                },
-                {
-                    name: 'tim_suppress',
-                    description: 'Add a pattern to negative memory. Matching entries are hidden from search results.',
-                    inputSchema: {
-                        type: 'object',
-                        properties: {
-                            pattern: { type: 'string' },
-                            reason: { type: 'string', default: 'Manual suppression' },
-                            ttl: { type: 'string' },
-                        },
-                        required: ['pattern'],
-                    },
-                },
-                {
-                    name: 'tim_health',
-                    description: 'Run health diagnostics: broken links, orphans, FTS integrity, counts.',
-                    inputSchema: { type: 'object', properties: {} },
-                },
-                {
-                    name: 'tim_stats',
-                    description: 'Get memory statistics: totals, depth distribution, top tags, confidence.',
-                    inputSchema: { type: 'object', properties: {} },
-                },
-                {
-                    name: 'tim_export',
-                    description: 'Export TIM database to markdown or .hmem SQLite format.',
-                    inputSchema: {
-                        type: 'object',
-                        properties: {
-                            format: { type: 'string', enum: ['text', 'hmem', 'md'], default: 'text' },
-                            targetPath: { type: 'string', description: 'Output path (required for hmem format)' },
-                        },
-                    },
-                },
-                {
-                    name: 'tim_import',
-                    description: 'Import entries from a .hmem SQLite file.',
-                    inputSchema: {
-                        type: 'object',
-                        properties: {
-                            source: { type: 'string' },
-                            dryRun: { type: 'boolean', default: false },
-                            deduplicate: { type: 'boolean', default: false },
-                        },
-                        required: ['source'],
-                    },
-                },
-                {
-                    name: 'tim_doctor',
-                    description: 'Run comprehensive diagnostics: config, DB, API connectivity.',
-                    inputSchema: { type: 'object', properties: {} },
-                },
-                {
-                    name: 'tim_session_start',
-                    description: 'Start a TIM session (idempotent). With projectId (or default P0000 Inbox), creates nested Sessions/Summary/Exchanges tree.',
-                    inputSchema: {
-                        type: 'object',
-                        properties: {
-                            sessionId: { type: 'string' },
-                            projectId: { type: 'string', description: 'Project label, e.g. P0062' },
-                            agentName: { type: 'string', default: 'default' },
-                            cwd: { type: 'string' },
-                            harness: { type: 'string', default: 'mcp' },
-                            batchSize: { type: 'number', minimum: 1, maximum: 50 },
-                        },
-                        required: ['sessionId'],
-                    },
-                },
-                {
-                    name: 'tim_session_log',
-                    description: 'Append exchange entries to a session log.',
-                    inputSchema: {
-                        type: 'object',
-                        properties: {
-                            sessionId: { type: 'string' },
-                            entries: {
-                                type: 'array',
-                                items: {
-                                    type: 'object',
-                                    properties: {
-                                        role: { type: 'string', enum: ['user', 'agent'] },
-                                        content: { type: 'string' },
-                                    },
-                                    required: ['role', 'content'],
-                                },
-                            },
-                        },
-                        required: ['sessionId', 'entries'],
-                    },
-                },
-                {
-                    name: 'tim_show_unsummarized',
-                    description: 'Return the next unsummarized batch of exchanges for a session (UUIDs + user/agent bodies). Summarizer reads this, writes a Batch node under Summary.',
-                    inputSchema: {
-                        type: 'object',
-                        properties: { sessionId: { type: 'string' } },
-                        required: ['sessionId'],
-                    },
-                },
-                {
-                    name: 'tim_show_all_unsummarized',
-                    description: 'Scan ALL sessions and return every unsummarized batch. Use at startup for cleanup sweep of stale batches (crashed summarizer, missed triggers). No parameters needed.',
-                    inputSchema: {
-                        type: 'object',
-                        properties: {},
-                    },
-                },
-                {
-                    name: 'tim_show_untagged',
-                    description: 'Return batch-summary nodes that have only structural tags (#session-summary, #batch-summary) and no content hashtags. Use for re-tagging failed or legacy summaries.',
-                    inputSchema: {
-                        type: 'object',
-                        properties: {},
-                    },
-                },
-                {
-                    name: 'tim_write_batch_summary',
-                    description: 'Write an idempotent Batch summary node under the session Summary tree. Used by tim-summarizer CLI.',
-                    inputSchema: {
-                        type: 'object',
-                        properties: {
-                            sessionId: { type: 'string' },
-                            batchIndex: { type: 'number', minimum: 1 },
-                            summary: { type: 'string' },
-                            seqFrom: { type: 'number', minimum: 0 },
-                            seqTo: { type: 'number', minimum: 0 },
-                            tags: { type: 'array', items: { type: 'string' } },
-                        },
-                        required: ['sessionId', 'batchIndex', 'summary', 'seqFrom', 'seqTo'],
-                    },
-                },
-                {
-                    name: 'tim_rollup_session_summary',
-                    description: 'Fold batch-summary children into the session-summary-root content field. Called after tim-summarizer writes all batches.',
-                    inputSchema: {
-                        type: 'object',
-                        properties: {
-                            sessionId: { type: 'string' },
-                        },
-                        required: ['sessionId'],
-                    },
-                },
-                {
-                    name: 'tim_record_commit',
-                    description: 'Record a git commit under the project Commits section. Idempotent by hash. Links to session via relates/implements when sessionId given.',
-                    inputSchema: {
-                        type: 'object',
-                        properties: {
-                            projectId: { type: 'string', description: 'Project label, e.g. P0063' },
-                            hash: { type: 'string', description: 'Full git commit SHA' },
-                            message: { type: 'string', description: 'Commit message' },
-                            diffSummary: { type: 'string', description: 'git show --stat output' },
-                            sessionId: { type: 'string', description: 'Session that produced this commit' },
-                            branch: { type: 'string' },
-                            author: { type: 'string' },
-                            date: { type: 'string', description: 'ISO 8601 commit date' },
-                        },
-                        required: ['projectId', 'hash', 'message'],
-                    },
-                },
-                {
-                    name: 'tim_checkpoint',
-                    description: 'Create a session checkpoint summary and run verify-before-decay.',
-                    inputSchema: {
-                        type: 'object',
-                        properties: {
-                            sessionId: { type: 'string' },
-                        },
-                        required: ['sessionId'],
-                    },
-                },
-                {
-                    name: 'tim_rename_entry',
-                    description: 'Atomically rename an entry ID and update all references (edges, parent_id, staging, metadata).',
-                    inputSchema: {
-                        type: 'object',
-                        properties: {
-                            oldId: { type: 'string', description: 'Current entry ID' },
-                            newId: { type: 'string', description: 'New entry ID (must not exist)' },
-                        },
-                        required: ['oldId', 'newId'],
-                    },
-                },
-                {
-                    name: 'tim_move_entry',
-                    description: 'Move an entry under a new parent and cascade depth updates to descendants.',
-                    inputSchema: {
-                        type: 'object',
-                        properties: {
-                            id: { type: 'string', description: 'Entry ID to move' },
-                            newParentId: { type: ['string', 'null'], description: 'New parent ID, or null for root' },
-                        },
-                        required: ['id'],
-                    },
-                },
-                {
-                    name: 'tim_update_many',
-                    description: 'Batch-update irrelevant and/or favorite flags on multiple entries (flags only, never content).',
-                    inputSchema: {
-                        type: 'object',
-                        properties: {
-                            ids: { type: 'array', items: { type: 'string' }, minItems: 1 },
-                            irrelevant: { type: 'boolean' },
-                            favorite: { type: 'boolean' },
-                        },
-                        required: ['ids'],
-                    },
-                },
-                {
-                    name: 'tim_tag_add',
-                    description: 'Add tags to an entry (deduplicated). Deprecated status/priority tags (#todo, #done, #priority-*) are skipped — use metadata.task.status / metadata.task.priority.',
-                    inputSchema: {
-                        type: 'object',
-                        properties: {
-                            id: { type: 'string' },
-                            tags: { type: 'array', items: { type: 'string' }, minItems: 1 },
-                        },
-                        required: ['id', 'tags'],
-                    },
-                },
-                {
-                    name: 'tim_tag_remove',
-                    description: 'Remove tags from an entry.',
-                    inputSchema: {
-                        type: 'object',
-                        properties: {
-                            id: { type: 'string' },
-                            tags: { type: 'array', items: { type: 'string' }, minItems: 1 },
-                        },
-                        required: ['id', 'tags'],
-                    },
-                },
-                {
-                    name: 'tim_tag_rename',
-                    description: 'Rename a tag across all entries (exact match only, safe for substring collisions).',
-                    inputSchema: {
-                        type: 'object',
-                        properties: {
-                            oldTag: { type: 'string' },
-                            newTag: { type: 'string' },
-                        },
-                        required: ['oldTag', 'newTag'],
-                    },
-                },
-                {
-                    name: 'tim_create_project',
-                    description: 'Register a project entry so load_project can find it later.',
-                    inputSchema: {
-                        type: 'object',
-                        properties: {
-                            label: { type: 'string', description: 'Project label, e.g. P0062' },
-                            metadata: { type: 'object', default: {} },
-                            content: { type: 'string' },
-                            aliases: {
-                                type: 'array',
-                                items: { type: 'string' },
-                                description: 'Short names for tim_load_project, e.g. ["o9k", "hmem"]',
-                            },
-                        },
-                        required: ['label'],
-                    },
-                },
-                {
-                    name: 'tim_load_project',
-                    description: 'Load a project by label or alias and bind the session once. Rejects a different project if the session is already bound — use tim_read_project for cross-project lookups.',
-                    inputSchema: {
-                        type: 'object',
-                        properties: {
-                            label: { type: 'string', description: 'Project label, e.g. P0062' },
-                            depth: { type: 'number', default: 3, description: 'How many child levels to load (1-5)' },
-                            budget: { type: 'number', default: 200, description: 'Max child entries to return' },
-                            sections: {
-                                type: ['array', 'null'],
-                                items: { type: 'string' },
-                                default: null,
-                                description: 'Optional section IDs/labels to filter direct children',
-                            },
-                        },
-                        required: ['label'],
-                    },
-                },
-                {
-                    name: 'tim_read_project',
-                    description: 'Read a project brief + tree WITHOUT binding the session (cross-project lookup). Use tim_load_project to start working on a project.',
-                    inputSchema: {
-                        type: 'object',
-                        properties: {
-                            label: { type: 'string', description: 'Project label, e.g. P0062' },
-                            depth: { type: 'number', default: 3, description: 'How many child levels to load (1-5)' },
-                            budget: { type: 'number', default: 200, description: 'Max child entries to return' },
-                            sections: {
-                                type: ['array', 'null'],
-                                items: { type: 'string' },
-                                default: null,
-                                description: 'Optional section IDs/labels to filter direct children',
-                            },
-                        },
-                        required: ['label'],
-                    },
-                },
-                {
-                    name: 'tim_show',
-                    description: 'Unified overview: tasks, errors, bugs, ideas, decisions, learnings, commits, sections, or all. ' +
-                        'Use root for project scope (omit=active, "all"=cross-project). ' +
-                        'Use with for comma-separated AND filters (open,done,urgent,recent,<tag>,<free text>).',
-                    inputSchema: {
-                        type: 'object',
-                        properties: {
-                            what: {
-                                type: 'string',
-                                description: 'tasks|errors|bugs|ideas|decisions|learnings|commits|all|<SectionName>',
-                            },
-                            root: {
-                                type: 'string',
-                                description: 'Project label/alias/name; "" or "all" = all projects; omit = active',
-                            },
-                            with: {
-                                type: 'string',
-                                description: 'Comma-separated AND filters: open,done,urgent,recent,<tag>,<free text>',
-                            },
-                            limit: { type: 'number', minimum: 1, maximum: 100, default: 20 },
-                        },
-                        required: ['what'],
-                    },
-                },
-                {
-                    name: 'tim_tasks',
-                    description: "[DEPRECATED — use tim_show what='tasks'] List open tasks across all projects, " +
-                        'grouped by project and sorted by status, priority, and due date.',
-                    inputSchema: {
-                        type: 'object',
-                        properties: {
-                            status: {
-                                type: 'string',
-                                enum: ['todo', 'in_progress', 'done', 'cancelled'],
-                                description: 'Filter by task status. Default: todo + in_progress.',
-                            },
-                        },
-                    },
-                },
-                {
-                    name: 'tim_error_stats',
-                    description: 'Show error statistics: total errors, top errors, error rate, alert thresholds (>5 identical errors in 1h).',
-                    inputSchema: {
-                        type: 'object',
-                        properties: {
-                            hours: { type: 'number', default: 24, description: 'Time window in hours (1-720)' },
-                            limit: { type: 'number', default: 10, description: 'Max top errors to return' },
-                        },
-                    },
-                },
-                {
-                    name: 'tim_error_log',
-                    description: 'Log an error entry. Used by CLI tools and summarizer for structured error tracking.',
-                    inputSchema: {
-                        type: 'object',
-                        properties: {
-                            tool: { type: 'string', description: 'Tool name, e.g. "summarizer/codex"' },
-                            error: { type: 'string', description: 'Error message' },
-                            stack: { type: 'string', description: 'Stack trace (optional)' },
-                            sessionId: { type: 'string', description: 'Associated session ID (optional)' },
-                            args: { type: 'object', description: 'Tool arguments (optional)' },
-                        },
-                        required: ['tool', 'error'],
-                    },
-                },
-                ...(rememberEnabled ? [{
-                        name: 'tim_remember',
-                        description: 'Associative memory recall for vague queries. Expands query variants, FTS5 pre-filters, ' +
-                            'then CLI-chain rerank. Read-only. Slower and costlier than tim_search — use when exact keywords are unknown.',
-                        inputSchema: {
-                            type: 'object',
-                            properties: {
-                                query: {
-                                    type: 'string',
-                                    minLength: 1,
-                                    maxLength: 500,
-                                    description: 'Vage Erinnerungs-Query. Mehrere Wortvarianten werden automatisch probiert.',
-                                },
-                                topK: {
-                                    type: 'number',
-                                    minimum: 1,
-                                    maximum: 20,
-                                    default: 5,
-                                    description: 'Anzahl Rückgabe-Treffer. Default 5, max 20.',
-                                },
-                                minConfidence: {
-                                    type: 'number',
-                                    minimum: 0,
-                                    maximum: 1,
-                                    default: 0.3,
-                                    description: 'Treffer unter diesem Confidence werden gefiltert. Default 0.3.',
-                                },
-                                includeBatchSummaries: {
-                                    type: 'boolean',
-                                    default: true,
-                                    description: 'Session-Batch-Summaries der letzten 30 Tage mit einbeziehen. Default true.',
-                                },
-                                searchType: {
-                                    type: 'string',
-                                    enum: ['fts'],
-                                    default: 'fts',
-                                    description: 'Nur FTS5 in Phase 1.0. "hybrid" ist für Embedding-Phase 0.7+ reserviert.',
-                                },
-                                projectScope: {
-                                    type: 'string',
-                                    pattern: '^P\\d{4}$',
-                                    description: 'Optional: Suche auf ein Projekt beschränken (z.B. "P0062"). Default: alle Projekte.',
-                                },
-                            },
-                            required: ['query'],
-                        },
-                    }] : []),
-            ],
-        };
+        const defs = rememberEnabled
+            ? exports.TOOL_DEFS
+            : exports.TOOL_DEFS.filter(d => d.name !== 'tim_remember');
+        const allTools = defs.map(def => ({
+            name: def.name,
+            description: def.description,
+            inputSchema: (0, zod_to_json_schema_1.zodToJsonSchema)(def.schema, { target: 'openApi3' }),
+            internal: def.internal,
+        }));
+        const exposeInternal = process.env.TIM_EXPOSE_INTERNAL_TOOLS === '1';
+        const tools = exposeInternal ? allTools : allTools.filter(t => !t.internal);
+        return { tools };
     });
     // ─── Tool Handler ────────────────────────────────────
     server.setRequestHandler(types_js_1.CallToolRequestSchema, async (request) => {
@@ -1577,10 +1255,7 @@ async function createMcpServer() {
                         }
                         const entry = await s.read(pr.label, readOpts);
                         if (!entry) {
-                            return {
-                                content: [{ type: 'text', text: JSON.stringify(null) }],
-                                isError: true,
-                            };
+                            return errorResult(`Project not found: ${project}`);
                         }
                         const edges = includeEdges ? await s.getEdges(entry.id, 'both') : [];
                         return {
@@ -1607,16 +1282,16 @@ async function createMcpServer() {
                         }
                         const entry = await s.read(id, readOpts);
                         if (!entry) {
+                            return errorResult(`Entry not found: ${id}`);
+                        }
+                        if (entry && await s.isSuppressed(`${entry.title}\n${entry.content}`)) {
                             return {
-                                content: [{ type: 'text', text: JSON.stringify(null) }],
+                                content: [{ type: 'text', text: `Entry suppressed: ${id}` }],
                                 isError: true,
                             };
                         }
                         if (projectLabel && s.getProjectLabel(entry.id) !== projectLabel) {
-                            return {
-                                content: [{ type: 'text', text: JSON.stringify(null) }],
-                                isError: true,
-                            };
+                            return errorResult(`Entry ${id} not found in project ${projectLabel}`);
                         }
                         const edges = includeEdges ? await s.getEdges(id, 'both') : [];
                         return {
@@ -1716,6 +1391,14 @@ async function createMcpServer() {
                     // project roots, sessions, exchanges, batch summaries, commits,
                     // checkpoints) are exempt — everything else is user content and
                     // must carry at least 2 tags for discoverability.
+                    let parentKind;
+                    if (writeOpts.parentId) {
+                        const parent = await s.read(writeOpts.parentId, { includeChildren: false });
+                        parentKind = typeof parent?.metadata?.kind === 'string' ? parent.metadata.kind : undefined;
+                    }
+                    const supplemented = (0, write_validate_js_1.supplementWriteTags)(writeOpts.tags, writeOpts.metadata, parentKind);
+                    writeOpts.tags = supplemented.tags;
+                    writeOpts.metadata = supplemented.metadata ?? {};
                     const tagWarnings = (0, tim_store_1.validateTagsDeprecated)(writeOpts.tags ?? []);
                     const { clean: cleanWriteTags } = (0, tim_core_1.stripDeprecatedTags)(writeOpts.tags ?? []);
                     writeOpts.tags = cleanWriteTags;
@@ -1807,18 +1490,18 @@ async function createMcpServer() {
                         content: [{ type: 'text', text: formatToolResponse(entry) }],
                     };
                 }
-                case 'tim_rename_title': {
-                    const { id, title } = TimRenameTitleSchema.parse(args);
-                    const entry = await s.update(id, { title });
-                    return {
-                        content: [{ type: 'text', text: formatToolResponse(entry) }],
-                    };
-                }
                 case 'tim_delete': {
                     const { id, hard } = TimDeleteSchema.parse(args);
                     await s.delete(id, hard);
                     return {
                         content: [{ type: 'text', text: `Entry ${id} ${hard ? 'hard-deleted' : 'marked irrelevant'}` }],
+                    };
+                }
+                case 'tim_delete_batch': {
+                    const { ids, hard } = TimDeleteBatchSchema.parse(args);
+                    const deleted = await s.deleteBatch(ids, hard);
+                    return {
+                        content: [{ type: 'text', text: JSON.stringify({ deleted }, null, 2) }],
                     };
                 }
                 case 'tim_sync': {
@@ -1850,7 +1533,7 @@ async function createMcpServer() {
                         case 'pull': {
                             const config = (0, tim_sync_client_1.loadConfig)();
                             if (!config) {
-                                return { content: [{ type: 'text', text: 'Sync not configured (set TIM_SYNC_PASSPHRASE and tim-sync config)' }] };
+                                return errorResult('Sync not configured (set TIM_SYNC_PASSPHRASE and tim-sync config)');
                             }
                             // Force re-arm: manual pull bypasses cooldown + in-flight guard
                             (0, tim_sync_client_1.resetSyncCooldowns)();
@@ -1866,7 +1549,7 @@ async function createMcpServer() {
                             };
                         }
                         default:
-                            return { content: [{ type: 'text', text: `Sync action '${action}' not yet implemented` }] };
+                            return errorResult(`Sync action '${action}' not yet implemented`);
                     }
                 }
                 case 'tim_lease': {
@@ -1875,7 +1558,7 @@ async function createMcpServer() {
                         const agents = await s.getAgents();
                         const agent = agents.find(a => a.label === grant);
                         if (!agent)
-                            return { content: [{ type: 'text', text: `Agent "${grant}" not registered` }] };
+                            return errorResult(`Agent "${grant}" not registered`);
                         await s.link(entryId, agent.id, 'leases', 1.0, ttl ? { ttl } : {});
                         return { content: [{ type: 'text', text: `Leased entry ${entryId} to ${grant}` + (ttl ? ` (TTL: ${ttl})` : '') }] };
                     }
@@ -1888,7 +1571,7 @@ async function createMcpServer() {
                         }
                         return { content: [{ type: 'text', text: `No active lease found for ${entryId}` }] };
                     }
-                    return { content: [{ type: 'text', text: 'Specify grant= or revoke=' }] };
+                    return errorResult('Specify grant= or revoke=');
                 }
                 case 'tim_suppress': {
                     const { pattern, reason, ttl } = TimSuppressSchema.parse(args);
@@ -1904,9 +1587,55 @@ async function createMcpServer() {
                     };
                 }
                 case 'tim_stats': {
-                    const stats = await s.stats();
+                    const { root, kind, buckets } = TimStatsSchema.parse(args);
+                    const stats = await s.getContentStats(root, kind, buckets);
                     return {
                         content: [{ type: 'text', text: formatToolResponse(stats) }],
+                    };
+                }
+                case 'tim_section_children': {
+                    const { parentId, parentLabel, sectionTitle, kind } = TimSectionChildrenSchema.parse(args);
+                    let resolvedParentId = parentId;
+                    if (!resolvedParentId) {
+                        if (!parentLabel || !sectionTitle) {
+                            throw new Error('parentId or (parentLabel + sectionTitle) required');
+                        }
+                        const section = await s.resolveSectionByTitle(parentLabel, sectionTitle);
+                        if (section.status !== 'found') {
+                            return {
+                                content: [{
+                                        type: 'text',
+                                        text: JSON.stringify({ parentTitle: sectionTitle, children: [], count: 0 }, null, 2),
+                                    }],
+                            };
+                        }
+                        resolvedParentId = section.id;
+                    }
+                    const parent = await s.read(resolvedParentId, { includeChildren: false });
+                    if (!parent) {
+                        return {
+                            content: [{
+                                    type: 'text',
+                                    text: JSON.stringify({ parentTitle: sectionTitle ?? '', children: [], count: 0 }, null, 2),
+                                }],
+                        };
+                    }
+                    const children = await s.getChildren(resolvedParentId, kind ? { metadataKind: kind } : undefined);
+                    const compact = children.map(child => ({
+                        id: child.id,
+                        title: child.title,
+                        kind: typeof child.metadata.kind === 'string' ? child.metadata.kind : '',
+                        size: child.content.length,
+                    }));
+                    return {
+                        content: [{
+                                type: 'text',
+                                text: JSON.stringify({
+                                    parentTitle: parent.title,
+                                    children: compact,
+                                    count: compact.length,
+                                }, null, 2),
+                            }],
                     };
                 }
                 case 'tim_export': {
@@ -1925,7 +1654,7 @@ async function createMcpServer() {
                 case 'tim_import': {
                     const { source, dryRun, deduplicate } = TimImportSchema.parse(args);
                     if (!fs.existsSync(source)) {
-                        return { content: [{ type: 'text', text: `Source not found: ${source}` }] };
+                        return errorResult(`Source not found: ${source}`);
                     }
                     const report = (0, tim_migrate_1.tim_import)(s, source, { dryRun, deduplicate });
                     return { content: [{ type: 'text', text: formatToolResponse(report) }] };
@@ -2103,18 +1832,13 @@ async function createMcpServer() {
                     };
                 }
                 case 'tim_load_project': {
-                    const { label, depth, budget, sections, sessionId: sessionIdArg } = TimLoadProjectSchema.parse(args);
+                    const { label, depth, budget, sections, sessionId: sessionIdArg, bind } = TimLoadProjectSchema.parse(args);
                     const resolved = await s.resolveProjectLabel(label);
                     if (resolved.status === 'ambiguous') {
-                        return {
-                            content: [{
-                                    type: 'text',
-                                    text: `Ambiguous alias: matches ${resolved.labels.join(', ')}. Use label.`,
-                                }],
-                        };
+                        return errorResult(`Ambiguous alias: matches ${resolved.labels.join(', ')}. Use label.`);
                     }
                     if (resolved.status === 'not_found') {
-                        return { content: [{ type: 'text', text: `Project not found: ${label}` }] };
+                        return errorResult(`Project not found: ${label}`);
                     }
                     const projectLabel = resolved.label;
                     const cwd = process.cwd();
@@ -2122,28 +1846,23 @@ async function createMcpServer() {
                         sessionIdArg: sessionIdArg,
                         markerSession: (0, tim_hooks_1.findMarker)(cwd, { walkUp: true })?.marker.session,
                     });
-                    if (sessionId) {
+                    if (bind && sessionId) {
                         const existing = await s.read(sessionId);
                         if (existing?.metadata.kind === 'session') {
                             const existingRef = typeof existing.metadata.project_ref === 'string'
                                 ? existing.metadata.project_ref
                                 : undefined;
                             if ((0, tim_core_1.evaluateLoadGate)(existingRef, projectLabel) === 'reject') {
-                                return {
-                                    content: [{
-                                            type: 'text',
-                                            text: `Session already bound to ${existingRef}. tim_load_project binds once per session. ` +
-                                                'Use tim_read_project for cross-project access.',
-                                        }],
-                                };
+                                return errorResult(`Session already bound to ${existingRef}. tim_load_project binds once per session. ` +
+                                    'Use tim_load_project with bind:false for cross-project access.');
                             }
                         }
                     }
                     const result = await s.loadProject(projectLabel, { depth, budget, sections });
                     if (!result) {
-                        return { content: [{ type: 'text', text: `Project not found: ${label}` }] };
+                        return errorResult(`Project not found: ${label}`);
                     }
-                    if (sessionId) {
+                    if (bind && sessionId) {
                         try {
                             await getSessions().startProjectSession({
                                 sessionId,
@@ -2163,7 +1882,7 @@ async function createMcpServer() {
                     catch {
                         // Non-critical — brief still returned
                     }
-                    const formatted = (0, tim_store_1.formatProjectOutput)(result, budget, loadProjectSchema(), 'load');
+                    const formatted = (0, tim_store_1.formatProjectOutput)(result, budget, loadProjectSchema(), bind ? 'load' : 'read');
                     return {
                         content: [{
                                 type: 'text',
@@ -2175,19 +1894,14 @@ async function createMcpServer() {
                     const { label, depth, budget, sections } = TimReadProjectSchema.parse(args);
                     const resolved = await s.resolveProjectLabel(label);
                     if (resolved.status === 'ambiguous') {
-                        return {
-                            content: [{
-                                    type: 'text',
-                                    text: `Ambiguous alias: matches ${resolved.labels.join(', ')}. Use label.`,
-                                }],
-                        };
+                        return errorResult(`Ambiguous alias: matches ${resolved.labels.join(', ')}. Use label.`);
                     }
                     if (resolved.status === 'not_found') {
-                        return { content: [{ type: 'text', text: `Project not found: ${label}` }] };
+                        return errorResult(`Project not found: ${label}`);
                     }
                     const result = await s.loadProject(resolved.label, { depth, budget, sections });
                     if (!result) {
-                        return { content: [{ type: 'text', text: `Project not found: ${label}` }] };
+                        return errorResult(`Project not found: ${label}`);
                     }
                     const formatted = (0, tim_store_1.formatProjectOutput)(result, budget, loadProjectSchema(), 'read');
                     return {
@@ -2211,17 +1925,6 @@ async function createMcpServer() {
                     entries = sortForShow(entries);
                     entries = entries.slice(0, limit);
                     const formatted = await formatShowOutput(s, entries);
-                    return {
-                        content: [{ type: 'text', text: formatted }],
-                    };
-                }
-                case 'tim_tasks': {
-                    const { status } = TimTasksSchema.parse(args);
-                    let tasks = await s.getTasks(status ? { status } : undefined);
-                    if (!status) {
-                        tasks = tasks.filter(t => t.status === 'todo' || t.status === 'in_progress' || t.status == null);
-                    }
-                    const formatted = await formatTasksOutput(s, tasks);
                     return {
                         content: [{ type: 'text', text: formatted }],
                     };

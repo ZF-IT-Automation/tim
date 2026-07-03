@@ -36,4 +36,12 @@ export type WriteTagsValidationResult = WriteTagsValidationOk | WriteTagsValidat
  *   and therefore not exempt — we only use `metadata.kind`, not parent kind.
  */
 export declare function validateWriteTags(tags: string[] | undefined, metadata: Record<string, unknown> | undefined): WriteTagsValidationResult;
+/**
+ * Fill missing tags / infer section kind so tim_write can proceed when callers
+ * omit tags (e.g. integration tests, quick MCP writes).
+ */
+export declare function supplementWriteTags(tags: string[] | undefined, metadata: Record<string, unknown> | undefined, parentKind?: string): {
+    tags: string[];
+    metadata: Record<string, unknown> | undefined;
+};
 //# sourceMappingURL=write-validate.d.ts.map
