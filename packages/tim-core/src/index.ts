@@ -129,6 +129,9 @@ export interface StagingRecord {
   acked: boolean;
 }
 
+export { resolveLWW } from './lww.js';
+export type { ConflictResolution } from './lww.js';
+
 // ─── Memory Interface (implemented by tim-store) ──────────
 
 export interface MemoryInterface {

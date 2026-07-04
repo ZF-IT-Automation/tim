@@ -5,7 +5,7 @@ import {
   applyRemoteEdge,
   getUnackedStaging,
 } from 'tim-store';
-import { resolveLWW } from 'tim-sync';
+import { resolveLWW } from 'tim-core';
 import type { StagingRecord } from 'tim-core';
 import { TimSyncClient } from './client.js';
 import { deriveKey, encrypt, decrypt } from './crypto.js';

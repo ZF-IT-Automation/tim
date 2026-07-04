@@ -17,7 +17,6 @@
   "references": [
     { "path": "packages/tim-core" },
     { "path": "packages/tim-store" },
-    { "path": "packages/tim-sync" },
     { "path": "packages/tim-sync-client" },
     { "path": "packages/tim-search" },
     { "path": "packages/tim-cli" },

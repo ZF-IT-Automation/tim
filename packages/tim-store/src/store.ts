@@ -12,7 +12,7 @@ import type {
   ResolveProjectResult, ResolveSectionResult, SectionCandidate,
 } from 'tim-core';
 import { stripDeprecatedTags } from 'tim-core';
-import { resolveLWW } from 'tim-sync';
+import { resolveLWW } from 'tim-core';
 import { runMigrations, createTriggers, getCurrentVersion } from './schema.js';
 import { CurateManager } from './curate.js';
 import { metadataNeedsCoercion, parseAndCoerceMetadata } from './metadata-coerce.js';

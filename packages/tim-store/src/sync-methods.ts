@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import { resolveLWW } from 'tim-sync';
+import { resolveLWW } from 'tim-core';
 import type { StagingRecord } from 'tim-core';
 import { parseAndCoerceMetadata } from './metadata-coerce.js';
 

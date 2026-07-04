@@ -11,7 +11,6 @@
   },
   "dependencies": {
     "tim-core": "*",
-    "tim-store": "*",
-    "tim-sync": "*"
+    "tim-store": "*"
   }
 }
