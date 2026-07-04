@@ -28,6 +28,7 @@ import { formatProjectOutput, type ProjectSchema } from './project-output.js';
 import { loadConfig, resolveActiveSessionId, evaluateLoadGate, stripDeprecatedTags, SCHEMA_KINDS, type EdgeType, type Entry } from 'tim-core';
 import { annotateTrust } from './trust.js';
 import { captureProvenance } from './provenance.js';
+import { resolveEntryTaskStatus } from './task-status.js';
 import {
   findMarker,
   getActiveProjectLabel,
@@ -936,16 +937,6 @@ const SHOW_PRIORITY_ORDER: Record<string, number> = {
   medium: 1,
   low: 2,
 };
-
-function resolveEntryTaskStatus(metadata: Record<string, unknown>): string | undefined {
-  const task = metadata.task;
-  if (typeof task === 'object' && task !== null && !Array.isArray(task)) {
-    const st = (task as Record<string, unknown>).status;
-    if (typeof st === 'string') return st;
-  }
-  const st = metadata.status;
-  return typeof st === 'string' ? st : undefined;
-}
 
 function resolveEntryTaskPriority(metadata: Record<string, unknown>): string | undefined {
   const task = metadata.task;

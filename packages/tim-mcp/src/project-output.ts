@@ -1,6 +1,7 @@
 import type { Entry } from 'tim-core';
 import type { LoadProjectResult } from 'tim-store';
 import { isTaskMarker } from 'tim-store';
+import { resolveEntryTaskStatus } from './task-status.js';
 
 const FORMAT_SEP = '─'.repeat(40);
 
@@ -117,16 +118,7 @@ function sectionContentBody(section: Entry): string {
 
 function entryBadge(entry: Entry): string {
   if (isTaskMarker(entry.metadata.task)) {
-    // Read the canonical task status from metadata.task.status.
-    // Legacy metadata.status is intentionally ignored — the badge must
-    // reflect the actual task state, not a deprecated top-level field.
-    // Falls back to 'todo' only when neither field is set.
-    const task = entry.metadata.task;
-    const taskStatus =
-      typeof task === 'object' && task !== null && !Array.isArray(task)
-        ? (task as { status?: unknown }).status
-        : undefined;
-    const status = (typeof taskStatus === 'string' ? taskStatus : undefined) || 'todo';
+    const status = resolveEntryTaskStatus(entry.metadata);
     return ` [${status}]`;
   }
   if (entry.metadata.kind === 'error') {
