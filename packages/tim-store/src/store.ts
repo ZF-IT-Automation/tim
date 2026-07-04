@@ -1439,7 +1439,9 @@ export class TimStore implements MemoryInterface {
     const limit = opts.limit ?? 5;
     const STOP = new Set([
       'the', 'and', 'for', 'with', 'from', 'this', 'that', 'via', 'into',
-      'your', 'office', 'plants',
+      'your',
+      // German function words — actions often mix DE/EN (Finding 2 established DE matters)
+      'der', 'die', 'das', 'und', 'mit', 'von', 'für', 'auf', 'ist', 'nicht',
     ]);
     const keywords = query
       .toLowerCase()
