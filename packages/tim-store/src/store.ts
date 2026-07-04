@@ -1866,7 +1866,7 @@ export class TimStore implements MemoryInterface {
     const unique = [...new Set(entryIds)];
     const placeholders = unique.map(() => '?').join(', ');
     const rows = this.db.prepare(`
-      SELECT entry_id, COUNT(*) AS c FROM entry_usage
+      SELECT entry_id, COUNT(DISTINCT session_id) AS c FROM entry_usage
       WHERE referenced = 1 AND entry_id IN (${placeholders})
       GROUP BY entry_id
     `).all(...unique) as Array<{ entry_id: string; c: number }>;
