@@ -1667,6 +1667,63 @@ export class TimStore implements MemoryInterface {
     return result.changes;
   }
 
+  // ─── Retrieval usage feedback (device-local, never synced) ─────
+
+  private usageGcDone = false;
+
+  /** Record that these entries were surfaced to the agent (read or search hit). */
+  recordRead(entryIds: string[], sessionId: string | null): void {
+    if (entryIds.length === 0) return;
+    // Opportunistic GC, once per process: usage older than 180 days is noise.
+    if (!this.usageGcDone) {
+      this.usageGcDone = true;
+      const cutoff = new Date(Date.now() - 180 * 86400_000).toISOString();
+      this.db.prepare('DELETE FROM entry_usage WHERE read_at < ?').run(cutoff);
+    }
+    const now = new Date().toISOString();
+    const stmt = this.db.prepare(
+      'INSERT INTO entry_usage (entry_id, session_id, read_at) VALUES (?, ?, ?)',
+    );
+    this.db.transaction(() => {
+      for (const id of new Set(entryIds)) stmt.run(id, sessionId, now);
+    })();
+  }
+
+  /**
+   * Mark previously-read entries as actually used (linked, updated, or
+   * cited in a later write). Only flips rows of the same session — a
+   * reference without a prior read in that session is not a retrieval win.
+   */
+  markReferenced(entryIds: string[], sessionId: string | null): number {
+    if (entryIds.length === 0 || !sessionId) return 0;
+    const unique = [...new Set(entryIds)];
+    const placeholders = unique.map(() => '?').join(', ');
+    const info = this.db.prepare(`
+      UPDATE entry_usage SET referenced = 1
+      WHERE session_id = ? AND referenced = 0 AND entry_id IN (${placeholders})
+    `).run(sessionId, ...unique);
+    return info.changes;
+  }
+
+  getSessionReadIds(sessionId: string): string[] {
+    const rows = this.db.prepare(
+      'SELECT DISTINCT entry_id FROM entry_usage WHERE session_id = ?',
+    ).all(sessionId) as Array<{ entry_id: string }>;
+    return rows.map(r => r.entry_id);
+  }
+
+  getReferenceCounts(entryIds: string[]): Map<string, number> {
+    if (entryIds.length === 0) return new Map();
+    const unique = [...new Set(entryIds)];
+    const placeholders = unique.map(() => '?').join(', ');
+    const rows = this.db.prepare(`
+      SELECT entry_id, COUNT(*) AS c FROM entry_usage
+      WHERE referenced = 1 AND entry_id IN (${placeholders})
+      GROUP BY entry_id
+    `).all(...unique) as Array<{ entry_id: string; c: number }>;
+    return new Map(rows.map(r => [r.entry_id, r.c]));
+  }
+
   // ─── Health ────────────────────────────────────────────
 
   async health(): Promise<HealthReport> {
