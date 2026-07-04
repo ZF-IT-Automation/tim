@@ -1193,7 +1193,27 @@ export class TimStore implements MemoryInterface {
       tags: patch.tags ? JSON.stringify(patch.tags) : existing.tags,
       irrelevant: patch.irrelevant === undefined ? existing.irrelevant : (patch.irrelevant ? 1 : 0),
       tombstoned_at: patch.tombstonedAt === undefined ? existing.tombstoned_at : patch.tombstonedAt,
-      metadata: patch.metadata ? JSON.stringify(patch.metadata) : existing.metadata,
+      metadata: (() => {
+        if (!patch.metadata) return existing.metadata;
+        const existingMeta = JSON.parse(existing.metadata || '{}') as Record<string, unknown>;
+        const patchMeta = JSON.parse(JSON.stringify(patch.metadata)) as Record<string, unknown>;
+        const SYSTEM_FIELDS = ['verified_at', 'provenance'] as const;
+        for (const f of SYSTEM_FIELDS) {
+          if (existingMeta[f] !== undefined && patchMeta[f] === undefined) {
+            patchMeta[f] = existingMeta[f];
+          }
+        }
+        if (
+          typeof existingMeta.task === 'object' && existingMeta.task !== null &&
+          typeof patchMeta.task === 'object' && patchMeta.task !== null
+        ) {
+          patchMeta.task = {
+            ...(existingMeta.task as Record<string, unknown>),
+            ...(patchMeta.task as Record<string, unknown>),
+          };
+        }
+        return JSON.stringify({ ...existingMeta, ...patchMeta });
+      })(),
       accessed_at: now,
       updated_at: now,
     };
@@ -1423,7 +1443,7 @@ export class TimStore implements MemoryInterface {
     ]);
     const keywords = query
       .toLowerCase()
-      .split(/\W+/)
+      .split(/[^\p{L}\p{N}]+/u)
       .filter(w => w.length >= 3 && !STOP.has(w));
     const terms = keywords.length > 0 ? keywords : [query.trim()].filter(Boolean);
 

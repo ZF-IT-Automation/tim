@@ -136,6 +136,26 @@ describe('usage wiring through MCP handlers', () => {
     expect(rows.some(r => r.referenced === 1)).toBe(true);
   });
 
+  it('tim_update via label marks the resolved entry referenced after label read', async () => {
+    const w = await client.callTool('tim_write', {
+      content: 'Label usage fact\nBody.',
+      tags: ['#a', '#b'],
+      metadata: { label: 'L7701' },
+    });
+    const entry = JSON.parse(w.result!.content[0].text);
+    const compositeId = entry.id ?? entry.entry?.id;
+    expect(compositeId).not.toBe('L7701');
+
+    await client.callTool('tim_read', { id: 'L7701' });
+    let rows = usageRows().filter(r => r.entry_id === compositeId);
+    expect(rows.length).toBe(1);
+    expect(rows[0].referenced).toBe(0);
+
+    await client.callTool('tim_update', { id: 'L7701', content: 'Label usage fact\nEdited.' });
+    rows = usageRows().filter(r => r.entry_id === compositeId);
+    expect(rows.some(r => r.referenced === 1)).toBe(true);
+  });
+
   it('tim_search results are recorded as reads', async () => {
     const w = await client.callTool('tim_write', {
       content: 'Searchable usage fact\nBody.', tags: ['#a', '#b'],

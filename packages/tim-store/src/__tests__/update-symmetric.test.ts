@@ -51,4 +51,20 @@ describe('update() symmetric flags', () => {
     expect(restored).not.toBeNull();
     expect(restored!.tombstonedAt).toBeNull();
   });
+
+  it('update merges task metadata without dropping system-managed fields', async () => {
+    const entry = await store.write('Task item\nbody', {
+      metadata: {
+        task: { status: 'todo' },
+        provenance: { commit: 'abc', branch: 'main' },
+        verified_at: '2026-01-01T00:00:00.000Z',
+      },
+    });
+
+    await store.update(entry.id, { metadata: { task: { status: 'done' } } });
+    const updated = await store.read(entry.id);
+    expect(updated!.metadata.task).toEqual({ status: 'done' });
+    expect(updated!.metadata.provenance).toEqual({ commit: 'abc', branch: 'main' });
+    expect(updated!.metadata.verified_at).toBe('2026-01-01T00:00:00.000Z');
+  });
 });

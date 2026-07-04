@@ -1841,7 +1841,12 @@ export async function createMcpServer(): Promise<Server> {
         case 'tim_link': {
           const { sourceId, targetId, type, weight, metadata } = TimLinkSchema.parse(args);
           const edge = await s.link(sourceId, targetId, type as EdgeType, weight, metadata);
-          s.markReferenced([sourceId, targetId], usageSessionId());
+          const refIds: string[] = [];
+          for (const raw of [sourceId, targetId]) {
+            const e = await s.read(raw, { includeChildren: false });
+            if (e) refIds.push(e.id);
+          }
+          if (refIds.length > 0) s.markReferenced(refIds, usageSessionId());
           return {
             content: [{ type: 'text', text: formatToolResponse(edge) }],
           };
@@ -1857,19 +1862,21 @@ export async function createMcpServer(): Promise<Server> {
 
         case 'tim_update': {
           const { id, ...patch } = TimUpdateSchema.parse(args);
+          const resolved = await s.read(id, { showIrrelevant: true, includeChildren: false });
+          if (!resolved) return errorResult(`Entry not found: ${id}`);
           if (patch.tags !== undefined) {
             const tagWarnings = validateTagsDeprecated(patch.tags);
             const { clean: cleanTags } = stripDeprecatedTags(patch.tags);
             patch.tags = cleanTags;
-            const entry = await s.update(id, patch as Partial<Entry>);
-            s.markReferenced([id], usageSessionId());
+            const entry = await s.update(resolved.id, patch as Partial<Entry>);
+            s.markReferenced([entry.id], usageSessionId());
             const payload = tagWarnings.length > 0 ? { entry, warnings: tagWarnings } : entry;
             return {
               content: [{ type: 'text', text: formatToolResponse(payload) }],
             };
           }
-          const entry = await s.update(id, patch as Partial<Entry>);
-          s.markReferenced([id], usageSessionId());
+          const entry = await s.update(resolved.id, patch as Partial<Entry>);
+          s.markReferenced([entry.id], usageSessionId());
           return {
             content: [{ type: 'text', text: formatToolResponse(entry) }],
           };
