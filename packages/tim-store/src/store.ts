@@ -70,6 +70,24 @@ export function sanitizeFtsQuery(query: string): string {
   return out.join(' ');
 }
 
+/**
+ * Jaccard overlap of lowercase word-token sets. 1.0 = same word set.
+ * Single-char tokens are dropped — they are almost always punctuation
+ * noise ("v2", "a") and inflate similarity between unrelated titles.
+ */
+export function titleSimilarity(a: string, b: string): number {
+  const tokens = (s: string): Set<string> =>
+    new Set(
+      s.toLowerCase().split(/[^0-9a-zà-öø-ÿ]+/).filter(w => w.length > 1),
+    );
+  const ta = tokens(a);
+  const tb = tokens(b);
+  if (ta.size === 0 || tb.size === 0) return 0;
+  let intersection = 0;
+  for (const w of ta) if (tb.has(w)) intersection++;
+  return intersection / (ta.size + tb.size - intersection);
+}
+
 export interface TimStoreOptions {
   emitter?: Pick<EventBus, 'emit'>;
   agentId?: string;
@@ -1334,6 +1352,35 @@ export class TimStore implements MemoryInterface {
     `).all(sanitized, limit) as RowEntry[];
 
     return rows.map(rowToEntry);
+  }
+
+  /**
+   * Near-duplicate candidates for a title, for the tim_write dedup gate.
+   * FTS narrows to plausible candidates; Jaccard token overlap on the
+   * title decides. Suppressed/irrelevant/tombstoned entries are already
+   * excluded by searchFts.
+   */
+  async findSimilar(
+    title: string,
+    opts: { projectLabel?: string; threshold?: number; limit?: number } = {},
+  ): Promise<Array<{ id: string; title: string; similarity: number }>> {
+    const threshold = opts.threshold ?? 0.6;
+    // FTS5 AND-matches every token — drop version suffixes (v2, v10) that
+    // Jaccard scoring tolerates but would exclude otherwise-good candidates.
+    const ftsQuery = title
+      .replace(/\bv\d+\b/gi, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    const candidates = await this.searchFts(ftsQuery || title, 25);
+    const hits: Array<{ id: string; title: string; similarity: number }> = [];
+    for (const c of candidates) {
+      if (opts.projectLabel && this.getProjectLabel(c.id) !== opts.projectLabel) continue;
+      const similarity = titleSimilarity(title, c.title);
+      if (similarity >= threshold) {
+        hits.push({ id: c.id, title: c.title, similarity: Number(similarity.toFixed(2)) });
+      }
+    }
+    return hits.sort((x, y) => y.similarity - x.similarity).slice(0, opts.limit ?? 5);
   }
 
   // ─── Edges ─────────────────────────────────────────────
