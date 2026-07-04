@@ -1312,8 +1312,13 @@ export class TimStore implements MemoryInterface {
   async search(options: SearchOptions): Promise<Entry[]> {
     const topK = options.topK ?? 10;
     const patterns = this.loadActiveSuppressPatterns();
-    const fts = (await this.searchFts(options.query, topK))
-      .filter(e => !TimStore.matchesSuppressed(patterns, e));
+    // Over-fetch 3× so usage-boosted entries just below the cutoff can
+    // climb into the topK window; rankByUsage slices back down.
+    const fts = this.rankByUsage(
+      (await this.searchFts(options.query, topK * 3))
+        .filter(e => !TimStore.matchesSuppressed(patterns, e)),
+      topK,
+    );
     // Labels/aliases live in metadata, not the FTS corpus. Merge a direct project hit.
     // Broader fix: index metadata.label + aliases in fts_entries (migration + triggers).
     const resolved = await this.resolveProjectLabel(options.query);
@@ -1331,6 +1336,23 @@ export class TimStore implements MemoryInterface {
       }
     }
     return fts;
+  }
+
+  /**
+   * Deterministic usage boost on top of FTS order: an entry's score is its
+   * FTS position minus 2·log2(1 + referencedCount); ascending. Referenced
+   * 1× → +2 positions, 3× → +4, 7× → +6. No wall-clock, no randomness.
+   */
+  private rankByUsage(entries: Entry[], topK: number): Entry[] {
+    if (process.env.TIM_USAGE_RANKING === '0' || entries.length <= 1) {
+      return entries.slice(0, topK);
+    }
+    const counts = this.getReferenceCounts(entries.map(e => e.id));
+    return entries
+      .map((e, i) => ({ e, score: i - 2 * Math.log2(1 + (counts.get(e.id) ?? 0)) }))
+      .sort((a, b) => a.score - b.score)
+      .map(x => x.e)
+      .slice(0, topK);
   }
 
   async searchFts(query: string, limit: number = 10): Promise<Entry[]> {
