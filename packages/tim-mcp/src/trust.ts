@@ -2,15 +2,8 @@
 // drift (Task 5). Annotations are additive fields on the returned entry —
 // the stored row is never modified by reading it.
 
-import { SCHEMA_KINDS, type Entry } from 'tim-core';
+import { SCHEMA_KINDS, isStale, staleDays, daysSinceLastVerified, type Entry } from 'tim-core';
 import { commitsSince } from './provenance.js';
-
-const DAY_MS = 86_400_000;
-
-function staleDays(): number {
-  const raw = Number(process.env.TIM_STALE_DAYS);
-  return Number.isFinite(raw) && raw > 0 ? raw : 90;
-}
 
 export interface StaleInfo {
   lastVerified: string;   // ISO — verified_at, else updated_at, else created_at
@@ -29,10 +22,10 @@ export function annotateTrust(entry: Entry, cwd: string): TrustAnnotated {
   const verifiedAt =
     typeof entry.metadata.verified_at === 'string' ? entry.metadata.verified_at : undefined;
   const lastVerified = verifiedAt ?? entry.updatedAt ?? entry.createdAt;
-  const daysSince = Math.floor((Date.now() - Date.parse(lastVerified)) / DAY_MS);
+  const daysSince = daysSinceLastVerified(entry);
 
   const annotated: TrustAnnotated = { ...entry };
-  if (Number.isFinite(daysSince) && daysSince > staleDays()) {
+  if (isStale(entry, staleDays())) {
     annotated.stale = { lastVerified, daysSince };
   }
 

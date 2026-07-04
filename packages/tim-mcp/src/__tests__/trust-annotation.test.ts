@@ -64,6 +64,13 @@ describe('annotateTrust — staleness', () => {
     );
     expect(out.stale).toBeUndefined();
   });
+
+  it('does not mark entries at exactly 90 days stale', () => {
+    const now = Date.now();
+    const last = new Date(now - 90 * 86400_000).toISOString();
+    const out = annotateTrust(entryFixture({ createdAt: last, updatedAt: last }), process.cwd());
+    expect(out.stale).toBeUndefined();
+  });
 });
 
 describe('annotateTrust — provenance drift', () => {

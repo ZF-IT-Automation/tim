@@ -11,7 +11,7 @@ import type {
   SyncEntity, SyncOperation, EventBus, EventType,
   ResolveProjectResult, ResolveSectionResult, SectionCandidate,
 } from 'tim-core';
-import { stripDeprecatedTags, resolveLWW, SCHEMA_KINDS } from 'tim-core';
+import { stripDeprecatedTags, resolveLWW, SCHEMA_KINDS, staleDays } from 'tim-core';
 import { runMigrations, createTriggers, getCurrentVersion } from './schema.js';
 import { CurateManager } from './curate.js';
 import { metadataNeedsCoercion, parseAndCoerceMetadata } from './metadata-coerce.js';
@@ -1922,22 +1922,22 @@ export class TimStore implements MemoryInterface {
 
     // Stale knowledge: non-schema entries not verified/edited within the
     // threshold. Schema entries (sessions, sections, …) are structure and
-    // don't go stale. Cutoff computed in JS — ISO strings compare correctly
-    // only against ISO strings, not against SQLite's datetime() format.
-    const staleDaysRaw = Number(process.env.TIM_STALE_DAYS);
-    const staleDays = Number.isFinite(staleDaysRaw) && staleDaysRaw > 0 ? staleDaysRaw : 90;
-    const cutoff = new Date(Date.now() - staleDays * 86400_000).toISOString();
+    // don't go stale. Day count uses Math.floor — same as tim-core isStale().
+    const threshold = staleDays();
     const kindList = [...SCHEMA_KINDS].map(() => '?').join(', ');
     const stale = this.db.prepare(`
       SELECT COUNT(*) as count FROM entries
       WHERE irrelevant = 0 AND tombstoned_at IS NULL
         AND (json_extract(metadata, '$.kind') IS NULL
              OR json_extract(metadata, '$.kind') NOT IN (${kindList}))
-        AND COALESCE(json_extract(metadata, '$.verified_at'),
-                     NULLIF(updated_at, ''), created_at) < ?
-    `).get(...SCHEMA_KINDS, cutoff) as { count: number };
+        AND CAST(
+          (strftime('%s','now') - strftime('%s', COALESCE(
+            json_extract(metadata, '$.verified_at'),
+            COALESCE(NULLIF(updated_at, ''), created_at)
+          ))) / 86400.0 AS INTEGER) > ?
+    `).get(...SCHEMA_KINDS, threshold) as { count: number };
     if (stale.count > 0) {
-      issues.push(`${stale.count} stale entries (older than ${staleDays}d, unverified)`);
+      issues.push(`${stale.count} stale entries (older than ${threshold}d, unverified)`);
     }
 
     return {
