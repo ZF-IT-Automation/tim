@@ -28,6 +28,7 @@ import { formatProjectOutput, type ProjectSchema } from './project-output.js';
 import { loadConfig, resolveActiveSessionId, evaluateLoadGate, stripDeprecatedTags, SCHEMA_KINDS, type EdgeType, type Entry } from 'tim-core';
 import { annotateTrust } from './trust.js';
 import { captureProvenance } from './provenance.js';
+import { resolveEntryTaskStatus } from './task-status.js';
 import {
   findMarker,
   getActiveProjectLabel,
@@ -87,8 +88,11 @@ const CLI = parseCliArgs();
 // ─── Tool Schemas ───────────────────────────────────────
 
 const TimReadSchemaBase = z.object({
-  id: z.union([z.string(), z.array(z.string())]).optional()
-    .describe('Entry ID (ULID), or array of IDs for batch read'),
+  id: z.union([
+    z.string(),
+    z.array(z.string().min(1)).min(1).max(50),
+  ]).optional()
+    .describe('Entry ID (ULID), or array of IDs for batch read (max 50)'),
   project: z.string().optional().describe('Project label/alias/name (auto-resolved)'),
   section: z.string().optional().describe('Section title — read its children'),
   depth: z.number().min(1).max(5).optional().default(2)
@@ -934,16 +938,6 @@ const SHOW_PRIORITY_ORDER: Record<string, number> = {
   low: 2,
 };
 
-function resolveEntryTaskStatus(metadata: Record<string, unknown>): string | undefined {
-  const task = metadata.task;
-  if (typeof task === 'object' && task !== null && !Array.isArray(task)) {
-    const st = (task as Record<string, unknown>).status;
-    if (typeof st === 'string') return st;
-  }
-  const st = metadata.status;
-  return typeof st === 'string' ? st : undefined;
-}
-
 function resolveEntryTaskPriority(metadata: Record<string, unknown>): string | undefined {
   const task = metadata.task;
   if (typeof task === 'object' && task !== null && !Array.isArray(task)) {
@@ -1659,24 +1653,29 @@ export async function createMcpServer(): Promise<Server> {
           ) {
             const candidateTitle = (writeOpts.title ?? opts.content.split('\n')[0]).trim();
             const dedupScope = writeOpts.parentId
-              ? s.getProjectLabel(writeOpts.parentId) ?? undefined
-              : undefined;
-            const dupes = candidateTitle
-              ? await s.findSimilar(candidateTitle, { projectLabel: dedupScope })
-              : [];
-            if (dupes.length > 0) {
-              return {
-                content: [{
-                  type: 'text',
-                  text: formatToolResponse({
-                    status: 'duplicate_suspected',
-                    candidates: dupes,
-                    hint: 'A very similar entry already exists. Append to it with ' +
-                      'tim_update, or pass force:true to write a new entry anyway.',
-                  }),
-                }],
-                isError: true,
-              };
+              ? (s.getProjectLabel(writeOpts.parentId) ?? null)
+              : null;
+            // Without a resolvable project scope the gate would scan all projects
+            // and false-positive on generic titles ("Setup", "Next Steps", "Log").
+            // Skip the gate; callers can pass force:true for explicit opt-in.
+            if (dedupScope !== null) {
+              const dupes = candidateTitle
+                ? await s.findSimilar(candidateTitle, { projectLabel: dedupScope })
+                : [];
+              if (dupes.length > 0) {
+                return {
+                  content: [{
+                    type: 'text',
+                    text: formatToolResponse({
+                      status: 'duplicate_suspected',
+                      candidates: dupes,
+                      hint: 'A very similar entry already exists. Append to it with ' +
+                        'tim_update, or pass force:true to write a new entry anyway.',
+                    }),
+                  }],
+                  isError: true,
+                };
+              }
             }
           }
 

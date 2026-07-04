@@ -3,7 +3,7 @@
 // the stored row is never modified by reading it.
 
 import { SCHEMA_KINDS, isStale, staleDays, daysSinceLastVerified, type Entry } from 'tim-core';
-import { commitsSince } from './provenance.js';
+import { commitsSinceCached } from './provenance.js';
 
 export interface StaleInfo {
   lastVerified: string;   // ISO — verified_at, else updated_at, else created_at
@@ -31,7 +31,7 @@ export function annotateTrust(entry: Entry, cwd: string): TrustAnnotated {
 
   const prov = entry.metadata.provenance as { commit?: unknown } | undefined;
   if (prov && typeof prov.commit === 'string') {
-    const drift = commitsSince(cwd, prov.commit);
+    const drift = commitsSinceCached(cwd, prov.commit);
     if (drift !== null && drift > 0) {
       annotated.provenance_drift = { commitsSince: drift };
     }

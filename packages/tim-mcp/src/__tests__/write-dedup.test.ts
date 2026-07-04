@@ -108,14 +108,26 @@ describe('tim_write dedup gate', () => {
   });
 
   it('refuses a near-duplicate title and lists candidates', async () => {
+    const proj = await client.callTool('tim_create_project', { label: 'P9000', content: 'Dedup Proj' });
+    const project = JSON.parse(proj.result!.content![0].text);
+    const section = await client.callTool('tim_write', {
+      content: 'Notes',
+      parentId: project.id,
+      metadata: { kind: 'section' },
+      tags: ['#section', '#schema'],
+    });
+    const sec = JSON.parse(section.result!.content![0].text);
+
     const first = await client.callTool('tim_write', {
       content: 'Reminder System via Cron Checker\nDesign notes.',
+      parentId: sec.id,
       tags: ['#reminder', '#design'],
     });
     expect(first.result?.isError).toBeFalsy();
 
     const dup = await client.callTool('tim_write', {
       content: 'Reminder System Cron Checker\nSlightly different notes.',
+      parentId: sec.id,
       tags: ['#reminder', '#design'],
     });
     expect(dup.result?.isError).toBe(true);
@@ -144,5 +156,66 @@ describe('tim_write dedup gate', () => {
     });
     expect(s1.result?.isError).toBeFalsy();
     expect(s2.result?.isError).toBeFalsy();
+  });
+
+  it('skips dedup gate without parentId even when another project has the same title', async () => {
+    const projA = await client.callTool('tim_create_project', { label: 'P9001', content: 'Project A' });
+    const projectA = JSON.parse(projA.result!.content![0].text);
+    const sectionA = await client.callTool('tim_write', {
+      content: 'Tasks',
+      parentId: projectA.id,
+      metadata: { kind: 'section' },
+      tags: ['#section', '#schema'],
+    });
+    const secA = JSON.parse(sectionA.result!.content![0].text);
+
+    await client.callTool('tim_write', {
+      title: 'Common Setup',
+      content: 'Common Setup\nNotes in project A.',
+      parentId: secA.id,
+      tags: ['#note', '#test'],
+    });
+
+    const projB = await client.callTool('tim_create_project', { label: 'P9002', content: 'Project B' });
+    expect(projB.result?.isError).toBeFalsy();
+
+    const second = await client.callTool('tim_write', {
+      title: 'Common Setup',
+      content: 'Common Setup\nNotes in project B without parent.',
+      tags: ['#note', '#test'],
+    });
+    expect(second.result?.isError).toBeFalsy();
+    const body = JSON.parse(second.result!.content![0].text);
+    expect(body.title).toBe('Common Setup');
+  });
+
+  it('applies dedup gate within project when parentId is set', async () => {
+    const proj = await client.callTool('tim_create_project', { label: 'P9003', content: 'Scoped Project' });
+    const project = JSON.parse(proj.result!.content![0].text);
+    const section = await client.callTool('tim_write', {
+      content: 'Tasks',
+      parentId: project.id,
+      metadata: { kind: 'section' },
+      tags: ['#section', '#schema'],
+    });
+    const sec = JSON.parse(section.result!.content![0].text);
+
+    const first = await client.callTool('tim_write', {
+      title: 'Shared Task Title',
+      content: 'Shared Task Title\nFirst body.',
+      parentId: sec.id,
+      tags: ['#task', '#test'],
+    });
+    expect(first.result?.isError).toBeFalsy();
+
+    const dup = await client.callTool('tim_write', {
+      title: 'Shared Task Title',
+      content: 'Shared Task Title\nSecond body.',
+      parentId: sec.id,
+      tags: ['#task', '#test'],
+    });
+    expect(dup.result?.isError).toBe(true);
+    const body = JSON.parse(dup.result!.content![0].text);
+    expect(body.status).toBe('duplicate_suspected');
   });
 });

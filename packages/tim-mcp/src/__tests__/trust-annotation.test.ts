@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { annotateTrust } from '../trust.js';
+import { clearCommitsSinceCache, getCommitsSinceCacheStats } from '../provenance.js';
 import type { Entry } from 'tim-core';
 
 function git(cwd: string, ...args: string[]): string {
@@ -101,5 +102,19 @@ describe('annotateTrust — provenance drift', () => {
     });
     const out = annotateTrust(entry, repo);
     expect(out.provenance_drift).toEqual({ commitsSince: 1 });
+  });
+
+  it('memoises git drift lookups across repeated annotations', () => {
+    clearCommitsSinceCache();
+    const entry = entryFixture({
+      metadata: { provenance: { commit: firstCommit } },
+    });
+    for (let i = 0; i < 10; i++) {
+      annotateTrust(entry, repo);
+    }
+    const stats = getCommitsSinceCacheStats();
+    expect(stats.misses).toBe(1);
+    expect(stats.hits).toBe(9);
+    clearCommitsSinceCache();
   });
 });

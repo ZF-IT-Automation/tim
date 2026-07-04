@@ -51,6 +51,15 @@ describe('entry_usage recording', () => {
     expect(store.getReferenceCounts([a.id]).get(a.id)).toBe(3);
   });
 
+  it('counts distinct sessions, not read-events, for reference boost', async () => {
+    const a = await store.write('Entry A\nBody.', { tags: ['#x', '#y'] });
+    store.recordRead([a.id], 'session-1');
+    store.recordRead([a.id], 'session-1');
+    store.recordRead([a.id], 'session-1');
+    store.markReferenced([a.id], 'session-1');
+    expect(store.getReferenceCounts([a.id]).get(a.id)).toBe(1);
+  });
+
   it('never stages usage rows for sync', async () => {
     const a = await store.write('Entry A\nBody.', { tags: ['#x', '#y'] });
     const cursor = await store.getStagingCursor();
