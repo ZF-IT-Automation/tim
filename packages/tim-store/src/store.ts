@@ -1405,6 +1405,91 @@ export class TimStore implements MemoryInterface {
     return hits.sort((x, y) => y.similarity - x.similarity).slice(0, opts.limit ?? 5);
   }
 
+  /**
+   * Negative-memory lookup for the tim_guard pre-action check: FTS over
+   * the query, filtered to failure knowledge (kind error/learning, or
+   * #error/#learning tagged). Over-fetches because most FTS hits are not
+   * failures.
+   */
+  async searchFailures(
+    query: string,
+    opts: { projectLabel?: string; limit?: number } = {},
+  ): Promise<Entry[]> {
+    const limit = opts.limit ?? 5;
+    const hits = await this.searchFts(query, 50);
+    const failures = hits.filter(e => {
+      const kind = typeof e.metadata.kind === 'string' ? e.metadata.kind : '';
+      return kind === 'error' || kind === 'learning'
+        || e.tags.includes('#error') || e.tags.includes('#learning');
+    });
+    if (!opts.projectLabel) return failures.slice(0, limit);
+    return failures
+      .filter(e => this.getProjectLabel(e.id) === opts.projectLabel)
+      .slice(0, limit);
+  }
+
+  /**
+   * All entries in the project subtree touched since the cutoff, for the
+   * tim_delta session briefing supplement. Tombstoned entries appear as
+   * "deleted" (their reads are otherwise filtered). Capped at 500 —
+   * beyond that, a delta is no longer a briefing.
+   */
+  async getChangedSince(
+    projectId: string,
+    sinceIso: string,
+  ): Promise<{ created: Entry[]; updated: Entry[]; deleted: Entry[] }> {
+    const rows = this.db.prepare(`
+      WITH RECURSIVE sub(id) AS (
+        SELECT id FROM entries WHERE id = ?
+        UNION ALL
+        SELECT e.id FROM entries e JOIN sub ON e.parent_id = sub.id
+      )
+      SELECT e.* FROM entries e
+      WHERE e.id IN (SELECT id FROM sub)
+        AND e.id != ?
+        AND (
+          e.created_at >= ?
+          OR e.updated_at >= ?
+          OR (e.tombstoned_at IS NOT NULL AND e.tombstoned_at >= ?)
+        )
+      ORDER BY e.updated_at DESC, e.rowid DESC
+      LIMIT 500
+    `).all(projectId, projectId, sinceIso, sinceIso, sinceIso) as RowEntry[];
+
+    const created: Entry[] = [];
+    const updated: Entry[] = [];
+    const deleted: Entry[] = [];
+    for (const row of rows) {
+      const entry = rowToEntry(row);
+      if (row.tombstoned_at) deleted.push(entry);
+      else if (row.created_at >= sinceIso) created.push(entry);
+      else updated.push(entry);
+    }
+    return { created, updated, deleted };
+  }
+
+  /** Newest session entry in the project subtree, excluding the current session. */
+  async getPreviousSession(
+    projectId: string,
+    excludeSessionId?: string | null,
+  ): Promise<Entry | null> {
+    const row = this.db.prepare(`
+      WITH RECURSIVE sub(id) AS (
+        SELECT id FROM entries WHERE id = ?
+        UNION ALL
+        SELECT e.id FROM entries e JOIN sub ON e.parent_id = sub.id
+      )
+      SELECT e.* FROM entries e
+      WHERE e.id IN (SELECT id FROM sub)
+        AND json_extract(e.metadata, '$.kind') = 'session'
+        AND e.tombstoned_at IS NULL
+        AND e.id != COALESCE(?, '')
+      ORDER BY e.created_at DESC, e.rowid DESC
+      LIMIT 1
+    `).get(projectId, excludeSessionId ?? null) as RowEntry | undefined;
+    return row ? rowToEntry(row) : null;
+  }
+
   // ─── Edges ─────────────────────────────────────────────
 
   async link(
