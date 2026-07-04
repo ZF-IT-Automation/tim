@@ -117,6 +117,8 @@ const TimWriteSchema = z.object({
     .describe('Topic tags only (#tim, #security). Status/priority tags (#todo, #done, #priority-*) are deprecated — use metadata.task.status / metadata.task.priority.'),
   visibility: z.number().optional().default(1),
   metadata: z.record(z.unknown()).optional().default({}),
+  force: z.boolean().optional().default(false)
+    .describe('Bypass the near-duplicate title check and write anyway'),
 });
 
 const TimSearchSchema = z.object({
@@ -1450,7 +1452,7 @@ export async function createMcpServer(): Promise<Server> {
 
         case 'tim_write': {
           const opts = TimWriteSchema.parse(args);
-          const { parentTitle, projectId, where, ...writeOpts } = opts;
+          const { parentTitle, projectId, where, force, ...writeOpts } = opts;
 
           if (!writeOpts.parentId && where) {
             const parts = where.split('/');
@@ -1577,6 +1579,41 @@ export async function createMcpServer(): Promise<Server> {
               (writeOpts.metadata as Record<string, unknown>).provenance = {
                 ...prov,
                 captured_at: new Date().toISOString(),
+              };
+            }
+          }
+
+          // Dedup gate: refuse knowledge writes whose title is nearly
+          // identical to an existing entry in the same project. Schema
+          // kinds (sessions, exchanges, summaries, …) are pipeline writes
+          // and are never blocked.
+          const dedupKind = typeof (writeOpts.metadata as Record<string, unknown>)?.kind === 'string'
+            ? (writeOpts.metadata as Record<string, unknown>).kind as string
+            : undefined;
+          if (
+            !force &&
+            process.env.TIM_DEDUP_CHECK !== '0' &&
+            (!dedupKind || !SCHEMA_KINDS.has(dedupKind))
+          ) {
+            const candidateTitle = (writeOpts.title ?? opts.content.split('\n')[0]).trim();
+            const dedupScope = writeOpts.parentId
+              ? s.getProjectLabel(writeOpts.parentId) ?? undefined
+              : undefined;
+            const dupes = candidateTitle
+              ? await s.findSimilar(candidateTitle, { projectLabel: dedupScope })
+              : [];
+            if (dupes.length > 0) {
+              return {
+                content: [{
+                  type: 'text',
+                  text: formatToolResponse({
+                    status: 'duplicate_suspected',
+                    candidates: dupes,
+                    hint: 'A very similar entry already exists. Append to it with ' +
+                      'tim_update, or pass force:true to write a new entry anyway.',
+                  }),
+                }],
+                isError: true,
               };
             }
           }

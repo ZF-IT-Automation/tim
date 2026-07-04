@@ -13,6 +13,7 @@ All notable changes to TIM are documented in this file.
 - **Memory trust annotations on `tim_read`** — non-schema entries may include `stale` (`lastVerified`, `daysSince`) and/or `provenance_drift` (`commitsSince`) when age or git drift exceeds thresholds.
 - **`HealthReport.staleEntries`** — count of unverified knowledge entries older than `TIM_STALE_DAYS` (default 90); surfaced in `tim_health` issues list.
 - **Git commit provenance on `tim_write`** — best-effort `metadata.provenance` (`commit`, `branch`, `captured_at`) from agent cwd; set `TIM_PROVENANCE=0` to disable.
+- **Write-time dedup on `tim_write`** — refuses near-duplicate knowledge titles (Jaccard ≥ 0.6, project-scoped when parent set) with `duplicate_suspected` + candidate list; `force:true` bypasses; `TIM_DEDUP_CHECK=0` disables; schema kinds exempt.
 - **`SCHEMA_KINDS` moved to `tim-core`** — shared set of structural entry kinds (sessions, sections, tasks, …); exempt from staleness annotations and provenance capture.
 
 ### Changed

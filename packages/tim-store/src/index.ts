@@ -3,6 +3,7 @@
 export {
   TimStore,
   splitTitleBody,
+  titleSimilarity,
   type TimStoreOptions,
   type CreateProjectOptions,
   type LoadProjectOptions,
