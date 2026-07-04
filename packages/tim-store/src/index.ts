@@ -13,11 +13,6 @@ export {
 } from './store.js';
 export type { ResolveProjectResult } from 'tim-core';
 export {
-  formatProjectOutput,
-  type ProjectSchema,
-  type ProjectSchemaSection,
-} from './project-output.js';
-export {
   cropDisplayName,
   projectDisplayNameFromEntry,
   resolveProjectDisplayName,

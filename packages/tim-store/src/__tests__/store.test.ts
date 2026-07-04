@@ -2,7 +2,6 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { TimStore } from '../store.js';
-import { formatProjectOutput } from '../project-output.js';
 import type { Entry, Edge } from 'tim-core';
 
 let store: TimStore;
@@ -860,49 +859,11 @@ describe('TimStore', () => {
   });
 
   // ─── render_override ──────────────────────────────────
-
-  describe('render_override', () => {
-    it('formatProjectOutput uses metadata.render_depth override', async () => {
-      const project = await store.createProject('P0400', { content: 'Demo | Active' });
-      const section = await store.write('Some rules here', {
-        parentId: project.id,
-        title: 'Rules',
-        metadata: { order: 0, render_depth: 0 },
-      });
-      await store.write('Hidden child', { parentId: section.id });
-
-      // render_depth=0 on the section → skip section entirely (new behavior)
-      const loaded = await store.loadProject('P0400', { depth: 3 });
-      const output = formatProjectOutput(loaded!, 50, {
-        sections: [{ name: 'Rules', render_depth: 2 }],
-      });
-
-      // Per-node render_depth:0 overrides schema render_depth:2 → section is fully skipped
-      expect(output).not.toContain('Rules');
-      expect(output).not.toContain('Hidden child');
-    });
-
-    it('formatProjectOutput skips sections with render_depth=0 entirely', async () => {
-      const project = await store.createProject('P0401');
-      await store.write('', {
-        parentId: project.id,
-        title: 'Hidden Section',
-        metadata: { order: 0, render_depth: 0 },
-      });
-      await store.write('Has body', {
-        parentId: project.id,
-        title: 'Visible Section',
-        metadata: { order: 1 },
-      });
-
-      const loaded = await store.loadProject('P0401', { depth: 2 });
-      const output = formatProjectOutput(loaded!, 50);
-
-      // render_depth=0 → section fully skipped, not shown at all
-      expect(output).not.toContain('Hidden Section');
-      expect(output).toContain('Visible Section');
-    });
-  });
+  //
+  // Moved to packages/tim-mcp/src/__tests__/render-depth.test.ts
+  // (T3: formatProjectOutput presentation code now lives in tim-mcp).
+  // See the moved `describe('renderDepthLoad / renderDepthRead', ...)`
+  // block in that file for the equivalent coverage.
 
   describe('getChildByKind / getChildrenBySeq', () => {
     it('returns only children matching a metadata.kind', async () => {

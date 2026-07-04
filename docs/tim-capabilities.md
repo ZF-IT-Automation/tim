@@ -381,10 +381,8 @@ Für vage Anfragen („was haben wir letzte Woche zu Sync entschieden?") dispatc
 ```
 tim-mcp          → 37 MCP Tools
 tim-cli          → User-facing Commands
-tim-core         → Typen, Config, Interfaces
-tim-store        → SQLite (einziger DB-Touchpoint)
-tim-search       → FTS5 + (geplant) Vector/Hybrid
-tim-sync         → LWW + Merkle
+tim-core         → Typen, Config, Interfaces, LWW
+tim-store        → SQLite (einziger DB-Touchpoint), FTS5
 tim-sync-client  → E2E Encryption, Transport
 tim-summarizer   → Batch-Summaries
 tim-hooks        → Shell-Hooks, Marker, Checkpoint

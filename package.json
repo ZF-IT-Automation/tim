@@ -6,9 +6,7 @@
   "workspaces": [
     "packages/tim-core",
     "packages/tim-store",
-    "packages/tim-sync",
     "packages/tim-sync-client",
-    "packages/tim-search",
     "packages/tim-cli",
     "packages/tim-mcp",
     "packages/tim-migrate",

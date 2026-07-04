@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
-import { TimStore, SessionManager, deriveCounters, formatProjectOutput, foldBatchSummaries } from 'tim-store';
+import { TimStore, SessionManager, deriveCounters, foldBatchSummaries } from 'tim-store';
+import { formatProjectOutput } from 'tim-mcp';
 import { loadConfig } from 'tim-core';
 import type { LoadProjectResult } from 'tim-store';
 import {
