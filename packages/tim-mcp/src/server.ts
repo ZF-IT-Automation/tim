@@ -1261,6 +1261,16 @@ function usageSessionId(): string | null {
   }
 }
 
+/** Telemetry must never fail a user-facing tool response. */
+function bestEffortTelemetry(label: string, fn: () => void): void {
+  try {
+    fn();
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.debug(`[tim-mcp] ${label} failed:`, msg);
+  }
+}
+
 export async function createMcpServer(): Promise<Server> {
   const server = new Server(
     {
@@ -1360,7 +1370,8 @@ export async function createMcpServer(): Promise<Server> {
               }
               entries.push(entry);
             }
-            s.recordRead(entries.map(e => e.id), usageSessionId());
+            bestEffortTelemetry('recordRead', () =>
+              s.recordRead(entries.map(e => e.id), usageSessionId()));
             return {
               content: [{ type: 'text', text: formatToolResponse({ entries: entries.map(e => annotateTrust(e, process.cwd())), missing }) }],
             };
@@ -1449,7 +1460,8 @@ export async function createMcpServer(): Promise<Server> {
               return errorResult(`Project not found: ${project}`);
             }
             const edges = includeEdges ? await s.getEdges(entry.id, 'both') : [];
-            s.recordRead([entry.id], usageSessionId());
+            bestEffortTelemetry('recordRead', () =>
+              s.recordRead([entry.id], usageSessionId()));
             return {
               content: [{ type: 'text', text: formatToolResponse({ entry: annotateTrust(entry, process.cwd()), edges }) }],
             };
@@ -1487,7 +1499,8 @@ export async function createMcpServer(): Promise<Server> {
               return errorResult(`Entry ${id} not found in project ${projectLabel}`);
             }
             const edges = includeEdges ? await s.getEdges(id, 'both') : [];
-            s.recordRead([entry.id], usageSessionId());
+            bestEffortTelemetry('recordRead', () =>
+              s.recordRead([entry.id], usageSessionId()));
             return {
               content: [{ type: 'text', text: formatToolResponse({ entry: annotateTrust(entry, process.cwd()), edges }) }],
             };
@@ -1672,7 +1685,9 @@ export async function createMcpServer(): Promise<Server> {
           if (usageSid) {
             const readIds = s.getSessionReadIds(usageSid);
             const cited = readIds.filter(rid => opts.content.includes(rid));
-            if (cited.length > 0) s.markReferenced(cited, usageSid);
+            if (cited.length > 0) {
+              bestEffortTelemetry('markReferenced', () => s.markReferenced(cited, usageSid));
+            }
           }
           const payload = tagWarnings.length > 0 ? { entry, warnings: tagWarnings } : entry;
           return {
@@ -1709,7 +1724,8 @@ export async function createMcpServer(): Promise<Server> {
           if (hasFilters) {
             results = results.slice(0, topK);
           }
-          s.recordRead(results.map(e => e.id), usageSessionId());
+          bestEffortTelemetry('recordRead', () =>
+            s.recordRead(results.map(e => e.id), usageSessionId()));
           return {
             content: [{ type: 'text', text: formatToolResponse(results) }],
           };
@@ -1846,7 +1862,10 @@ export async function createMcpServer(): Promise<Server> {
             const e = await s.read(raw, { includeChildren: false });
             if (e) refIds.push(e.id);
           }
-          if (refIds.length > 0) s.markReferenced(refIds, usageSessionId());
+          if (refIds.length > 0) {
+            bestEffortTelemetry('markReferenced', () =>
+              s.markReferenced(refIds, usageSessionId()));
+          }
           return {
             content: [{ type: 'text', text: formatToolResponse(edge) }],
           };
@@ -1869,14 +1888,16 @@ export async function createMcpServer(): Promise<Server> {
             const { clean: cleanTags } = stripDeprecatedTags(patch.tags);
             patch.tags = cleanTags;
             const entry = await s.update(resolved.id, patch as Partial<Entry>);
-            s.markReferenced([entry.id], usageSessionId());
+            bestEffortTelemetry('markReferenced', () =>
+              s.markReferenced([entry.id], usageSessionId()));
             const payload = tagWarnings.length > 0 ? { entry, warnings: tagWarnings } : entry;
             return {
               content: [{ type: 'text', text: formatToolResponse(payload) }],
             };
           }
           const entry = await s.update(resolved.id, patch as Partial<Entry>);
-          s.markReferenced([entry.id], usageSessionId());
+          bestEffortTelemetry('markReferenced', () =>
+            s.markReferenced([entry.id], usageSessionId()));
           return {
             content: [{ type: 'text', text: formatToolResponse(entry) }],
           };

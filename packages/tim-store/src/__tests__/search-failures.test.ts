@@ -68,4 +68,17 @@ describe('TimStore.searchFailures', () => {
     await store.write('Happy note\nAll good.', { tags: ['#a', '#b'] });
     expect(await store.searchFailures('happy note')).toEqual([]);
   });
+
+  it('keeps content words office and plants in guard queries', async () => {
+    const err = await store.write(
+      'office plants humidity sensor fails\nSensors in the office plant area misread.',
+      {
+        tags: ['#plants', '#office'],
+        metadata: { kind: 'error', title: 'office plants humidity sensor fails' },
+      },
+    );
+
+    const hits = await store.searchFailures('water the office plants');
+    expect(hits.map(e => e.id)).toContain(err.id);
+  });
 });
