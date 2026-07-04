@@ -17,15 +17,14 @@ import {
   TimStore,
   SessionManager,
   CommitManager,
-  formatProjectOutput,
   ensureInboxProject,
   INBOX_PROJECT_LABEL,
   foldBatchSummaries,
   ErrorLogger,
   validateTagsDeprecated,
   type TaskRecord,
-  type ProjectSchema,
 } from 'tim-store';
+import { formatProjectOutput, type ProjectSchema } from './project-output.js';
 import { loadConfig, resolveActiveSessionId, evaluateLoadGate, stripDeprecatedTags, type EdgeType, type Entry } from 'tim-core';
 import {
   findMarker,

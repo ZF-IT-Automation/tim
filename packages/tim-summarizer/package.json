@@ -9,6 +9,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",
     "tim-core": "*",
+    "tim-mcp": "*",
     "tim-store": "*"
   },
   "devDependencies": {
