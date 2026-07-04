@@ -131,6 +131,22 @@ const TimSearchSchema = z.object({
   status: z.string().optional().describe('Filter metadata.status'),
 });
 
+const TimGuardSchema = z.object({
+  action: z.string().min(3)
+    .describe('The planned action, in plain words — e.g. "upload PDF via rmapi"'),
+  project: z.string().optional()
+    .describe('Scope to a project (label/alias/name). Default: all projects'),
+  topK: z.number().min(1).max(20).optional().default(5),
+});
+
+const TimDeltaSchema = z.object({
+  project: z.string().optional()
+    .describe('Project label/alias/name. Default: the bound project'),
+  since: z.string().optional()
+    .describe('ISO 8601 cutoff. Default: last activity of the previous session, ' +
+              'else 7 days ago'),
+});
+
 const TimRememberSchema = z.object({
   query: z.string().min(1).max(500)
     .describe('Vage Erinnerungs-Query. Mehrere Wortvarianten werden automatisch probiert.'),
@@ -415,6 +431,21 @@ export const TOOL_DEFS: Array<{
     name: 'tim_search',
     description: 'Search TIM entries using FTS5 full-text search.',
     schema: TimSearchSchema,
+  },
+  {
+    name: 'tim_guard',
+    description: 'Pre-action check against negative memory: search known ' +
+      'failures (kind=error) and learnings (kind=learning) matching a planned ' +
+      'action. Call BEFORE risky/expensive actions — returns warnings with ' +
+      'entry ids to tim_read, or status "clear".',
+    schema: TimGuardSchema,
+  },
+  {
+    name: 'tim_delta',
+    description: 'What changed in a project since the previous session ' +
+      '(created / updated / deleted entries). Supplement to the full ' +
+      'project briefing, not a replacement.',
+    schema: TimDeltaSchema,
   },
   {
     name: 'tim_link',
@@ -1681,6 +1712,115 @@ export async function createMcpServer(): Promise<Server> {
           s.recordRead(results.map(e => e.id), usageSessionId());
           return {
             content: [{ type: 'text', text: formatToolResponse(results) }],
+          };
+        }
+
+        case 'tim_guard': {
+          const { action, project, topK } = TimGuardSchema.parse(args);
+          let projectLabel: string | undefined;
+          if (project) {
+            const pr = await s.resolveProjectLabel(project);
+            if (pr.status !== 'found') {
+              return {
+                content: [{ type: 'text', text: `project not found: ${project}` }],
+                isError: true,
+              };
+            }
+            projectLabel = pr.label;
+          }
+          const matches = await s.searchFailures(action, { projectLabel, limit: topK });
+          if (matches.length === 0) {
+            return {
+              content: [{
+                type: 'text',
+                text: formatToolResponse({
+                  status: 'clear',
+                  message: 'No known failures or learnings match this action.',
+                }),
+              }],
+            };
+          }
+          return {
+            content: [{
+              type: 'text',
+              text: formatToolResponse({
+                status: 'warnings',
+                matches: matches.map(e => ({
+                  id: e.id,
+                  title: e.title,
+                  kind: e.metadata.kind,
+                  excerpt: e.content.slice(0, 300),
+                })),
+                hint: 'Known failures/learnings match this action. tim_read the ids ' +
+                  'for details before proceeding.',
+              }),
+            }],
+          };
+        }
+
+        case 'tim_delta': {
+          const { project, since } = TimDeltaSchema.parse(args);
+          const roots = await resolveRoots(s, project);
+          if (roots.error) {
+            return { content: [{ type: 'text', text: roots.error }], isError: true };
+          }
+          if (!roots.labels || roots.labels.length !== 1) {
+            return {
+              content: [{
+                type: 'text',
+                text: 'tim_delta requires a single project (pass project or bind one)',
+              }],
+              isError: true,
+            };
+          }
+          const projEntry = await s.read(roots.labels[0], { includeChildren: false });
+          if (!projEntry) {
+            return {
+              content: [{ type: 'text', text: `project not found: ${roots.labels[0]}` }],
+              isError: true,
+            };
+          }
+
+          let cutoff = since;
+          let baseline = 'explicit since argument';
+          if (!cutoff) {
+            const currentSession = resolveActiveSessionId({
+              markerSession: findMarker(process.cwd(), { walkUp: true })?.marker.session,
+            });
+            const prev = await s.getPreviousSession(projEntry.id, currentSession ?? null);
+            if (prev) {
+              cutoff = prev.updatedAt;
+              baseline = `previous session ${prev.id} (last activity)`;
+            } else {
+              cutoff = new Date(Date.now() - 7 * 86400_000).toISOString();
+              baseline = 'no previous session found — defaulted to 7 days';
+            }
+          }
+
+          const delta = await s.getChangedSince(projEntry.id, cutoff);
+          const brief = (e: Entry) => ({
+            id: e.id,
+            title: e.title,
+            kind: e.metadata.kind ?? null,
+            updatedAt: e.updatedAt,
+          });
+          return {
+            content: [{
+              type: 'text',
+              text: formatToolResponse({
+                project: roots.labels[0],
+                since: cutoff,
+                baseline,
+                counts: {
+                  created: delta.created.length,
+                  updated: delta.updated.length,
+                  deleted: delta.deleted.length,
+                },
+                created: delta.created.map(brief),
+                updated: delta.updated.map(brief),
+                deleted: delta.deleted.map(brief),
+              }),
+            }],
           };
         }
 
