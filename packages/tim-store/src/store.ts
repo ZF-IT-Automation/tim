@@ -1423,7 +1423,7 @@ export class TimStore implements MemoryInterface {
     ]);
     const keywords = query
       .toLowerCase()
-      .split(/\W+/)
+      .split(/[^\p{L}\p{N}]+/u)
       .filter(w => w.length >= 3 && !STOP.has(w));
     const terms = keywords.length > 0 ? keywords : [query.trim()].filter(Boolean);
 

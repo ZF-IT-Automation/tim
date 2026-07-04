@@ -54,6 +54,16 @@ describe('TimStore.searchFailures', () => {
     expect(hits.map(e => e.id)).toEqual([inProj.id]);
   });
 
+  it('tokenizes German umlauts without splitting letters', async () => {
+    const err = await store.write(
+      'Überweisung schlägt fehl\nSEPA-Lastschrift bricht mit Timeout ab.',
+      { tags: ['#banking', '#sepa'], metadata: { kind: 'error' } },
+    );
+
+    const hits = await store.searchFailures('Überweisung ausführen');
+    expect(hits.map(e => e.id)).toContain(err.id);
+  });
+
   it('returns empty for a query with no failure matches', async () => {
     await store.write('Happy note\nAll good.', { tags: ['#a', '#b'] });
     expect(await store.searchFailures('happy note')).toEqual([]);

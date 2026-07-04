@@ -27,6 +27,7 @@ All notable changes to TIM are documented in this file.
 ### Fixed
 
 - **Usage ranking on label paths** — `tim_update`/`tim_link` now pass the store-resolved entry id to `markReferenced`, so usage feedback works when callers use hmem-style labels (e.g. `L0042`) instead of composite ids.
+- **`tim_guard` German queries** — `searchFailures` splits action text on Unicode-aware word boundaries so umlauts (ü/ö/ä/ß) are not stripped before FTS lookup.
 - **`tim_read` not-found paths** — used to return `JSON.stringify(null)` (text `"null"` without `isError:true`), which broke clients that grepped the response for content. Now returns `isError:true` with `"Entry not found: <id>"`.
 - **`tim_load_project` / `tim_read_project` failure paths** — ambiguous alias, project not found, and load-gate rejection now return `isError:true`. Previously only `tim_load_project` ambiguous path returned `isError:true`; the others returned silent text-only responses.
 - **`tim_sync` / `tim_lease` / `tim_import` failure paths** — sync-not-configured, sync-action-not-implemented, agent-not-registered, missing-grant-or-revoke, source-not-found now return `isError:true` instead of silent text.
