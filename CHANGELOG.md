@@ -15,6 +15,7 @@ All notable changes to TIM are documented in this file.
 - **Git commit provenance on `tim_write`** — best-effort `metadata.provenance` (`commit`, `branch`, `captured_at`) from agent cwd; set `TIM_PROVENANCE=0` to disable.
 - **Write-time dedup on `tim_write`** — refuses near-duplicate knowledge titles (Jaccard ≥ 0.6, project-scoped when parent set) with `duplicate_suspected` + candidate list; `force:true` bypasses; `TIM_DEDUP_CHECK=0` disables; schema kinds exempt.
 - **`SCHEMA_KINDS` moved to `tim-core`** — shared set of structural entry kinds (sessions, sections, tasks, …); exempt from staleness annotations and provenance capture.
+- **Retrieval usage-feedback loop** — device-local `entry_usage` table records reads (`tim_read`, `tim_search`) and references (`tim_update`, `tim_link`, id cited in same-session `tim_write`); `search()` re-ranks with `position − 2·log2(1 + referenced)`; `TIM_USAGE_RANKING=0` disables the re-rank. The table is deliberately excluded from staging/sync/export (privacy — usage is a per-device relevance signal, not shared knowledge).
 
 ### Changed
 

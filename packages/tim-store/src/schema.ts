@@ -165,6 +165,25 @@ export const MIGRATIONS: { version: number; sql: string }[] = [
         datetime('now')
       );
     `
+  },
+  {
+    version: 8,
+    sql: `
+      -- Device-local retrieval feedback. Deliberately NOT synced: usage is
+      -- a per-device relevance signal, so no staging rows are ever written
+      -- for it and it is excluded from export.
+      CREATE TABLE IF NOT EXISTS entry_usage (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        entry_id TEXT NOT NULL,
+        session_id TEXT,
+        read_at TEXT NOT NULL,
+        referenced INTEGER NOT NULL DEFAULT 0
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_usage_entry ON entry_usage(entry_id, referenced);
+      CREATE INDEX IF NOT EXISTS idx_usage_session ON entry_usage(session_id);
+      CREATE INDEX IF NOT EXISTS idx_usage_read_at ON entry_usage(read_at);
+    `
   }
 ];
 

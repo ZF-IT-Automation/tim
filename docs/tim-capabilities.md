@@ -165,6 +165,22 @@ Beide Annotationen können gleichzeitig auftreten. Fehlen sie, ist der Eintrag w
 
 **`tim_health` — `staleEntries`:** Zählt nicht-schema Einträge, deren `verified_at ?? updated_at ?? created_at` älter als `TIM_STALE_DAYS` ist. Erscheint auch in `issues` als `"N stale entries (older than 90d, unverified)"`. Zusammen mit `tim_verify` und gezieltem Curating ein Ops-Signal für vernachlässigtes Wissen.
 
+### Retrieval Usage-Feedback Loop
+
+TIM lernt aus seinem eigenen Traffic, welche Einträge tatsächlich nützlich sind. Die Messung ist **device-local** — sie verlässt die Maschine nie, wird nicht gesynct und nicht exportiert. Ranking-Boosts sind eine Ranking-Hilfe, keine globale Wahrheit.
+
+**Was zählt als Read:** Jeder `tim_read` (alle drei Pfade: Batch, Project-Pfad, Single-ID) sowie Treffer aus `tim_search`. Pro Eintrag wird eine Zeile in `entry_usage` (Session-ID + Timestamp) angelegt. Reads sind idempotent — derselbe Eintrag in derselben Session erzeugt keine zweite Zeile.
+
+**Was zählt als Reference:** `tim_update`, `tim_link` und das Zitieren einer Entry-ID im Body eines späteren `tim_write` — **nur wenn alle drei in derselben Session passieren wie der Read**. Ein Eintrag der gelesen aber nie benutzt wurde, bekommt keine Referenz. Andere Sessions ohne vorherigen Read sind no-ops.
+
+**Ranking-Formel:** `score = ftsPosition − 2·log2(1 + referencedCount)` (ascending). Eine Referenz hebt um ~2 Positionen, 3 Referenzen um 4, 7 Referenzen um 6. Deterministisch — kein Wallclock-Decay, kein Randomness. Sucht mit `TIM_USAGE_RANKING=0` deaktiviert den Re-Rank vollständig (Recording läuft weiter).
+
+**Opportunistischer GC:** `recordRead` löscht beim ersten Aufruf pro Prozess `entry_usage`-Zeilen älter als 180 Tage. Kein Cron, keine Migration — der GC lebt im Read-Pfad.
+
+**Privacy:** `entry_usage` hat **keine** `staging`-Trigger und ist aus `tim_export` ausgeschlossen. Grep-Beweis nach jedem Change: `grep -rn "entry_usage" packages --include="*.ts" | grep -E "(staging|sync|export)"` muss leer sein.
+
+**Für Agenten:** Eine Suchantwort, in der ein unerwarteter Eintrag zuoberst steht, bedeutet: andere Sessions/Maschinen haben ihn als nützlich markiert. Das ist ein schwaches Signal — kein Befehl. Wenn TIM behauptet, etwas sei wichtig, und die Quelle nicht klar, ist `tim_read` mit `include_body=true` der richtige nächste Schritt.
+
 ### Lesen mit Kontext-Budget
 
 `tim_read` liefert standardmäßig **Title + Summary**, nicht den vollen Body — spart Kontextfenster. Voller Inhalt nur mit `include_body=true`. `tim_load_project` hat ein **Budget** (default 200 Einträge) mit Truncation-Priorität: Next Steps und offene Tasks zuerst, Roh-Exchanges nie im Briefing.
