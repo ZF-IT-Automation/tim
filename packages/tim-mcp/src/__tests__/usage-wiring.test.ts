@@ -166,4 +166,24 @@ describe('usage wiring through MCP handlers', () => {
     await client.callTool('tim_search', { query: 'searchable usage' });
     expect(usageRows().some(r => r.entry_id === entryId)).toBe(true);
   });
+
+  it('tim_read succeeds even when recordRead telemetry fails', async () => {
+    const w = await client.callTool('tim_write', {
+      content: 'Telemetry resilience\nBody.', tags: ['#a', '#b'],
+    });
+    const entry = JSON.parse(w.result!.content[0].text);
+    const entryId = entry.id ?? entry.entry?.id;
+
+    const db = new Database(dbPath);
+    try {
+      db.exec('DROP TABLE entry_usage');
+    } finally {
+      db.close();
+    }
+
+    const r = await client.callTool('tim_read', { id: entryId });
+    expect(r.result?.isError).not.toBe(true);
+    const body = JSON.parse(r.result!.content[0].text);
+    expect(body.entry?.id ?? body.id).toBe(entryId);
+  });
 });
