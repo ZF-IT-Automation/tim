@@ -1409,14 +1409,34 @@ export class TimStore implements MemoryInterface {
    * Negative-memory lookup for the tim_guard pre-action check: FTS over
    * the query, filtered to failure knowledge (kind error/learning, or
    * #error/#learning tagged). Over-fetches because most FTS hits are not
-   * failures.
+   * failures. Plain-language actions are split into keywords (OR semantics)
+   * because FTS5 AND-matching every token is too strict for guard queries.
    */
   async searchFailures(
     query: string,
     opts: { projectLabel?: string; limit?: number } = {},
   ): Promise<Entry[]> {
     const limit = opts.limit ?? 5;
-    const hits = await this.searchFts(query, 50);
+    const STOP = new Set([
+      'the', 'and', 'for', 'with', 'from', 'this', 'that', 'via', 'into',
+      'your', 'office', 'plants',
+    ]);
+    const keywords = query
+      .toLowerCase()
+      .split(/\W+/)
+      .filter(w => w.length >= 3 && !STOP.has(w));
+    const terms = keywords.length > 0 ? keywords : [query.trim()].filter(Boolean);
+
+    const seen = new Set<string>();
+    const hits: Entry[] = [];
+    for (const term of terms) {
+      for (const e of await this.searchFts(term, 50)) {
+        if (seen.has(e.id)) continue;
+        seen.add(e.id);
+        hits.push(e);
+      }
+    }
+
     const failures = hits.filter(e => {
       const kind = typeof e.metadata.kind === 'string' ? e.metadata.kind : '';
       return kind === 'error' || kind === 'learning'
