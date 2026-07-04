@@ -19,9 +19,7 @@
     "tim-core": "*",
     "tim-hooks": "*",
     "tim-migrate": "*",
-    "tim-search": "*",
     "tim-store": "*",
-    "tim-sync": "*",
     "tim-sync-client": "*",
     "zod": "^3.24.0",
     "zod-to-json-schema": "^3.25.2"

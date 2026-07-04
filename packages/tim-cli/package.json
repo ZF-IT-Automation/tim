@@ -16,9 +16,7 @@
   "dependencies": {
     "tim-core": "*",
     "tim-store": "*",
-    "tim-sync": "*",
     "tim-sync-client": "*",
-    "tim-search": "*",
     "tim-hooks": "*",
     "tim-migrate": "*",
     "better-sqlite3": "^11.7.0"
