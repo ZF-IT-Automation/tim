@@ -26,6 +26,7 @@ import {
 } from 'tim-store';
 import { formatProjectOutput, type ProjectSchema } from './project-output.js';
 import { loadConfig, resolveActiveSessionId, evaluateLoadGate, stripDeprecatedTags, type EdgeType, type Entry } from 'tim-core';
+import { annotateTrust } from './trust.js';
 import {
   findMarker,
   getActiveProjectLabel,
@@ -170,6 +171,11 @@ const TimUpdateSchema = z.object({
   irrelevant: z.boolean().optional()
     .describe('Set false to restore a soft-deleted entry, true to soft-delete'),
   metadata: z.record(z.unknown()).optional(),
+});
+
+const TimVerifySchema = z.object({
+  id: z.union([z.string(), z.array(z.string()).min(1).max(50)])
+    .describe('Entry ID (or label like L0042), or array of up to 50 IDs'),
 });
 
 const TimDeleteSchema = z.object({
@@ -421,6 +427,11 @@ export const TOOL_DEFS: Array<{
     name: 'tim_update',
     description: 'Update an existing entry. Only provided fields are changed.',
     schema: TimUpdateSchema,
+  },
+  {
+    name: 'tim_verify',
+    description: 'Re-confirm entries as still valid without editing them. Stamps metadata.verified_at — clears the stale annotation on reads and the stale count in tim_health.',
+    schema: TimVerifySchema,
   },
   {
     name: 'tim_delete',
@@ -1142,7 +1153,7 @@ function getSessions(): SessionManager {
 }
 
 const WRITE_TOOLS = new Set([
-  'tim_write', 'tim_update', 'tim_delete', 'tim_delete_batch', 'tim_link',
+  'tim_write', 'tim_update', 'tim_verify', 'tim_delete', 'tim_delete_batch', 'tim_link',
   'tim_session_start', 'tim_session_log', 'tim_checkpoint', 'tim_write_batch_summary',
   'tim_rollup_session_summary',
   'tim_record_commit',
@@ -1301,7 +1312,7 @@ export async function createMcpServer(): Promise<Server> {
               entries.push(entry);
             }
             return {
-              content: [{ type: 'text', text: formatToolResponse({ entries, missing }) }],
+              content: [{ type: 'text', text: formatToolResponse({ entries: entries.map(e => annotateTrust(e, process.cwd())), missing }) }],
             };
           }
 
@@ -1389,7 +1400,7 @@ export async function createMcpServer(): Promise<Server> {
             }
             const edges = includeEdges ? await s.getEdges(entry.id, 'both') : [];
             return {
-              content: [{ type: 'text', text: formatToolResponse({ entry, edges }) }],
+              content: [{ type: 'text', text: formatToolResponse({ entry: annotateTrust(entry, process.cwd()), edges }) }],
             };
           }
 
@@ -1426,7 +1437,7 @@ export async function createMcpServer(): Promise<Server> {
             }
             const edges = includeEdges ? await s.getEdges(id, 'both') : [];
             return {
-              content: [{ type: 'text', text: formatToolResponse({ entry, edges }) }],
+              content: [{ type: 'text', text: formatToolResponse({ entry: annotateTrust(entry, process.cwd()), edges }) }],
             };
           }
 
@@ -1635,6 +1646,28 @@ export async function createMcpServer(): Promise<Server> {
           const entry = await s.update(id, patch as Partial<Entry>);
           return {
             content: [{ type: 'text', text: formatToolResponse(entry) }],
+          };
+        }
+
+        case 'tim_verify': {
+          const { id } = TimVerifySchema.parse(args);
+          const rawIds = Array.isArray(id) ? id : [id];
+          const resolved: string[] = [];
+          const unresolved: string[] = [];
+          for (const raw of rawIds) {
+            const entry = await s.read(raw, { showIrrelevant: true, includeChildren: false });
+            if (entry) resolved.push(entry.id);
+            else unresolved.push(raw);
+          }
+          const result = await s.touchVerified(resolved);
+          return {
+            content: [{
+              type: 'text',
+              text: formatToolResponse({
+                verified: result.verified,
+                missing: [...unresolved, ...result.missing],
+              }),
+            }],
           };
         }
 
