@@ -104,6 +104,46 @@ Veraltetes oder falsches Wissen soll den Agenten nicht mehr stören:
 - `irrelevant`-Flag — Soft-Delete durch Curator/Agent
 - `tim_health` — meldet verwaiste Links, stale Suppressions
 
+### Memory Trust
+
+Wissen altert — Codebases bewegen sich, Fakten werden falsch. Plan 8 führt **Staleness** und **Git-Provenance** ein, damit Agenten veraltetes Wissen nicht stillschweigend als aktuell behandeln.
+
+**Staleness-Definition:** Ein Eintrag gilt als veraltet (*stale*), wenn seit dem letzten Vertrauenszeitpunkt mehr als `TIM_STALE_DAYS` Tage vergangen sind (Default: **90**). Der Zeitpunkt ist:
+
+```
+verified_at ?? updated_at ?? created_at
+```
+
+- `verified_at` — explizite Bestätigung via `tim_verify` (oder manuell in `metadata`)
+- `updated_at` — jede inhaltliche Änderung zählt als implizite Re-Verifikation
+- `created_at` — Fallback für nie bearbeitete Einträge
+
+Schema-Einträge (`kind` in `SCHEMA_KINDS` — Sessions, Sections, Tasks, …) sind **ausgenommen**: Struktur-Knoten „veralten" nicht.
+
+**`tim_verify`:** Bestätigt Einträge als noch gültig **ohne** Inhalt zu ändern. Setzt `metadata.verified_at`, bumpet `updated_at` und schreibt einen Sync-Staging-Upsert — die Verifikation propagiert wie jede andere Änderung. Entfernt die `stale`-Annotation beim nächsten `tim_read` und senkt `staleEntries` in `tim_health`.
+
+**Provenance bei `tim_write`:** Beim Schreiben von Wissens-Einträgen (nicht Schema-Kinds) erfasst die MCP-Schicht best-effort den aktuellen Git-Stand:
+
+```json
+{ "provenance": { "commit": "a1b2c3d", "branch": "main", "captured_at": "2026-07-04T..." } }
+```
+
+- `TIM_PROVENANCE=0` — Capture deaktivieren
+- Explizites `metadata.provenance` vom Caller wird nicht überschrieben
+- Kein Git-Repo, Timeout oder fehlendes `git` → kein Provenance-Feld (kein Fehler)
+- Capture nutzt `process.cwd()` des MCP-Prozesses — in **stdio**-Modus das Agent-Workspace; im geplanten HTTP-Multi-Client-Modus (Plan 5) ist der Daemon-cwd bedeutungslos → dort Capture überspringen
+
+**Read-Annotationen (`tim_read`):** Zusätzliche Felder auf der Response — die gespeicherte Row wird beim Lesen nicht verändert:
+
+| Feld | Bedeutung für Agenten |
+|------|----------------------|
+| `stale` | `{ lastVerified, daysSince }` — Eintrag älter als Schwellwert. Vor Vertrauen: `tim_verify` oder Inhalt prüfen und ggf. `tim_update` |
+| `provenance_drift` | `{ commitsSince: N }` — seit dem Write sind N Commits auf dem aktuellen Branch gelandet. Code-Kontext hat sich bewegt → Fakten gegen aktuellen Stand re-checken |
+
+Beide Annotationen können gleichzeitig auftreten. Fehlen sie, ist der Eintrag weder stale noch drifted (oder Schema-exempt).
+
+**`tim_health` — `staleEntries`:** Zählt nicht-schema Einträge, deren `verified_at ?? updated_at ?? created_at` älter als `TIM_STALE_DAYS` ist. Erscheint auch in `issues` als `"N stale entries (older than 90d, unverified)"`. Zusammen mit `tim_verify` und gezieltem Curating ein Ops-Signal für vernachlässigtes Wissen.
+
 ### Lesen mit Kontext-Budget
 
 `tim_read` liefert standardmäßig **Title + Summary**, nicht den vollen Body — spart Kontextfenster. Voller Inhalt nur mit `include_body=true`. `tim_load_project` hat ein **Budget** (default 200 Einträge) mit Truncation-Priorität: Next Steps und offene Tasks zuerst, Roh-Exchanges nie im Briefing.

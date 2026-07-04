@@ -14,6 +14,7 @@ export interface TimRowEntry {
   confidence: number;
   created_at: string;
   accessed_at: string;
+  updated_at: string;
   decay_rate: number;
   visibility: number;
   tags: string;
@@ -46,6 +47,7 @@ function rowToEntry(row: TimRowEntry): Entry {
     confidence: row.confidence,
     createdAt: row.created_at,
     accessedAt: row.accessed_at,
+    updatedAt: row.updated_at,
     decayRate: row.decay_rate,
     visibility: row.visibility,
     tags: JSON.parse(row.tags) as string[],

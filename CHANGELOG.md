@@ -8,6 +8,12 @@ All notable changes to TIM are documented in this file.
 
 - **`tim_load_project(bind:false)`** — read a project without binding the session; the canonical replacement for cross-project lookups previously done via `tim_read_project`. Also adds `sessionId` to `tim_load_project` (was already on the zod schema, now visible in ListTools).
 - **`errorResult` helper** — every failure path in the MCP handler returns `isError:true` with a helpful text payload (e.g. `"Entry not found: NOPE-000"`, `"Project not found: P9999"`). Replaces the old `"null"` text returns and the silent text-only failure paths that broke JSON clients.
+- **`Entry.updatedAt`** — top-level field on read/write responses; mirrors DB `updated_at` (bumps on content edits and on `tim_verify`).
+- **`tim_verify`** — re-confirm entries as still valid without editing content; stamps `metadata.verified_at`, bumps `updated_at`, stages sync upsert.
+- **Memory trust annotations on `tim_read`** — non-schema entries may include `stale` (`lastVerified`, `daysSince`) and/or `provenance_drift` (`commitsSince`) when age or git drift exceeds thresholds.
+- **`HealthReport.staleEntries`** — count of unverified knowledge entries older than `TIM_STALE_DAYS` (default 90); surfaced in `tim_health` issues list.
+- **Git commit provenance on `tim_write`** — best-effort `metadata.provenance` (`commit`, `branch`, `captured_at`) from agent cwd; set `TIM_PROVENANCE=0` to disable.
+- **`SCHEMA_KINDS` moved to `tim-core`** — shared set of structural entry kinds (sessions, sections, tasks, …); exempt from staleness annotations and provenance capture.
 
 ### Changed
 

@@ -42,6 +42,7 @@ export interface Entry {
   confidence: number;            // 0.0-1.0
   createdAt: string;             // ISO 8601
   accessedAt: string;
+  updatedAt: string;             // ISO 8601 — last content/metadata change
   decayRate: number;             // 0.0 = never decay
   visibility: number;            // bitmask: 1=owner, 2=trusted, 4=leased, 8=public
   tags: string[];                // e.g. ['#sql', '#bug']
@@ -183,6 +184,7 @@ export interface HealthReport {
   ftsIntegrity: boolean;
   totalEntries: number;
   totalEdges: number;
+  staleEntries: number;
   issues: string[];
 }
 
@@ -332,3 +334,4 @@ export {
   type TimSessionCache,
 } from './session-cache.js';
 export { evaluateLoadGate } from './load-gate.js';
+export { SCHEMA_KINDS } from './schema-kinds.js';
