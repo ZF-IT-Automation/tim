@@ -11,8 +11,7 @@ import type {
   SyncEntity, SyncOperation, EventBus, EventType,
   ResolveProjectResult, ResolveSectionResult, SectionCandidate,
 } from 'tim-core';
-import { stripDeprecatedTags } from 'tim-core';
-import { resolveLWW } from 'tim-core';
+import { stripDeprecatedTags, resolveLWW, SCHEMA_KINDS } from 'tim-core';
 import { runMigrations, createTriggers, getCurrentVersion } from './schema.js';
 import { CurateManager } from './curate.js';
 import { metadataNeedsCoercion, parseAndCoerceMetadata } from './metadata-coerce.js';
@@ -1668,12 +1667,33 @@ export class TimStore implements MemoryInterface {
     const totalEntries = (this.db.prepare('SELECT COUNT(*) as count FROM entries WHERE irrelevant = 0').get() as { count: number }).count;
     const totalEdges = (this.db.prepare('SELECT COUNT(*) as count FROM edges').get() as { count: number }).count;
 
+    // Stale knowledge: non-schema entries not verified/edited within the
+    // threshold. Schema entries (sessions, sections, …) are structure and
+    // don't go stale. Cutoff computed in JS — ISO strings compare correctly
+    // only against ISO strings, not against SQLite's datetime() format.
+    const staleDaysRaw = Number(process.env.TIM_STALE_DAYS);
+    const staleDays = Number.isFinite(staleDaysRaw) && staleDaysRaw > 0 ? staleDaysRaw : 90;
+    const cutoff = new Date(Date.now() - staleDays * 86400_000).toISOString();
+    const kindList = [...SCHEMA_KINDS].map(() => '?').join(', ');
+    const stale = this.db.prepare(`
+      SELECT COUNT(*) as count FROM entries
+      WHERE irrelevant = 0 AND tombstoned_at IS NULL
+        AND (json_extract(metadata, '$.kind') IS NULL
+             OR json_extract(metadata, '$.kind') NOT IN (${kindList}))
+        AND COALESCE(json_extract(metadata, '$.verified_at'),
+                     NULLIF(updated_at, ''), created_at) < ?
+    `).get(...SCHEMA_KINDS, cutoff) as { count: number };
+    if (stale.count > 0) {
+      issues.push(`${stale.count} stale entries (older than ${staleDays}d, unverified)`);
+    }
+
     return {
       brokenLinks: brokenLinks.count,
       orphanEntries: orphans.count,
       ftsIntegrity: ftsOk,
       totalEntries,
       totalEdges,
+      staleEntries: stale.count,
       issues,
     };
   }
@@ -1829,6 +1849,46 @@ export class TimStore implements MemoryInterface {
       buckets: bucketRows,
       byKind: byKindRows,
     };
+  }
+
+  /**
+   * Re-confirm entries as still valid without editing them. Stamps
+   * metadata.verified_at and bumps updated_at (a verification is a
+   * meaningful, syncable change — the staging upsert carries it to
+   * other devices). Staleness elsewhere is verified_at ?? updated_at.
+   */
+  async touchVerified(ids: string[]): Promise<{ verified: string[]; missing: string[] }> {
+    const now = new Date().toISOString();
+    const timestamp = Date.now();
+    const verified: string[] = [];
+    const missing: string[] = [];
+
+    this.db.transaction(() => {
+      for (const id of [...new Set(ids)]) {
+        const existing = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(id) as
+          RowEntry | undefined;
+        if (!existing || existing.tombstoned_at) {
+          missing.push(id);
+          continue;
+        }
+        const metadata = JSON.stringify({
+          ...JSON.parse(existing.metadata || '{}'),
+          verified_at: now,
+        });
+        const updated = { ...existing, metadata, accessed_at: now, updated_at: now };
+        this.db.prepare(
+          'UPDATE entries SET metadata = ?, accessed_at = ?, updated_at = ? WHERE id = ?',
+        ).run(metadata, now, now, id);
+        this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
+          lww_timestamp, lww_device, lww_confidence)
+          VALUES (?, 'entry', 'upsert', ?, ?, 'local', ?)`).run(
+          id, JSON.stringify(updated), timestamp, existing.confidence,
+        );
+        verified.push(id);
+      }
+    })();
+
+    return { verified, missing };
   }
 
   // ─── Suppression ───────────────────────────────────────

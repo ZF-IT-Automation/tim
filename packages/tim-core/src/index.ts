@@ -184,6 +184,7 @@ export interface HealthReport {
   ftsIntegrity: boolean;
   totalEntries: number;
   totalEdges: number;
+  staleEntries: number;
   issues: string[];
 }
 
