@@ -1215,6 +1215,21 @@ function installProcessErrorGuards(): void {
   });
 }
 
+/**
+ * Session identity for usage recording — best-effort, null when the
+ * process has no resolvable session (recording is then session-less and
+ * can never be marked referenced, which is the correct neutral outcome).
+ */
+function usageSessionId(): string | null {
+  try {
+    return resolveActiveSessionId({
+      markerSession: findMarker(process.cwd(), { walkUp: true })?.marker.session,
+    }) ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export async function createMcpServer(): Promise<Server> {
   const server = new Server(
     {
@@ -1314,6 +1329,7 @@ export async function createMcpServer(): Promise<Server> {
               }
               entries.push(entry);
             }
+            s.recordRead(entries.map(e => e.id), usageSessionId());
             return {
               content: [{ type: 'text', text: formatToolResponse({ entries: entries.map(e => annotateTrust(e, process.cwd())), missing }) }],
             };
@@ -1402,6 +1418,7 @@ export async function createMcpServer(): Promise<Server> {
               return errorResult(`Project not found: ${project}`);
             }
             const edges = includeEdges ? await s.getEdges(entry.id, 'both') : [];
+            s.recordRead([entry.id], usageSessionId());
             return {
               content: [{ type: 'text', text: formatToolResponse({ entry: annotateTrust(entry, process.cwd()), edges }) }],
             };
@@ -1439,6 +1456,7 @@ export async function createMcpServer(): Promise<Server> {
               return errorResult(`Entry ${id} not found in project ${projectLabel}`);
             }
             const edges = includeEdges ? await s.getEdges(id, 'both') : [];
+            s.recordRead([entry.id], usageSessionId());
             return {
               content: [{ type: 'text', text: formatToolResponse({ entry: annotateTrust(entry, process.cwd()), edges }) }],
             };
@@ -1619,6 +1637,12 @@ export async function createMcpServer(): Promise<Server> {
           }
 
           const entry = await s.write(opts.content, writeOpts);
+          const usageSid = usageSessionId();
+          if (usageSid) {
+            const readIds = s.getSessionReadIds(usageSid);
+            const cited = readIds.filter(rid => opts.content.includes(rid));
+            if (cited.length > 0) s.markReferenced(cited, usageSid);
+          }
           const payload = tagWarnings.length > 0 ? { entry, warnings: tagWarnings } : entry;
           return {
             content: [{ type: 'text', text: formatToolResponse(payload) }],
@@ -1654,6 +1678,7 @@ export async function createMcpServer(): Promise<Server> {
           if (hasFilters) {
             results = results.slice(0, topK);
           }
+          s.recordRead(results.map(e => e.id), usageSessionId());
           return {
             content: [{ type: 'text', text: formatToolResponse(results) }],
           };
@@ -1676,6 +1701,7 @@ export async function createMcpServer(): Promise<Server> {
         case 'tim_link': {
           const { sourceId, targetId, type, weight, metadata } = TimLinkSchema.parse(args);
           const edge = await s.link(sourceId, targetId, type as EdgeType, weight, metadata);
+          s.markReferenced([sourceId, targetId], usageSessionId());
           return {
             content: [{ type: 'text', text: formatToolResponse(edge) }],
           };
@@ -1696,12 +1722,14 @@ export async function createMcpServer(): Promise<Server> {
             const { clean: cleanTags } = stripDeprecatedTags(patch.tags);
             patch.tags = cleanTags;
             const entry = await s.update(id, patch as Partial<Entry>);
+            s.markReferenced([id], usageSessionId());
             const payload = tagWarnings.length > 0 ? { entry, warnings: tagWarnings } : entry;
             return {
               content: [{ type: 'text', text: formatToolResponse(payload) }],
             };
           }
           const entry = await s.update(id, patch as Partial<Entry>);
+          s.markReferenced([id], usageSessionId());
           return {
             content: [{ type: 'text', text: formatToolResponse(entry) }],
           };
