@@ -87,8 +87,11 @@ const CLI = parseCliArgs();
 // ─── Tool Schemas ───────────────────────────────────────
 
 const TimReadSchemaBase = z.object({
-  id: z.union([z.string(), z.array(z.string())]).optional()
-    .describe('Entry ID (ULID), or array of IDs for batch read'),
+  id: z.union([
+    z.string(),
+    z.array(z.string().min(1)).min(1).max(50),
+  ]).optional()
+    .describe('Entry ID (ULID), or array of IDs for batch read (max 50)'),
   project: z.string().optional().describe('Project label/alias/name (auto-resolved)'),
   section: z.string().optional().describe('Section title — read its children'),
   depth: z.number().min(1).max(5).optional().default(2)

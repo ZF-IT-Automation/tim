@@ -3,7 +3,13 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { captureProvenance, commitsSince } from '../provenance.js';
+import {
+  captureProvenance,
+  commitsSince,
+  commitsSinceCached,
+  clearCommitsSinceCache,
+  getCommitsSinceCacheStats,
+} from '../provenance.js';
 
 function git(cwd: string, ...args: string[]): string {
   return execFileSync('git', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] })
@@ -53,5 +59,15 @@ describe('provenance', () => {
 
   it('returns null for an unknown commit', () => {
     expect(commitsSince(repo, 'ffffffff')).toBeNull();
+  });
+
+  it('commitsSinceCached memoises by commit hash', () => {
+    clearCommitsSinceCache();
+    expect(commitsSinceCached(repo, firstCommit)).toBe(1);
+    expect(commitsSinceCached(repo, firstCommit)).toBe(1);
+    const stats = getCommitsSinceCacheStats();
+    expect(stats.misses).toBe(1);
+    expect(stats.hits).toBe(1);
+    clearCommitsSinceCache();
   });
 });
