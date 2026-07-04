@@ -133,6 +133,27 @@ Schema-Einträge (`kind` in `SCHEMA_KINDS` — Sessions, Sections, Tasks, …) s
 - Kein Git-Repo, Timeout oder fehlendes `git` → kein Provenance-Feld (kein Fehler)
 - Capture nutzt `process.cwd()` des MCP-Prozesses — in **stdio**-Modus das Agent-Workspace; im geplanten HTTP-Multi-Client-Modus (Plan 5) ist der Daemon-cwd bedeutungslos → dort Capture überspringen
 
+**Write-time dedup bei `tim_write`:** Vor dem Insert prüft die MCP-Schicht, ob ein Wissens-Eintrag mit nahezu identischem Titel bereits existiert (FTS-Vorkandidaten + Jaccard-Token-Overlap ≥ **0.6** auf dem Titel). Bei Treffer wird **nicht** geschrieben — stattdessen:
+
+```json
+{
+  "status": "duplicate_suspected",
+  "candidates": [{ "id": "...", "title": "...", "similarity": 0.67 }],
+  "hint": "A very similar entry already exists. Append to it with tim_update, or pass force:true to write a new entry anyway."
+}
+```
+
+(`isError: true` auf der MCP-Response.)
+
+| Regel | Detail |
+|-------|--------|
+| Scope | Projektgebunden, wenn `parentId` gesetzt — nur Duplikate im selben Projekt zählen |
+| Schema-Kinds | **Ausgenommen** (`kind` in `SCHEMA_KINDS` — Sessions, Exchanges, Batch-Summaries, …) — Pipeline-Writes werden nie blockiert |
+| Bypass | `force: true` am `tim_write`-Call schreibt trotzdem |
+| Kill-switch | `TIM_DEDUP_CHECK=0` deaktiviert die Prüfung vollständig |
+
+Agenten sollten bei `duplicate_suspected` den Kandidaten per `tim_update` erweitern oder bewusst mit `force:true` einen neuen Eintrag anlegen.
+
 **Read-Annotationen (`tim_read`):** Zusätzliche Felder auf der Response — die gespeicherte Row wird beim Lesen nicht verändert:
 
 | Feld | Bedeutung für Agenten |
