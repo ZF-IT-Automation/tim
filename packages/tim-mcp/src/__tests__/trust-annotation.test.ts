@@ -1,6 +1,15 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { annotateTrust } from '../trust.js';
 import type { Entry } from 'tim-core';
+
+function git(cwd: string, ...args: string[]): string {
+  return execFileSync('git', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] })
+    .toString().trim();
+}
 
 function entryFixture(overrides: Partial<Entry>): Entry {
   const now = new Date().toISOString();
@@ -54,5 +63,36 @@ describe('annotateTrust — staleness', () => {
       process.cwd(),
     );
     expect(out.stale).toBeUndefined();
+  });
+});
+
+describe('annotateTrust — provenance drift', () => {
+  let repo: string;
+  let firstCommit: string;
+
+  beforeAll(() => {
+    repo = fs.mkdtempSync(path.join(os.tmpdir(), 'tim-trust-prov-'));
+    git(repo, 'init', '-b', 'main');
+    git(repo, 'config', 'user.email', 'test@test');
+    git(repo, 'config', 'user.name', 'test');
+    fs.writeFileSync(path.join(repo, 'a.txt'), 'one');
+    git(repo, 'add', '.');
+    git(repo, 'commit', '-m', 'first');
+    firstCommit = git(repo, 'rev-parse', '--short', 'HEAD');
+    fs.writeFileSync(path.join(repo, 'b.txt'), 'two');
+    git(repo, 'add', '.');
+    git(repo, 'commit', '-m', 'second');
+  });
+
+  afterAll(() => {
+    fs.rmSync(repo, { recursive: true, force: true });
+  });
+
+  it('annotates provenance_drift when HEAD has moved on', () => {
+    const entry = entryFixture({
+      metadata: { provenance: { commit: firstCommit } },
+    });
+    const out = annotateTrust(entry, repo);
+    expect(out.provenance_drift).toEqual({ commitsSince: 1 });
   });
 });

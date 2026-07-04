@@ -25,8 +25,9 @@ import {
   type TaskRecord,
 } from 'tim-store';
 import { formatProjectOutput, type ProjectSchema } from './project-output.js';
-import { loadConfig, resolveActiveSessionId, evaluateLoadGate, stripDeprecatedTags, type EdgeType, type Entry } from 'tim-core';
+import { loadConfig, resolveActiveSessionId, evaluateLoadGate, stripDeprecatedTags, SCHEMA_KINDS, type EdgeType, type Entry } from 'tim-core';
 import { annotateTrust } from './trust.js';
+import { captureProvenance } from './provenance.js';
 import {
   findMarker,
   getActiveProjectLabel,
@@ -1558,6 +1559,26 @@ export async function createMcpServer(): Promise<Server> {
               content: [{ type: 'text', text: formatToolResponse(tagsValidation) }],
               isError: true,
             };
+          }
+
+          // Best-effort git provenance: which commit was HEAD when this
+          // knowledge was written. Skipped for schema entries, explicit
+          // provenance, and when disabled via env.
+          const provKind = typeof (writeOpts.metadata as Record<string, unknown>)?.kind === 'string'
+            ? (writeOpts.metadata as Record<string, unknown>).kind as string
+            : undefined;
+          if (
+            process.env.TIM_PROVENANCE !== '0' &&
+            (writeOpts.metadata as Record<string, unknown>).provenance === undefined &&
+            (!provKind || !SCHEMA_KINDS.has(provKind))
+          ) {
+            const prov = captureProvenance(process.cwd());
+            if (prov) {
+              (writeOpts.metadata as Record<string, unknown>).provenance = {
+                ...prov,
+                captured_at: new Date().toISOString(),
+              };
+            }
           }
 
           const entry = await s.write(opts.content, writeOpts);

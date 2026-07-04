@@ -3,6 +3,7 @@
 // the stored row is never modified by reading it.
 
 import { SCHEMA_KINDS, type Entry } from 'tim-core';
+import { commitsSince } from './provenance.js';
 
 const DAY_MS = 86_400_000;
 
@@ -16,9 +17,12 @@ export interface StaleInfo {
   daysSince: number;
 }
 
-export type TrustAnnotated = Entry & { stale?: StaleInfo };
+export type TrustAnnotated = Entry & {
+  stale?: StaleInfo;
+  provenance_drift?: { commitsSince: number };
+};
 
-export function annotateTrust(entry: Entry, _cwd: string): TrustAnnotated {
+export function annotateTrust(entry: Entry, cwd: string): TrustAnnotated {
   const kind = typeof entry.metadata.kind === 'string' ? entry.metadata.kind : undefined;
   if (kind && SCHEMA_KINDS.has(kind)) return entry;
 
@@ -27,6 +31,18 @@ export function annotateTrust(entry: Entry, _cwd: string): TrustAnnotated {
   const lastVerified = verifiedAt ?? entry.updatedAt ?? entry.createdAt;
   const daysSince = Math.floor((Date.now() - Date.parse(lastVerified)) / DAY_MS);
 
-  if (!Number.isFinite(daysSince) || daysSince <= staleDays()) return entry;
-  return { ...entry, stale: { lastVerified, daysSince } };
+  const annotated: TrustAnnotated = { ...entry };
+  if (Number.isFinite(daysSince) && daysSince > staleDays()) {
+    annotated.stale = { lastVerified, daysSince };
+  }
+
+  const prov = entry.metadata.provenance as { commit?: unknown } | undefined;
+  if (prov && typeof prov.commit === 'string') {
+    const drift = commitsSince(cwd, prov.commit);
+    if (drift !== null && drift > 0) {
+      annotated.provenance_drift = { commitsSince: drift };
+    }
+  }
+
+  return annotated.stale || annotated.provenance_drift ? annotated : entry;
 }
