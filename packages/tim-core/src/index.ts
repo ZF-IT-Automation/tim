@@ -333,3 +333,4 @@ export {
   type TimSessionCache,
 } from './session-cache.js';
 export { evaluateLoadGate } from './load-gate.js';
+export { SCHEMA_KINDS } from './schema-kinds.js';
