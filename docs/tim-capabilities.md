@@ -424,6 +424,31 @@ tim_show(what="Bugs")                          # Section-Inhalt direkt
 
 Ein Parameter `what`, ein Parameter `with` — Agent muss die DB-Struktur nicht kennen.
 
+### `tim_guard` — Pre-Action Negative Memory
+
+Vor riskanten oder teuren Aktionen (Worker-Spawn, Deploy, externes API-Call) prüft `tim_guard` die geplante Aktion gegen bekannte Fehler und Learnings:
+
+```
+tim_guard(action="upload PDF to reMarkable via rmapi", project="P0063")
+```
+
+**Negative Memory:** Einträge mit `metadata.kind ∈ {error, learning}` oder Tags `#error` / `#learning`. Treffer → `status: "warnings"` mit Entry-IDs zum `tim_read`; kein Treffer → `status: "clear"`.
+
+**Workflow-Hook (o9k):** Ein Pre-Spawn-Hook kann `tim_guard` mit der Worker-Task-Beschreibung aufrufen, bevor Hermes startet — ohne TIM-Repo-Änderung außerhalb dieses Projekts.
+
+### `tim_delta` — Was hat sich seit der letzten Session geändert?
+
+Ergänzung zum vollen `tim_load_project`-Briefing — **kein Ersatz** (LLMs sind stateless; neue Sessions brauchen weiterhin den vollen Load):
+
+```
+tim_delta(project="P0063")           # Default: seit letzter Session
+tim_delta(project="P0063", since="2026-07-01T00:00:00Z")
+```
+
+- **Default-Baseline:** `updatedAt` der vorherigen Session im Projektbaum; Fallback 7 Tage wenn keine Session existiert
+- **Cap:** 500 Einträge — darüber ist ein Delta kein Briefing mehr
+- **Klassifikation:** `created` / `updated` / `deleted` (tombstoned) relativ zum Cutoff
+
 ### `tim_recall` / Skills — wenn ein Tool nicht reicht
 
 Für vage Anfragen („was haben wir letzte Woche zu Sync entschieden?") dispatcht der `tim-recall`-Skill einen Sub-Agenten, der sucht und nur Treffer zurückgibt — der Haupt-Agent bekommt komprimiertes Ergebnis, nicht 50 Roheinträge.
@@ -439,9 +464,9 @@ Für vage Anfragen („was haben wir letzte Woche zu Sync entschieden?") dispatc
 
 ## 6. MCP-Tools — Überblick
 
-37 Tools in `tim-mcp`. Wichtigste Gruppen:
+39 Tools in `tim-mcp`. Wichtigste Gruppen:
 
-**Lesen:** `tim_read`, `tim_search`, `tim_load_project`, `tim_read_project`, `tim_show`, `tim_trace`, `tim_health`, `tim_stats`
+**Lesen:** `tim_read`, `tim_search`, `tim_guard`, `tim_delta`, `tim_load_project`, `tim_read_project`, `tim_show`, `tim_trace`, `tim_health`, `tim_stats`
 
 **Schreiben:** `tim_write`, `tim_update`, `tim_link`, `tim_tag_add/remove`, `tim_record_commit`, `tim_write_batch_summary`, `tim_rollup_session_summary`
 
@@ -456,7 +481,7 @@ Für vage Anfragen („was haben wir letzte Woche zu Sync entschieden?") dispatc
 ## 7. Architektur (10 Packages)
 
 ```
-tim-mcp          → 37 MCP Tools
+tim-mcp          → 39 MCP Tools
 tim-cli          → User-facing Commands
 tim-core         → Typen, Config, Interfaces, LWW
 tim-store        → SQLite (einziger DB-Touchpoint), FTS5
