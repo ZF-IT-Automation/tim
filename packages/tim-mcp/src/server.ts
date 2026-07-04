@@ -1659,24 +1659,29 @@ export async function createMcpServer(): Promise<Server> {
           ) {
             const candidateTitle = (writeOpts.title ?? opts.content.split('\n')[0]).trim();
             const dedupScope = writeOpts.parentId
-              ? s.getProjectLabel(writeOpts.parentId) ?? undefined
-              : undefined;
-            const dupes = candidateTitle
-              ? await s.findSimilar(candidateTitle, { projectLabel: dedupScope })
-              : [];
-            if (dupes.length > 0) {
-              return {
-                content: [{
-                  type: 'text',
-                  text: formatToolResponse({
-                    status: 'duplicate_suspected',
-                    candidates: dupes,
-                    hint: 'A very similar entry already exists. Append to it with ' +
-                      'tim_update, or pass force:true to write a new entry anyway.',
-                  }),
-                }],
-                isError: true,
-              };
+              ? (s.getProjectLabel(writeOpts.parentId) ?? null)
+              : null;
+            // Without a resolvable project scope the gate would scan all projects
+            // and false-positive on generic titles ("Setup", "Next Steps", "Log").
+            // Skip the gate; callers can pass force:true for explicit opt-in.
+            if (dedupScope !== null) {
+              const dupes = candidateTitle
+                ? await s.findSimilar(candidateTitle, { projectLabel: dedupScope })
+                : [];
+              if (dupes.length > 0) {
+                return {
+                  content: [{
+                    type: 'text',
+                    text: formatToolResponse({
+                      status: 'duplicate_suspected',
+                      candidates: dupes,
+                      hint: 'A very similar entry already exists. Append to it with ' +
+                        'tim_update, or pass force:true to write a new entry anyway.',
+                    }),
+                  }],
+                  isError: true,
+                };
+              }
             }
           }
 
