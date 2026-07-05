@@ -100,6 +100,8 @@ const TimReadSchemaBase = z.object({
   includeEdges: z.boolean().optional().default(false),
   includeChildren: z.boolean().optional().default(true).describe('Default true: returns subtree (capped by depth). Set false for parent-only.'),
   showIrrelevant: z.boolean().optional().default(false),
+  include_body: z.boolean().optional().default(false)
+    .describe('Return the full content body. Default false — returns summary only (first 500 chars or metadata.summary)'),
 });
 
 const TimReadSchema = TimReadSchemaBase.refine(
@@ -677,6 +679,18 @@ function truncText(s: string, max: number): string {
   const t = s.replace(/\s+/g, ' ').trim();
   if (t.length <= max) return t;
   return t.slice(0, max - 3) + '...';
+}
+
+function summarizeEntry(entry: Entry & { summary?: string }, includeBody: boolean): unknown {
+  const summary = typeof entry.metadata.summary === 'string' && entry.metadata.summary
+    ? entry.metadata.summary
+    : truncText(entry.content, 500);
+
+  if (includeBody) {
+    return { ...entry, summary };
+  }
+  const { content, ...rest } = entry;
+  return { ...rest, summary };
 }
 
 function parseProjectContent(entry: Entry): { title: string; status: string; description: string; packages?: number; tests?: number } {
@@ -1329,6 +1343,7 @@ export async function createMcpServer(): Promise<Server> {
             includeEdges,
             includeChildren,
             showIrrelevant,
+            include_body,
           } = TimReadSchema.parse(args);
           const readOpts = { depth, includeChildren, showIrrelevant };
 
@@ -1367,7 +1382,10 @@ export async function createMcpServer(): Promise<Server> {
             bestEffortTelemetry('recordRead', () =>
               s.recordRead(entries.map(e => e.id), usageSessionId()));
             return {
-              content: [{ type: 'text', text: formatToolResponse({ entries: entries.map(e => annotateTrust(e, process.cwd())), missing }) }],
+              content: [{ type: 'text', text: formatToolResponse({
+                entries: entries.map(e => summarizeEntry(annotateTrust(e, process.cwd()) as Entry, include_body)),
+                missing,
+              }) }],
             };
           }
 
@@ -1457,7 +1475,10 @@ export async function createMcpServer(): Promise<Server> {
             bestEffortTelemetry('recordRead', () =>
               s.recordRead([entry.id], usageSessionId()));
             return {
-              content: [{ type: 'text', text: formatToolResponse({ entry: annotateTrust(entry, process.cwd()), edges }) }],
+              content: [{ type: 'text', text: formatToolResponse({
+                entry: summarizeEntry(annotateTrust(entry, process.cwd()) as Entry, include_body),
+                edges,
+              }) }],
             };
           }
 
@@ -1496,7 +1517,10 @@ export async function createMcpServer(): Promise<Server> {
             bestEffortTelemetry('recordRead', () =>
               s.recordRead([entry.id], usageSessionId()));
             return {
-              content: [{ type: 'text', text: formatToolResponse({ entry: annotateTrust(entry, process.cwd()), edges }) }],
+              content: [{ type: 'text', text: formatToolResponse({
+                entry: summarizeEntry(annotateTrust(entry, process.cwd()) as Entry, include_body),
+                edges,
+              }) }],
             };
           }
 

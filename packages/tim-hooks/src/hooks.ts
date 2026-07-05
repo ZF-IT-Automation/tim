@@ -1,6 +1,7 @@
 import { spawn } from 'child_process';
 import type { HooksConfig } from 'tim-core';
 import { normalizeHookScripts } from 'tim-core';
+import type { TimStore } from 'tim-store';
 
 export interface HookEnv {
   TIM_SESSION_ID?: string;
@@ -105,4 +106,77 @@ export async function runConfiguredHooks(
     timeoutMs: hooksConfig?.timeoutMs ?? 30_000,
     cwd: env.TIM_CWD,
   });
+}
+
+interface EmbeddingOptions {
+  batchSize?: number;
+  model?: string;
+}
+
+function resolveEmbeddingModel(name: string): string {
+  if (name === 'all-MiniLM-L6-v2') return 'fast-all-MiniLM-L6-v2';
+  return name;
+}
+
+function resolveEmbeddingModelEnum(
+  name: string,
+  EmbeddingModel: typeof import('fastembed').EmbeddingModel,
+): typeof import('fastembed').EmbeddingModel.AllMiniLML6V2 {
+  const resolved = resolveEmbeddingModel(name);
+  const match = Object.values(EmbeddingModel).find(v => v === resolved);
+  return (match ?? EmbeddingModel.AllMiniLML6V2) as typeof EmbeddingModel.AllMiniLML6V2;
+}
+
+/**
+ * Background hook: finds unembedded content entries and computes their
+ * vectors via fastembed (local ONNX). Runs in the summarizer-style
+ * fallback chain — best-effort, never blocks user flows.
+ *
+ * Set TIM_EMBEDDING_DISABLED=1 to skip entirely.
+ */
+export async function embedUnembeddedEntries(
+  store: TimStore,
+  opts: EmbeddingOptions = {},
+): Promise<number> {
+  if (process.env.TIM_EMBEDDING_DISABLED === '1') return 0;
+
+  const batchSize = opts.batchSize ?? (Number(process.env.TIM_EMBEDDING_BATCH_SIZE) || 32);
+  const modelName = resolveEmbeddingModel(
+    opts.model ?? process.env.TIM_EMBEDDING_MODEL ?? 'all-MiniLM-L6-v2',
+  );
+
+  let entries;
+  try {
+    entries = await store.getUnembedded(batchSize);
+  } catch {
+    return 0;
+  }
+
+  if (entries.length === 0) return 0;
+
+  try {
+    const { EmbeddingModel, FlagEmbedding } = await import('fastembed');
+    const modelEnum = resolveEmbeddingModelEnum(modelName, EmbeddingModel);
+    const embedder = await FlagEmbedding.init({ model: modelEnum });
+
+    const texts = entries.map(e => e.content.slice(0, 2000));
+    const gen = embedder.embed(texts, batchSize);
+    const batch = await gen.next();
+    const vectors = batch.value;
+    if (!vectors) return 0;
+
+    let embedded = 0;
+    for (let i = 0; i < entries.length; i++) {
+      try {
+        store.setVectors(entries[i].id, new Float32Array(vectors[i]), modelName);
+        embedded++;
+      } catch {
+        // individual entry failure — continue with next
+      }
+    }
+    return embedded;
+  } catch (err) {
+    console.debug('[tim-hooks] embedUnembeddedEntries: embedding not available:', (err as Error).message);
+    return 0;
+  }
 }

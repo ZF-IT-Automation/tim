@@ -12,5 +12,8 @@
   "dependencies": {
     "tim-core": "*",
     "tim-store": "*"
+  },
+  "optionalDependencies": {
+    "fastembed": "^1.0.0"
   }
 }

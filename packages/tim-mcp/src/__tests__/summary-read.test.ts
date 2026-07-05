@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { spawn, type ChildProcess } from 'node:child_process';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
+import os from 'node:os';
 
 const SERVER_PATH = path.resolve(__dirname, '..', '..', 'dist', 'server.js');
 
@@ -70,7 +71,7 @@ class McpClient {
     await this.send('initialize', {
       protocolVersion: '2024-11-05',
       capabilities: {},
-      clientInfo: { name: 'test-tim-update-title', version: '0.0.1' },
+      clientInfo: { name: 'summary-test', version: '0.0.1' },
     });
     this.proc.stdin!.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n');
     this.ready = true;
@@ -89,69 +90,61 @@ class McpClient {
   }
 }
 
-function parseEntry(text: string): { id: string; title: string; content: string } {
-  const parsed = JSON.parse(text);
-  return parsed.entry ?? parsed;
-}
-
-describe('tim_update title param', () => {
+describe('summary-first reads', () => {
+  let dir: string;
   let client: McpClient;
-  let dbPath: string;
 
   beforeEach(async () => {
-    dbPath = `/tmp/tim-update-title-${Date.now()}-${Math.random().toString(36).slice(2)}.db`;
-    if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath);
-    client = new McpClient(dbPath);
-    await client.init();
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tim-summary-'));
+    client = new McpClient(path.join(dir, 'test.db'));
   });
 
   afterEach(() => {
     client.kill();
-    if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath);
+    fs.rmSync(dir, { recursive: true, force: true });
   });
 
-  it('updates title on first-line-as-title entry without changing content', async () => {
-    const writeResp = await client.callTool('tim_write', {
-      content: 'AutoTitle\nBody stays',
-      tags: ['#tim', '#test'],
+  it('returns summary by default (first 500 chars)', async () => {
+    const longBody = 'A'.repeat(2000);
+    const w = await client.callTool('tim_write', {
+      content: `Test Entry\n${longBody}`,
+      tags: ['#test', '#summary'],
     });
-    const written = parseEntry(writeResp.result!.content[0].text);
-    expect(written.title).toBe('AutoTitle');
-    expect(written.content).toBe('Body stays');
+    const entry = JSON.parse(w.result!.content[0].text);
+    const id = entry.id ?? entry.entry?.id;
 
-    const updateResp = await client.callTool('tim_update', {
-      id: written.id,
-      title: 'New Title',
-    });
-    expect(updateResp.error).toBeUndefined();
-    const updated = parseEntry(updateResp.result!.content[0].text);
-    expect(updated.title).toBe('New Title');
-
-    const readResp = await client.callTool('tim_read', { id: written.id, include_body: true });
-    const readBack = parseEntry(readResp.result!.content[0].text);
-    expect(readBack.title).toBe('New Title');
-    expect(readBack.content).toBe('Body stays');
+    const r = await client.callTool('tim_read', { id });
+    const body = JSON.parse(r.result!.content[0].text);
+    expect(body.entry.summary).toBeDefined();
+    expect(body.entry.summary.length).toBeLessThanOrEqual(500);
+    expect(body.entry.content).toBeUndefined();
   });
 
-  it('updates title on explicit-title entry without changing content', async () => {
-    const writeResp = await client.callTool('tim_write', {
-      content: 'Body text',
-      title: 'Original',
-      tags: ['#tim', '#test'],
+  it('returns full body with include_body=true', async () => {
+    const w = await client.callTool('tim_write', {
+      content: 'Entry\nFull body here.',
+      tags: ['#test', '#summary'],
     });
-    const written = parseEntry(writeResp.result!.content[0].text);
+    const entry = JSON.parse(w.result!.content[0].text);
+    const id = entry.id ?? entry.entry?.id;
 
-    const updateResp = await client.callTool('tim_update', {
-      id: written.id,
-      title: 'Updated',
+    const r = await client.callTool('tim_read', { id, include_body: true });
+    const body = JSON.parse(r.result!.content[0].text);
+    expect(body.entry.summary).toBeDefined();
+    expect(body.entry.content).toContain('Full body here');
+  });
+
+  it('uses metadata.summary if set explicitly', async () => {
+    const w = await client.callTool('tim_write', {
+      content: 'Entry\nReal body.',
+      metadata: { summary: 'Custom summary text' },
+      tags: ['#test', '#summary'],
     });
-    const updated = parseEntry(updateResp.result!.content[0].text);
-    expect(updated.title).toBe('Updated');
-    expect(updated.content).toBe('Body text');
+    const entry = JSON.parse(w.result!.content[0].text);
+    const id = entry.id ?? entry.entry?.id;
 
-    const readResp = await client.callTool('tim_read', { id: written.id, include_body: true });
-    const readBack = parseEntry(readResp.result!.content[0].text);
-    expect(readBack.title).toBe('Updated');
-    expect(readBack.content).toBe('Body text');
+    const r = await client.callTool('tim_read', { id });
+    const body = JSON.parse(r.result!.content[0].text);
+    expect(body.entry.summary).toBe('Custom summary text');
   });
 });
