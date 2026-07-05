@@ -11,7 +11,7 @@ import type {
   SyncEntity, SyncOperation, EventBus, EventType,
   ResolveProjectResult, ResolveSectionResult, SectionCandidate,
 } from 'tim-core';
-import { stripDeprecatedTags, resolveLWW, SCHEMA_KINDS, staleDays } from 'tim-core';
+import { stripDeprecatedTags, resolveLWW, SCHEMA_KINDS, staleDays, isStale } from 'tim-core';
 import { runMigrations, createTriggers, getCurrentVersion } from './schema.js';
 import { CurateManager } from './curate.js';
 import { metadataNeedsCoercion, parseAndCoerceMetadata } from './metadata-coerce.js';
@@ -1332,13 +1332,26 @@ export class TimStore implements MemoryInterface {
   async search(options: SearchOptions): Promise<Entry[]> {
     const topK = options.topK ?? 10;
     const patterns = this.loadActiveSuppressPatterns();
-    // Over-fetch 3× so usage-boosted entries just below the cutoff can
-    // climb into the topK window; rankByUsage slices back down.
-    const fts = this.rankByUsage(
-      (await this.searchFts(options.query, topK * 3))
-        .filter(e => !TimStore.matchesSuppressed(patterns, e)),
-      topK,
-    );
+    const candidates = (await this.searchFts(options.query, topK * 3))
+      .filter(e => !TimStore.matchesSuppressed(patterns, e));
+
+    let queryVector: Float32Array | null = null;
+    try {
+      if (process.env.TIM_EMBEDDING_DISABLED !== '1') {
+        const { EmbeddingModel, FlagEmbedding } = await import('fastembed');
+        const modelName = process.env.TIM_EMBEDDING_MODEL ?? 'all-MiniLM-L6-v2';
+        const resolved = modelName === 'all-MiniLM-L6-v2' ? EmbeddingModel.AllMiniLML6V2 : EmbeddingModel.AllMiniLML6V2;
+        const embedder = await FlagEmbedding.init({ model: resolved });
+        const batch = await embedder.embed([options.query], 1).next();
+        if (batch.value?.[0]) {
+          queryVector = new Float32Array(batch.value[0]);
+        }
+      }
+    } catch {
+      // No fastembed — use pure FTS + usage
+    }
+
+    const fts = await this.rankByHybrid(candidates, queryVector, topK);
     // Labels/aliases live in metadata, not the FTS corpus. Merge a direct project hit.
     // Broader fix: index metadata.label + aliases in fts_entries (migration + triggers).
     const resolved = await this.resolveProjectLabel(options.query);
@@ -1370,6 +1383,69 @@ export class TimStore implements MemoryInterface {
     const counts = this.getReferenceCounts(entries.map(e => e.id));
     return entries
       .map((e, i) => ({ e, score: i - 2 * Math.log2(1 + (counts.get(e.id) ?? 0)) }))
+      .sort((a, b) => a.score - b.score)
+      .map(x => x.e)
+      .slice(0, topK);
+  }
+
+  /**
+   * Hybrid re-rank combining three signals:
+   *   1. FTS5 position (the raw order)
+   *   2. Cosine similarity (embedding distance to query vector)
+   *   3. Graph/usage/staleness boost (from Plan 8/10)
+   */
+  private async rankByHybrid(
+    entries: Entry[],
+    queryVector: Float32Array | null,
+    topK: number,
+  ): Promise<Entry[]> {
+    if (process.env.TIM_EMBEDDING_DISABLED === '1' || !queryVector) {
+      return this.rankByUsage(entries, topK);
+    }
+
+    const raw = (process.env.TIM_HYBRID_WEIGHTS ?? '1.0,2.0,0.5').split(',');
+    const wFts = Number(raw[0]) || 1;
+    const wEmbed = Number(raw[1]) || 2;
+    const wGraph = Number(raw[2]) || 0.5;
+
+    const days = staleDays();
+    const counts = this.getReferenceCounts(entries.map(e => e.id));
+
+    if (entries.length === 0) return [];
+
+    const vecRows = this.db.prepare(`
+      SELECT entry_id, vector, model FROM entry_vectors
+      WHERE entry_id IN (${entries.map(() => '?').join(', ')})
+    `).all(...entries.map(e => e.id)) as Array<{
+      entry_id: string; vector: Buffer; model: string;
+    }>;
+
+    if (vecRows.length === 0) {
+      return this.rankByUsage(entries, topK);
+    }
+
+    const vecMap = new Map<string, Float32Array>();
+    for (const row of vecRows) {
+      vecMap.set(row.entry_id, new Float32Array(row.vector.buffer, row.vector.byteOffset, row.vector.byteLength / 4));
+    }
+
+    const scored = entries.map((e, i) => {
+      let score = i * wFts;
+
+      const vec = vecMap.get(e.id);
+      if (vec) {
+        const similarity = cosineSimilarity(queryVector, vec);
+        score -= similarity * wEmbed;
+      }
+
+      const refCount = counts.get(e.id) ?? 0;
+      const stale = isStale(e, days) ? 1 : 0;
+      score -= (refCount * 0.5 - stale * 0.3) * wGraph;
+
+      return { e, score };
+    });
+
+    return scored
       .sort((a, b) => a.score - b.score)
       .map(x => x.e)
       .slice(0, topK);
@@ -2316,6 +2392,21 @@ export function splitTitleBody(content: string, explicitTitle?: string): { title
   const nl = content.indexOf('\n');
   if (nl === -1) return { title: content.trim(), body: '' };
   return { title: content.slice(0, nl).trim(), body: content.slice(nl + 1).trim() };
+}
+
+/** Cosine similarity between two same-length vectors. Range: [-1, 1]. */
+function cosineSimilarity(a: Float32Array, b: Float32Array): number {
+  let dot = 0;
+  let normA = 0;
+  let normB = 0;
+  const len = Math.min(a.length, b.length);
+  for (let i = 0; i < len; i++) {
+    dot += a[i] * b[i];
+    normA += a[i] * a[i];
+    normB += b[i] * b[i];
+  }
+  const denom = Math.sqrt(normA) * Math.sqrt(normB);
+  return denom === 0 ? 0 : dot / denom;
 }
 
 function rowToEntry(row: RowEntry): Entry {
