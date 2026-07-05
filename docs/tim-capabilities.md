@@ -181,6 +181,21 @@ TIM lernt aus seinem eigenen Traffic, welche Einträge tatsächlich nützlich si
 
 **Für Agenten:** Eine Suchantwort, in der ein unerwarteter Eintrag zuoberst steht, bedeutet: andere Sessions/Maschinen haben ihn als nützlich markiert. Das ist ein schwaches Signal — kein Befehl. Wenn TIM behauptet, etwas sei wichtig, und die Quelle nicht klar, ist `tim_read` mit `include_body=true` der richtige nächste Schritt.
 
+### Hybrid Retrieval (Plan 12a)
+
+TIM kombiniert drei Signale für das Retrieval-Ranking:
+
+1. **FTS5 (Keyword-Matching)** — exakter BM25-basierter Kandidaten-Generator.
+2. **Embedding-Ähnlichkeit** — lokales ONNX-Modell (fastembed/all-MiniLM-L6-v2) berechnet Vektoren, die nie das Gerät verlassen. `entry_vectors`-Tabelle ist device-lokal wie `entry_usage` — kein Sync, kein Export.
+3. **Graph/Usage/Staleness-Boost** — häufig referenzierte Einträge (Plan 10) steigen, als veraltet markierte (Plan 8) werden abgestuft.
+
+**Env-Knobs:**
+- `TIM_EMBEDDING_DISABLED=1` — schaltet Embedding komplett ab (pure FTS)
+- `TIM_EMBEDDING_MODEL=all-MiniLM-L6-v2` — welches fastembed-Modell
+- `TIM_HYBRID_WEIGHTS=1.0,2.0,0.5` — Gewichte: FTS5, Embedding, Graph-Boost
+
+**Summary-first reads:** `tim_read` liefert standardmäßig eine Zusammenfassung (erste 500 Zeichen oder `metadata.summary`). Der volle Content nur mit `include_body=true`.
+
 ### Lesen mit Kontext-Budget
 
 `tim_read` liefert standardmäßig **Title + Summary**, nicht den vollen Body — spart Kontextfenster. Voller Inhalt nur mit `include_body=true`. `tim_load_project` hat ein **Budget** (default 200 Einträge) mit Truncation-Priorität: Next Steps und offene Tasks zuerst, Roh-Exchanges nie im Briefing.

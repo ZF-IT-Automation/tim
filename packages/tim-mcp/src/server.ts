@@ -101,7 +101,7 @@ const TimReadSchemaBase = z.object({
   includeChildren: z.boolean().optional().default(true).describe('Default true: returns subtree (capped by depth). Set false for parent-only.'),
   showIrrelevant: z.boolean().optional().default(false),
   include_body: z.boolean().optional().default(false)
-    .describe('Return the full content body instead of just a summary'),
+    .describe('Return the full content body. Default false — returns summary only (first 500 chars or metadata.summary)'),
 });
 
 const TimReadSchema = TimReadSchemaBase.refine(

@@ -6,6 +6,9 @@ All notable changes to TIM are documented in this file.
 
 ### Added
 
+- **Hybrid search** — `entry_vectors` table (migration v10, device-local), fastembed-based embedding hook (`tim-hooks`), three-signal re-rank in `search()` (FTS5 + cosine similarity + graph/usage/staleness boost). `TIM_EMBEDDING_DISABLED=1` disables entirely.
+- **Summary-first reads** — `tim_read` returns `summary` by default (500 chars or `metadata.summary`); full content only with `include_body=true`.
+- **Retrieval benchmark harness** — `runBenchmark()` with precision@3, recall@5, MRR; golden query suite in test.
 - **`tim_load_project(bind:false)`** — read a project without binding the session; the canonical replacement for cross-project lookups previously done via `tim_read_project`. Also adds `sessionId` to `tim_load_project` (was already on the zod schema, now visible in ListTools).
 - **`errorResult` helper** — every failure path in the MCP handler returns `isError:true` with a helpful text payload (e.g. `"Entry not found: NOPE-000"`, `"Project not found: P9999"`). Replaces the old `"null"` text returns and the silent text-only failure paths that broke JSON clients.
 - **`Entry.updatedAt`** — top-level field on read/write responses; mirrors DB `updated_at` (bumps on content edits and on `tim_verify`).
