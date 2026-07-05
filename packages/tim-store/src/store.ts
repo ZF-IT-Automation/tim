@@ -1873,6 +1873,39 @@ export class TimStore implements MemoryInterface {
     return new Map(rows.map(r => [r.entry_id, r.c]));
   }
 
+  // ─── Embedding vectors (device-local, never synced) ─────
+
+  /**
+   * Entries that need embedding (no vector yet, newest content first).
+   * Schema kinds (sessions, sections, …) are skipped — they don't need
+   * semantic search.
+   */
+  async getUnembedded(count: number): Promise<Entry[]> {
+    const scopesKinds = [...SCHEMA_KINDS].map(() => '?').join(', ');
+    const rows = this.db.prepare(`
+      SELECT e.* FROM entries e
+      LEFT JOIN entry_vectors v ON v.entry_id = e.id
+      WHERE v.entry_id IS NULL
+        AND e.tombstoned_at IS NULL
+        AND e.irrelevant = 0
+        AND (json_extract(e.metadata, '$.kind') IS NULL
+             OR json_extract(e.metadata, '$.kind') NOT IN (${scopesKinds}))
+      ORDER BY e.updated_at DESC, e.rowid DESC
+      LIMIT ?
+    `).all(...SCHEMA_KINDS, count) as RowEntry[];
+    return rows.map(rowToEntry);
+  }
+
+  /** Store an embedding vector for an entry. Upserts — second call replaces. */
+  setVectors(entryId: string, vector: Float32Array, model: string): void {
+    const blob = Buffer.from(vector.buffer, vector.byteOffset, vector.byteLength);
+    this.db.prepare(
+      `INSERT INTO entry_vectors (entry_id, model, vector)
+       VALUES (?, ?, ?)
+       ON CONFLICT(entry_id) DO UPDATE SET model = excluded.model, vector = excluded.vector`,
+    ).run(entryId, model, blob);
+  }
+
   // ─── Health ────────────────────────────────────────────
 
   async health(): Promise<HealthReport> {

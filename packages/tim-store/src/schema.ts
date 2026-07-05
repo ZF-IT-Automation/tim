@@ -184,7 +184,24 @@ export const MIGRATIONS: { version: number; sql: string }[] = [
       CREATE INDEX IF NOT EXISTS idx_usage_session ON entry_usage(session_id);
       CREATE INDEX IF NOT EXISTS idx_usage_read_at ON entry_usage(read_at);
     `
-  }
+  },
+  {
+    version: 10,
+    sql: `
+      -- Device-local embedding vectors. Each device computes its own;
+      -- vectors are NEVER synced, staged, or exported (same contract
+      -- as entry_usage in Plan 10).
+      CREATE TABLE IF NOT EXISTS entry_vectors (
+        entry_id TEXT PRIMARY KEY,
+        model TEXT NOT NULL,
+        vector BLOB NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        FOREIGN KEY (entry_id) REFERENCES entries(id) ON DELETE CASCADE
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_entry_vectors_model ON entry_vectors(model);
+    `,
+  },
 ];
 
 export function getCurrentVersion(): number {
