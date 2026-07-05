@@ -2320,6 +2320,52 @@ export class TimStore implements MemoryInterface {
   }
 }
 
+export interface GoldenQuery {
+  query: string;
+  expectedIds: string[];
+}
+
+export interface BenchmarkResult {
+  query: string;
+  precisionAt3: number;
+  recallAt5: number;
+  mrr: number;
+  found: string[];
+  missing: string[];
+}
+
+export async function runBenchmark(
+  store: TimStore,
+  queries: GoldenQuery[],
+): Promise<BenchmarkResult[]> {
+  const results: BenchmarkResult[] = [];
+  for (const q of queries) {
+    const hits = await store.search({ query: q.query, topK: 10 });
+    const hitIds = hits.map(e => e.id);
+    const found = q.expectedIds.filter(id => hitIds.includes(id));
+    const missing = q.expectedIds.filter(id => !hitIds.includes(id));
+
+    const top3 = hitIds.slice(0, 3);
+    const relevantTop3 = q.expectedIds.filter(id => top3.includes(id));
+    const precisionAt3 = top3.length > 0 ? relevantTop3.length / top3.length : 0;
+
+    const top5 = hitIds.slice(0, 5);
+    const relevantTop5 = q.expectedIds.filter(id => top5.includes(id));
+    const recallAt5 = q.expectedIds.length > 0 ? relevantTop5.length / q.expectedIds.length : 1;
+
+    let mrr = 0;
+    for (let i = 0; i < hitIds.length; i++) {
+      if (q.expectedIds.includes(hitIds[i])) {
+        mrr = 1 / (i + 1);
+        break;
+      }
+    }
+
+    results.push({ query: q.query, precisionAt3, recallAt5, mrr, found, missing });
+  }
+  return results;
+}
+
 // ─── Row Types (internal) ───────────────────────────────
 
 interface RowEntry {
