@@ -127,7 +127,7 @@ describe('tim_update title param', () => {
     const updated = parseEntry(updateResp.result!.content[0].text);
     expect(updated.title).toBe('New Title');
 
-    const readResp = await client.callTool('tim_read', { id: written.id });
+    const readResp = await client.callTool('tim_read', { id: written.id, include_body: true });
     const readBack = parseEntry(readResp.result!.content[0].text);
     expect(readBack.title).toBe('New Title');
     expect(readBack.content).toBe('Body stays');
@@ -149,7 +149,7 @@ describe('tim_update title param', () => {
     expect(updated.title).toBe('Updated');
     expect(updated.content).toBe('Body text');
 
-    const readResp = await client.callTool('tim_read', { id: written.id });
+    const readResp = await client.callTool('tim_read', { id: written.id, include_body: true });
     const readBack = parseEntry(readResp.result!.content[0].text);
     expect(readBack.title).toBe('Updated');
     expect(readBack.content).toBe('Body text');

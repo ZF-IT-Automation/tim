@@ -1337,14 +1337,22 @@ export class TimStore implements MemoryInterface {
 
     let queryVector: Float32Array | null = null;
     try {
-      if (process.env.TIM_EMBEDDING_DISABLED !== '1') {
-        const { EmbeddingModel, FlagEmbedding } = await import('fastembed');
-        const modelName = process.env.TIM_EMBEDDING_MODEL ?? 'all-MiniLM-L6-v2';
-        const resolved = modelName === 'all-MiniLM-L6-v2' ? EmbeddingModel.AllMiniLML6V2 : EmbeddingModel.AllMiniLML6V2;
-        const embedder = await FlagEmbedding.init({ model: resolved });
-        const batch = await embedder.embed([options.query], 1).next();
-        if (batch.value?.[0]) {
-          queryVector = new Float32Array(batch.value[0]);
+      if (process.env.TIM_EMBEDDING_DISABLED !== '1' && candidates.length > 0) {
+        const placeholders = candidates.map(() => '?').join(', ');
+        const hasVectors = this.db.prepare(`
+          SELECT 1 FROM entry_vectors
+          WHERE entry_id IN (${placeholders})
+          LIMIT 1
+        `).get(...candidates.map(e => e.id));
+        if (hasVectors) {
+          const { EmbeddingModel, FlagEmbedding } = await import('fastembed');
+          const modelName = process.env.TIM_EMBEDDING_MODEL ?? 'all-MiniLM-L6-v2';
+          const resolved = modelName === 'all-MiniLM-L6-v2' ? EmbeddingModel.AllMiniLML6V2 : EmbeddingModel.AllMiniLML6V2;
+          const embedder = await FlagEmbedding.init({ model: resolved });
+          const batch = await embedder.embed([options.query], 1).next();
+          if (batch.value?.[0]) {
+            queryVector = new Float32Array(batch.value[0]);
+          }
         }
       }
     } catch {
