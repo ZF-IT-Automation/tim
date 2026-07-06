@@ -27,6 +27,7 @@ import {
   auditHermesStatusline,
   cmdSetupHermesStatusline,
 } from './hermes-statusline-install.js';
+import { cmdConsolidate } from './consolidate.js';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -570,6 +571,9 @@ async function main() {
     }
     case 'root-entries':
       await cmdRootEntries(rest);
+      break;
+    case 'consolidate':
+      await cmdConsolidate(rest);
       break;
     case '--version':
     case '-v':

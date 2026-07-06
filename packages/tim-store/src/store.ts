@@ -14,6 +14,7 @@ import type {
 import { stripDeprecatedTags, resolveLWW, SCHEMA_KINDS, staleDays, isStale } from 'tim-core';
 import { runMigrations, createTriggers, getCurrentVersion } from './schema.js';
 import { CurateManager } from './curate.js';
+import { ConsolidationManager } from './consolidate.js';
 import { metadataNeedsCoercion, parseAndCoerceMetadata } from './metadata-coerce.js';
 import { recordFromPayload, entryLocalLwwTimestamp, edgeLocalLwwTimestamp } from './sync-methods.js';
 
@@ -508,12 +509,6 @@ export class TimStore implements MemoryInterface {
     return { project, children, truncated };
   }
 
-  /**
-   * Count sessions recorded under a project (by label or id). One session
-   * entry (kind=session) is created per session start, so this is the
-   * "sessions so far" count used to gate periodic project-summary generation.
-   * Kinds are literals to avoid a session-tree → store import cycle.
-   */
   async countSessionSummaries(projectLabel: string): Promise<number> {
     const project = await this.read(projectLabel);
     if (!project) return 0;
@@ -532,6 +527,27 @@ export class TimStore implements MemoryInterface {
         AND tombstoned_at IS NULL
     `).get(sessionsRoot.id) as { n: number };
     return row.n;
+  }
+
+  /** Count live descendants of a project node + latest created_at. */
+  getProjectEntryStats(projectId: string): { count: number; lastActivity: string } {
+    const row = this.db.prepare(`
+      WITH RECURSIVE descendants AS (
+        SELECT id, created_at FROM entries
+        WHERE parent_id = ?
+          AND tombstoned_at IS NULL
+          AND irrelevant = 0
+        UNION ALL
+        SELECT e.id, e.created_at FROM entries e
+        INNER JOIN descendants d ON e.parent_id = d.id
+        WHERE e.tombstoned_at IS NULL AND e.irrelevant = 0
+      )
+      SELECT COUNT(*) AS n, MAX(created_at) AS last FROM descendants
+    `).get(projectId) as { n: number; last: string | null };
+    return {
+      count: row.n ?? 0,
+      lastActivity: row.last ?? new Date(0).toISOString(),
+    };
   }
 
   async getChildren(
@@ -998,6 +1014,10 @@ export class TimStore implements MemoryInterface {
 
   curate(): CurateManager {
     return new CurateManager(this.db);
+  }
+
+  consolidate(): ConsolidationManager {
+    return new ConsolidationManager(this.db, this);
   }
 
   /** @internal Exposed for tests */
@@ -2494,7 +2514,7 @@ export function splitTitleBody(content: string, explicitTitle?: string): { title
 }
 
 /** Cosine similarity between two same-length vectors. Range: [-1, 1]. */
-function cosineSimilarity(a: Float32Array, b: Float32Array): number {
+export function cosineSimilarity(a: Float32Array, b: Float32Array): number {
   let dot = 0;
   let normA = 0;
   let normB = 0;

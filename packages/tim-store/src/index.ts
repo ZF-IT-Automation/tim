@@ -4,6 +4,7 @@ export {
   TimStore,
   splitTitleBody,
   titleSimilarity,
+  cosineSimilarity,
   runBenchmark,
   type GoldenQuery,
   type BenchmarkResult,
@@ -73,6 +74,13 @@ export {
   COMMIT_TAG,
 } from './commit-tree.js';
 export { CurateManager, type UpdateManyFlags } from './curate.js';
+export {
+  ConsolidationManager,
+  type ConsolidationCandidate,
+  type ConsolidationType,
+  type CurationStatus,
+  type CurationMetadata,
+} from './consolidate.js';
 export {
   validateTaskMetadata,
   validateRuleMetadata,

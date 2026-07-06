@@ -1,12 +1,19 @@
 #!/usr/bin/env node
 import * as os from 'os';
 import * as path from 'path';
-import { loadConfig } from 'tim-core';
-import { TimStore } from 'tim-store';
+import { loadConfig, type Entry } from 'tim-core';
+import {
+  TimStore,
+  SessionManager,
+  findChildByKind,
+  KIND_SUMMARY_ROOT,
+  KIND_SESSION,
+} from 'tim-store';
 import { connectTimMcp, callTimTool, type UnsummarizedBatch } from './mcp-client.js';
 import {
   generateSummary,
   generateProjectSummary,
+  generateSummaryHeuristic,
   extractTags,
   FALLBACK_MARKER,
 } from './generate-summary.js';
@@ -88,6 +95,139 @@ function seqRange(batch: UnsummarizedBatch): { seqFrom: number; seqTo: number } 
   return { seqFrom: Math.min(...seqs), seqTo: Math.max(...seqs) };
 }
 
+function entryText(entry: Entry): string {
+  return [entry.title, entry.content].filter(Boolean).join('\n').trim();
+}
+
+/** Process pending curation-queue entries via LLM (duplicates merge, decay confirm). */
+export async function processCurationQueue(store: TimStore, projectLabel: string): Promise<number> {
+  const mgr = store.consolidate();
+  const pending = await mgr.getCurationQueue(projectLabel, 'pending');
+  let processed = 0;
+
+  for (const item of pending) {
+    const meta = item.metadata;
+    const consolidation = meta.consolidation as string | undefined;
+
+    if (consolidation === 'duplicate' && Array.isArray(meta.pair) && meta.pair.length === 2) {
+      const [keepId, dropId] = meta.pair as [string, string];
+      const keep = await store.read(keepId);
+      const drop = await store.read(dropId);
+      if (!keep || !drop) {
+        await mgr.setCurationRejected(item.id);
+        continue;
+      }
+
+      const batch: UnsummarizedBatch = {
+        sessionId: 'curation',
+        summaryNodeId: '',
+        exchangesNodeId: '',
+        batchIndex: 1,
+        batchSize: 2,
+        exchanges: [
+          {
+            seq: 1,
+            userId: keepId,
+            userContent: entryText(keep),
+            agentId: dropId,
+            agentContent: entryText(drop),
+          },
+        ],
+        hasMore: false,
+        previousSummaries: [],
+        sessionMeta: { project: projectLabel },
+      };
+
+      const raw = await generateSummary(batch);
+      const merged =
+        raw === FALLBACK_MARKER
+          ? `${entryText(keep)}\n\n---\n\n${entryText(drop)}`
+          : extractTags(raw).body;
+
+      await store.update(keepId, {
+        content: merged,
+        title: keep.title,
+      });
+      await store.update(dropId, { irrelevant: true });
+      await mgr.setCurationDone(item.id);
+      processed += 1;
+      continue;
+    }
+
+    if (consolidation === 'decay' && typeof meta.target === 'string') {
+      const target = await store.read(meta.target);
+      if (!target) {
+        await mgr.setCurationRejected(item.id);
+        continue;
+      }
+
+      const batch: UnsummarizedBatch = {
+        sessionId: 'curation',
+        summaryNodeId: '',
+        exchangesNodeId: '',
+        batchIndex: 1,
+        batchSize: 1,
+        exchanges: [
+          {
+            seq: 1,
+            userId: target.id,
+            userContent:
+              `Should this memory entry be marked irrelevant (decay)? Entry:\n${entryText(target)}\n` +
+              `Reason queued: ${String(meta.reason ?? '')}\n` +
+              `Reply DECAY to confirm or KEEP to reject.`,
+            agentId: null,
+            agentContent: null,
+          },
+        ],
+        hasMore: false,
+        previousSummaries: [],
+        sessionMeta: { project: projectLabel },
+      };
+
+      const raw = await generateSummary(batch);
+      const verdict =
+        raw === FALLBACK_MARKER
+          ? generateSummaryHeuristic(batch)
+          : extractTags(raw).body;
+      const decay = /\bDECAY\b/i.test(verdict) && !/\bKEEP\b/i.test(verdict);
+
+      if (decay) {
+        await store.update(meta.target, { irrelevant: true });
+        await mgr.setCurationDone(item.id);
+      } else {
+        await mgr.setCurationRejected(item.id);
+      }
+      processed += 1;
+    }
+  }
+
+  return processed;
+}
+
+async function postSummarizerHandoff(sessionId: string): Promise<void> {
+  const store = new TimStore(resolveDbPath());
+  try {
+    const session = await store.read(sessionId);
+    if (!session || session.metadata.kind !== KIND_SESSION) return;
+
+    const sessions = new SessionManager(store);
+    const summaryNode = await findChildByKind(store, sessionId, KIND_SUMMARY_ROOT);
+    const text = String(summaryNode?.content || summaryNode?.metadata.summary || '').trim();
+    if (text) {
+      await sessions.updateSessionSummary(sessionId, text);
+    }
+
+    const projectRef =
+      typeof session.metadata.project_ref === 'string' ? session.metadata.project_ref : null;
+    if (projectRef) {
+      await sessions.updateProjectSummary(projectRef);
+      await processCurationQueue(store, projectRef);
+    }
+  } finally {
+    store.close();
+  }
+}
+
 export async function runSummarizerLoop(sessionId: string): Promise<number> {
   const client = await connectTimMcp();
   let written = 0;
@@ -134,6 +274,7 @@ export async function runSummarizerLoop(sessionId: string): Promise<number> {
   } finally {
     await callTimTool(client, 'tim_rollup_session_summary', { sessionId });
     await client.close();
+    await postSummarizerHandoff(sessionId);
   }
   return written;
 }

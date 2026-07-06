@@ -302,9 +302,9 @@ describe('tim new-project', () => {
     const loaded = await store.loadProject('P0001', { depth: 1 });
     expect(loaded).not.toBeNull();
     const sections = loaded!.children.filter(c => c.metadata.kind === 'section');
-    expect(sections).toHaveLength(6);
+    expect(sections).toHaveLength(7);
     const labels = sections.map(s => s.metadata.label).sort();
-    expect(labels).toEqual(['Decisions', 'Errors', 'Ideas', 'Learnings', 'Log', 'Tasks']);
+    expect(labels).toEqual(['Decisions', 'Errors', 'Ideas', 'Learnings', 'Log', 'Tasks', 'Testing']);
     store.close();
   });
 
