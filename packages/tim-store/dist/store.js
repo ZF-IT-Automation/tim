@@ -95,10 +95,12 @@ class TimStore {
     db;
     emitter;
     agentId;
+    deviceId;
     constructor(dbPath, options = {}) {
         this.db = new better_sqlite3_1.default(dbPath);
         this.emitter = options.emitter;
         this.agentId = options.agentId ?? 'system';
+        this.deviceId = options.deviceId ?? 'local';
         (0, schema_js_1.runMigrations)(this.db);
         (0, schema_js_1.createTriggers)(this.db);
     }
@@ -447,6 +449,37 @@ class TimStore {
       LIMIT ?
     `).all(kind, limit);
         return rows.map(rowToEntry);
+    }
+    /**
+     * Projects ordered by most recent session activity — used by the
+     * tim_session_start Inbox fallback to offer a binding choice when no
+     * `.tim-project` marker resolved. Groups kind=session entries by their
+     * `project_ref` label and joins the project entry for its title.
+     * The Inbox itself ('P0000' — literal to avoid a session-tree → store
+     * import cycle) is excluded: falling back to it is what triggered the call.
+     */
+    async recentActiveProjects(limit = 5) {
+        const rows = this.db.prepare(`
+      SELECT sub.label AS label, sub.last_active AS lastActive, p.title AS title
+      FROM (
+        SELECT json_extract(metadata, '$.project_ref') AS label,
+               MAX(created_at) AS last_active
+        FROM entries
+        WHERE json_extract(metadata, '$.kind') = 'session'
+          AND json_extract(metadata, '$.project_ref') IS NOT NULL
+          AND irrelevant = 0
+          AND tombstoned_at IS NULL
+        GROUP BY label
+      ) sub
+      LEFT JOIN entries p
+        ON json_extract(p.metadata, '$.kind') = 'project'
+        AND json_extract(p.metadata, '$.label') = sub.label
+        AND p.tombstoned_at IS NULL
+      WHERE sub.label != 'P0000'
+      ORDER BY sub.last_active DESC
+      LIMIT ?
+    `).all(limit);
+        return rows;
     }
     /** Return which of the given entry IDs exist in the DB (single IN-query). */
     async entryExistsBatch(ids) {
@@ -926,18 +959,19 @@ class TimStore {
             favorite: 0,
             tombstoned_at: null,
             metadata: JSON.stringify(metadata),
+            lww_device: this.deviceId,
         };
         return { entry, now, timestamp };
     }
     insertEntrySync(entry) {
         this.db.prepare(`INSERT INTO entries (id, parent_id, title, content, content_type, depth,
       confidence, created_at, accessed_at, updated_at, decay_rate, visibility, tags, irrelevant,
-      favorite, tombstoned_at, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(entry.id, entry.parent_id, entry.title, entry.content, entry.content_type, entry.depth, entry.confidence, entry.created_at, entry.accessed_at, entry.updated_at, entry.decay_rate, entry.visibility, entry.tags, entry.irrelevant, entry.favorite, entry.tombstoned_at, entry.metadata);
+      favorite, tombstoned_at, metadata, lww_device) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(entry.id, entry.parent_id, entry.title, entry.content, entry.content_type, entry.depth, entry.confidence, entry.created_at, entry.accessed_at, entry.updated_at, entry.decay_rate, entry.visibility, entry.tags, entry.irrelevant, entry.favorite, entry.tombstoned_at, entry.metadata, entry.lww_device);
     }
     insertStagingSync(entry, timestamp, confidence) {
         this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
       lww_timestamp, lww_device, lww_confidence)
-      VALUES (?, 'entry', 'upsert', ?, ?, ?, ?)`).run(entry.id, JSON.stringify(entry), timestamp, 'local', confidence);
+      VALUES (?, 'entry', 'upsert', ?, ?, ?, ?)`).run(entry.id, JSON.stringify(entry), timestamp, this.deviceId, confidence);
     }
     async write(content, options = {}) {
         const { clean: cleanTags, removed: removedTags } = (0, tim_core_1.stripDeprecatedTags)(options.tags ?? []);
@@ -1021,14 +1055,15 @@ class TimStore {
             })(),
             accessed_at: now,
             updated_at: now,
+            lww_device: this.deviceId,
         };
         this.db.prepare(`UPDATE entries SET title=?, content=?, content_type=?, confidence=?,
       decay_rate=?, visibility=?, tags=?, irrelevant=?, tombstoned_at=?, metadata=?,
-      accessed_at=?, updated_at=? WHERE id=?`).run(updated.title, updated.content, updated.content_type, updated.confidence, updated.decay_rate, updated.visibility, updated.tags, updated.irrelevant, updated.tombstoned_at, updated.metadata, updated.accessed_at, updated.updated_at, id);
+      accessed_at=?, updated_at=?, lww_device=? WHERE id=?`).run(updated.title, updated.content, updated.content_type, updated.confidence, updated.decay_rate, updated.visibility, updated.tags, updated.irrelevant, updated.tombstoned_at, updated.metadata, updated.accessed_at, updated.updated_at, updated.lww_device, id);
         // Write to staging
         this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
       lww_timestamp, lww_device, lww_confidence)
-      VALUES (?, 'entry', 'upsert', ?, ?, ?, ?)`).run(id, JSON.stringify(updated), timestamp, 'local', updated.confidence);
+      VALUES (?, 'entry', 'upsert', ?, ?, ?, ?)`).run(id, JSON.stringify(updated), timestamp, this.deviceId, updated.confidence);
         const result = rowToEntry(updated);
         this.emit('memory:updated', { entry: result, agentId: this.agentId, timestamp: now });
         return result;
@@ -1042,7 +1077,7 @@ class TimStore {
             this.db.prepare('UPDATE entries SET tombstoned_at = ? WHERE id = ?').run(now, id);
             this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
         lww_timestamp, lww_device, lww_confidence)
-        VALUES (?, 'entry', 'delete', ?, ?, ?, ?)`).run(id, JSON.stringify({ id, tombstoned_at: now }), Date.now(), 'local', 1.0);
+        VALUES (?, 'entry', 'delete', ?, ?, ?, ?)`).run(id, JSON.stringify({ id, tombstoned_at: now, lww_device: this.deviceId }), Date.now(), this.deviceId, 1.0);
         }
         else {
             const timestamp = Date.now();
@@ -1051,11 +1086,12 @@ class TimStore {
                 irrelevant: 1,
                 accessed_at: now,
                 updated_at: now,
+                lww_device: this.deviceId,
             };
-            this.db.prepare('UPDATE entries SET irrelevant = 1, accessed_at = ?, updated_at = ? WHERE id = ?').run(now, now, id);
+            this.db.prepare('UPDATE entries SET irrelevant = 1, accessed_at = ?, updated_at = ?, lww_device = ? WHERE id = ?').run(now, now, this.deviceId, id);
             this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
         lww_timestamp, lww_device, lww_confidence)
-        VALUES (?, 'entry', 'upsert', ?, ?, ?, ?)`).run(id, JSON.stringify(updated), timestamp, 'local', updated.confidence);
+        VALUES (?, 'entry', 'upsert', ?, ?, ?, ?)`).run(id, JSON.stringify(updated), timestamp, this.deviceId, updated.confidence);
         }
         this.emit('memory:deleted', {
             entry: rowToEntry(existing),
@@ -1093,7 +1129,7 @@ class TimStore {
             this.db.prepare('UPDATE entries SET tombstoned_at = ? WHERE id = ?').run(now, existing.id);
             this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
         lww_timestamp, lww_device, lww_confidence)
-        VALUES (?, 'entry', 'delete', ?, ?, ?, ?)`).run(existing.id, JSON.stringify({ id: existing.id, tombstoned_at: now }), Date.now(), 'local', 1.0);
+        VALUES (?, 'entry', 'delete', ?, ?, ?, ?)`).run(existing.id, JSON.stringify({ id: existing.id, tombstoned_at: now, lww_device: this.deviceId }), Date.now(), this.deviceId, 1.0);
         }
         else {
             const timestamp = Date.now();
@@ -1102,11 +1138,12 @@ class TimStore {
                 irrelevant: 1,
                 accessed_at: now,
                 updated_at: now,
+                lww_device: this.deviceId,
             };
-            this.db.prepare('UPDATE entries SET irrelevant = 1, accessed_at = ?, updated_at = ? WHERE id = ?').run(now, now, existing.id);
+            this.db.prepare('UPDATE entries SET irrelevant = 1, accessed_at = ?, updated_at = ?, lww_device = ? WHERE id = ?').run(now, now, this.deviceId, existing.id);
             this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
         lww_timestamp, lww_device, lww_confidence)
-        VALUES (?, 'entry', 'upsert', ?, ?, ?, ?)`).run(existing.id, JSON.stringify(updated), timestamp, 'local', updated.confidence);
+        VALUES (?, 'entry', 'upsert', ?, ?, ?, ?)`).run(existing.id, JSON.stringify(updated), timestamp, this.deviceId, updated.confidence);
         }
     }
     // ─── Search ────────────────────────────────────────────
@@ -1498,8 +1535,8 @@ class TimStore {
     async applyStaging(records) {
         const upsertEntry = this.db.prepare(`INSERT OR REPLACE INTO entries
       (id, parent_id, title, content, content_type, depth, confidence, created_at,
-       accessed_at, updated_at, decay_rate, visibility, tags, irrelevant, favorite, tombstoned_at, metadata)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+       accessed_at, updated_at, decay_rate, visibility, tags, irrelevant, favorite, tombstoned_at, metadata, lww_device)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
         const upsertEdge = this.db.prepare(`INSERT OR REPLACE INTO edges
       (id, source_id, target_id, type, weight, metadata, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?)`);
@@ -1512,7 +1549,7 @@ class TimStore {
                         const payload = JSON.parse(record.payload);
                         const existing = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(payload.id);
                         if (existing) {
-                            const local = (0, sync_methods_js_1.recordFromPayload)(payload.id, 'entry', existing.tombstoned_at ? 'delete' : 'upsert', JSON.stringify(existing), (0, sync_methods_js_1.entryLocalLwwTimestamp)(existing), 'local', Number(existing.confidence ?? 1));
+                            const local = (0, sync_methods_js_1.recordFromPayload)(payload.id, 'entry', existing.tombstoned_at ? 'delete' : 'upsert', JSON.stringify(existing), (0, sync_methods_js_1.entryLocalLwwTimestamp)(existing), String(existing.lww_device ?? 'local'), Number(existing.confidence ?? 1));
                             const { winner } = (0, tim_core_1.resolveLWW)(local, record);
                             if (winner !== record)
                                 continue;
@@ -1523,13 +1560,13 @@ class TimStore {
                         const entry = JSON.parse(record.payload);
                         const existing = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(entry.id);
                         if (existing) {
-                            const local = (0, sync_methods_js_1.recordFromPayload)(entry.id, 'entry', existing.tombstoned_at ? 'delete' : 'upsert', JSON.stringify(existing), (0, sync_methods_js_1.entryLocalLwwTimestamp)(existing), 'local', Number(existing.confidence ?? 1));
+                            const local = (0, sync_methods_js_1.recordFromPayload)(entry.id, 'entry', existing.tombstoned_at ? 'delete' : 'upsert', JSON.stringify(existing), (0, sync_methods_js_1.entryLocalLwwTimestamp)(existing), String(existing.lww_device ?? 'local'), Number(existing.confidence ?? 1));
                             const { winner } = (0, tim_core_1.resolveLWW)(local, record);
                             if (winner !== record)
                                 continue;
                         }
                         const appliedUpdatedAt = new Date(record.lwwTimestamp).toISOString();
-                        upsertEntry.run(entry.id, entry.parent_id, entry.title ?? '', entry.content, entry.content_type, entry.depth, entry.confidence, entry.created_at, entry.accessed_at, appliedUpdatedAt, entry.decay_rate, entry.visibility, entry.tags, entry.irrelevant, entry.favorite ?? 0, entry.tombstoned_at, entry.metadata);
+                        upsertEntry.run(entry.id, entry.parent_id, entry.title ?? '', entry.content, entry.content_type, entry.depth, entry.confidence, entry.created_at, entry.accessed_at, appliedUpdatedAt, entry.decay_rate, entry.visibility, entry.tags, entry.irrelevant, entry.favorite ?? 0, entry.tombstoned_at, entry.metadata, record.lwwDevice);
                     }
                 }
                 else if (record.entityType === 'edge') {

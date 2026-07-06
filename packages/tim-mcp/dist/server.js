@@ -57,6 +57,7 @@ const tim_migrate_1 = require("tim-migrate");
 const tim_sync_client_1 = require("tim-sync-client");
 const write_validate_js_1 = require("./write-validate.js");
 const remember_handler_js_1 = require("./remember-handler.js");
+const session_guidance_js_1 = require("./session-guidance.js");
 const fs = __importStar(require("fs"));
 const os = __importStar(require("os"));
 const path = __importStar(require("path"));
@@ -380,17 +381,25 @@ const TimShowUntaggedSchema = zod_1.z.object({});
 exports.TOOL_DEFS = [
     {
         name: 'tim_read',
-        description: 'Read an entry from TIM. Returns entry content, children, and optional edges.',
+        description: 'Read an entry from TIM. Returns entry content, children, and optional edges. ' +
+            'id accepts a human label (P0063, L0042, E0007) or an internal entry id — ' +
+            'labels are resolved automatically, no need to look up the id first.',
         schema: TimReadSchemaBase,
     },
     {
         name: 'tim_write',
-        description: 'Write a new entry to TIM. parentId direct, or parentTitle+projectId to resolve a project section by title (section title under project root metadata.label).',
+        description: 'Write a NEW entry to TIM (never for editing — use tim_update). ' +
+            'Placement: where:"P0063/Ideas" shorthand, or parentId, or parentTitle+projectId. ' +
+            'A near-duplicate title in scope returns duplicate_suspected with the existing entry — ' +
+            'read it and update instead; pass force:true only when it is genuinely a different thing. ' +
+            'Tags are topics (#tim, #security); status/priority belong in metadata.task.',
         schema: TimWriteSchema,
     },
     {
         name: 'tim_search',
-        description: 'Search TIM entries using FTS5 full-text search.',
+        description: 'Search TIM entries using FTS5 full-text search: keywords, "quoted phrases", ' +
+            'prefix*. NOT SQL — no column filters. For vague/associative queries use tim_remember; ' +
+            'for a known label use tim_read directly.',
         schema: TimSearchSchema,
     },
     {
@@ -420,7 +429,11 @@ exports.TOOL_DEFS = [
     },
     {
         name: 'tim_update',
-        description: 'Update an existing entry. Only provided fields are changed.',
+        description: 'Update an existing entry. Only provided fields are changed — but a provided ' +
+            'field REPLACES its old value entirely: content replaces the whole body (it does NOT ' +
+            'append — tim_read first, merge, then update), metadata replaces the whole metadata ' +
+            'object except system-managed fields (verified_at, provenance), which are preserved. ' +
+            'For short flips (status, priority) send only the metadata patch, keep content out.',
         schema: TimUpdateSchema,
     },
     {
@@ -485,7 +498,7 @@ exports.TOOL_DEFS = [
     },
     {
         name: 'tim_session_start',
-        description: 'Start a TIM session (idempotent). With projectId (or default P0000 Inbox), creates nested Sessions/Summary/Exchanges tree.',
+        description: 'Start a TIM session (idempotent). With projectId (or default P0000 Inbox), creates nested Sessions/Summary/Exchanges tree. Without a resolvable project the response lists recently active projects — follow its ACTION line to bind one.',
         schema: TimSessionStartSchema,
     },
     {
@@ -745,7 +758,7 @@ async function formatTasksOutput(store, tasks) {
 }
 async function resolveRoots(store, root) {
     if (root === undefined) {
-        if (!isHttp) {
+        if (!transportIsHttp) {
             const marker = (0, tim_hooks_1.findMarker)(process.cwd(), { walkUp: true });
             if (marker)
                 return { labels: [marker.marker.project] };
@@ -1147,6 +1160,12 @@ function installProcessErrorGuards() {
     });
 }
 /**
+ * Module-scope transport flag for helpers that live outside createMcpServer
+ * (resolveRoots, usageSessionId). Set once by createMcpServer; false covers
+ * the stdio default and any call before server construction.
+ */
+let transportIsHttp = false;
+/**
  * Session identity for usage recording — best-effort, null when the
  * process has no resolvable session (recording is then session-less and
  * can never be marked referenced, which is the correct neutral outcome).
@@ -1154,9 +1173,11 @@ function installProcessErrorGuards() {
 function usageSessionId() {
     try {
         return (0, tim_core_1.resolveActiveSessionId)({
-            markerSession: isHttp ? undefined : (0, tim_hooks_1.findMarker)(process.cwd(), { walkUp: true })?.marker.session,
-            useSessionCache: !isHttp,
-            useEnv: !isHttp,
+            markerSession: transportIsHttp
+                ? undefined
+                : (0, tim_hooks_1.findMarker)(process.cwd(), { walkUp: true })?.marker.session,
+            useSessionCache: !transportIsHttp,
+            useEnv: !transportIsHttp,
         }) ?? null;
     }
     catch {
@@ -1175,6 +1196,7 @@ function bestEffortTelemetry(label, fn) {
 }
 async function createMcpServer(options = {}) {
     const isHttp = options.transportMode === 'http';
+    transportIsHttp = isHttp;
     const server = new index_js_1.Server({
         name: 'tim-mcp',
         version: '0.1.0-alpha',
@@ -1545,8 +1567,10 @@ async function createMcpServer(options = {}) {
                                             text: formatToolResponse({
                                                 status: 'duplicate_suspected',
                                                 candidates: dupes,
-                                                hint: 'A very similar entry already exists. Append to it with ' +
-                                                    'tim_update, or pass force:true to write a new entry anyway.',
+                                                hint: 'A very similar entry already exists. To extend it: tim_read ' +
+                                                    'the candidate, merge your text into its body, then tim_update ' +
+                                                    '(content replaces, it does not append). Pass force:true only if ' +
+                                                    'this is genuinely a different thing.',
                                             }),
                                         }],
                                     isError: true,
@@ -1979,9 +2003,11 @@ async function createMcpServer(options = {}) {
                     const { sessionId, projectId, agentName, cwd, harness, batchSize, tool, model, taskSummary } = TimSessionStartSchema.parse(args);
                     const cwdResolved = cwd ?? (isHttp ? '' : process.cwd());
                     let boundProjectId = projectId ?? (0, tim_hooks_1.getActiveProjectLabel)() ?? undefined;
+                    let inboxFallback = false;
                     if (!boundProjectId) {
                         await (0, tim_store_1.ensureInboxProject)(s);
                         boundProjectId = tim_store_1.INBOX_PROJECT_LABEL;
+                        inboxFallback = true;
                     }
                     const entry = await getSessions().startProjectSession({
                         sessionId,
@@ -1995,9 +2021,14 @@ async function createMcpServer(options = {}) {
                         taskSummary,
                     });
                     const cortex = await buildCortexReadyBlock(s, entry);
-                    const text = cortex
+                    let text = cortex
                         ? `${cortex}\n\n${formatToolResponse(entry)}`
                         : formatToolResponse(entry);
+                    if (inboxFallback) {
+                        const guidance = await (0, session_guidance_js_1.buildInboxFallbackGuidance)(s);
+                        if (guidance)
+                            text = `${guidance}\n\n${text}`;
+                    }
                     return {
                         content: [{ type: 'text', text }],
                     };
@@ -2188,10 +2219,17 @@ async function createMcpServer(options = {}) {
                         }
                     }
                     const formatted = (0, project_output_js_1.formatProjectOutput)(result, budget, loadProjectSchema(), bind ? 'load' : 'read');
+                    // Response-driven guidance: weak models follow response text more
+                    // reliably than system prompts — spell out the standard next step.
+                    const nextHint = bind
+                        ? `\n\nNEXT: review the open tasks above (tim_show kind="tasks" for the full list). ` +
+                            `Save new insights as you go: tim_write with where:"${projectLabel}/<Section>" ` +
+                            `(Ideas, Decisions, Errors, Log) — never rely on chat history alone.`
+                        : '';
                     return {
                         content: [{
                                 type: 'text',
-                                text: formatted,
+                                text: formatted + nextHint,
                             }],
                     };
                 }

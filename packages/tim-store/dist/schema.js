@@ -192,6 +192,10 @@ exports.MIGRATIONS = [
     `
     },
     {
+        version: 9,
+        sql: `ALTER TABLE entries ADD COLUMN lww_device TEXT NOT NULL DEFAULT 'local';`,
+    },
+    {
         version: 10,
         sql: `
       -- Device-local embedding vectors. Each device computes its own;
@@ -206,7 +210,7 @@ exports.MIGRATIONS = [
       );
 
       CREATE INDEX IF NOT EXISTS idx_entry_vectors_model ON entry_vectors(model);
-    `,
+    `
     },
 ];
 function getCurrentVersion() {
