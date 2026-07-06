@@ -808,4 +808,56 @@ describe('SessionManager', () => {
       expect(ex.map(e => e.metadata.role)).toEqual(['user', 'agent']);
     });
   });
+
+  describe('recentActiveProjects', () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('orders projects by most recent session, excludes Inbox, joins titles', async () => {
+      vi.useFakeTimers();
+      await store.createProject('P0071', { content: 'Alpha — first project' });
+      await store.createProject('P0072', { content: 'Beta — second project' });
+      await ensureInboxProject(store);
+
+      const startAt = async (iso: string, sessionId: string, projectId: string) => {
+        vi.setSystemTime(new Date(iso));
+        await sessions.startProjectSession({
+          sessionId,
+          projectId,
+          agentName: 'a',
+          cwd: '/',
+          harness: 't',
+        });
+      };
+      await startAt('2026-07-01T10:00:00Z', 's-a1', 'P0071');
+      await startAt('2026-07-02T10:00:00Z', 's-b1', 'P0072');
+      await startAt('2026-07-03T10:00:00Z', 's-a2', 'P0071');
+      await startAt('2026-07-04T10:00:00Z', 's-inbox', 'P0000');
+
+      const recents = await store.recentActiveProjects(5);
+      expect(recents.map(r => r.label)).toEqual(['P0071', 'P0072']);
+      expect(recents[0].lastActive.slice(0, 10)).toBe('2026-07-03');
+      expect(recents[0].title).toContain('Alpha');
+    });
+
+    it('respects the limit and returns empty without sessions', async () => {
+      expect(await store.recentActiveProjects(5)).toEqual([]);
+
+      vi.useFakeTimers();
+      for (let i = 1; i <= 3; i++) {
+        await store.createProject(`P008${i}`);
+        vi.setSystemTime(new Date(`2026-07-0${i}T10:00:00Z`));
+        await sessions.startProjectSession({
+          sessionId: `s-${i}`,
+          projectId: `P008${i}`,
+          agentName: 'a',
+          cwd: '/',
+          harness: 't',
+        });
+      }
+      const recents = await store.recentActiveProjects(2);
+      expect(recents.map(r => r.label)).toEqual(['P0083', 'P0082']);
+    });
+  });
 });

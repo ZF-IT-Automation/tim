@@ -49,7 +49,7 @@ function applyRemoteEntry(db, payloadJson, lwwTimestamp, lwwDevice, deleted) {
     const remote = recordFromPayload(entryId, 'entry', deleted ? 'delete' : 'upsert', payloadJson, lwwTimestamp, lwwDevice);
     const existing = db.prepare('SELECT * FROM entries WHERE id = ?').get(entryId);
     if (existing) {
-        const local = recordFromPayload(entryId, 'entry', existing.tombstoned_at ? 'delete' : 'upsert', JSON.stringify(existing), entryLocalLwwTimestamp(existing), 'local', Number(existing.confidence ?? 1));
+        const local = recordFromPayload(entryId, 'entry', existing.tombstoned_at ? 'delete' : 'upsert', JSON.stringify(existing), entryLocalLwwTimestamp(existing), String(existing.lww_device ?? 'local'), Number(existing.confidence ?? 1));
         const { winner } = (0, tim_core_1.resolveLWW)(local, remote);
         if (winner !== remote)
             return false;
@@ -66,8 +66,8 @@ function applyRemoteEntry(db, payloadJson, lwwTimestamp, lwwDevice, deleted) {
     const updatedAt = new Date(lwwTimestamp).toISOString();
     db.prepare(`INSERT OR REPLACE INTO entries
     (id, parent_id, title, content, content_type, depth, confidence, created_at,
-     accessed_at, updated_at, decay_rate, visibility, tags, irrelevant, favorite, tombstoned_at, metadata)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(entry.id, entry.parent_id ?? null, entry.title ?? '', entry.content, entry.content_type, entry.depth, entry.confidence, entry.created_at, entry.accessed_at, updatedAt, entry.decay_rate, entry.visibility, entry.tags, entry.irrelevant, entry.favorite ?? 0, entry.tombstoned_at, coercedMetadata);
+     accessed_at, updated_at, decay_rate, visibility, tags, irrelevant, favorite, tombstoned_at, metadata, lww_device)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(entry.id, entry.parent_id ?? null, entry.title ?? '', entry.content, entry.content_type, entry.depth, entry.confidence, entry.created_at, entry.accessed_at, updatedAt, entry.decay_rate, entry.visibility, entry.tags, entry.irrelevant, entry.favorite ?? 0, entry.tombstoned_at, coercedMetadata, lwwDevice);
     return true;
 }
 function applyRemoteEdge(db, payloadJson, lwwTimestamp, lwwDevice, deleted) {

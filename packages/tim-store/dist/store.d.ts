@@ -25,6 +25,8 @@ export declare function titleSimilarity(a: string, b: string): number;
 export interface TimStoreOptions {
     emitter?: Pick<EventBus, 'emit'>;
     agentId?: string;
+    /** Stable device id for LWW tiebreaks. Default 'local'. */
+    deviceId?: string;
 }
 export interface CreateProjectOptions {
     content?: string;
@@ -80,6 +82,7 @@ export declare class TimStore implements MemoryInterface {
     private db;
     private emitter?;
     private agentId;
+    private deviceId;
     constructor(dbPath: string, options?: TimStoreOptions);
     private emit;
     read(id: string, options?: ReadOptions): Promise<Entry | null>;
@@ -121,6 +124,19 @@ export declare class TimStore implements MemoryInterface {
     }): Promise<Entry[]>;
     /** Get all entries with a given metadata.kind value (no parent filter). */
     getByMetadataKind(kind: string, limit?: number): Promise<Entry[]>;
+    /**
+     * Projects ordered by most recent session activity — used by the
+     * tim_session_start Inbox fallback to offer a binding choice when no
+     * `.tim-project` marker resolved. Groups kind=session entries by their
+     * `project_ref` label and joins the project entry for its title.
+     * The Inbox itself ('P0000' — literal to avoid a session-tree → store
+     * import cycle) is excluded: falling back to it is what triggered the call.
+     */
+    recentActiveProjects(limit?: number): Promise<{
+        label: string;
+        title: string | null;
+        lastActive: string;
+    }[]>;
     /** Return which of the given entry IDs exist in the DB (single IN-query). */
     entryExistsBatch(ids: string[]): Promise<Set<string>>;
     /**

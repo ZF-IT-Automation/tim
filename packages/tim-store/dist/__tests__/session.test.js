@@ -693,5 +693,51 @@ const index_js_1 = require("../index.js");
             (0, vitest_1.expect)(ex.map(e => e.metadata.role)).toEqual(['user', 'agent']);
         });
     });
+    (0, vitest_1.describe)('recentActiveProjects', () => {
+        (0, vitest_1.afterEach)(() => {
+            vitest_1.vi.useRealTimers();
+        });
+        (0, vitest_1.it)('orders projects by most recent session, excludes Inbox, joins titles', async () => {
+            vitest_1.vi.useFakeTimers();
+            await store.createProject('P0071', { content: 'Alpha — first project' });
+            await store.createProject('P0072', { content: 'Beta — second project' });
+            await (0, index_js_1.ensureInboxProject)(store);
+            const startAt = async (iso, sessionId, projectId) => {
+                vitest_1.vi.setSystemTime(new Date(iso));
+                await sessions.startProjectSession({
+                    sessionId,
+                    projectId,
+                    agentName: 'a',
+                    cwd: '/',
+                    harness: 't',
+                });
+            };
+            await startAt('2026-07-01T10:00:00Z', 's-a1', 'P0071');
+            await startAt('2026-07-02T10:00:00Z', 's-b1', 'P0072');
+            await startAt('2026-07-03T10:00:00Z', 's-a2', 'P0071');
+            await startAt('2026-07-04T10:00:00Z', 's-inbox', 'P0000');
+            const recents = await store.recentActiveProjects(5);
+            (0, vitest_1.expect)(recents.map(r => r.label)).toEqual(['P0071', 'P0072']);
+            (0, vitest_1.expect)(recents[0].lastActive.slice(0, 10)).toBe('2026-07-03');
+            (0, vitest_1.expect)(recents[0].title).toContain('Alpha');
+        });
+        (0, vitest_1.it)('respects the limit and returns empty without sessions', async () => {
+            (0, vitest_1.expect)(await store.recentActiveProjects(5)).toEqual([]);
+            vitest_1.vi.useFakeTimers();
+            for (let i = 1; i <= 3; i++) {
+                await store.createProject(`P008${i}`);
+                vitest_1.vi.setSystemTime(new Date(`2026-07-0${i}T10:00:00Z`));
+                await sessions.startProjectSession({
+                    sessionId: `s-${i}`,
+                    projectId: `P008${i}`,
+                    agentName: 'a',
+                    cwd: '/',
+                    harness: 't',
+                });
+            }
+            const recents = await store.recentActiveProjects(2);
+            (0, vitest_1.expect)(recents.map(r => r.label)).toEqual(['P0083', 'P0082']);
+        });
+    });
 });
 //# sourceMappingURL=session.test.js.map

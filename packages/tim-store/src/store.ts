@@ -572,6 +572,40 @@ export class TimStore implements MemoryInterface {
     return rows.map(rowToEntry);
   }
 
+  /**
+   * Projects ordered by most recent session activity — used by the
+   * tim_session_start Inbox fallback to offer a binding choice when no
+   * `.tim-project` marker resolved. Groups kind=session entries by their
+   * `project_ref` label and joins the project entry for its title.
+   * The Inbox itself ('P0000' — literal to avoid a session-tree → store
+   * import cycle) is excluded: falling back to it is what triggered the call.
+   */
+  async recentActiveProjects(
+    limit: number = 5,
+  ): Promise<{ label: string; title: string | null; lastActive: string }[]> {
+    const rows = this.db.prepare(`
+      SELECT sub.label AS label, sub.last_active AS lastActive, p.title AS title
+      FROM (
+        SELECT json_extract(metadata, '$.project_ref') AS label,
+               MAX(created_at) AS last_active
+        FROM entries
+        WHERE json_extract(metadata, '$.kind') = 'session'
+          AND json_extract(metadata, '$.project_ref') IS NOT NULL
+          AND irrelevant = 0
+          AND tombstoned_at IS NULL
+        GROUP BY label
+      ) sub
+      LEFT JOIN entries p
+        ON json_extract(p.metadata, '$.kind') = 'project'
+        AND json_extract(p.metadata, '$.label') = sub.label
+        AND p.tombstoned_at IS NULL
+      WHERE sub.label != 'P0000'
+      ORDER BY sub.last_active DESC
+      LIMIT ?
+    `).all(limit) as { label: string; title: string | null; lastActive: string }[];
+    return rows;
+  }
+
   /** Return which of the given entry IDs exist in the DB (single IN-query). */
   async entryExistsBatch(ids: string[]): Promise<Set<string>> {
     if (ids.length === 0) return new Set();
