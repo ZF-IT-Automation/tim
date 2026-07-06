@@ -7,7 +7,7 @@ exports.edgeLocalLwwTimestamp = edgeLocalLwwTimestamp;
 exports.recordFromPayload = recordFromPayload;
 exports.applyRemoteEntry = applyRemoteEntry;
 exports.applyRemoteEdge = applyRemoteEdge;
-const tim_sync_1 = require("tim-sync");
+const tim_core_1 = require("tim-core");
 const metadata_coerce_js_1 = require("./metadata-coerce.js");
 function getUnackedStaging(db) {
     return db.prepare('SELECT * FROM staging WHERE acked = 0 ORDER BY rowid').all();
@@ -50,7 +50,7 @@ function applyRemoteEntry(db, payloadJson, lwwTimestamp, lwwDevice, deleted) {
     const existing = db.prepare('SELECT * FROM entries WHERE id = ?').get(entryId);
     if (existing) {
         const local = recordFromPayload(entryId, 'entry', existing.tombstoned_at ? 'delete' : 'upsert', JSON.stringify(existing), entryLocalLwwTimestamp(existing), 'local', Number(existing.confidence ?? 1));
-        const { winner } = (0, tim_sync_1.resolveLWW)(local, remote);
+        const { winner } = (0, tim_core_1.resolveLWW)(local, remote);
         if (winner !== remote)
             return false;
     }
@@ -83,7 +83,7 @@ function applyRemoteEdge(db, payloadJson, lwwTimestamp, lwwDevice, deleted) {
     const existing = db.prepare('SELECT * FROM edges WHERE source_id = ? AND target_id = ? AND type = ?').get(edge.source_id, edge.target_id, edge.type);
     if (existing) {
         const local = recordFromPayload(compositeKey, 'edge', 'upsert', JSON.stringify(existing), edgeLocalLwwTimestamp(existing), 'local');
-        const { winner } = (0, tim_sync_1.resolveLWW)(local, remote);
+        const { winner } = (0, tim_core_1.resolveLWW)(local, remote);
         if (winner !== remote)
             return false;
     }

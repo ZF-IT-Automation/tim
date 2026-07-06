@@ -7,11 +7,13 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.TimStore = void 0;
 exports.sanitizeFtsQuery = sanitizeFtsQuery;
+exports.titleSimilarity = titleSimilarity;
+exports.runBenchmark = runBenchmark;
+exports.splitTitleBody = splitTitleBody;
 const better_sqlite3_1 = __importDefault(require("better-sqlite3"));
 const ulid_1 = require("ulid");
 const entry_id_js_1 = require("./entry-id.js");
 const tim_core_1 = require("tim-core");
-const tim_sync_1 = require("tim-sync");
 const schema_js_1 = require("./schema.js");
 const curate_js_1 = require("./curate.js");
 const metadata_coerce_js_1 = require("./metadata-coerce.js");
@@ -19,52 +21,75 @@ const sync_methods_js_1 = require("./sync-methods.js");
 /**
  * Sanitize a user-supplied query string into a safe FTS5 MATCH expression.
  *
- * Problems this guards against (verified empirically against better-sqlite3 FTS5):
- *   1. `task:true` → "no such column: task"   (token:value parsed as column filter)
- *   2. `"foo AND bar"` literal text containing AND is a valid FTS5 operator,
- *      so users searching for "AND" or "OR" as words can collide with FTS5 syntax.
- *   3. Special chars `^ * ( ) " '` in raw input can throw `fts5: syntax error`.
+ * Strategy: each whitespace-separated token is emitted as an FTS5 quoted
+ * string (`"token"`). Inside the quotes FTS5 treats operators (AND/OR/
+ * NOT/NEAR) and punctuation (`. / @ + % # -`) as literal text to
+ * tokenize — the whole blocklist arms race disappears. Column filters
+ * `title:`/`content:`/`tags:` survive as `column:"value"`.
  *
- * Strategy:
- *   - For `token:value` patterns, if `token` matches a real FTS5 column name
- *     (title, content, tags), pass through as-is. Otherwise, split into two
- *     tokens (the bogus "column" becomes a search term).
- *   - Drop FTS5 operator words (AND, OR, NOT, NEAR) case-insensitive.
- *   - Strip quotes/parens/carets/stars, replace with space.
- *   - Re-emit as `token1 token2` (implicit FTS5 AND).
- *   - Return empty string if no safe tokens survive — caller must skip the query.
+ * Trade-off: a user phrase originally quoted across spaces (`"foo bar"`)
+ * degrades to `"foo" "bar"` (AND instead of phrase) — acceptable.
+ * Tokens with no alphanumeric content are dropped (a fully-punctuation
+ * quoted string would match nothing or error).
  */
 function sanitizeFtsQuery(query) {
     if (!query)
         return '';
-    // FTS5 columns defined in schema.ts — these are the ONLY column names
-    // a `token:value` filter is allowed to reference. Anything else is a
-    // crash ("no such column: X").
+    // FTS5 columns defined in schema.ts — the ONLY names a `token:value`
+    // filter may reference. Anything else would crash ("no such column: X").
     const REAL_COLUMNS = new Set(['title', 'content', 'tags']);
-    // Step 1: rewrite each `token:` occurrence.
-    //   - If token is a real FTS5 column (title/content/tags), preserve the
-    //     `token:value` form (pass-through).
-    //   - If token is NOT a real column, split it: keep the token as a
-    //     search term AND keep the value as a search term.
-    //     We do this by replacing the colon with a space, NOT the whole match.
-    let s = query.replace(/([A-Za-z_][A-Za-z0-9_]*):/g, (m, col) => {
-        if (REAL_COLUMNS.has(col.toLowerCase())) {
-            return m; // keep "title:" / "content:" / "tags:" intact
+    const out = [];
+    const quoteTerm = (term) => {
+        // Embedded double quotes would terminate the FTS5 string — strip them.
+        const cleaned = term.replace(/"/g, ' ').trim();
+        // A quoted string with no tokenizable content matches nothing (or errors).
+        if (!/[0-9A-Za-zÀ-￿]/.test(cleaned))
+            return null;
+        return `"${cleaned}"`;
+    };
+    for (const raw of query.split(/\s+/)) {
+        if (!raw)
+            continue;
+        const m = raw.match(/^([A-Za-z_][A-Za-z0-9_]*):(.+)$/);
+        if (m && REAL_COLUMNS.has(m[1].toLowerCase())) {
+            const q = quoteTerm(m[2]);
+            if (q)
+                out.push(`${m[1].toLowerCase()}:${q}`);
+            continue;
         }
-        return col + ' '; // "kind:summary" → "kind summary" (split, don't drop)
-    });
-    // Step 2: drop chars that confuse FTS5 tokenization: " ' ( ) * ^ # -
-    s = s.replace(/["'*()^#~\/-]/g, ' ');
-    // Step 3: split, drop operator words, trim.
-    const tokens = s
-        .split(/\s+/)
-        .map(t => t.trim())
-        .filter(t => t.length > 0)
-        .filter(t => !/^(AND|OR|NOT|NEAR)$/i.test(t));
-    if (tokens.length === 0)
-        return '';
-    // Implicit FTS5 AND — each token joined by space.
-    return tokens.join(' ');
+        if (m) {
+            // Bogus column filter: keep both sides as plain search terms.
+            const a = quoteTerm(m[1]);
+            if (a)
+                out.push(a);
+            const b = quoteTerm(m[2]);
+            if (b)
+                out.push(b);
+            continue;
+        }
+        const q = quoteTerm(raw);
+        if (q)
+            out.push(q);
+    }
+    // Implicit FTS5 AND — quoted terms joined by space.
+    return out.join(' ');
+}
+/**
+ * Jaccard overlap of lowercase word-token sets. 1.0 = same word set.
+ * Single-char tokens are dropped — they are almost always punctuation
+ * noise ("v2", "a") and inflate similarity between unrelated titles.
+ */
+function titleSimilarity(a, b) {
+    const tokens = (s) => new Set(s.toLowerCase().split(/[^0-9a-zà-öø-ÿ]+/).filter(w => w.length > 1));
+    const ta = tokens(a);
+    const tb = tokens(b);
+    if (ta.size === 0 || tb.size === 0)
+        return 0;
+    let intersection = 0;
+    for (const w of ta)
+        if (tb.has(w))
+            intersection++;
+    return intersection / (ta.size + tb.size - intersection);
 }
 class TimStore {
     db;
@@ -320,11 +345,15 @@ class TimStore {
         const sections = options.sections ?? null;
         const children = [];
         let truncated = false;
+        const suppressPatterns = this.loadActiveSuppressPatterns();
         const matchesSection = (entry) => {
             if (!sections?.length)
                 return true;
             const entryLabel = entry.metadata.label;
-            return sections.some(section => section === entry.id || section === entryLabel);
+            const entryTitle = entry.title.toLowerCase();
+            return sections.some(section => section === entry.id ||
+                section === entryLabel ||
+                section.toLowerCase() === entryTitle);
         };
         const loadChildren = (parentId, currentDepth, filterSections, reverse) => {
             if (currentDepth > depth || truncated)
@@ -350,6 +379,8 @@ class TimStore {
                     return;
                 }
                 const child = rowToEntry(row);
+                if (TimStore.matchesSuppressed(suppressPatterns, child))
+                    continue;
                 children.push(child);
                 // Load session subtrees newest-first so the newest sessions survive
                 // budget truncation (Recent-Sessions sort bug).
@@ -966,9 +997,28 @@ class TimStore {
             decay_rate: patch.decayRate ?? existing.decay_rate,
             visibility: patch.visibility ?? existing.visibility,
             tags: patch.tags ? JSON.stringify(patch.tags) : existing.tags,
-            irrelevant: patch.irrelevant ? 1 : existing.irrelevant,
-            tombstoned_at: patch.tombstonedAt ?? existing.tombstoned_at,
-            metadata: patch.metadata ? JSON.stringify(patch.metadata) : existing.metadata,
+            irrelevant: patch.irrelevant === undefined ? existing.irrelevant : (patch.irrelevant ? 1 : 0),
+            tombstoned_at: patch.tombstonedAt === undefined ? existing.tombstoned_at : patch.tombstonedAt,
+            metadata: (() => {
+                if (!patch.metadata)
+                    return existing.metadata;
+                const existingMeta = JSON.parse(existing.metadata || '{}');
+                const patchMeta = JSON.parse(JSON.stringify(patch.metadata));
+                const SYSTEM_FIELDS = ['verified_at', 'provenance'];
+                for (const f of SYSTEM_FIELDS) {
+                    if (existingMeta[f] !== undefined && patchMeta[f] === undefined) {
+                        patchMeta[f] = existingMeta[f];
+                    }
+                }
+                if (typeof existingMeta.task === 'object' && existingMeta.task !== null &&
+                    typeof patchMeta.task === 'object' && patchMeta.task !== null) {
+                    patchMeta.task = {
+                        ...existingMeta.task,
+                        ...patchMeta.task,
+                    };
+                }
+                return JSON.stringify({ ...existingMeta, ...patchMeta });
+            })(),
             accessed_at: now,
             updated_at: now,
         };
@@ -1062,7 +1112,34 @@ class TimStore {
     // ─── Search ────────────────────────────────────────────
     async search(options) {
         const topK = options.topK ?? 10;
-        const fts = await this.searchFts(options.query, topK);
+        const patterns = this.loadActiveSuppressPatterns();
+        const candidates = (await this.searchFts(options.query, topK * 3))
+            .filter(e => !TimStore.matchesSuppressed(patterns, e));
+        let queryVector = null;
+        try {
+            if (process.env.TIM_EMBEDDING_DISABLED !== '1' && candidates.length > 0) {
+                const placeholders = candidates.map(() => '?').join(', ');
+                const hasVectors = this.db.prepare(`
+          SELECT 1 FROM entry_vectors
+          WHERE entry_id IN (${placeholders})
+          LIMIT 1
+        `).get(...candidates.map(e => e.id));
+                if (hasVectors) {
+                    const { EmbeddingModel, FlagEmbedding } = await import('fastembed');
+                    const modelName = process.env.TIM_EMBEDDING_MODEL ?? 'all-MiniLM-L6-v2';
+                    const resolved = modelName === 'all-MiniLM-L6-v2' ? EmbeddingModel.AllMiniLML6V2 : EmbeddingModel.AllMiniLML6V2;
+                    const embedder = await FlagEmbedding.init({ model: resolved });
+                    const batch = await embedder.embed([options.query], 1).next();
+                    if (batch.value?.[0]) {
+                        queryVector = new Float32Array(batch.value[0]);
+                    }
+                }
+            }
+        }
+        catch {
+            // No fastembed — use pure FTS + usage
+        }
+        const fts = await this.rankByHybrid(candidates, queryVector, topK);
         // Labels/aliases live in metadata, not the FTS corpus. Merge a direct project hit.
         // Broader fix: index metadata.label + aliases in fts_entries (migration + triggers).
         const resolved = await this.resolveProjectLabel(options.query);
@@ -1075,16 +1152,81 @@ class TimStore {
           AND tombstoned_at IS NULL
       `).get(resolved.label);
             const proj = row ? rowToEntry(row) : null;
-            if (proj && !fts.some(e => e.id === proj.id)) {
+            if (proj && !TimStore.matchesSuppressed(patterns, proj) && !fts.some(e => e.id === proj.id)) {
                 return [proj, ...fts].slice(0, topK);
             }
         }
         return fts;
     }
+    /**
+     * Deterministic usage boost on top of FTS order: an entry's score is its
+     * FTS position minus 2·log2(1 + referencedCount); ascending. Referenced
+     * 1× → +2 positions, 3× → +4, 7× → +6. No wall-clock, no randomness.
+     */
+    rankByUsage(entries, topK) {
+        if (process.env.TIM_USAGE_RANKING === '0' || entries.length <= 1) {
+            return entries.slice(0, topK);
+        }
+        const counts = this.getReferenceCounts(entries.map(e => e.id));
+        return entries
+            .map((e, i) => ({ e, score: i - 2 * Math.log2(1 + (counts.get(e.id) ?? 0)) }))
+            .sort((a, b) => a.score - b.score)
+            .map(x => x.e)
+            .slice(0, topK);
+    }
+    /**
+     * Hybrid re-rank combining three signals:
+     *   1. FTS5 position (the raw order)
+     *   2. Cosine similarity (embedding distance to query vector)
+     *   3. Graph/usage/staleness boost (from Plan 8/10)
+     */
+    async rankByHybrid(entries, queryVector, topK) {
+        if (process.env.TIM_EMBEDDING_DISABLED === '1' || !queryVector) {
+            return this.rankByUsage(entries, topK);
+        }
+        const raw = (process.env.TIM_HYBRID_WEIGHTS ?? '1.0,2.0,0.5').split(',');
+        const wFts = Number(raw[0]) || 1;
+        const wEmbed = Number(raw[1]) || 2;
+        const wGraph = Number(raw[2]) || 0.5;
+        const days = (0, tim_core_1.staleDays)();
+        const counts = this.getReferenceCounts(entries.map(e => e.id));
+        if (entries.length === 0)
+            return [];
+        const vecRows = this.db.prepare(`
+      SELECT entry_id, vector, model FROM entry_vectors
+      WHERE entry_id IN (${entries.map(() => '?').join(', ')})
+    `).all(...entries.map(e => e.id));
+        if (vecRows.length === 0) {
+            return this.rankByUsage(entries, topK);
+        }
+        const vecMap = new Map();
+        for (const row of vecRows) {
+            vecMap.set(row.entry_id, new Float32Array(row.vector.buffer, row.vector.byteOffset, row.vector.byteLength / 4));
+        }
+        const scored = entries.map((e, i) => {
+            let score = i * wFts;
+            const vec = vecMap.get(e.id);
+            if (vec) {
+                const similarity = cosineSimilarity(queryVector, vec);
+                score -= similarity * wEmbed;
+            }
+            const refCount = counts.get(e.id) ?? 0;
+            const stale = (0, tim_core_1.isStale)(e, days) ? 1 : 0;
+            score -= (refCount * 0.5 - stale * 0.3) * wGraph;
+            return { e, score };
+        });
+        return scored
+            .sort((a, b) => a.score - b.score)
+            .map(x => x.e)
+            .slice(0, topK);
+    }
     async searchFts(query, limit = 10) {
-        // Sanitize FTS5 query — strip operator words, escape special chars, AND-join tokens.
+        // Sanitize FTS5 query — quote tokens; drop quoted FTS operator literals before MATCH.
         // See sanitizeFtsQuery() in store-utils for rationale.
-        const sanitized = sanitizeFtsQuery(query);
+        const sanitized = sanitizeFtsQuery(query)
+            .replace(/"(?:AND|OR|NOT|NEAR)"/gi, '')
+            .replace(/\s+/g, ' ')
+            .trim();
         if (!sanitized)
             return [];
         const rows = this.db.prepare(`
@@ -1097,6 +1239,129 @@ class TimStore {
       LIMIT ?
     `).all(sanitized, limit);
         return rows.map(rowToEntry);
+    }
+    /**
+     * Near-duplicate candidates for a title, for the tim_write dedup gate.
+     * FTS narrows to plausible candidates; Jaccard token overlap on the
+     * title decides. Suppressed/irrelevant/tombstoned entries are already
+     * excluded by searchFts.
+     */
+    async findSimilar(title, opts = {}) {
+        const threshold = opts.threshold ?? 0.6;
+        // FTS5 AND-matches every token — drop version suffixes (v2, v10) that
+        // Jaccard scoring tolerates but would exclude otherwise-good candidates.
+        const ftsQuery = title
+            .replace(/\bv\d+\b/gi, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+        const candidates = await this.searchFts(ftsQuery || title, 25);
+        const hits = [];
+        for (const c of candidates) {
+            if (opts.projectLabel && this.getProjectLabel(c.id) !== opts.projectLabel)
+                continue;
+            const similarity = titleSimilarity(title, c.title);
+            if (similarity >= threshold) {
+                hits.push({ id: c.id, title: c.title, similarity: Number(similarity.toFixed(2)) });
+            }
+        }
+        return hits.sort((x, y) => y.similarity - x.similarity).slice(0, opts.limit ?? 5);
+    }
+    /**
+     * Negative-memory lookup for the tim_guard pre-action check: FTS over
+     * the query, filtered to failure knowledge (kind error/learning, or
+     * #error/#learning tagged). Over-fetches because most FTS hits are not
+     * failures. Plain-language actions are split into keywords (OR semantics)
+     * because FTS5 AND-matching every token is too strict for guard queries.
+     */
+    async searchFailures(query, opts = {}) {
+        const limit = opts.limit ?? 5;
+        const STOP = new Set([
+            'the', 'and', 'for', 'with', 'from', 'this', 'that', 'via', 'into',
+            'your',
+            // German function words — actions often mix DE/EN (Finding 2 established DE matters)
+            'der', 'die', 'das', 'und', 'mit', 'von', 'für', 'auf', 'ist', 'nicht',
+        ]);
+        const keywords = query
+            .toLowerCase()
+            .split(/[^\p{L}\p{N}]+/u)
+            .filter(w => w.length >= 3 && !STOP.has(w));
+        const terms = keywords.length > 0 ? keywords : [query.trim()].filter(Boolean);
+        const seen = new Set();
+        const hits = [];
+        for (const term of terms) {
+            for (const e of await this.searchFts(term, 50)) {
+                if (seen.has(e.id))
+                    continue;
+                seen.add(e.id);
+                hits.push(e);
+            }
+        }
+        const failures = hits.filter(e => {
+            const kind = typeof e.metadata.kind === 'string' ? e.metadata.kind : '';
+            return kind === 'error' || kind === 'learning'
+                || e.tags.includes('#error') || e.tags.includes('#learning');
+        });
+        if (!opts.projectLabel)
+            return failures.slice(0, limit);
+        return failures
+            .filter(e => this.getProjectLabel(e.id) === opts.projectLabel)
+            .slice(0, limit);
+    }
+    /**
+     * All entries in the project subtree touched since the cutoff, for the
+     * tim_delta session briefing supplement. Tombstoned entries appear as
+     * "deleted" (their reads are otherwise filtered). Capped at 500 —
+     * beyond that, a delta is no longer a briefing.
+     */
+    async getChangedSince(projectId, sinceIso) {
+        const rows = this.db.prepare(`
+      WITH RECURSIVE sub(id) AS (
+        SELECT id FROM entries WHERE id = ?
+        UNION ALL
+        SELECT e.id FROM entries e JOIN sub ON e.parent_id = sub.id
+      )
+      SELECT e.* FROM entries e
+      WHERE e.id IN (SELECT id FROM sub)
+        AND e.id != ?
+        AND (
+          e.created_at >= ?
+          OR e.updated_at >= ?
+          OR (e.tombstoned_at IS NOT NULL AND e.tombstoned_at >= ?)
+        )
+      ORDER BY e.updated_at DESC, e.rowid DESC
+      LIMIT 500
+    `).all(projectId, projectId, sinceIso, sinceIso, sinceIso);
+        const created = [];
+        const updated = [];
+        const deleted = [];
+        for (const row of rows) {
+            const entry = rowToEntry(row);
+            if (row.tombstoned_at)
+                deleted.push(entry);
+            else if (row.created_at >= sinceIso)
+                created.push(entry);
+            else
+                updated.push(entry);
+        }
+        return { created, updated, deleted };
+    }
+    /** Newest session entry in the project subtree, excluding the current session. */
+    async getPreviousSession(projectId, excludeSessionId) {
+        const row = this.db.prepare(`
+      WITH RECURSIVE sub(id) AS (
+        SELECT id FROM entries WHERE id = ?
+        UNION ALL
+        SELECT e.id FROM entries e JOIN sub ON e.parent_id = sub.id
+      )
+      SELECT e.* FROM entries e
+      WHERE e.id IN (SELECT id FROM sub)
+        AND json_extract(e.metadata, '$.kind') = 'session'
+        AND e.tombstoned_at IS NULL
+        AND e.id != COALESCE(?, '')
+      ORDER BY e.created_at DESC, e.rowid DESC
+      LIMIT 1
+    `).get(projectId, excludeSessionId ?? null);
+        return row ? rowToEntry(row) : null;
     }
     // ─── Edges ─────────────────────────────────────────────
     async link(sourceId, targetId, type, weight = 1.0, metadata = {}) {
@@ -1248,7 +1513,7 @@ class TimStore {
                         const existing = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(payload.id);
                         if (existing) {
                             const local = (0, sync_methods_js_1.recordFromPayload)(payload.id, 'entry', existing.tombstoned_at ? 'delete' : 'upsert', JSON.stringify(existing), (0, sync_methods_js_1.entryLocalLwwTimestamp)(existing), 'local', Number(existing.confidence ?? 1));
-                            const { winner } = (0, tim_sync_1.resolveLWW)(local, record);
+                            const { winner } = (0, tim_core_1.resolveLWW)(local, record);
                             if (winner !== record)
                                 continue;
                         }
@@ -1259,7 +1524,7 @@ class TimStore {
                         const existing = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(entry.id);
                         if (existing) {
                             const local = (0, sync_methods_js_1.recordFromPayload)(entry.id, 'entry', existing.tombstoned_at ? 'delete' : 'upsert', JSON.stringify(existing), (0, sync_methods_js_1.entryLocalLwwTimestamp)(existing), 'local', Number(existing.confidence ?? 1));
-                            const { winner } = (0, tim_sync_1.resolveLWW)(local, record);
+                            const { winner } = (0, tim_core_1.resolveLWW)(local, record);
                             if (winner !== record)
                                 continue;
                         }
@@ -1274,7 +1539,7 @@ class TimStore {
                     if (record.operation === 'delete') {
                         if (existing) {
                             const local = (0, sync_methods_js_1.recordFromPayload)(compositeKey, 'edge', 'upsert', JSON.stringify(existing), (0, sync_methods_js_1.edgeLocalLwwTimestamp)(existing), 'local');
-                            const { winner } = (0, tim_sync_1.resolveLWW)(local, record);
+                            const { winner } = (0, tim_core_1.resolveLWW)(local, record);
                             if (winner !== record)
                                 continue;
                         }
@@ -1283,7 +1548,7 @@ class TimStore {
                     else {
                         if (existing) {
                             const local = (0, sync_methods_js_1.recordFromPayload)(compositeKey, 'edge', 'upsert', JSON.stringify(existing), (0, sync_methods_js_1.edgeLocalLwwTimestamp)(existing), 'local');
-                            const { winner } = (0, tim_sync_1.resolveLWW)(local, record);
+                            const { winner } = (0, tim_core_1.resolveLWW)(local, record);
                             if (winner !== record)
                                 continue;
                         }
@@ -1303,6 +1568,85 @@ class TimStore {
         const result = this.db.prepare('DELETE FROM staging WHERE acked = 1 AND lww_timestamp < ?').run(threshold);
         return result.changes;
     }
+    // ─── Retrieval usage feedback (device-local, never synced) ─────
+    usageGcDone = false;
+    /** Record that these entries were surfaced to the agent (read or search hit). */
+    recordRead(entryIds, sessionId) {
+        if (entryIds.length === 0)
+            return;
+        // Opportunistic GC, once per process: usage older than 180 days is noise.
+        if (!this.usageGcDone) {
+            this.usageGcDone = true;
+            const cutoff = new Date(Date.now() - 180 * 86400_000).toISOString();
+            this.db.prepare('DELETE FROM entry_usage WHERE read_at < ?').run(cutoff);
+        }
+        const now = new Date().toISOString();
+        const stmt = this.db.prepare('INSERT INTO entry_usage (entry_id, session_id, read_at) VALUES (?, ?, ?)');
+        this.db.transaction(() => {
+            for (const id of new Set(entryIds))
+                stmt.run(id, sessionId, now);
+        })();
+    }
+    /**
+     * Mark previously-read entries as actually used (linked, updated, or
+     * cited in a later write). Only flips rows of the same session — a
+     * reference without a prior read in that session is not a retrieval win.
+     */
+    markReferenced(entryIds, sessionId) {
+        if (entryIds.length === 0 || !sessionId)
+            return 0;
+        const unique = [...new Set(entryIds)];
+        const placeholders = unique.map(() => '?').join(', ');
+        const info = this.db.prepare(`
+      UPDATE entry_usage SET referenced = 1
+      WHERE session_id = ? AND referenced = 0 AND entry_id IN (${placeholders})
+    `).run(sessionId, ...unique);
+        return info.changes;
+    }
+    getSessionReadIds(sessionId) {
+        const rows = this.db.prepare('SELECT DISTINCT entry_id FROM entry_usage WHERE session_id = ?').all(sessionId);
+        return rows.map(r => r.entry_id);
+    }
+    getReferenceCounts(entryIds) {
+        if (entryIds.length === 0)
+            return new Map();
+        const unique = [...new Set(entryIds)];
+        const placeholders = unique.map(() => '?').join(', ');
+        const rows = this.db.prepare(`
+      SELECT entry_id, COUNT(DISTINCT session_id) AS c FROM entry_usage
+      WHERE referenced = 1 AND entry_id IN (${placeholders})
+      GROUP BY entry_id
+    `).all(...unique);
+        return new Map(rows.map(r => [r.entry_id, r.c]));
+    }
+    // ─── Embedding vectors (device-local, never synced) ─────
+    /**
+     * Entries that need embedding (no vector yet, newest content first).
+     * Schema kinds (sessions, sections, …) are skipped — they don't need
+     * semantic search.
+     */
+    async getUnembedded(count) {
+        const scopesKinds = [...tim_core_1.SCHEMA_KINDS].map(() => '?').join(', ');
+        const rows = this.db.prepare(`
+      SELECT e.* FROM entries e
+      LEFT JOIN entry_vectors v ON v.entry_id = e.id
+      WHERE v.entry_id IS NULL
+        AND e.tombstoned_at IS NULL
+        AND e.irrelevant = 0
+        AND (json_extract(e.metadata, '$.kind') IS NULL
+             OR json_extract(e.metadata, '$.kind') NOT IN (${scopesKinds}))
+      ORDER BY e.updated_at DESC, e.rowid DESC
+      LIMIT ?
+    `).all(...tim_core_1.SCHEMA_KINDS, count);
+        return rows.map(rowToEntry);
+    }
+    /** Store an embedding vector for an entry. Upserts — second call replaces. */
+    setVectors(entryId, vector, model) {
+        const blob = Buffer.from(vector.buffer, vector.byteOffset, vector.byteLength);
+        this.db.prepare(`INSERT INTO entry_vectors (entry_id, model, vector)
+       VALUES (?, ?, ?)
+       ON CONFLICT(entry_id) DO UPDATE SET model = excluded.model, vector = excluded.vector`).run(entryId, model, blob);
+    }
     // ─── Health ────────────────────────────────────────────
     async health() {
         const issues = [];
@@ -1317,13 +1661,18 @@ class TimStore {
         if (brokenLinks.count > 0) {
             issues.push(`${brokenLinks.count} broken links`);
         }
-        // Orphan entries: no edges, no children, not root
+        // Orphan entries: live entries whose parent_id references a missing or
+        // tombstoned parent. Leaves without edges are normal tree nodes, NOT
+        // orphans — the old metric counted those and produced numbers larger
+        // than the entry count.
         const orphans = this.db.prepare(`
       SELECT COUNT(*) as count FROM entries e
-      WHERE e.parent_id IS NOT NULL
-        AND e.id NOT IN (SELECT DISTINCT parent_id FROM entries WHERE parent_id IS NOT NULL)
-        AND e.id NOT IN (SELECT source_id FROM edges)
-        AND e.id NOT IN (SELECT target_id FROM edges)
+      WHERE e.tombstoned_at IS NULL
+        AND e.parent_id IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM entries p
+          WHERE p.id = e.parent_id AND p.tombstoned_at IS NULL
+        )
     `).get();
         if (orphans.count > 0) {
             issues.push(`${orphans.count} orphan entries`);
@@ -1340,12 +1689,32 @@ class TimStore {
         // Counts
         const totalEntries = this.db.prepare('SELECT COUNT(*) as count FROM entries WHERE irrelevant = 0').get().count;
         const totalEdges = this.db.prepare('SELECT COUNT(*) as count FROM edges').get().count;
+        // Stale knowledge: non-schema entries not verified/edited within the
+        // threshold. Schema entries (sessions, sections, …) are structure and
+        // don't go stale. Day count uses Math.floor — same as tim-core isStale().
+        const threshold = (0, tim_core_1.staleDays)();
+        const kindList = [...tim_core_1.SCHEMA_KINDS].map(() => '?').join(', ');
+        const stale = this.db.prepare(`
+      SELECT COUNT(*) as count FROM entries
+      WHERE irrelevant = 0 AND tombstoned_at IS NULL
+        AND (json_extract(metadata, '$.kind') IS NULL
+             OR json_extract(metadata, '$.kind') NOT IN (${kindList}))
+        AND CAST(
+          (strftime('%s','now') - strftime('%s', COALESCE(
+            json_extract(metadata, '$.verified_at'),
+            COALESCE(NULLIF(updated_at, ''), created_at)
+          ))) / 86400.0 AS INTEGER) > ?
+    `).get(...tim_core_1.SCHEMA_KINDS, threshold);
+        if (stale.count > 0) {
+            issues.push(`${stale.count} stale entries (older than ${threshold}d, unverified)`);
+        }
         return {
             brokenLinks: brokenLinks.count,
             orphanEntries: orphans.count,
             ftsIntegrity: ftsOk,
             totalEntries,
             totalEdges,
+            staleEntries: stale.count,
             issues,
         };
     }
@@ -1480,6 +1849,38 @@ class TimStore {
             byKind: byKindRows,
         };
     }
+    /**
+     * Re-confirm entries as still valid without editing them. Stamps
+     * metadata.verified_at and bumps updated_at (a verification is a
+     * meaningful, syncable change — the staging upsert carries it to
+     * other devices). Staleness elsewhere is verified_at ?? updated_at.
+     */
+    async touchVerified(ids) {
+        const now = new Date().toISOString();
+        const timestamp = Date.now();
+        const verified = [];
+        const missing = [];
+        this.db.transaction(() => {
+            for (const id of [...new Set(ids)]) {
+                const existing = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(id);
+                if (!existing || existing.tombstoned_at) {
+                    missing.push(id);
+                    continue;
+                }
+                const metadata = JSON.stringify({
+                    ...JSON.parse(existing.metadata || '{}'),
+                    verified_at: now,
+                });
+                const updated = { ...existing, metadata, accessed_at: now, updated_at: now };
+                this.db.prepare('UPDATE entries SET metadata = ?, accessed_at = ?, updated_at = ? WHERE id = ?').run(metadata, now, now, id);
+                this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
+          lww_timestamp, lww_device, lww_confidence)
+          VALUES (?, 'entry', 'upsert', ?, ?, 'local', ?)`).run(id, JSON.stringify(updated), timestamp, existing.confidence);
+                verified.push(id);
+            }
+        })();
+        return { verified, missing };
+    }
     // ─── Suppression ───────────────────────────────────────
     async suppress(pattern, reason, ttl) {
         const now = new Date().toISOString();
@@ -1501,6 +1902,18 @@ class TimStore {
         const patterns = this.db.prepare('SELECT pattern FROM suppressed WHERE expires_at IS NULL OR expires_at > ?').all(now);
         return patterns.some(p => content.toLowerCase().includes(p.pattern.toLowerCase()));
     }
+    /** Active (non-expired) suppress patterns, lowercased. Loaded once per retrieval call. */
+    loadActiveSuppressPatterns() {
+        const now = new Date().toISOString();
+        const rows = this.db.prepare('SELECT pattern FROM suppressed WHERE expires_at IS NULL OR expires_at > ?').all(now);
+        return rows.map(r => r.pattern.toLowerCase());
+    }
+    static matchesSuppressed(patterns, entry) {
+        if (patterns.length === 0)
+            return false;
+        const text = `${entry.title}\n${entry.content}`.toLowerCase();
+        return patterns.some(p => text.includes(p));
+    }
     async runDecay(options) {
         const exclude = new Set(options.exclude ?? []);
         const rows = this.db.prepare(`
@@ -1521,6 +1934,30 @@ class TimStore {
     }
 }
 exports.TimStore = TimStore;
+async function runBenchmark(store, queries) {
+    const results = [];
+    for (const q of queries) {
+        const hits = await store.search({ query: q.query, topK: 10 });
+        const hitIds = hits.map(e => e.id);
+        const found = q.expectedIds.filter(id => hitIds.includes(id));
+        const missing = q.expectedIds.filter(id => !hitIds.includes(id));
+        const top3 = hitIds.slice(0, 3);
+        const relevantTop3 = q.expectedIds.filter(id => top3.includes(id));
+        const precisionAt3 = top3.length > 0 ? relevantTop3.length / top3.length : 0;
+        const top5 = hitIds.slice(0, 5);
+        const relevantTop5 = q.expectedIds.filter(id => top5.includes(id));
+        const recallAt5 = q.expectedIds.length > 0 ? relevantTop5.length / q.expectedIds.length : 1;
+        let mrr = 0;
+        for (let i = 0; i < hitIds.length; i++) {
+            if (q.expectedIds.includes(hitIds[i])) {
+                mrr = 1 / (i + 1);
+                break;
+            }
+        }
+        results.push({ query: q.query, precisionAt3, recallAt5, mrr, found, missing });
+    }
+    return results;
+}
 // ─── Row → Domain Mappers ───────────────────────────────
 function normalizeProjectAliases(aliases) {
     if (!aliases?.length)
@@ -1543,6 +1980,20 @@ function splitTitleBody(content, explicitTitle) {
         return { title: content.trim(), body: '' };
     return { title: content.slice(0, nl).trim(), body: content.slice(nl + 1).trim() };
 }
+/** Cosine similarity between two same-length vectors. Range: [-1, 1]. */
+function cosineSimilarity(a, b) {
+    let dot = 0;
+    let normA = 0;
+    let normB = 0;
+    const len = Math.min(a.length, b.length);
+    for (let i = 0; i < len; i++) {
+        dot += a[i] * b[i];
+        normA += a[i] * a[i];
+        normB += b[i] * b[i];
+    }
+    const denom = Math.sqrt(normA) * Math.sqrt(normB);
+    return denom === 0 ? 0 : dot / denom;
+}
 function rowToEntry(row) {
     return {
         id: row.id,
@@ -1554,6 +2005,7 @@ function rowToEntry(row) {
         confidence: row.confidence,
         createdAt: row.created_at,
         accessedAt: row.accessed_at,
+        updatedAt: row.updated_at,
         decayRate: row.decay_rate,
         visibility: row.visibility,
         tags: JSON.parse(row.tags),

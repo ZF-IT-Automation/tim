@@ -1,5 +1,3 @@
-export { migrateHmemToTim, verifyHmemFile } from './migrate.js';
-export type { MigrationReport } from './migrate.js';
 export { tim_export, exportToHmem, exportToMarkdown } from './export.js';
 export type { ExportOptions, HmemExportResult } from './export.js';
 export { tim_import, labelFromMetadata } from './import.js';

@@ -44,6 +44,7 @@ const snapshot_js_1 = require("./snapshot.js");
 const restore_js_1 = require("./restore.js");
 const statusline_js_1 = require("./statusline.js");
 const record_commit_js_1 = require("./record-commit.js");
+const new_project_js_1 = require("./new-project.js");
 const hermes_statusline_install_js_1 = require("./hermes-statusline-install.js");
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
@@ -478,6 +479,9 @@ async function main() {
         case 'bind-project':
             await cmdBindProject(rest);
             break;
+        case 'new-project':
+            await (0, new_project_js_1.cmdNewProject)(rest);
+            break;
         case 'record-commit':
             await (0, record_commit_js_1.cmdRecordCommit)(rest);
             break;
@@ -552,6 +556,7 @@ Commands:
   resolve-project       Print bound project from nearest .tim-project (--cwd, --walk-up, --format label|json|directive)
   resolve-session       Print project_ref for a TIM session (--session, --format label|directive|json)
   bind-project          Write/refresh .tim-project for a project (--label, --cwd, --session)
+  new-project           Create a new TIM project + bind to dir (-p <path> -n <name> [--no-git] [--confirm])
   record-commit         Record git commit to project Commits section (--cwd, --hash, --message, --diff)
   hook session-start    Start a session (--session, --agent, --cwd, --harness)
   hook session-end      End a session and run checkpoint (--session)

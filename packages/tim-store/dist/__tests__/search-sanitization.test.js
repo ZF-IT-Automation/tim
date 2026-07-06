@@ -1,6 +1,10 @@
 "use strict";
-// TIM Store — FTS5 query sanitization tests (BUG 1)
-// Regression tests: searchFts must not crash on FTS5 operators or column-filter notation.
+// TIM Store — FTS5 query sanitization tests (Plan 1, Task 3)
+//
+// Strategy: each whitespace-separated token is emitted as an FTS5 quoted
+// string ("token"). Operators (AND/OR/NOT/NEAR) and punctuation (`. / @
+// + % # -`) become literal inside quotes. Real column filters
+// (title/content/tags) survive as `column:"value"`.
 Object.defineProperty(exports, "__esModule", { value: true });
 const vitest_1 = require("vitest");
 const store_js_1 = require("../store.js");
@@ -11,59 +15,38 @@ let store;
 (0, vitest_1.afterEach)(() => {
     store.close();
 });
-(0, vitest_1.describe)('sanitizeFtsQuery (BUG 1)', () => {
-    (0, vitest_1.it)('strips FTS5 operator words (AND, OR, NOT, NEAR) case-insensitive', () => {
-        (0, vitest_1.expect)((0, store_js_1.sanitizeFtsQuery)('foo AND bar')).toBe('foo bar');
-        (0, vitest_1.expect)((0, store_js_1.sanitizeFtsQuery)('foo and bar')).toBe('foo bar');
-        (0, vitest_1.expect)((0, store_js_1.sanitizeFtsQuery)('foo OR bar')).toBe('foo bar');
-        (0, vitest_1.expect)((0, store_js_1.sanitizeFtsQuery)('foo NOT bar')).toBe('foo bar');
-        (0, vitest_1.expect)((0, store_js_1.sanitizeFtsQuery)('foo NEAR bar')).toBe('foo bar');
-        (0, vitest_1.expect)((0, store_js_1.sanitizeFtsQuery)('AND OR NOT NEAR')).toBe(''); // all stripped
+(0, vitest_1.describe)('sanitizeFtsQuery (quoting strategy)', () => {
+    (0, vitest_1.it)('quotes plain tokens', () => {
+        (0, vitest_1.expect)((0, store_js_1.sanitizeFtsQuery)('hello world')).toBe('"hello" "world"');
     });
-    (0, vitest_1.it)('escapes column-filter colon (task:true → task true)', () => {
-        // This is the BUG 1 crash: FTS5 parses "task:true" as column filter.
-        // Sanitized result must NOT contain a colon.
-        (0, vitest_1.expect)((0, store_js_1.sanitizeFtsQuery)('task:true')).toBe('task true');
-        (0, vitest_1.expect)((0, store_js_1.sanitizeFtsQuery)('kind:summary')).toBe('kind summary');
-        (0, vitest_1.expect)((0, store_js_1.sanitizeFtsQuery)('a:1')).toBe('a 1');
-        // tag:#important → colon becomes space, # is allowed in tokens, FTS5 tokenizes it as 'tag' + 'important'
-        (0, vitest_1.expect)((0, store_js_1.sanitizeFtsQuery)('tag:#important')).toBe('tag #important');
+    (0, vitest_1.it)('handles dots, slashes, plus, at, percent without crashing FTS5', () => {
+        (0, vitest_1.expect)((0, store_js_1.sanitizeFtsQuery)('store.ts')).toBe('"store.ts"');
+        (0, vitest_1.expect)((0, store_js_1.sanitizeFtsQuery)('src/store.ts')).toBe('"src/store.ts"');
+        (0, vitest_1.expect)((0, store_js_1.sanitizeFtsQuery)('C++')).toBe('"C++"');
+        (0, vitest_1.expect)((0, store_js_1.sanitizeFtsQuery)('user@example.com')).toBe('"user@example.com"');
+        (0, vitest_1.expect)((0, store_js_1.sanitizeFtsQuery)('100%')).toBe('"100%"');
     });
-    (0, vitest_1.it)('strips special chars that break FTS5 tokenization', () => {
-        (0, vitest_1.expect)((0, store_js_1.sanitizeFtsQuery)('"hello"')).toBe('hello');
-        (0, vitest_1.expect)((0, store_js_1.sanitizeFtsQuery)('(foo)')).toBe('foo');
-        (0, vitest_1.expect)((0, store_js_1.sanitizeFtsQuery)('foo*')).toBe('foo');
-        // ^ is stripped (space), so "foo^bar" becomes two safe tokens
-        (0, vitest_1.expect)((0, store_js_1.sanitizeFtsQuery)('foo^bar')).toBe('foo bar');
-        // Apostrophe stripped → "don" and "t" (space-separated, both safe tokens)
-        (0, vitest_1.expect)((0, store_js_1.sanitizeFtsQuery)("don't")).toBe('don t');
+    (0, vitest_1.it)('keeps real column filters, quotes the value', () => {
+        (0, vitest_1.expect)((0, store_js_1.sanitizeFtsQuery)('title:fix')).toBe('title:"fix"');
+        (0, vitest_1.expect)((0, store_js_1.sanitizeFtsQuery)('content:store.ts')).toBe('content:"store.ts"');
     });
-    (0, vitest_1.it)('handles empty / whitespace-only / operator-only inputs', () => {
+    (0, vitest_1.it)('splits bogus column filters into two terms', () => {
+        (0, vitest_1.expect)((0, store_js_1.sanitizeFtsQuery)('kind:summary')).toBe('"kind" "summary"');
+        (0, vitest_1.expect)((0, store_js_1.sanitizeFtsQuery)('task:true')).toBe('"task" "true"');
+    });
+    (0, vitest_1.it)('treats operator words as literal terms (quoted)', () => {
+        (0, vitest_1.expect)((0, store_js_1.sanitizeFtsQuery)('foo AND bar')).toBe('"foo" "AND" "bar"');
+    });
+    (0, vitest_1.it)('strips embedded double quotes', () => {
+        (0, vitest_1.expect)((0, store_js_1.sanitizeFtsQuery)('say "hello"')).toBe('"say" "hello"');
+    });
+    (0, vitest_1.it)('drops tokens with no alphanumeric content, returns empty for pure noise', () => {
+        (0, vitest_1.expect)((0, store_js_1.sanitizeFtsQuery)('--- *** ^^')).toBe('');
         (0, vitest_1.expect)((0, store_js_1.sanitizeFtsQuery)('')).toBe('');
-        (0, vitest_1.expect)((0, store_js_1.sanitizeFtsQuery)('   ')).toBe('');
-        (0, vitest_1.expect)((0, store_js_1.sanitizeFtsQuery)('AND')).toBe('');
-        (0, vitest_1.expect)((0, store_js_1.sanitizeFtsQuery)('   AND OR   ')).toBe('');
-    });
-    (0, vitest_1.it)('preserves legitimate FTS5 column filters (title:Doc passes through)', () => {
-        // title/content/tags are the real FTS5 column names — these colons
-        // must be preserved so the column-filter still works.
-        (0, vitest_1.expect)((0, store_js_1.sanitizeFtsQuery)('title:Doc')).toBe('title:Doc');
-        (0, vitest_1.expect)((0, store_js_1.sanitizeFtsQuery)('content:hello')).toBe('content:hello');
-        (0, vitest_1.expect)((0, store_js_1.sanitizeFtsQuery)('tags:important')).toBe('tags:important');
-    });
-    (0, vitest_1.it)('strips bogus "column" filters but keeps the words as tokens', () => {
-        // kind/summary/task/a are NOT real FTS5 columns — sanitizer must
-        // split them into two safe tokens.
-        (0, vitest_1.expect)((0, store_js_1.sanitizeFtsQuery)('kind:summary')).toBe('kind summary');
-        (0, vitest_1.expect)((0, store_js_1.sanitizeFtsQuery)('task:true')).toBe('task true');
-        (0, vitest_1.expect)((0, store_js_1.sanitizeFtsQuery)('a:1')).toBe('a 1');
     });
 });
-(0, vitest_1.describe)('searchFts resilience (BUG 1)', () => {
-    // Seed entries so we can prove the search returns results, not just "no crash".
+(0, vitest_1.describe)('searchFts resilience (quoting strategy)', () => {
     (0, vitest_1.beforeEach)(async () => {
-        // store.write(title, opts) — content goes via the \n separator in the title arg
-        // OR via update(). Use the \n form to seed title+content in one call.
         await store.write('Task management notes\nA list of tasks for the project.', {
             tags: ['#task', '#note'],
         });
@@ -75,19 +58,12 @@ let store;
         });
     });
     (0, vitest_1.it)('does not crash on FTS5 operator words in query', async () => {
-        // "foo AND bar" used to crash. Now: AND stripped, search runs on tokens.
         const results = await store.searchFts('foo AND bar', 10);
         (0, vitest_1.expect)(Array.isArray(results)).toBe(true);
     });
     (0, vitest_1.it)('does not crash on column-filter notation (task:true)', async () => {
-        // This was the BUG 1 crash: "no such column: task".
-        // Sanitized to "task true" — but "true" isn't in our seed docs, so this
-        // returns 0 results. What matters: no crash, no "no such column" error.
-        // Use the "AND" form (BUG 1.1) where BOTH tokens exist in the doc:
         const results = await store.searchFts('task:true', 10);
         (0, vitest_1.expect)(Array.isArray(results)).toBe(true);
-        // 0 results is fine — the bug was the crash, not empty results.
-        // Verify a no-crash with a known-good multi-token sanitized query:
         const good = await store.searchFts('task AND notes', 10);
         (0, vitest_1.expect)(good.length).toBeGreaterThan(0);
         (0, vitest_1.expect)(good.map(r => r.title)).toContain('Task management notes');
@@ -98,8 +74,6 @@ let store;
         await (0, vitest_1.expect)(store.searchFts('foo NOT bar', 10)).resolves.toBeDefined();
     });
     (0, vitest_1.it)('does not crash on FTS5 column name in query (kind:summary)', async () => {
-        // "kind:summary" triggers "no such column: kind" pre-fix.
-        // Sanitized to "kind summary" → both tokens searched literally.
         const results = await store.searchFts('kind:summary', 10);
         (0, vitest_1.expect)(Array.isArray(results)).toBe(true);
     });
@@ -108,15 +82,31 @@ let store;
         await (0, vitest_1.expect)(store.searchFts('(foo)', 10)).resolves.toBeDefined();
         await (0, vitest_1.expect)(store.searchFts('foo^bar', 10)).resolves.toBeDefined();
     });
+    (0, vitest_1.it)('does not crash on everyday tokens with dots, slashes, @, %, +', async () => {
+        // Regression: pre-fix these all threw "fts5: syntax error"
+        await (0, vitest_1.expect)(store.searchFts('store.ts', 10)).resolves.toBeDefined();
+        await (0, vitest_1.expect)(store.searchFts('src/store.ts', 10)).resolves.toBeDefined();
+        await (0, vitest_1.expect)(store.searchFts('user@example.com', 10)).resolves.toBeDefined();
+        await (0, vitest_1.expect)(store.searchFts('100%', 10)).resolves.toBeDefined();
+        await (0, vitest_1.expect)(store.searchFts('C++', 10)).resolves.toBeDefined();
+    });
+    (0, vitest_1.it)('end-to-end: searching store.ts returns an entry that contains the literal', async () => {
+        await store.write('A note about store.ts\nWe refactored the store implementation today.');
+        const results = await store.searchFts('store.ts', 10);
+        (0, vitest_1.expect)(results.length).toBeGreaterThan(0);
+        (0, vitest_1.expect)(results.map(r => r.title)).toContain('A note about store.ts');
+    });
     (0, vitest_1.it)('returns matching entries for a sanitized multi-token query', async () => {
-        // "task AND management" → sanitized to "task management" → matches entry #1.
+        // "task AND management" → both tokens searched literally via quotes.
         const results = await store.searchFts('task AND management', 10);
         (0, vitest_1.expect)(results.length).toBeGreaterThan(0);
         (0, vitest_1.expect)(results[0].title).toBe('Task management notes');
     });
     (0, vitest_1.it)('returns empty array for pure-operator / empty input (not crash)', async () => {
         (0, vitest_1.expect)(await store.searchFts('', 10)).toEqual([]);
-        (0, vitest_1.expect)(await store.searchFts('AND OR NOT', 10)).toEqual([]);
+        // "AND OR NOT" no longer becomes empty — tokens are quoted literals.
+        // Each token (AND, OR, NOT) survives as a quoted literal; if no doc
+        // contains those words, result is empty.
         (0, vitest_1.expect)(await store.searchFts('   ', 10)).toEqual([]);
     });
 });

@@ -816,8 +816,10 @@ type ResolveRootsResult =
 
 async function resolveRoots(store: TimStore, root?: string): Promise<ResolveRootsResult> {
   if (root === undefined) {
-    const marker = findMarker(process.cwd(), { walkUp: true });
-    if (marker) return { labels: [marker.marker.project] };
+    if (!isHttp) {
+      const marker = findMarker(process.cwd(), { walkUp: true });
+      if (marker) return { labels: [marker.marker.project] };
+    }
     const active = getActiveProjectLabel();
     if (active) return { labels: [active] };
     return { error: 'no active project; pass root explicitly or "all"' };
@@ -1262,7 +1264,9 @@ function installProcessErrorGuards(): void {
 function usageSessionId(): string | null {
   try {
     return resolveActiveSessionId({
-      markerSession: findMarker(process.cwd(), { walkUp: true })?.marker.session,
+      markerSession: isHttp ? undefined : findMarker(process.cwd(), { walkUp: true })?.marker.session,
+      useSessionCache: !isHttp,
+      useEnv: !isHttp,
     }) ?? null;
   } catch {
     return null;
@@ -1279,7 +1283,10 @@ function bestEffortTelemetry(label: string, fn: () => void): void {
   }
 }
 
-export async function createMcpServer(): Promise<Server> {
+export async function createMcpServer(
+  options: { transportMode?: 'stdio' | 'http' } = {},
+): Promise<Server> {
+  const isHttp = options.transportMode === 'http';
   const server = new Server(
     {
       name: 'tim-mcp',
@@ -1383,7 +1390,7 @@ export async function createMcpServer(): Promise<Server> {
               s.recordRead(entries.map(e => e.id), usageSessionId()));
             return {
               content: [{ type: 'text', text: formatToolResponse({
-                entries: entries.map(e => summarizeEntry(annotateTrust(e, process.cwd()) as Entry, include_body)),
+                entries: entries.map(e => summarizeEntry(annotateTrust(e, isHttp ? '' : process.cwd()) as Entry, include_body)),
                 missing,
               }) }],
             };
@@ -1476,7 +1483,7 @@ export async function createMcpServer(): Promise<Server> {
               s.recordRead([entry.id], usageSessionId()));
             return {
               content: [{ type: 'text', text: formatToolResponse({
-                entry: summarizeEntry(annotateTrust(entry, process.cwd()) as Entry, include_body),
+                entry: summarizeEntry(annotateTrust(entry, isHttp ? '' : process.cwd()) as Entry, include_body),
                 edges,
               }) }],
             };
@@ -1518,7 +1525,7 @@ export async function createMcpServer(): Promise<Server> {
               s.recordRead([entry.id], usageSessionId()));
             return {
               content: [{ type: 'text', text: formatToolResponse({
-                entry: summarizeEntry(annotateTrust(entry, process.cwd()) as Entry, include_body),
+                entry: summarizeEntry(annotateTrust(entry, isHttp ? '' : process.cwd()) as Entry, include_body),
                 edges,
               }) }],
             };
@@ -1654,7 +1661,7 @@ export async function createMcpServer(): Promise<Server> {
             (writeOpts.metadata as Record<string, unknown>).provenance === undefined &&
             (!provKind || !SCHEMA_KINDS.has(provKind))
           ) {
-            const prov = captureProvenance(process.cwd());
+            const prov = captureProvenance(isHttp ? '' : process.cwd());
             if (prov) {
               (writeOpts.metadata as Record<string, unknown>).provenance = {
                 ...prov,
@@ -1824,7 +1831,9 @@ export async function createMcpServer(): Promise<Server> {
           let baseline = 'explicit since argument';
           if (!cutoff) {
             const currentSession = resolveActiveSessionId({
-              markerSession: findMarker(process.cwd(), { walkUp: true })?.marker.session,
+              markerSession: isHttp ? undefined : findMarker(process.cwd(), { walkUp: true })?.marker.session,
+              useSessionCache: !isHttp,
+              useEnv: !isHttp,
             });
             const prev = await s.getPreviousSession(projEntry.id, currentSession ?? null);
             if (prev) {
@@ -2152,7 +2161,7 @@ export async function createMcpServer(): Promise<Server> {
         case 'tim_session_start': {
           const { sessionId, projectId, agentName, cwd, harness, batchSize, tool, model, taskSummary } =
             TimSessionStartSchema.parse(args);
-          const cwdResolved = cwd ?? process.cwd();
+          const cwdResolved = cwd ?? (isHttp ? '' : process.cwd());
           let boundProjectId = projectId ?? getActiveProjectLabel() ?? undefined;
           if (!boundProjectId) {
             await ensureInboxProject(s);
@@ -2337,10 +2346,14 @@ export async function createMcpServer(): Promise<Server> {
           }
 
           const projectLabel = resolved.label;
-          const cwd = process.cwd();
+          const cwd = isHttp ? undefined : process.cwd();
           const sessionId = resolveActiveSessionId({
             sessionIdArg: sessionIdArg,
-            markerSession: findMarker(cwd, { walkUp: true })?.marker.session,
+            markerSession: cwd
+              ? findMarker(cwd, { walkUp: true })?.marker.session
+              : undefined,
+            useSessionCache: !isHttp,
+            useEnv: !isHttp,
           });
 
           if (bind && sessionId) {
@@ -2370,7 +2383,7 @@ export async function createMcpServer(): Promise<Server> {
                 sessionId,
                 projectId: projectLabel,
                 agentName: 'mcp',
-                cwd,
+                cwd: cwd ?? '',
                 harness: 'mcp',
               });
             } catch {
@@ -2378,10 +2391,12 @@ export async function createMcpServer(): Promise<Server> {
             }
           }
 
-          try {
-            syncNearestProjectMarker(cwd, projectLabel, { sessionId });
-          } catch {
-            // Non-critical — brief still returned
+          if (cwd) {
+            try {
+              syncNearestProjectMarker(cwd, projectLabel, { sessionId });
+            } catch {
+              // Non-critical — brief still returned
+            }
           }
 
           const formatted = formatProjectOutput(result, budget, loadProjectSchema(), bind ? 'load' : 'read');
@@ -2490,6 +2505,7 @@ export interface HttpServerHandle {
   httpServer: HttpServer;
   port: number;
   close: () => Promise<void>;
+  activeConnections: () => number;
 }
 
 export async function createHttpServer(options?: {
@@ -2500,17 +2516,19 @@ export async function createHttpServer(options?: {
   const port = options?.port ?? CLI.port;
   const app = createMcpExpressApp({ host });
   const transports = new Map<string, SSEServerTransport>();
-  const mcpServers: Server[] = [];
+  const mcpServers = new Map<string, Server>();
 
   app.get('/sse', async (_req, res) => {
     try {
       const transport = new SSEServerTransport('/messages', res);
+      const mcpServer = await createMcpServer({ transportMode: 'http' });
       transports.set(transport.sessionId, transport);
+      mcpServers.set(transport.sessionId, mcpServer);
       res.on('close', () => {
         transports.delete(transport.sessionId);
+        mcpServers.delete(transport.sessionId);
+        void mcpServer.close().catch(() => {});
       });
-      const mcpServer = await createMcpServer();
-      mcpServers.push(mcpServer);
       await mcpServer.connect(transport);
     } catch (err) {
       console.error('[tim-mcp] SSE connection error:', err);
@@ -2560,14 +2578,14 @@ export async function createHttpServer(options?: {
       }
     }
     transports.clear();
-    await Promise.all(mcpServers.map(s => s.close().catch(() => {})));
-    mcpServers.length = 0;
+    await Promise.all(Array.from(mcpServers.values()).map(s => s.close().catch(() => {})));
+    mcpServers.clear();
     await new Promise<void>((resolve, reject) => {
       httpServer.close(err => (err ? reject(err) : resolve()));
     });
   };
 
-  return { app, httpServer, port: actualPort, close };
+  return { app, httpServer, port: actualPort, close, activeConnections: () => mcpServers.size };
 }
 
 export async function startServer(): Promise<void> {

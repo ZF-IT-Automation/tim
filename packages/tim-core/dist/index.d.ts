@@ -10,6 +10,7 @@ export interface Entry {
     confidence: number;
     createdAt: string;
     accessedAt: string;
+    updatedAt: string;
     decayRate: number;
     visibility: number;
     tags: string[];
@@ -77,6 +78,8 @@ export interface StagingRecord {
     lwwConfidence: number;
     acked: boolean;
 }
+export { resolveLWW } from './lww.js';
+export type { ConflictResolution } from './lww.js';
 export interface MemoryInterface {
     read(id: string, options?: ReadOptions): Promise<Entry | null>;
     write(content: string, options?: WriteOptions): Promise<Entry>;
@@ -95,6 +98,8 @@ export interface MemoryInterface {
     gcStaging(olderThanDays: number): Promise<number>;
     health(): Promise<HealthReport>;
     stats(): Promise<MemoryStats>;
+    getContentStats(root?: string, kind?: string, buckets?: number[]): Promise<ContentStats>;
+    deleteBatch(ids: string[], hard?: boolean): Promise<number>;
     suppress(pattern: string, reason: string, ttl?: string): Promise<void>;
     isSuppressed(content: string): Promise<boolean>;
     runDecay(options: DecayOptions): Promise<number>;
@@ -105,6 +110,7 @@ export interface HealthReport {
     ftsIntegrity: boolean;
     totalEntries: number;
     totalEdges: number;
+    staleEntries: number;
     issues: string[];
 }
 export interface MemoryStats {
@@ -120,6 +126,22 @@ export interface MemoryStats {
     oldestEntry: string | null;
     newestEntry: string | null;
     staleCount: number;
+}
+export interface ContentStats {
+    totalEntries: number;
+    totalContentBytes: number;
+    avgContentChars: number;
+    maxContentChars: number;
+    minContentChars: number;
+    buckets: {
+        threshold: string;
+        count: number;
+    }[];
+    byKind: {
+        kind: string;
+        count: number;
+        totalBytes: number;
+    }[];
 }
 export type EventType = 'memory:written' | 'memory:updated' | 'memory:deleted' | 'edge:created' | 'edge:deleted' | 'sync:pushed' | 'sync:pulled' | 'agent:registered' | 'rem:decay' | 'rem:compress' | 'rem:health';
 export interface MemoryEvent {
@@ -203,4 +225,6 @@ export { InProcessEventBus } from './event-bus.js';
 export { loadConfig, saveConfig, getConfigPath, getTimDir, normalizeHookScripts, hooksEnabled, type HooksConfig, type RememberConfig, type TimConfigFile, } from './config.js';
 export { readTimSessionCache, resolveActiveSessionId, timSessionCachePath, type TimSessionCache, } from './session-cache.js';
 export { evaluateLoadGate } from './load-gate.js';
+export { SCHEMA_KINDS } from './schema-kinds.js';
+export { isStale, staleDays, daysSinceLastVerified } from './staleness.js';
 //# sourceMappingURL=index.d.ts.map

@@ -1,11 +1,15 @@
 "use strict";
 // TIM Store Schema — v0.1.0-alpha
 // SQLite table definitions and migrations.
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.MIGRATIONS = void 0;
 exports.getCurrentVersion = getCurrentVersion;
 exports.runMigrations = runMigrations;
 exports.createTriggers = createTriggers;
+const node_fs_1 = __importDefault(require("node:fs"));
 exports.MIGRATIONS = [
     {
         version: 1,
@@ -167,30 +171,92 @@ exports.MIGRATIONS = [
         datetime('now')
       );
     `
-    }
+    },
+    {
+        version: 8,
+        sql: `
+      -- Device-local retrieval feedback. Deliberately NOT synced: usage is
+      -- a per-device relevance signal, so no staging rows are ever written
+      -- for it and it is excluded from export.
+      CREATE TABLE IF NOT EXISTS entry_usage (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        entry_id TEXT NOT NULL,
+        session_id TEXT,
+        read_at TEXT NOT NULL,
+        referenced INTEGER NOT NULL DEFAULT 0
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_usage_entry ON entry_usage(entry_id, referenced);
+      CREATE INDEX IF NOT EXISTS idx_usage_session ON entry_usage(session_id);
+      CREATE INDEX IF NOT EXISTS idx_usage_read_at ON entry_usage(read_at);
+    `
+    },
+    {
+        version: 10,
+        sql: `
+      -- Device-local embedding vectors. Each device computes its own;
+      -- vectors are NEVER synced, staged, or exported (same contract
+      -- as entry_usage in Plan 10).
+      CREATE TABLE IF NOT EXISTS entry_vectors (
+        entry_id TEXT PRIMARY KEY,
+        model TEXT NOT NULL,
+        vector BLOB NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        FOREIGN KEY (entry_id) REFERENCES entries(id) ON DELETE CASCADE
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_entry_vectors_model ON entry_vectors(model);
+    `,
+    },
 ];
 function getCurrentVersion() {
     return exports.MIGRATIONS[exports.MIGRATIONS.length - 1].version;
 }
-function runMigrations(db) {
+function runMigrations(db, migrations = exports.MIGRATIONS) {
     db.pragma('journal_mode = WAL');
     db.pragma('busy_timeout = 5000');
     db.pragma('foreign_keys = ON');
-    // Create version table if not exists
     db.exec(`CREATE TABLE IF NOT EXISTS _schema_version (version INTEGER NOT NULL)`);
     const current = db.prepare('SELECT version FROM _schema_version').get();
     const currentVersion = current?.version ?? 0;
-    for (const migration of exports.MIGRATIONS) {
-        if (migration.version > currentVersion) {
+    const pending = migrations.filter(m => m.version > currentVersion);
+    if (pending.length === 0)
+        return;
+    backupBeforeMigration(db, currentVersion);
+    for (const migration of pending) {
+        // One transaction per migration: SQLite DDL is transactional, so a crash
+        // or SQL error rolls back both the DDL and the version bump — the DB
+        // stays at the previous version and the migration is safely retryable.
+        db.transaction(() => {
             db.exec(migration.sql);
-        }
+            const row = db.prepare('SELECT version FROM _schema_version').get();
+            if (row) {
+                db.prepare('UPDATE _schema_version SET version = ?').run(migration.version);
+            }
+            else {
+                db.prepare('INSERT INTO _schema_version (version) VALUES (?)').run(migration.version);
+            }
+        })();
     }
-    // Update version
-    if (current) {
-        db.prepare('UPDATE _schema_version SET version = ?').run(getCurrentVersion());
+}
+function backupBeforeMigration(db, fromVersion) {
+    // Fresh DB (version 0) has nothing to lose; in-memory DBs have no file.
+    if (fromVersion === 0)
+        return;
+    const dbPath = db.name;
+    if (!dbPath || dbPath === ':memory:')
+        return;
+    if (process.env.TIM_SKIP_MIGRATION_BACKUP === '1')
+        return;
+    const backupPath = `${dbPath}.pre-migration-v${fromVersion}.bak`;
+    try {
+        // Fold WAL into the main file so the copy is complete on its own.
+        db.pragma('wal_checkpoint(TRUNCATE)');
+        node_fs_1.default.copyFileSync(dbPath, backupPath);
     }
-    else {
-        db.prepare('INSERT INTO _schema_version (version) VALUES (?)').run(getCurrentVersion());
+    catch (err) {
+        throw new Error(`Pre-migration backup failed (${backupPath}): ${err.message}. ` +
+            'Refusing to migrate without a backup. Set TIM_SKIP_MIGRATION_BACKUP=1 to override.');
     }
 }
 function createTriggers(db) {

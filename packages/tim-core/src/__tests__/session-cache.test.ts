@@ -62,4 +62,33 @@ describe('session-cache', () => {
     expect(readTimSessionCache(1000)).toBeNull();
     expect(readTimSessionCache(60_000)?.session_id).toBe('stale');
   });
+
+  it('useSessionCache:false skips the global cache file', () => {
+    fs.writeFileSync(
+      timSessionCachePath(),
+      JSON.stringify({ session_id: 'CACHED-1', cwd: '/x' }),
+    );
+    const resolved = resolveActiveSessionId({ useSessionCache: false, useEnv: false });
+    expect(resolved).toBeUndefined();
+  });
+
+  it('explicit arg still wins regardless of flags', () => {
+    fs.writeFileSync(
+      timSessionCachePath(),
+      JSON.stringify({ session_id: 'CACHED-2', cwd: '/y' }),
+    );
+    process.env.TIM_SESSION_ID = 'FROM-ENV';
+    expect(
+      resolveActiveSessionId({ sessionIdArg: 'ARG-1', useSessionCache: false, useEnv: false })
+    ).toBe('ARG-1');
+    delete process.env.TIM_SESSION_ID;
+  });
+
+  it('useEnv:false skips TIM_SESSION_ID env var', () => {
+    process.env.TIM_SESSION_ID = 'FROM-ENV';
+    // No cache file, no arg — env would normally win, but useEnv:false skips it
+    const resolved = resolveActiveSessionId({ useEnv: false, useSessionCache: false });
+    expect(resolved).toBeUndefined();
+    delete process.env.TIM_SESSION_ID;
+  });
 });

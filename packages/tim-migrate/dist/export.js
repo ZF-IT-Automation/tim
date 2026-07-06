@@ -16,6 +16,7 @@ function rowToEntry(row) {
         confidence: row.confidence,
         createdAt: row.created_at,
         accessedAt: row.accessed_at,
+        updatedAt: row.updated_at,
         decayRate: row.decay_rate,
         visibility: row.visibility,
         tags: JSON.parse(row.tags),

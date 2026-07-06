@@ -8,12 +8,15 @@ export declare const TOOL_DEFS: Array<{
     schema: z.ZodObject<z.ZodRawShape>;
     internal?: boolean;
 }>;
-export declare function createMcpServer(): Promise<Server>;
+export declare function createMcpServer(options?: {
+    transportMode?: 'stdio' | 'http';
+}): Promise<Server>;
 export interface HttpServerHandle {
     app: Express;
     httpServer: HttpServer;
     port: number;
     close: () => Promise<void>;
+    activeConnections: () => number;
 }
 export declare function createHttpServer(options?: {
     host?: string;

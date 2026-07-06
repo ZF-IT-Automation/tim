@@ -6,7 +6,7 @@ exports.runPush = runPush;
 exports.runPull = runPull;
 exports.buildSyncContext = buildSyncContext;
 const tim_store_1 = require("tim-store");
-const tim_sync_1 = require("tim-sync");
+const tim_core_1 = require("tim-core");
 const client_js_1 = require("./client.js");
 const crypto_js_1 = require("./crypto.js");
 const envelope_js_1 = require("./envelope.js");
@@ -82,7 +82,7 @@ async function pullCycle(client, store, state, decryptFn) {
                         lwwConfidence: Number(existing.confidence ?? 1),
                         acked: true,
                     };
-                    const resolution = (0, tim_sync_1.resolveLWW)(localRecord, remote);
+                    const resolution = (0, tim_core_1.resolveLWW)(localRecord, remote);
                     if (resolution.winner !== remote)
                         conflicts++;
                 }
@@ -107,7 +107,7 @@ async function pullCycle(client, store, state, decryptFn) {
                         lwwConfidence: 1,
                         acked: true,
                     };
-                    const resolution = (0, tim_sync_1.resolveLWW)(localRecord, remote);
+                    const resolution = (0, tim_core_1.resolveLWW)(localRecord, remote);
                     if (resolution.winner !== remote)
                         conflicts++;
                 }

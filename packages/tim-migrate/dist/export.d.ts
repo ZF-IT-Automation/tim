@@ -10,6 +10,7 @@ export interface TimRowEntry {
     confidence: number;
     created_at: string;
     accessed_at: string;
+    updated_at: string;
     decay_rate: number;
     visibility: number;
     tags: string;
