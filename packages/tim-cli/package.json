@@ -19,6 +19,7 @@
     "tim-sync-client": "*",
     "tim-hooks": "*",
     "tim-migrate": "*",
+    "tim-summarizer": "*",
     "better-sqlite3": "^11.7.0"
   }
 }
