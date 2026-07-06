@@ -44,42 +44,50 @@ function resolveDbPath(): string {
  */
 export async function runProjectSummary(label: string): Promise<boolean> {
   const store = new TimStore(resolveDbPath());
-  const result = await store.loadProject(label);
-  if (!result) throw new Error(`Project not found: ${label}`);
+  try {
+    const result = await store.loadProject(label);
+    if (!result) throw new Error(`Project not found: ${label}`);
 
-  // Collect batch summary content from each session-summary-root node.
-  // The root nodes themselves have empty content; real summaries are in #batch-summary children.
-  const sessionNodes = result.children
-    .filter(c => c.tags.includes('#session-summary'))
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    // Collect batch summary content from each session-summary-root node.
+    // The root nodes themselves have empty content; real summaries are in #batch-summary children.
+    const sessionNodes = result.children
+      .filter(c => c.tags.includes('#session-summary'))
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 
-  if (sessionNodes.length === 0) return false;
+    if (sessionNodes.length === 0) return false;
 
-  const summaries: string[] = [];
-  for (const session of sessionNodes) {
-    const children = await store.getChildren(session.id);
-    const batchSummaries = children
-      .filter(c => c.tags.includes('#batch-summary'))
-      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-      .map(c => c.content?.trim() || c.title.trim())
-      .filter(Boolean);
-    if (batchSummaries.length > 0) {
-      summaries.push(...batchSummaries);
-    } else if (session.content?.trim()) {
-      summaries.push(session.content.trim());
+    const summaries: string[] = [];
+    for (const session of sessionNodes) {
+      const children = await store.getChildren(session.id);
+      const batchSummaries = children
+        .filter(c => c.tags.includes('#batch-summary'))
+        .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+        .map(c => c.content?.trim() || c.title.trim())
+        .filter(Boolean);
+      if (batchSummaries.length > 0) {
+        summaries.push(...batchSummaries);
+      } else if (session.content?.trim()) {
+        summaries.push(session.content.trim());
+      }
     }
+    if (summaries.length === 0) return false;
+
+    const summary = await generateProjectSummary(summaries);
+    if (!summary) return false; // total CLI failure → write nothing
+
+    const newContent = mergeProjectSummary(result.project.content, summary);
+    await store.update(result.project.id, {
+      title: result.project.title,
+      content: newContent,
+    });
+
+    const sessions = new SessionManager(store);
+    await sessions.updateProjectSummary(label);
+    await processCurationQueue(store, label);
+    return true;
+  } finally {
+    store.close();
   }
-  if (summaries.length === 0) return false;
-
-  const summary = await generateProjectSummary(summaries);
-  if (!summary) return false; // total CLI failure → write nothing
-
-  const newContent = mergeProjectSummary(result.project.content, summary);
-  await store.update(result.project.id, {
-    title: result.project.title,
-    content: newContent,
-  });
-  return true;
 }
 
 function parseProjectSummaryArg(argv: string[]): string | null {
