@@ -279,7 +279,7 @@ async function seedProjectWithTask(client, label, title, taskTitle, taskMeta = {
             await client.callTool('tim_write', {
                 content,
                 parentId: sec.id,
-                metadata: { task: true, status },
+                metadata: { task: { status } },
                 tags: ['#task', '#test'],
             });
         }

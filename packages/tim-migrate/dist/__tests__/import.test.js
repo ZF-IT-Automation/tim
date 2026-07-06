@@ -126,13 +126,15 @@ function createOldFixture(filePath) {
         (0, vitest_1.expect)(report.nodesImported).toBe(1);
         (0, vitest_1.expect)(report.edgesImported).toBe(1);
         const root = store.getDb().prepare('SELECT * FROM entries WHERE id = ?').get(rootUid);
-        (0, vitest_1.expect)(root.content).toBe('Imported root');
+        (0, vitest_1.expect)(root.title).toBe('Imported root');
+        (0, vitest_1.expect)(root.content).toBe('');
         const meta = JSON.parse(root.metadata);
         (0, vitest_1.expect)(meta.label).toBe('P0001');
         (0, vitest_1.expect)(meta.hmemUid).toBe(rootUid);
         const child = store.getDb().prepare('SELECT * FROM entries WHERE id = ?').get(childUid);
         (0, vitest_1.expect)(child.parent_id).toBe(rootUid);
-        (0, vitest_1.expect)(child.content).toBe('Imported child');
+        (0, vitest_1.expect)(child.title).toBe('Imported child');
+        (0, vitest_1.expect)(child.content).toBe('');
     });
     (0, vitest_1.it)('imports old hmem format with level hierarchy and links', () => {
         const filePath = path.join(tmpDir, 'old.hmem');
@@ -144,8 +146,9 @@ function createOldFixture(filePath) {
         (0, vitest_1.expect)(report.edgesImported).toBe(1);
         const root = store.getDb().prepare("SELECT id FROM entries WHERE json_extract(metadata, '$.label') = 'P0042'").get();
         (0, vitest_1.expect)(root.id).toBe('P0042');
-        const children = store.getDb().prepare('SELECT content FROM entries WHERE parent_id = ?').all(root.id);
-        (0, vitest_1.expect)(children[0].content).toBe('Old child');
+        const children = store.getDb().prepare('SELECT title, content FROM entries WHERE parent_id = ?').all(root.id);
+        (0, vitest_1.expect)(children[0].title).toBe('Old child');
+        (0, vitest_1.expect)(children[0].content).toBe('');
     });
     (0, vitest_1.it)('dry run reports counts without writing', async () => {
         const filePath = path.join(tmpDir, 'dry.hmem');

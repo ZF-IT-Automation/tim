@@ -1,25 +1,27 @@
 import Database from 'better-sqlite3';
-import type { Entry, Edge, EdgeType, ReadOptions, WriteOptions, DecayOptions, SearchOptions, MemoryInterface, HealthReport, MemoryStats, AgentIdentity, StagingRecord, EventBus, ResolveProjectResult, ResolveSectionResult } from 'tim-core';
+import type { Entry, Edge, EdgeType, ReadOptions, WriteOptions, DecayOptions, SearchOptions, MemoryInterface, HealthReport, MemoryStats, ContentStats, AgentIdentity, StagingRecord, EventBus, ResolveProjectResult, ResolveSectionResult } from 'tim-core';
 import { CurateManager } from './curate.js';
 /**
  * Sanitize a user-supplied query string into a safe FTS5 MATCH expression.
  *
- * Problems this guards against (verified empirically against better-sqlite3 FTS5):
- *   1. `task:true` → "no such column: task"   (token:value parsed as column filter)
- *   2. `"foo AND bar"` literal text containing AND is a valid FTS5 operator,
- *      so users searching for "AND" or "OR" as words can collide with FTS5 syntax.
- *   3. Special chars `^ * ( ) " '` in raw input can throw `fts5: syntax error`.
+ * Strategy: each whitespace-separated token is emitted as an FTS5 quoted
+ * string (`"token"`). Inside the quotes FTS5 treats operators (AND/OR/
+ * NOT/NEAR) and punctuation (`. / @ + % # -`) as literal text to
+ * tokenize — the whole blocklist arms race disappears. Column filters
+ * `title:`/`content:`/`tags:` survive as `column:"value"`.
  *
- * Strategy:
- *   - For `token:value` patterns, if `token` matches a real FTS5 column name
- *     (title, content, tags), pass through as-is. Otherwise, split into two
- *     tokens (the bogus "column" becomes a search term).
- *   - Drop FTS5 operator words (AND, OR, NOT, NEAR) case-insensitive.
- *   - Strip quotes/parens/carets/stars, replace with space.
- *   - Re-emit as `token1 token2` (implicit FTS5 AND).
- *   - Return empty string if no safe tokens survive — caller must skip the query.
+ * Trade-off: a user phrase originally quoted across spaces (`"foo bar"`)
+ * degrades to `"foo" "bar"` (AND instead of phrase) — acceptable.
+ * Tokens with no alphanumeric content are dropped (a fully-punctuation
+ * quoted string would match nothing or error).
  */
 export declare function sanitizeFtsQuery(query: string): string;
+/**
+ * Jaccard overlap of lowercase word-token sets. 1.0 = same word set.
+ * Single-char tokens are dropped — they are almost always punctuation
+ * noise ("v2", "a") and inflate similarity between unrelated titles.
+ */
+export declare function titleSimilarity(a: string, b: string): number;
 export interface TimStoreOptions {
     emitter?: Pick<EventBus, 'emit'>;
     agentId?: string;
@@ -203,8 +205,63 @@ export declare class TimStore implements MemoryInterface {
     write(content: string, options?: WriteOptions): Promise<Entry>;
     update(id: string, patch: Partial<Entry>): Promise<Entry>;
     delete(id: string, hard?: boolean): Promise<void>;
+    /** Hard/soft delete multiple ids in one transaction; skips missing or tombstoned ids. */
+    deleteBatch(ids: string[], hard?: boolean): Promise<number>;
+    private deleteEntrySync;
     search(options: SearchOptions): Promise<Entry[]>;
+    /**
+     * Deterministic usage boost on top of FTS order: an entry's score is its
+     * FTS position minus 2·log2(1 + referencedCount); ascending. Referenced
+     * 1× → +2 positions, 3× → +4, 7× → +6. No wall-clock, no randomness.
+     */
+    private rankByUsage;
+    /**
+     * Hybrid re-rank combining three signals:
+     *   1. FTS5 position (the raw order)
+     *   2. Cosine similarity (embedding distance to query vector)
+     *   3. Graph/usage/staleness boost (from Plan 8/10)
+     */
+    private rankByHybrid;
     searchFts(query: string, limit?: number): Promise<Entry[]>;
+    /**
+     * Near-duplicate candidates for a title, for the tim_write dedup gate.
+     * FTS narrows to plausible candidates; Jaccard token overlap on the
+     * title decides. Suppressed/irrelevant/tombstoned entries are already
+     * excluded by searchFts.
+     */
+    findSimilar(title: string, opts?: {
+        projectLabel?: string;
+        threshold?: number;
+        limit?: number;
+    }): Promise<Array<{
+        id: string;
+        title: string;
+        similarity: number;
+    }>>;
+    /**
+     * Negative-memory lookup for the tim_guard pre-action check: FTS over
+     * the query, filtered to failure knowledge (kind error/learning, or
+     * #error/#learning tagged). Over-fetches because most FTS hits are not
+     * failures. Plain-language actions are split into keywords (OR semantics)
+     * because FTS5 AND-matching every token is too strict for guard queries.
+     */
+    searchFailures(query: string, opts?: {
+        projectLabel?: string;
+        limit?: number;
+    }): Promise<Entry[]>;
+    /**
+     * All entries in the project subtree touched since the cutoff, for the
+     * tim_delta session briefing supplement. Tombstoned entries appear as
+     * "deleted" (their reads are otherwise filtered). Capped at 500 —
+     * beyond that, a delta is no longer a briefing.
+     */
+    getChangedSince(projectId: string, sinceIso: string): Promise<{
+        created: Entry[];
+        updated: Entry[];
+        deleted: Entry[];
+    }>;
+    /** Newest session entry in the project subtree, excluding the current session. */
+    getPreviousSession(projectId: string, excludeSessionId?: string | null): Promise<Entry | null>;
     link(sourceId: string, targetId: string, type: EdgeType, weight?: number, metadata?: Record<string, unknown>): Promise<Edge>;
     unlink(edgeId: string): Promise<void>;
     getEdges(id: string, direction?: 'outgoing' | 'incoming' | 'both'): Promise<Edge[]>;
@@ -215,10 +272,60 @@ export declare class TimStore implements MemoryInterface {
     applyStaging(records: StagingRecord[]): Promise<void>;
     getStagingCursor(): Promise<number>;
     gcStaging(olderThanDays: number): Promise<number>;
+    private usageGcDone;
+    /** Record that these entries were surfaced to the agent (read or search hit). */
+    recordRead(entryIds: string[], sessionId: string | null): void;
+    /**
+     * Mark previously-read entries as actually used (linked, updated, or
+     * cited in a later write). Only flips rows of the same session — a
+     * reference without a prior read in that session is not a retrieval win.
+     */
+    markReferenced(entryIds: string[], sessionId: string | null): number;
+    getSessionReadIds(sessionId: string): string[];
+    getReferenceCounts(entryIds: string[]): Map<string, number>;
+    /**
+     * Entries that need embedding (no vector yet, newest content first).
+     * Schema kinds (sessions, sections, …) are skipped — they don't need
+     * semantic search.
+     */
+    getUnembedded(count: number): Promise<Entry[]>;
+    /** Store an embedding vector for an entry. Upserts — second call replaces. */
+    setVectors(entryId: string, vector: Float32Array, model: string): void;
     health(): Promise<HealthReport>;
     stats(): Promise<MemoryStats>;
+    getContentStats(root?: string, kind?: string, buckets?: number[]): Promise<ContentStats>;
+    /**
+     * Re-confirm entries as still valid without editing them. Stamps
+     * metadata.verified_at and bumps updated_at (a verification is a
+     * meaningful, syncable change — the staging upsert carries it to
+     * other devices). Staleness elsewhere is verified_at ?? updated_at.
+     */
+    touchVerified(ids: string[]): Promise<{
+        verified: string[];
+        missing: string[];
+    }>;
     suppress(pattern: string, reason: string, ttl?: string): Promise<void>;
     isSuppressed(content: string): Promise<boolean>;
+    /** Active (non-expired) suppress patterns, lowercased. Loaded once per retrieval call. */
+    private loadActiveSuppressPatterns;
+    private static matchesSuppressed;
     runDecay(options: DecayOptions): Promise<number>;
 }
+export interface GoldenQuery {
+    query: string;
+    expectedIds: string[];
+}
+export interface BenchmarkResult {
+    query: string;
+    precisionAt3: number;
+    recallAt5: number;
+    mrr: number;
+    found: string[];
+    missing: string[];
+}
+export declare function runBenchmark(store: TimStore, queries: GoldenQuery[]): Promise<BenchmarkResult[]>;
+export declare function splitTitleBody(content: string, explicitTitle?: string): {
+    title: string;
+    body: string;
+};
 //# sourceMappingURL=store.d.ts.map

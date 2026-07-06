@@ -1,6 +1,5 @@
-export { TimStore, type TimStoreOptions, type CreateProjectOptions, type LoadProjectOptions, type LoadProjectResult, type TaskRecord, type GetTasksOptions, type RuleRecord, } from './store.js';
+export { TimStore, splitTitleBody, titleSimilarity, runBenchmark, type GoldenQuery, type BenchmarkResult, type TimStoreOptions, type CreateProjectOptions, type LoadProjectOptions, type LoadProjectResult, type TaskRecord, type GetTasksOptions, type RuleRecord, } from './store.js';
 export type { ResolveProjectResult } from 'tim-core';
-export { formatProjectOutput, type ProjectSchema, type ProjectSchemaSection, } from './project-output.js';
 export { cropDisplayName, projectDisplayNameFromEntry, resolveProjectDisplayName, resolveProjectBindingLabel, } from './project-display.js';
 export { runMigrations, getCurrentVersion, MIGRATIONS } from './schema.js';
 export { SessionManager, type Exchange, type ExchangeRole, type SessionStartParams, type ProjectSessionParams, type Summarizer, type UnsummarizedBatch, type UnsummarizedExchange, type UntaggedBatch, type BatchFullInfo, type OnBatchFullHandler, } from './session.js';

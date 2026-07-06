@@ -35,7 +35,7 @@ async function collectDescendants(store, rootId) {
         store = new index_js_1.TimStore(':memory:');
         const entry = await store.write('title\noriginal');
         const row = store.getDb().prepare('SELECT * FROM entries WHERE id = ?').get(entry.id);
-        store.getDb().prepare("UPDATE entries SET accessed_at = '2099-01-01T00:00:00Z' WHERE id = ?").run(entry.id);
+        store.getDb().prepare("UPDATE entries SET updated_at = '2099-01-01T00:00:00Z' WHERE id = ?").run(entry.id);
         const remote = {
             key: entry.id,
             entityType: 'entry',

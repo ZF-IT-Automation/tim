@@ -1,10 +1,7 @@
 "use strict";
 // TIM Migration — package exports
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.migrateTagsToTypes = exports.createV2HmemDatabase = exports.inspectHmemFile = exports.detectHmemFormat = exports.labelFromMetadata = exports.tim_import = exports.exportToMarkdown = exports.exportToHmem = exports.tim_export = exports.verifyHmemFile = exports.migrateHmemToTim = void 0;
-var migrate_js_1 = require("./migrate.js");
-Object.defineProperty(exports, "migrateHmemToTim", { enumerable: true, get: function () { return migrate_js_1.migrateHmemToTim; } });
-Object.defineProperty(exports, "verifyHmemFile", { enumerable: true, get: function () { return migrate_js_1.verifyHmemFile; } });
+exports.migrateTagsToTypes = exports.createV2HmemDatabase = exports.inspectHmemFile = exports.detectHmemFormat = exports.labelFromMetadata = exports.tim_import = exports.exportToMarkdown = exports.exportToHmem = exports.tim_export = void 0;
 var export_js_1 = require("./export.js");
 Object.defineProperty(exports, "tim_export", { enumerable: true, get: function () { return export_js_1.tim_export; } });
 Object.defineProperty(exports, "exportToHmem", { enumerable: true, get: function () { return export_js_1.exportToHmem; } });

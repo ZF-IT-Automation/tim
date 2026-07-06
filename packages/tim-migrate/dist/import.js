@@ -8,6 +8,7 @@ exports.tim_import = tim_import;
 exports.labelFromMetadata = labelFromMetadata;
 const better_sqlite3_1 = __importDefault(require("better-sqlite3"));
 const ulid_1 = require("ulid");
+const tim_store_1 = require("tim-store");
 const hmem_format_js_1 = require("./hmem-format.js");
 function findByLabel(store, label) {
     const row = store.getDb().prepare("SELECT id FROM entries WHERE json_extract(metadata, '$.label') = ? AND tombstoned_at IS NULL").get(label);
@@ -24,19 +25,44 @@ function contentChanged(store, id, content) {
 function hmemUidExists(store, hmemUid) {
     return store.getDb().prepare("SELECT id FROM entries WHERE json_extract(metadata, '$.hmemUid') = ? AND tombstoned_at IS NULL").get(hmemUid);
 }
+/** Re-read the row and enqueue an upsert staging record so imports sync. */
+function stageEntryRow(db, id) {
+    const row = db.prepare('SELECT * FROM entries WHERE id = ?').get(id);
+    if (!row)
+        return;
+    db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
+    lww_timestamp, lww_device, lww_confidence)
+    VALUES (?, 'entry', 'upsert', ?, ?, 'local', ?)`).run(id, JSON.stringify(row), Date.now(), Number(row.confidence ?? 1));
+}
 function insertEntryDirect(db, params) {
+    const { title, body } = (0, tim_store_1.splitTitleBody)(params.content);
     db.prepare(`
     INSERT INTO entries (
-      id, parent_id, content, content_type, depth, confidence, created_at, accessed_at,
+      id, parent_id, title, content, content_type, depth, confidence,
+      created_at, accessed_at, updated_at,
       decay_rate, visibility, tags, irrelevant, favorite, tombstoned_at, metadata
-    ) VALUES (?, ?, ?, 'text', ?, ?, ?, ?, 0.0, 1, ?, ?, ?, NULL, ?)
-  `).run(params.id, params.parentId, params.content, params.depth, params.confidence, params.createdAt, params.accessedAt, JSON.stringify(params.tags), params.irrelevant ? 1 : 0, params.favorite ? 1 : 0, JSON.stringify(params.metadata));
+    ) VALUES (?, ?, ?, ?, 'text', ?, ?, ?, ?, ?, 0.0, 1, ?, ?, ?, NULL, ?)
+  `).run(params.id, params.parentId, title, body, params.depth, params.confidence, params.createdAt, params.accessedAt, params.accessedAt, // updated_at: best available signal from the source
+    JSON.stringify(params.tags), params.irrelevant ? 1 : 0, params.favorite ? 1 : 0, JSON.stringify(params.metadata));
+    stageEntryRow(db, params.id);
 }
 function insertEdgeDirect(db, sourceId, targetId, type) {
-    db.prepare(`
-    INSERT OR IGNORE INTO edges (id, source_id, target_id, type, weight, metadata)
-    VALUES (?, ?, ?, ?, 1.0, '{}')
-  `).run((0, ulid_1.ulid)(), sourceId, targetId, type);
+    const id = (0, ulid_1.ulid)();
+    const ts = Date.now();
+    const updatedAt = new Date(ts).toISOString();
+    const result = db.prepare(`
+    INSERT OR IGNORE INTO edges (id, source_id, target_id, type, weight, metadata, updated_at)
+    VALUES (?, ?, ?, ?, 1.0, '{}', ?)
+  `).run(id, sourceId, targetId, type, updatedAt);
+    if (result.changes === 0)
+        return; // duplicate — nothing new to sync
+    const edgeRow = {
+        id, source_id: sourceId, target_id: targetId,
+        type, weight: 1.0, metadata: '{}', updated_at: updatedAt,
+    };
+    db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
+    lww_timestamp, lww_device, lww_confidence)
+    VALUES (?, 'edge', 'upsert', ?, ?, 'local', 1.0)`).run(`${sourceId}|${targetId}|${type}`, JSON.stringify(edgeRow), ts);
 }
 function importV2(source, store, options) {
     const warnings = [];
@@ -66,7 +92,6 @@ function importV2(source, store, options) {
     SELECT src_uid, dst_uid, kind FROM links
   `).all();
     const idMap = new Map();
-    const mergedRoots = new Set();
     const planRoots = () => {
         for (const e of hmemEntries) {
             // Idempotency guard: if entry was already imported (same hmemUid), skip unless forced
@@ -81,9 +106,13 @@ function importV2(source, store, options) {
             const tags = e.tags ? JSON.parse(e.tags) : [];
             if (existingLabel && options.deduplicate) {
                 idMap.set(e.uid, existingLabel);
-                mergedRoots.add(e.uid);
-                if (contentChanged(store, existingLabel, e.level_1)) {
+                const { title, body } = (0, tim_store_1.splitTitleBody)(e.level_1);
+                if (contentChanged(store, existingLabel, body)) {
                     changedCount++;
+                    if (!options.dryRun) {
+                        store.getDb().prepare('UPDATE entries SET title = ?, content = ?, updated_at = ? WHERE id = ?').run(title, body, new Date().toISOString(), existingLabel);
+                        stageEntryRow(store.getDb(), existingLabel);
+                    }
                 }
                 else {
                     skipped++;

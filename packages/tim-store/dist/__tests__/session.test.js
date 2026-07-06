@@ -536,6 +536,44 @@ const index_js_1 = require("../index.js");
             (0, vitest_1.expect)(batch.hasMore).toBe(false);
         });
     });
+    (0, vitest_1.describe)('showUnsummarized re-sweep', () => {
+        (0, vitest_1.it)('re-sweeps summarized batch when late exchanges appended (partial-batch race)', async () => {
+            await store.createProject('P0097');
+            await sessions.startProjectSession({
+                sessionId: 'su-race',
+                projectId: 'P0097',
+                agentName: 'a',
+                cwd: '/',
+                harness: 't',
+                batchSize: 2,
+            });
+            await sessions.logExchange('su-race', [
+                { role: 'user', content: 'Q1' },
+                { role: 'agent', content: 'A1' },
+                { role: 'user', content: 'Q2' },
+                { role: 'agent', content: 'A2' },
+            ]);
+            await sessions.writeBatchSummary('su-race', 1, 'batch one', { seqFrom: 1, seqTo: 2 });
+            const exNode = (await store.getChildByKind('su-race', 'exchanges-root'))[0];
+            const batch1 = (await store.getChildByKind(exNode.id, 'exchange-batch'))
+                .find(b => b.metadata.batch_index === 1);
+            const lateUser = await store.write('Q-late', {
+                parentId: batch1.id,
+                metadata: { kind: 'exchange', role: 'user', seq: 3, sessionId: 'su-race' },
+                tags: ['#exchange'],
+            });
+            await store.write('A-late', {
+                parentId: lateUser.id,
+                metadata: { kind: 'exchange', role: 'agent', seq: 3, sessionId: 'su-race' },
+                tags: ['#exchange'],
+            });
+            const batch = await sessions.showUnsummarized('su-race');
+            (0, vitest_1.expect)(batch.batchIndex).toBe(1);
+            (0, vitest_1.expect)(batch.exchanges.map(e => e.seq)).toEqual([3]);
+            (0, vitest_1.expect)(batch.exchanges[0]?.userContent).toBe('Q-late');
+            (0, vitest_1.expect)(batch.hasMore).toBe(false);
+        });
+    });
     (0, vitest_1.describe)('writeBatchSummary + rollUpSession', () => {
         (0, vitest_1.beforeEach)(async () => {
             await store.createProject('P0095');

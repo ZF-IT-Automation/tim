@@ -47,7 +47,11 @@ const types_js_1 = require("@modelcontextprotocol/sdk/types.js");
 const zod_1 = require("zod");
 const zod_to_json_schema_1 = require("zod-to-json-schema");
 const tim_store_1 = require("tim-store");
+const project_output_js_1 = require("./project-output.js");
 const tim_core_1 = require("tim-core");
+const trust_js_1 = require("./trust.js");
+const provenance_js_1 = require("./provenance.js");
+const task_status_js_1 = require("./task-status.js");
 const tim_hooks_1 = require("tim-hooks");
 const tim_migrate_1 = require("tim-migrate");
 const tim_sync_client_1 = require("tim-sync-client");
@@ -97,8 +101,11 @@ function parseCliArgs() {
 const CLI = parseCliArgs();
 // ─── Tool Schemas ───────────────────────────────────────
 const TimReadSchemaBase = zod_1.z.object({
-    id: zod_1.z.union([zod_1.z.string(), zod_1.z.array(zod_1.z.string())]).optional()
-        .describe('Entry ID (ULID), or array of IDs for batch read'),
+    id: zod_1.z.union([
+        zod_1.z.string(),
+        zod_1.z.array(zod_1.z.string().min(1)).min(1).max(50),
+    ]).optional()
+        .describe('Entry ID (ULID), or array of IDs for batch read (max 50)'),
     project: zod_1.z.string().optional().describe('Project label/alias/name (auto-resolved)'),
     section: zod_1.z.string().optional().describe('Section title — read its children'),
     depth: zod_1.z.number().min(1).max(5).optional().default(2)
@@ -106,6 +113,8 @@ const TimReadSchemaBase = zod_1.z.object({
     includeEdges: zod_1.z.boolean().optional().default(false),
     includeChildren: zod_1.z.boolean().optional().default(true).describe('Default true: returns subtree (capped by depth). Set false for parent-only.'),
     showIrrelevant: zod_1.z.boolean().optional().default(false),
+    include_body: zod_1.z.boolean().optional().default(false)
+        .describe('Return the full content body. Default false — returns summary only (first 500 chars or metadata.summary)'),
 });
 const TimReadSchema = TimReadSchemaBase.refine(d => d.id !== undefined || d.project !== undefined || d.section !== undefined, { message: 'tim_read requires one of: id, project, section' });
 const TimWriteSchema = zod_1.z.object({
@@ -122,6 +131,8 @@ const TimWriteSchema = zod_1.z.object({
         .describe('Topic tags only (#tim, #security). Status/priority tags (#todo, #done, #priority-*) are deprecated — use metadata.task.status / metadata.task.priority.'),
     visibility: zod_1.z.number().optional().default(1),
     metadata: zod_1.z.record(zod_1.z.unknown()).optional().default({}),
+    force: zod_1.z.boolean().optional().default(false)
+        .describe('Bypass the near-duplicate title check and write anyway'),
 });
 const TimSearchSchema = zod_1.z.object({
     query: zod_1.z.string().describe('FTS5 search query'),
@@ -131,6 +142,20 @@ const TimSearchSchema = zod_1.z.object({
     type: zod_1.z.string().optional().describe('Filter metadata.type'),
     tag: zod_1.z.string().optional().describe('Filter exact tag'),
     status: zod_1.z.string().optional().describe('Filter metadata.status'),
+});
+const TimGuardSchema = zod_1.z.object({
+    action: zod_1.z.string().min(3)
+        .describe('The planned action, in plain words — e.g. "upload PDF via rmapi"'),
+    project: zod_1.z.string().optional()
+        .describe('Scope to a project (label/alias/name). Default: all projects'),
+    topK: zod_1.z.number().min(1).max(20).optional().default(5),
+});
+const TimDeltaSchema = zod_1.z.object({
+    project: zod_1.z.string().optional()
+        .describe('Project label/alias/name. Default: the bound project'),
+    since: zod_1.z.string().optional()
+        .describe('ISO 8601 cutoff. Default: last activity of the previous session, ' +
+        'else 7 days ago'),
 });
 const TimRememberSchema = zod_1.z.object({
     query: zod_1.z.string().min(1).max(500)
@@ -172,6 +197,10 @@ const TimUpdateSchema = zod_1.z.object({
     irrelevant: zod_1.z.boolean().optional()
         .describe('Set false to restore a soft-deleted entry, true to soft-delete'),
     metadata: zod_1.z.record(zod_1.z.unknown()).optional(),
+});
+const TimVerifySchema = zod_1.z.object({
+    id: zod_1.z.union([zod_1.z.string(), zod_1.z.array(zod_1.z.string()).min(1).max(50)])
+        .describe('Entry ID (or label like L0042), or array of up to 50 IDs'),
 });
 const TimDeleteSchema = zod_1.z.object({
     id: zod_1.z.string(),
@@ -365,6 +394,21 @@ exports.TOOL_DEFS = [
         schema: TimSearchSchema,
     },
     {
+        name: 'tim_guard',
+        description: 'Pre-action check against negative memory: search known ' +
+            'failures (kind=error) and learnings (kind=learning) matching a planned ' +
+            'action. Call BEFORE risky/expensive actions — returns warnings with ' +
+            'entry ids to tim_read, or status "clear".',
+        schema: TimGuardSchema,
+    },
+    {
+        name: 'tim_delta',
+        description: 'What changed in a project since the previous session ' +
+            '(created / updated / deleted entries). Supplement to the full ' +
+            'project briefing, not a replacement.',
+        schema: TimDeltaSchema,
+    },
+    {
         name: 'tim_link',
         description: 'Create an edge (relationship) between two entries.',
         schema: TimLinkSchema,
@@ -378,6 +422,11 @@ exports.TOOL_DEFS = [
         name: 'tim_update',
         description: 'Update an existing entry. Only provided fields are changed.',
         schema: TimUpdateSchema,
+    },
+    {
+        name: 'tim_verify',
+        description: 'Re-confirm entries as still valid without editing them. Stamps metadata.verified_at — clears the stale annotation on reads and the stale count in tim_health.',
+        schema: TimVerifySchema,
     },
     {
         name: 'tim_delete',
@@ -575,6 +624,16 @@ function truncText(s, max) {
         return t;
     return t.slice(0, max - 3) + '...';
 }
+function summarizeEntry(entry, includeBody) {
+    const summary = typeof entry.metadata.summary === 'string' && entry.metadata.summary
+        ? entry.metadata.summary
+        : truncText(entry.content, 500);
+    if (includeBody) {
+        return { ...entry, summary };
+    }
+    const { content, ...rest } = entry;
+    return { ...rest, summary };
+}
 function parseProjectContent(entry) {
     const combined = entry.content ? `${entry.title}\n${entry.content}` : entry.title;
     const parts = combined.split('|').map(p => p.trim());
@@ -686,9 +745,11 @@ async function formatTasksOutput(store, tasks) {
 }
 async function resolveRoots(store, root) {
     if (root === undefined) {
-        const marker = (0, tim_hooks_1.findMarker)(process.cwd(), { walkUp: true });
-        if (marker)
-            return { labels: [marker.marker.project] };
+        if (!isHttp) {
+            const marker = (0, tim_hooks_1.findMarker)(process.cwd(), { walkUp: true });
+            if (marker)
+                return { labels: [marker.marker.project] };
+        }
         const active = (0, tim_hooks_1.getActiveProjectLabel)();
         if (active)
             return { labels: [active] };
@@ -811,16 +872,6 @@ const SHOW_PRIORITY_ORDER = {
     medium: 1,
     low: 2,
 };
-function resolveEntryTaskStatus(metadata) {
-    const task = metadata.task;
-    if (typeof task === 'object' && task !== null && !Array.isArray(task)) {
-        const st = task.status;
-        if (typeof st === 'string')
-            return st;
-    }
-    const st = metadata.status;
-    return typeof st === 'string' ? st : undefined;
-}
 function resolveEntryTaskPriority(metadata) {
     const task = metadata.task;
     if (typeof task === 'object' && task !== null && !Array.isArray(task)) {
@@ -842,12 +893,12 @@ async function applyWith(store, entries, withStr) {
         switch (lc) {
             case 'open':
                 result = result.filter(e => {
-                    const st = resolveEntryTaskStatus(e.metadata);
+                    const st = (0, task_status_js_1.resolveEntryTaskStatus)(e.metadata);
                     return st !== 'done' && st !== 'cancelled';
                 });
                 break;
             case 'done':
-                result = result.filter(e => resolveEntryTaskStatus(e.metadata) === 'done');
+                result = result.filter(e => (0, task_status_js_1.resolveEntryTaskStatus)(e.metadata) === 'done');
                 break;
             case 'urgent':
                 result = result.filter(e => e.tags.includes('#urgent'));
@@ -882,8 +933,8 @@ async function applyWith(store, entries, withStr) {
 }
 function sortForShow(entries) {
     return [...entries].sort((a, b) => {
-        const statusA = SHOW_STATUS_ORDER[resolveEntryTaskStatus(a.metadata) ?? ''] ?? 2;
-        const statusB = SHOW_STATUS_ORDER[resolveEntryTaskStatus(b.metadata) ?? ''] ?? 2;
+        const statusA = SHOW_STATUS_ORDER[(0, task_status_js_1.resolveEntryTaskStatus)(a.metadata) ?? ''] ?? 2;
+        const statusB = SHOW_STATUS_ORDER[(0, task_status_js_1.resolveEntryTaskStatus)(b.metadata) ?? ''] ?? 2;
         if (statusA !== statusB)
             return statusA - statusB;
         const priorityA = SHOW_PRIORITY_ORDER[resolveEntryTaskPriority(a.metadata) ?? ''] ?? 3;
@@ -894,7 +945,7 @@ function sortForShow(entries) {
     });
 }
 function formatShowLine(entry) {
-    const icon = taskStatusIcon(resolveEntryTaskStatus(entry.metadata) ?? null);
+    const icon = taskStatusIcon((0, task_status_js_1.resolveEntryTaskStatus)(entry.metadata) ?? null);
     const title = entry.title.padEnd(44, ' ');
     const tagStr = entry.tags.join(' ');
     return `  ${icon} ${title}${tagStr ? ' ' + tagStr : ''}`.trimEnd();
@@ -1039,7 +1090,7 @@ function getSessions() {
     return sessions;
 }
 const WRITE_TOOLS = new Set([
-    'tim_write', 'tim_update', 'tim_delete', 'tim_delete_batch', 'tim_link',
+    'tim_write', 'tim_update', 'tim_verify', 'tim_delete', 'tim_delete_batch', 'tim_link',
     'tim_session_start', 'tim_session_log', 'tim_checkpoint', 'tim_write_batch_summary',
     'tim_rollup_session_summary',
     'tim_record_commit',
@@ -1095,7 +1146,35 @@ function installProcessErrorGuards() {
         }
     });
 }
-async function createMcpServer() {
+/**
+ * Session identity for usage recording — best-effort, null when the
+ * process has no resolvable session (recording is then session-less and
+ * can never be marked referenced, which is the correct neutral outcome).
+ */
+function usageSessionId() {
+    try {
+        return (0, tim_core_1.resolveActiveSessionId)({
+            markerSession: isHttp ? undefined : (0, tim_hooks_1.findMarker)(process.cwd(), { walkUp: true })?.marker.session,
+            useSessionCache: !isHttp,
+            useEnv: !isHttp,
+        }) ?? null;
+    }
+    catch {
+        return null;
+    }
+}
+/** Telemetry must never fail a user-facing tool response. */
+function bestEffortTelemetry(label, fn) {
+    try {
+        fn();
+    }
+    catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.debug(`[tim-mcp] ${label} failed:`, msg);
+    }
+}
+async function createMcpServer(options = {}) {
+    const isHttp = options.transportMode === 'http';
     const server = new index_js_1.Server({
         name: 'tim-mcp',
         version: '0.1.0-alpha',
@@ -1138,7 +1217,7 @@ async function createMcpServer() {
         try {
             switch (name) {
                 case 'tim_read': {
-                    const { id, project, section, depth, includeEdges, includeChildren, showIrrelevant, } = TimReadSchema.parse(args);
+                    const { id, project, section, depth, includeEdges, includeChildren, showIrrelevant, include_body, } = TimReadSchema.parse(args);
                     const readOpts = { depth, includeChildren, showIrrelevant };
                     if (Array.isArray(id)) {
                         let projectLabel = null;
@@ -1172,8 +1251,12 @@ async function createMcpServer() {
                             }
                             entries.push(entry);
                         }
+                        bestEffortTelemetry('recordRead', () => s.recordRead(entries.map(e => e.id), usageSessionId()));
                         return {
-                            content: [{ type: 'text', text: formatToolResponse({ entries, missing }) }],
+                            content: [{ type: 'text', text: formatToolResponse({
+                                        entries: entries.map(e => summarizeEntry((0, trust_js_1.annotateTrust)(e, isHttp ? '' : process.cwd()), include_body)),
+                                        missing,
+                                    }) }],
                         };
                     }
                     if (section) {
@@ -1258,8 +1341,12 @@ async function createMcpServer() {
                             return errorResult(`Project not found: ${project}`);
                         }
                         const edges = includeEdges ? await s.getEdges(entry.id, 'both') : [];
+                        bestEffortTelemetry('recordRead', () => s.recordRead([entry.id], usageSessionId()));
                         return {
-                            content: [{ type: 'text', text: formatToolResponse({ entry, edges }) }],
+                            content: [{ type: 'text', text: formatToolResponse({
+                                        entry: summarizeEntry((0, trust_js_1.annotateTrust)(entry, isHttp ? '' : process.cwd()), include_body),
+                                        edges,
+                                    }) }],
                         };
                     }
                     if (typeof id === 'string') {
@@ -1294,8 +1381,12 @@ async function createMcpServer() {
                             return errorResult(`Entry ${id} not found in project ${projectLabel}`);
                         }
                         const edges = includeEdges ? await s.getEdges(id, 'both') : [];
+                        bestEffortTelemetry('recordRead', () => s.recordRead([entry.id], usageSessionId()));
                         return {
-                            content: [{ type: 'text', text: formatToolResponse({ entry, edges }) }],
+                            content: [{ type: 'text', text: formatToolResponse({
+                                        entry: summarizeEntry((0, trust_js_1.annotateTrust)(entry, isHttp ? '' : process.cwd()), include_body),
+                                        edges,
+                                    }) }],
                         };
                     }
                     return {
@@ -1305,7 +1396,7 @@ async function createMcpServer() {
                 }
                 case 'tim_write': {
                     const opts = TimWriteSchema.parse(args);
-                    const { parentTitle, projectId, where, ...writeOpts } = opts;
+                    const { parentTitle, projectId, where, force, ...writeOpts } = opts;
                     if (!writeOpts.parentId && where) {
                         const parts = where.split('/');
                         const projPart = parts[0]?.trim();
@@ -1409,7 +1500,69 @@ async function createMcpServer() {
                             isError: true,
                         };
                     }
+                    // Best-effort git provenance: which commit was HEAD when this
+                    // knowledge was written. Skipped for schema entries, explicit
+                    // provenance, and when disabled via env.
+                    const provKind = typeof writeOpts.metadata?.kind === 'string'
+                        ? writeOpts.metadata.kind
+                        : undefined;
+                    if (process.env.TIM_PROVENANCE !== '0' &&
+                        writeOpts.metadata.provenance === undefined &&
+                        (!provKind || !tim_core_1.SCHEMA_KINDS.has(provKind))) {
+                        const prov = (0, provenance_js_1.captureProvenance)(isHttp ? '' : process.cwd());
+                        if (prov) {
+                            writeOpts.metadata.provenance = {
+                                ...prov,
+                                captured_at: new Date().toISOString(),
+                            };
+                        }
+                    }
+                    // Dedup gate: refuse knowledge writes whose title is nearly
+                    // identical to an existing entry in the same project. Schema
+                    // kinds (sessions, exchanges, summaries, …) are pipeline writes
+                    // and are never blocked.
+                    const dedupKind = typeof writeOpts.metadata?.kind === 'string'
+                        ? writeOpts.metadata.kind
+                        : undefined;
+                    if (!force &&
+                        process.env.TIM_DEDUP_CHECK !== '0' &&
+                        (!dedupKind || !tim_core_1.SCHEMA_KINDS.has(dedupKind))) {
+                        const candidateTitle = (writeOpts.title ?? opts.content.split('\n')[0]).trim();
+                        const dedupScope = writeOpts.parentId
+                            ? (s.getProjectLabel(writeOpts.parentId) ?? null)
+                            : null;
+                        // Without a resolvable project scope the gate would scan all projects
+                        // and false-positive on generic titles ("Setup", "Next Steps", "Log").
+                        // Skip the gate; callers can pass force:true for explicit opt-in.
+                        if (dedupScope !== null) {
+                            const dupes = candidateTitle
+                                ? await s.findSimilar(candidateTitle, { projectLabel: dedupScope })
+                                : [];
+                            if (dupes.length > 0) {
+                                return {
+                                    content: [{
+                                            type: 'text',
+                                            text: formatToolResponse({
+                                                status: 'duplicate_suspected',
+                                                candidates: dupes,
+                                                hint: 'A very similar entry already exists. Append to it with ' +
+                                                    'tim_update, or pass force:true to write a new entry anyway.',
+                                            }),
+                                        }],
+                                    isError: true,
+                                };
+                            }
+                        }
+                    }
                     const entry = await s.write(opts.content, writeOpts);
+                    const usageSid = usageSessionId();
+                    if (usageSid) {
+                        const readIds = s.getSessionReadIds(usageSid);
+                        const cited = readIds.filter(rid => opts.content.includes(rid));
+                        if (cited.length > 0) {
+                            bestEffortTelemetry('markReferenced', () => s.markReferenced(cited, usageSid));
+                        }
+                    }
                     const payload = tagWarnings.length > 0 ? { entry, warnings: tagWarnings } : entry;
                     return {
                         content: [{ type: 'text', text: formatToolResponse(payload) }],
@@ -1442,8 +1595,117 @@ async function createMcpServer() {
                     if (hasFilters) {
                         results = results.slice(0, topK);
                     }
+                    bestEffortTelemetry('recordRead', () => s.recordRead(results.map(e => e.id), usageSessionId()));
                     return {
                         content: [{ type: 'text', text: formatToolResponse(results) }],
+                    };
+                }
+                case 'tim_guard': {
+                    const { action, project, topK } = TimGuardSchema.parse(args);
+                    let projectLabel;
+                    if (project) {
+                        const pr = await s.resolveProjectLabel(project);
+                        if (pr.status !== 'found') {
+                            return {
+                                content: [{ type: 'text', text: `project not found: ${project}` }],
+                                isError: true,
+                            };
+                        }
+                        projectLabel = pr.label;
+                    }
+                    const matches = await s.searchFailures(action, { projectLabel, limit: topK });
+                    if (matches.length === 0) {
+                        return {
+                            content: [{
+                                    type: 'text',
+                                    text: formatToolResponse({
+                                        status: 'clear',
+                                        message: 'No known failures or learnings match this action.',
+                                    }),
+                                }],
+                        };
+                    }
+                    return {
+                        content: [{
+                                type: 'text',
+                                text: formatToolResponse({
+                                    status: 'warnings',
+                                    matches: matches.map(e => ({
+                                        id: e.id,
+                                        title: e.title,
+                                        kind: e.metadata.kind,
+                                        excerpt: e.content.slice(0, 300),
+                                    })),
+                                    hint: 'Known failures/learnings match this action. tim_read the ids ' +
+                                        'for details before proceeding.',
+                                }),
+                            }],
+                    };
+                }
+                case 'tim_delta': {
+                    const { project, since } = TimDeltaSchema.parse(args);
+                    const roots = await resolveRoots(s, project);
+                    if (roots.error) {
+                        return { content: [{ type: 'text', text: roots.error }], isError: true };
+                    }
+                    if (!roots.labels || roots.labels.length !== 1) {
+                        return {
+                            content: [{
+                                    type: 'text',
+                                    text: 'tim_delta requires a single project (pass project or bind one)',
+                                }],
+                            isError: true,
+                        };
+                    }
+                    const projEntry = await s.read(roots.labels[0], { includeChildren: false });
+                    if (!projEntry) {
+                        return {
+                            content: [{ type: 'text', text: `project not found: ${roots.labels[0]}` }],
+                            isError: true,
+                        };
+                    }
+                    let cutoff = since;
+                    let baseline = 'explicit since argument';
+                    if (!cutoff) {
+                        const currentSession = (0, tim_core_1.resolveActiveSessionId)({
+                            markerSession: isHttp ? undefined : (0, tim_hooks_1.findMarker)(process.cwd(), { walkUp: true })?.marker.session,
+                            useSessionCache: !isHttp,
+                            useEnv: !isHttp,
+                        });
+                        const prev = await s.getPreviousSession(projEntry.id, currentSession ?? null);
+                        if (prev) {
+                            cutoff = prev.updatedAt;
+                            baseline = `previous session ${prev.id} (last activity)`;
+                        }
+                        else {
+                            cutoff = new Date(Date.now() - 7 * 86400_000).toISOString();
+                            baseline = 'no previous session found — defaulted to 7 days';
+                        }
+                    }
+                    const delta = await s.getChangedSince(projEntry.id, cutoff);
+                    const brief = (e) => ({
+                        id: e.id,
+                        title: e.title,
+                        kind: e.metadata.kind ?? null,
+                        updatedAt: e.updatedAt,
+                    });
+                    return {
+                        content: [{
+                                type: 'text',
+                                text: formatToolResponse({
+                                    project: roots.labels[0],
+                                    since: cutoff,
+                                    baseline,
+                                    counts: {
+                                        created: delta.created.length,
+                                        updated: delta.updated.length,
+                                        deleted: delta.deleted.length,
+                                    },
+                                    created: delta.created.map(brief),
+                                    updated: delta.updated.map(brief),
+                                    deleted: delta.deleted.map(brief),
+                                }),
+                            }],
                     };
                 }
                 case 'tim_remember': {
@@ -1462,6 +1724,15 @@ async function createMcpServer() {
                 case 'tim_link': {
                     const { sourceId, targetId, type, weight, metadata } = TimLinkSchema.parse(args);
                     const edge = await s.link(sourceId, targetId, type, weight, metadata);
+                    const refIds = [];
+                    for (const raw of [sourceId, targetId]) {
+                        const e = await s.read(raw, { includeChildren: false });
+                        if (e)
+                            refIds.push(e.id);
+                    }
+                    if (refIds.length > 0) {
+                        bestEffortTelemetry('markReferenced', () => s.markReferenced(refIds, usageSessionId()));
+                    }
                     return {
                         content: [{ type: 'text', text: formatToolResponse(edge) }],
                     };
@@ -1475,19 +1746,47 @@ async function createMcpServer() {
                 }
                 case 'tim_update': {
                     const { id, ...patch } = TimUpdateSchema.parse(args);
+                    const resolved = await s.read(id, { showIrrelevant: true, includeChildren: false });
+                    if (!resolved)
+                        return errorResult(`Entry not found: ${id}`);
                     if (patch.tags !== undefined) {
                         const tagWarnings = (0, tim_store_1.validateTagsDeprecated)(patch.tags);
                         const { clean: cleanTags } = (0, tim_core_1.stripDeprecatedTags)(patch.tags);
                         patch.tags = cleanTags;
-                        const entry = await s.update(id, patch);
+                        const entry = await s.update(resolved.id, patch);
+                        bestEffortTelemetry('markReferenced', () => s.markReferenced([entry.id], usageSessionId()));
                         const payload = tagWarnings.length > 0 ? { entry, warnings: tagWarnings } : entry;
                         return {
                             content: [{ type: 'text', text: formatToolResponse(payload) }],
                         };
                     }
-                    const entry = await s.update(id, patch);
+                    const entry = await s.update(resolved.id, patch);
+                    bestEffortTelemetry('markReferenced', () => s.markReferenced([entry.id], usageSessionId()));
                     return {
                         content: [{ type: 'text', text: formatToolResponse(entry) }],
+                    };
+                }
+                case 'tim_verify': {
+                    const { id } = TimVerifySchema.parse(args);
+                    const rawIds = Array.isArray(id) ? id : [id];
+                    const resolved = [];
+                    const unresolved = [];
+                    for (const raw of rawIds) {
+                        const entry = await s.read(raw, { showIrrelevant: true, includeChildren: false });
+                        if (entry)
+                            resolved.push(entry.id);
+                        else
+                            unresolved.push(raw);
+                    }
+                    const result = await s.touchVerified(resolved);
+                    return {
+                        content: [{
+                                type: 'text',
+                                text: formatToolResponse({
+                                    verified: result.verified,
+                                    missing: [...unresolved, ...result.missing],
+                                }),
+                            }],
                     };
                 }
                 case 'tim_delete': {
@@ -1678,7 +1977,7 @@ async function createMcpServer() {
                 }
                 case 'tim_session_start': {
                     const { sessionId, projectId, agentName, cwd, harness, batchSize, tool, model, taskSummary } = TimSessionStartSchema.parse(args);
-                    const cwdResolved = cwd ?? process.cwd();
+                    const cwdResolved = cwd ?? (isHttp ? '' : process.cwd());
                     let boundProjectId = projectId ?? (0, tim_hooks_1.getActiveProjectLabel)() ?? undefined;
                     if (!boundProjectId) {
                         await (0, tim_store_1.ensureInboxProject)(s);
@@ -1841,10 +2140,14 @@ async function createMcpServer() {
                         return errorResult(`Project not found: ${label}`);
                     }
                     const projectLabel = resolved.label;
-                    const cwd = process.cwd();
+                    const cwd = isHttp ? undefined : process.cwd();
                     const sessionId = (0, tim_core_1.resolveActiveSessionId)({
                         sessionIdArg: sessionIdArg,
-                        markerSession: (0, tim_hooks_1.findMarker)(cwd, { walkUp: true })?.marker.session,
+                        markerSession: cwd
+                            ? (0, tim_hooks_1.findMarker)(cwd, { walkUp: true })?.marker.session
+                            : undefined,
+                        useSessionCache: !isHttp,
+                        useEnv: !isHttp,
                     });
                     if (bind && sessionId) {
                         const existing = await s.read(sessionId);
@@ -1868,7 +2171,7 @@ async function createMcpServer() {
                                 sessionId,
                                 projectId: projectLabel,
                                 agentName: 'mcp',
-                                cwd,
+                                cwd: cwd ?? '',
                                 harness: 'mcp',
                             });
                         }
@@ -1876,13 +2179,15 @@ async function createMcpServer() {
                             // Non-critical — project brief still returned
                         }
                     }
-                    try {
-                        (0, tim_hooks_1.syncNearestProjectMarker)(cwd, projectLabel, { sessionId });
+                    if (cwd) {
+                        try {
+                            (0, tim_hooks_1.syncNearestProjectMarker)(cwd, projectLabel, { sessionId });
+                        }
+                        catch {
+                            // Non-critical — brief still returned
+                        }
                     }
-                    catch {
-                        // Non-critical — brief still returned
-                    }
-                    const formatted = (0, tim_store_1.formatProjectOutput)(result, budget, loadProjectSchema(), bind ? 'load' : 'read');
+                    const formatted = (0, project_output_js_1.formatProjectOutput)(result, budget, loadProjectSchema(), bind ? 'load' : 'read');
                     return {
                         content: [{
                                 type: 'text',
@@ -1903,7 +2208,7 @@ async function createMcpServer() {
                     if (!result) {
                         return errorResult(`Project not found: ${label}`);
                     }
-                    const formatted = (0, tim_store_1.formatProjectOutput)(result, budget, loadProjectSchema(), 'read');
+                    const formatted = (0, project_output_js_1.formatProjectOutput)(result, budget, loadProjectSchema(), 'read');
                     return {
                         content: [{
                                 type: 'text',
@@ -1976,16 +2281,18 @@ async function createHttpServer(options) {
     const port = options?.port ?? CLI.port;
     const app = (0, express_js_1.createMcpExpressApp)({ host });
     const transports = new Map();
-    const mcpServers = [];
+    const mcpServers = new Map();
     app.get('/sse', async (_req, res) => {
         try {
             const transport = new sse_js_1.SSEServerTransport('/messages', res);
+            const mcpServer = await createMcpServer({ transportMode: 'http' });
             transports.set(transport.sessionId, transport);
+            mcpServers.set(transport.sessionId, mcpServer);
             res.on('close', () => {
                 transports.delete(transport.sessionId);
+                mcpServers.delete(transport.sessionId);
+                void mcpServer.close().catch(() => { });
             });
-            const mcpServer = await createMcpServer();
-            mcpServers.push(mcpServer);
             await mcpServer.connect(transport);
         }
         catch (err) {
@@ -2031,13 +2338,13 @@ async function createHttpServer(options) {
             }
         }
         transports.clear();
-        await Promise.all(mcpServers.map(s => s.close().catch(() => { })));
-        mcpServers.length = 0;
+        await Promise.all(Array.from(mcpServers.values()).map(s => s.close().catch(() => { })));
+        mcpServers.clear();
         await new Promise((resolve, reject) => {
             httpServer.close(err => (err ? reject(err) : resolve()));
         });
     };
-    return { app, httpServer, port: actualPort, close };
+    return { app, httpServer, port: actualPort, close, activeConnections: () => mcpServers.size };
 }
 async function startServer() {
     installProcessErrorGuards();

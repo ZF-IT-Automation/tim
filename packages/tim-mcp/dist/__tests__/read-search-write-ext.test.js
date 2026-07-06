@@ -158,6 +158,12 @@ class McpClient {
         (0, vitest_1.expect)(parsed.entries[0].id).toBe(e1.id);
         (0, vitest_1.expect)(parsed.missing).toEqual(['missing-ulid-123']);
     });
+    (0, vitest_1.it)('rejects batch id arrays larger than 50', async () => {
+        const ids = Array.from({ length: 51 }, (_, i) => `id-${i}`);
+        const readResp = await client.callTool('tim_read', { id: ids });
+        (0, vitest_1.expect)(readResp.result?.isError).toBe(true);
+        (0, vitest_1.expect)(readResp.result.content[0].text).toMatch(/50|too big|maximum/i);
+    });
     (0, vitest_1.it)('project reads project entry by label', async () => {
         await client.callTool('tim_create_project', { label: 'P0500', content: 'Read Project' });
         const readResp = await client.callTool('tim_read', { project: 'P0500' });

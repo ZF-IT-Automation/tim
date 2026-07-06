@@ -38,16 +38,24 @@ export function resolveActiveSessionId(options: {
   envSessionId?: string;
   markerSession?: string;
   cacheMaxAgeMs?: number;
+  /** Set false in daemon/HTTP contexts — the cache file is per-machine, not per-client. */
+  useSessionCache?: boolean;
+  /** Set false in daemon/HTTP contexts — env is daemon-global. */
+  useEnv?: boolean;
 }): string | undefined {
   const fromArg = options.sessionIdArg?.trim();
   if (fromArg) return fromArg;
 
-  const fromEnv =
-    options.envSessionId?.trim() || process.env.TIM_SESSION_ID?.trim();
-  if (fromEnv) return fromEnv;
+  if (options.useEnv !== false) {
+    const fromEnv =
+      options.envSessionId?.trim() || process.env.TIM_SESSION_ID?.trim();
+    if (fromEnv) return fromEnv;
+  }
 
-  const cached = readTimSessionCache(options.cacheMaxAgeMs);
-  if (cached?.session_id) return cached.session_id;
+  if (options.useSessionCache !== false) {
+    const cached = readTimSessionCache(options.cacheMaxAgeMs);
+    if (cached?.session_id) return cached.session_id;
+  }
 
   const fromMarker = options.markerSession?.trim();
   if (fromMarker) return fromMarker;

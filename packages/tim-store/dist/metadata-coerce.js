@@ -28,7 +28,16 @@ function normalizeTaskValue(value) {
     return value;
 }
 function isTaskMarker(value) {
-    return normalizeTaskValue(value) === true;
+    // Recognizes BOTH the legacy boolean form (task: true / 1 / "true")
+    // AND the canonical object form (task: { status: ..., priority: ... }).
+    // The object form is what real tasks look like in the DB; the boolean
+    // form is what legacy entries (and some tests) use.
+    if (normalizeTaskValue(value) === true)
+        return true;
+    if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+        return true;
+    }
+    return false;
 }
 function coerceBooleanValue(value) {
     if (value === 1 || value === 'true')

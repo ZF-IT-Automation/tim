@@ -5,35 +5,8 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.MIN_TAGS_FOR_USER_CONTENT = exports.SCHEMA_KINDS = void 0;
 exports.validateWriteTags = validateWriteTags;
 exports.supplementWriteTags = supplementWriteTags;
-/**
- * Kind values that identify schema/structural entries. Entries with these kinds
- * are exempt from the "tags required" rule in tim_write. Everything else
- * (user-generated content) MUST carry at least 2 tags for discoverability.
- *
- * Sourced from:
- *   - packages/tim-core/src/project.ts   (project)
- *   - packages/tim-store/src/session-tree.ts  (sessions/summary/batch/exchange)
- *   - packages/tim-store/src/commit-tree.ts  (commits)
- *   - ad-hoc structural kinds in checkpoint + section code paths
- */
-exports.SCHEMA_KINDS = new Set([
-    // Project tree
-    'project',
-    'section',
-    // Sessions sub-tree
-    'sessions-root',
-    'session',
-    'session-summary-root',
-    'exchanges-root',
-    'exchange-batch',
-    'exchange',
-    'batch-summary',
-    // Commits sub-tree
-    'commits-root',
-    'commit',
-    // Other structural
-    'checkpoint',
-]);
+const tim_core_1 = require("tim-core");
+Object.defineProperty(exports, "SCHEMA_KINDS", { enumerable: true, get: function () { return tim_core_1.SCHEMA_KINDS; } });
 /** Minimum number of tags required on non-schema entries. */
 exports.MIN_TAGS_FOR_USER_CONTENT = 2;
 /**
@@ -52,7 +25,7 @@ exports.MIN_TAGS_FOR_USER_CONTENT = 2;
 function validateWriteTags(tags, metadata) {
     const kind = typeof metadata?.kind === 'string' ? metadata.kind : undefined;
     // Schema entries are exempt.
-    if (kind && exports.SCHEMA_KINDS.has(kind)) {
+    if (kind && tim_core_1.SCHEMA_KINDS.has(kind)) {
         return { ok: true };
     }
     const tagCount = tags?.length ?? 0;
@@ -85,7 +58,7 @@ function validateWriteTags(tags, metadata) {
 function supplementWriteTags(tags, metadata, parentKind) {
     const meta = metadata ? { ...metadata } : {};
     const kind = typeof meta.kind === 'string' ? meta.kind : undefined;
-    if (kind && exports.SCHEMA_KINDS.has(kind)) {
+    if (kind && tim_core_1.SCHEMA_KINDS.has(kind)) {
         return { tags: tags ?? [], metadata: meta };
     }
     if (parentKind === 'project' && !kind) {
