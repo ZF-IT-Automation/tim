@@ -20,6 +20,8 @@ export {
 
 export { getDeltaBriefing, type DeltaBriefingOptions } from './delta.js';
 
+export { getUpdateCheckLine } from './update-check.js';
+
 export {
   runPromptSubmit,
   type PromptSubmitParams,
