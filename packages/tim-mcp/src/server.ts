@@ -33,6 +33,7 @@ import {
   findMarker,
   getActiveProjectLabel,
   maybeSpawnSummarizer,
+  runPromptSubmit,
   syncNearestProjectMarker,
 } from 'tim-hooks';
 import { tim_export, tim_import } from 'tim-migrate';
@@ -319,6 +320,12 @@ const TimCheckpointSchema = z.object({
   sessionId: z.string(),
 });
 
+const TimHookPromptSubmitSchema = z.object({
+  prompt: z.string().min(1).describe('User prompt text for hybrid retrieval'),
+  project: z.string().optional()
+    .describe('Scope retrieval/guard to a project label'),
+});
+
 const TimRenameEntrySchema = z.object({
   oldId: z.string().describe('Current entry ID'),
   newId: z.string().describe('New entry ID (must not exist)'),
@@ -597,6 +604,14 @@ export const TOOL_DEFS: Array<{
     name: 'tim_checkpoint',
     description: 'Create a session checkpoint summary and run verify-before-decay.',
     schema: TimCheckpointSchema,
+    internal: true,
+  },
+  {
+    name: 'tim_hook_prompt_submit',
+    description:
+      'UserPromptSubmit hook: FTS retrieval (top-3) + guard warnings for action-like prompts. ' +
+      'Returns context lines for harness injection. Kill-switch: hooks.promptSubmit.enabled.',
+    schema: TimHookPromptSubmitSchema,
     internal: true,
   },
   {
@@ -1224,6 +1239,7 @@ const READ_TOOLS = new Set([
   'tim_export', 'tim_doctor', 'tim_sync', 'tim_load_project', 'tim_read_project',
   'tim_show',
   'tim_show_unsummarized', 'tim_show_all_unsummarized', 'tim_show_untagged',
+  'tim_hook_prompt_submit',
 ]);
 
 const REMEMBER_TOOLS = new Set(['tim_remember']);
@@ -2286,6 +2302,30 @@ export async function createMcpServer(
           const summary = await getSessions().checkpoint(sessionId);
           return {
             content: [{ type: 'text', text: formatToolResponse(summary) }],
+          };
+        }
+
+        case 'tim_hook_prompt_submit': {
+          const { prompt, project } = TimHookPromptSubmitSchema.parse(args);
+          let projectLabel: string | undefined;
+          if (project) {
+            const resolved = await s.resolveProjectLabel(project);
+            if (resolved.status === 'found') projectLabel = resolved.label;
+          } else {
+            const roots = await resolveRoots(s, undefined);
+            if (roots.labels?.length === 1) projectLabel = roots.labels[0];
+          }
+          const result = await runPromptSubmit(s, { prompt, projectLabel });
+          if (!result) {
+            return {
+              content: [{ type: 'text', text: formatToolResponse({ context: null, lines: [] }) }],
+            };
+          }
+          return {
+            content: [{
+              type: 'text',
+              text: formatToolResponse({ context: result.context, lines: result.lines }),
+            }],
           };
         }
 

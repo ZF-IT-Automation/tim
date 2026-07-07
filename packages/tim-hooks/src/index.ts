@@ -18,6 +18,14 @@ export {
   type SessionStartResult,
 } from './checkpoint.js';
 
+export { getDeltaBriefing, type DeltaBriefingOptions } from './delta.js';
+
+export {
+  runPromptSubmit,
+  type PromptSubmitParams,
+  type PromptSubmitResult,
+} from './prompt-submit.js';
+
 export {
   readMarker,
   writeMarker,
