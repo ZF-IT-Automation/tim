@@ -28,6 +28,13 @@ function looksLikeAction(prompt: string): boolean {
   return ACTION_PATTERN.test(prompt);
 }
 
+function raceWithTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | null> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(null), timeoutMs);
+    promise.then((v) => { clearTimeout(timer); resolve(v); }, () => { clearTimeout(timer); resolve(null); });
+  });
+}
+
 async function computePromptContext(
   store: TimStore,
   params: PromptSubmitParams,
@@ -81,11 +88,7 @@ export async function runPromptSubmit(
   const timeoutMs = params.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
   try {
-    const result = await Promise.race([
-      computePromptContext(store, params),
-      new Promise<null>(resolve => setTimeout(() => resolve(null), timeoutMs)),
-    ]);
-    return result;
+    return await raceWithTimeout(computePromptContext(store, params), timeoutMs);
   } catch {
     return null;
   }

@@ -53,6 +53,13 @@ async function computeDeltaBriefing(
  * Short delta block for SessionStart briefing. Returns null when nothing
  * changed or on timeout/error — never throws.
  */
+function raceWithTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | null> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(null), timeoutMs);
+    promise.then((v) => { clearTimeout(timer); resolve(v); }, () => { clearTimeout(timer); resolve(null); });
+  });
+}
+
 export async function getDeltaBriefing(
   store: TimStore,
   projectId: string,
@@ -61,11 +68,7 @@ export async function getDeltaBriefing(
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
   try {
-    const result = await Promise.race([
-      computeDeltaBriefing(store, projectId, opts.sessionId),
-      new Promise<null>(resolve => setTimeout(() => resolve(null), timeoutMs)),
-    ]);
-    return result;
+    return await raceWithTimeout(computeDeltaBriefing(store, projectId, opts.sessionId), timeoutMs);
   } catch {
     return null;
   }

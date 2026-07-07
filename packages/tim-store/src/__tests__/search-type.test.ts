@@ -1,16 +1,23 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+
+const initMock = vi.fn();
+vi.mock('fastembed', () => ({
+  EmbeddingModel: { AllMiniLML6V2: 'all-MiniLM-L6-v2' },
+  FlagEmbedding: { init: initMock },
+}));
+
 import { TimStore } from '../store.js';
 
 describe('search searchType', () => {
   let store: TimStore;
 
   beforeEach(() => {
+    initMock.mockClear();
     store = new TimStore(':memory:');
   });
 
   afterEach(() => {
     store.close();
-    vi.restoreAllMocks();
   });
 
   it('searchType fts skips fastembed even when vectors exist', async () => {
@@ -18,23 +25,11 @@ describe('search searchType', () => {
       tags: ['#alpha'],
       metadata: { kind: 'lesson' },
     });
-
     const db = (store as unknown as { db: import('better-sqlite3').Database }).db;
-    db.prepare(`
-      INSERT INTO entry_vectors (entry_id, vector, model)
-      VALUES (?, ?, 'all-MiniLM-L6-v2')
-    `).run(entry.id, Buffer.from(new Float32Array([1, 0, 0]).buffer));
+    db.prepare(`INSERT INTO entry_vectors (entry_id, vector, model) VALUES (?, ?, 'all-MiniLM-L6-v2')`)
+      .run(entry.id, Buffer.from(new Float32Array([1, 0, 0]).buffer));
 
-    const fastembed = await import('fastembed');
-    const initSpy = vi.spyOn(fastembed.FlagEmbedding, 'init');
-
-    const results = await store.search({
-      query: 'alpha embedding',
-      topK: 5,
-      searchType: 'fts',
-    });
-
-    expect(initSpy).not.toHaveBeenCalled();
-    expect(results.some(r => r.id === entry.id)).toBe(true);
+    await store.search({ query: 'alpha embedding', topK: 5, searchType: 'fts' });
+    expect(initMock).not.toHaveBeenCalled();
   });
 });

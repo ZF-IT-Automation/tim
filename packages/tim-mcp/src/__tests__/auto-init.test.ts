@@ -50,4 +50,22 @@ describe('runAutoInit', () => {
       process.env.HOME = prevHome;
     }
   });
+
+  it('does not register duplicate default agent', async () => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'tim-autoinit-agent-'));
+    const dbPath = path.join(root, 'tim.db');
+    const prevHome = process.env.HOME;
+    process.env.HOME = root;
+    try {
+      await runAutoInit({ dbPath });
+      await runAutoInit({ dbPath });
+      const { TimStore } = await import('tim-store');
+      const store = new TimStore(dbPath);
+      const agents = await store.getAgents().then(list => list.filter(a => a.label === 'default'));
+      store.close();
+      expect(agents.length).toBe(1);
+    } finally {
+      process.env.HOME = prevHome;
+    }
+  });
 });

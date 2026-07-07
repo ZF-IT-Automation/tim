@@ -43,10 +43,13 @@ export async function runAutoInit(options?: { dbPath?: string }): Promise<AutoIn
       result.dbCreated = true;
     }
 
-    try {
-      await store.registerAgent('Default Agent', 'default');
-    } catch {
-      // Agent may already exist.
+    const agents = await store.getAgents();
+    if (!agents.some(a => a.label === 'default')) {
+      try {
+        await store.registerAgent('Default Agent', 'default');
+      } catch {
+        // Race: another connect may have registered concurrently.
+      }
     }
     store.close();
 

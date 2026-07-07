@@ -18,7 +18,7 @@ import {
 } from 'tim-store';
 import { runConfiguredHooks, type HookEnv } from './hooks.js';
 import { getDeltaBriefing } from './delta.js';
-import { getUpdateCheckLine } from './update-check.js';
+import { getUpdateCheckLineBriefing } from './update-check.js';
 import { readMarker, writeMarker, validateMarkerAgainstStore } from './marker.js';
 import {
   onSessionStop,
@@ -203,7 +203,7 @@ export async function runSessionStart(
     });
     if (delta) briefingParts.push(delta);
   }
-  const updateLine = await getUpdateCheckLine();
+  const updateLine = await getUpdateCheckLineBriefing();
   if (updateLine) briefingParts.push(updateLine);
 
   const marker = readMarker(params.cwd);
