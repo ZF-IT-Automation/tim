@@ -110,9 +110,6 @@ async function resolveSessionProjectId(
   const cwdLabel = await resolveActiveProjectFromCwd(cwd, store);
   if (cwdLabel) return cwdLabel;
 
-  const auto = await ensureProjectForPath(store, cwd);
-  if (auto) return auto.label;
-
   const active = getActiveProjectLabel();
   if (active) {
     const validated = await validateMarkerAgainstStore(
@@ -128,6 +125,10 @@ async function resolveSessionProjectId(
     );
     if (validated) return validated.project;
   }
+
+  const auto = await ensureProjectForPath(store, cwd);
+  if (auto) return auto.label;
+
   await ensureInboxProject(store);
   return INBOX_PROJECT_LABEL;
 }

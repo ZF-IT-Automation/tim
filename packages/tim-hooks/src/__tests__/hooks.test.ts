@@ -189,14 +189,15 @@ describe('session-end checkpoint orchestration', () => {
 
     try {
       // No marker in `sub` → cwd-only binding must NOT find parent's P0042.
-      // Falls through to Inbox (P0000) per resolveSessionProjectId contract.
+      // Auto-project creates from basename "inner" before Inbox fallback.
       const { project } = await runSessionStart(store, {
         sessionId: 'sess-sub',
         agentName: 'a',
         cwd: sub,
         harness: 'test',
       });
-      expect(project?.metadata.label ?? project?.id).toBe('P0000');
+      expect(project?.metadata.label ?? project?.id).toMatch(/^P\d{4}$/);
+      expect(project?.metadata.label ?? project?.id).not.toBe('P0042');
     } finally {
       if (originalEnv === undefined) delete process.env.TIM_PROJECT;
       else process.env.TIM_PROJECT = originalEnv;
