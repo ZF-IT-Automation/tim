@@ -17,6 +17,7 @@ import { CurateManager } from './curate.js';
 import { ConsolidationManager } from './consolidate.js';
 import { metadataNeedsCoercion, parseAndCoerceMetadata } from './metadata-coerce.js';
 import { recordFromPayload, entryLocalLwwTimestamp, edgeLocalLwwTimestamp } from './sync-methods.js';
+import { parentIsSecret } from './secret.js';
 
 /**
  * Sanitize a user-supplied query string into a safe FTS5 MATCH expression.
@@ -592,7 +593,8 @@ export class TimStore implements MemoryInterface {
    * Projects ordered by most recent session activity — used by the
    * tim_session_start Inbox fallback to offer a binding choice when no
    * `.tim-project` marker resolved. Groups kind=session entries by their
-   * `project_ref` label and joins the project entry for its title.
+   * `project_ref` label and joins the project entry for its title; labels
+   * whose project entry is deleted (tombstoned) drop out with the join.
    * The Inbox itself ('P0000' — literal to avoid a session-tree → store
    * import cycle) is excluded: falling back to it is what triggered the call.
    */
@@ -1032,6 +1034,12 @@ export class TimStore implements MemoryInterface {
 
   /** Synchronous write for use inside `runExclusive` transactions. */
   writeSync(content: string, options: WriteOptions = {}): Entry {
+    if (options.parentId && parentIsSecret(this.db, options.parentId)) {
+      options = {
+        ...options,
+        metadata: { ...(options.metadata ?? {}), secret: true },
+      };
+    }
     const { entry, now, timestamp } = this.buildEntryRow(content, options);
     this.insertEntrySync(entry);
     this.insertStagingSync(entry, timestamp, options.confidence ?? 1.0);
@@ -1192,6 +1200,13 @@ export class TimStore implements MemoryInterface {
       console.warn(`[tim-store] Deprecated status/priority tags stripped: ${removedTags.join(', ')}`);
     }
     options = { ...options, tags: cleanTags };
+
+    if (options.parentId && parentIsSecret(this.db, options.parentId)) {
+      options = {
+        ...options,
+        metadata: { ...(options.metadata ?? {}), secret: true },
+      };
+    }
 
     const { entry, now, timestamp } = this.buildEntryRow(content, options);
     this.insertEntrySync(entry);

@@ -4,6 +4,7 @@
 import Database from 'better-sqlite3';
 import type { Entry } from 'tim-core';
 import { parseAndCoerceMetadata } from './metadata-coerce.js';
+import { materializeSecretSubtreeSync, parentIsSecret } from './secret.js';
 
 // ─── Internal Row Type ────────────────────────────────────
 
@@ -261,7 +262,11 @@ export class CurateManager {
       return rowToEntry(getEntry(this.db, id)!);
     });
 
-    return transaction();
+    const result = transaction();
+    if (parentIsSecret(this.db, newParentId)) {
+      materializeSecretSubtreeSync(this.db, id);
+    }
+    return result;
   }
 
   updateMany(ids: string[], flags: UpdateManyFlags): Entry[] {
