@@ -314,6 +314,8 @@ export interface TimConfig {
   updateCheck?: boolean;
   /** ISO timestamp of last registry check (config cache). */
   updateCheckLastAt?: string;
+  /** Auto-create projects for unbound directories (default true). */
+  autoProject?: boolean;
   checkpoint?: {
     everyN?: number;
   };

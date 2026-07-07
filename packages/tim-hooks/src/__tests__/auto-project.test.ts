@@ -12,7 +12,8 @@ describe('auto-project on session start', () => {
 
   beforeEach(() => {
     store = new TimStore(':memory:');
-    root = fs.mkdtempSync(path.join(os.tmpdir(), 'tim-auto-proj-'));
+    // Under $HOME but not $HOME itself — /tmp is blocked by ensureProjectForPath
+    root = fs.mkdtempSync(path.join(os.homedir(), '.tim-auto-proj-'));
   });
 
   afterEach(() => {

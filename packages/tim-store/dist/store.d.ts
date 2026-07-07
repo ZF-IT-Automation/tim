@@ -88,6 +88,13 @@ export declare class TimStore implements MemoryInterface {
     private emit;
     read(id: string, options?: ReadOptions): Promise<Entry | null>;
     private loadChildrenRecursive;
+    /** Find auto-created project bound to an exact filesystem path. */
+    findProjectByPath(projectPath: string): Promise<Entry | null>;
+    /**
+     * Allocate the next P-label under an immediate SQLite transaction lock.
+     * Skips reserved labels P0000 and P9999.
+     */
+    allocateNextProjectLabel(): string;
     createProject(label: string, options?: CreateProjectOptions): Promise<Entry>;
     /**
      * Resolve a project label or alias to a canonical P-label.

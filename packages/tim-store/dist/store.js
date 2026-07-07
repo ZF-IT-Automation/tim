@@ -1,6 +1,39 @@
 "use strict";
 // TIM Store — v0.1.0-alpha
 // SQLite-backed MemoryInterface implementation.
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
@@ -12,6 +45,7 @@ exports.runBenchmark = runBenchmark;
 exports.splitTitleBody = splitTitleBody;
 exports.cosineSimilarity = cosineSimilarity;
 const better_sqlite3_1 = __importDefault(require("better-sqlite3"));
+const path = __importStar(require("node:path"));
 const ulid_1 = require("ulid");
 const entry_id_js_1 = require("./entry-id.js");
 const tim_core_1 = require("tim-core");
@@ -161,6 +195,44 @@ class TimStore {
             }
             return child;
         });
+    }
+    /** Find auto-created project bound to an exact filesystem path. */
+    async findProjectByPath(projectPath) {
+        const resolved = path.resolve(projectPath);
+        const row = this.db.prepare(`
+      SELECT * FROM entries
+      WHERE json_extract(metadata, '$.kind') = 'project'
+        AND json_extract(metadata, '$.path') = ?
+        AND irrelevant = 0
+        AND tombstoned_at IS NULL
+    `).get(resolved);
+        return row ? rowToEntry(row) : null;
+    }
+    /**
+     * Allocate the next P-label under an immediate SQLite transaction lock.
+     * Skips reserved labels P0000 and P9999.
+     */
+    allocateNextProjectLabel() {
+        const tx = this.db.transaction(() => {
+            const rows = this.db.prepare(`
+        SELECT json_extract(metadata, '$.label') AS label FROM entries
+        WHERE json_extract(metadata, '$.kind') = 'project'
+          AND tombstoned_at IS NULL
+      `).all();
+            let maxNum = 0;
+            for (const row of rows) {
+                const match = /^P(\d{4})$/.exec(row.label);
+                if (!match)
+                    continue;
+                const num = parseInt(match[1], 10);
+                if (row.label === 'P0000' || row.label === 'P9999')
+                    continue;
+                if (num > maxNum)
+                    maxNum = num;
+            }
+            return `P${String(maxNum + 1).padStart(4, '0')}`;
+        });
+        return tx.immediate();
     }
     async createProject(label, options = {}) {
         const aliases = normalizeProjectAliases(options.aliases);
@@ -855,7 +927,7 @@ class TimStore {
         this.db.close();
     }
     curate() {
-        return new curate_js_1.CurateManager(this.db);
+        return new curate_js_1.CurateManager(this.db, this.deviceId);
     }
     consolidate() {
         return new consolidate_js_1.ConsolidationManager(this.db, this);

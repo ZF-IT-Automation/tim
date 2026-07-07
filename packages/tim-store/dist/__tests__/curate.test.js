@@ -57,6 +57,24 @@ let store;
             const movedGrand = await store.read(grandchild.id);
             (0, vitest_1.expect)(movedGrand.depth).toBe(4);
         });
+        (0, vitest_1.it)('materializes secret inside transaction when moved under secret parent', async () => {
+            const deviceStore = new store_js_1.TimStore(':memory:', { deviceId: 'device-abc' });
+            const secretParent = await deviceStore.write('Secret parent', {
+                metadata: { secret: true },
+            });
+            const child = await deviceStore.write('Will inherit', { parentId: null });
+            const grand = await deviceStore.write('Grandchild', { parentId: child.id });
+            deviceStore.curate().moveEntry(child.id, secretParent.id);
+            const db = deviceStore.getDb();
+            for (const id of [child.id, grand.id]) {
+                const row = db.prepare('SELECT metadata, lww_device FROM entries WHERE id = ?').get(id);
+                (0, vitest_1.expect)(JSON.parse(row.metadata).secret).toBe(true);
+                (0, vitest_1.expect)(row.lww_device).toBe('device-abc');
+            }
+            const staging = db.prepare('SELECT lww_device FROM staging WHERE key = ?').get(child.id);
+            (0, vitest_1.expect)(staging.lww_device).toBe('device-abc');
+            deviceStore.close();
+        });
     });
     (0, vitest_1.describe)('updateMany', () => {
         (0, vitest_1.it)('should batch-update irrelevant and favorite flags', async () => {

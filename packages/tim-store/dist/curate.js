@@ -58,8 +58,10 @@ function replaceIdInJsonString(json, oldId, newId) {
 // ─── CurateManager ─────────────────────────────────────────
 class CurateManager {
     db;
-    constructor(db) {
+    deviceId;
+    constructor(db, deviceId = 'local') {
         this.db = db;
+        this.deviceId = deviceId;
     }
     renameEntry(oldId, newId) {
         if (oldId === newId) {
@@ -194,13 +196,12 @@ class CurateManager {
         SELECT id FROM tree
       `).all(id);
             stageEntries(this.db, affectedIds.map(r => r.id));
+            if ((0, secret_js_1.parentIsSecret)(this.db, newParentId)) {
+                (0, secret_js_1.materializeSecretSubtreeSync)(this.db, id, this.deviceId);
+            }
             return rowToEntry(getEntry(this.db, id));
         });
-        const result = transaction();
-        if ((0, secret_js_1.parentIsSecret)(this.db, newParentId)) {
-            (0, secret_js_1.materializeSecretSubtreeSync)(this.db, id);
-        }
-        return result;
+        return transaction();
     }
     updateMany(ids, flags) {
         if (ids.length === 0)

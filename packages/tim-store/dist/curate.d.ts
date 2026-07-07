@@ -6,7 +6,8 @@ export interface UpdateManyFlags {
 }
 export declare class CurateManager {
     private db;
-    constructor(db: Database.Database);
+    private deviceId;
+    constructor(db: Database.Database, deviceId?: string);
     renameEntry(oldId: string, newId: string): Entry;
     moveEntry(id: string, newParentId: string | null, order?: number): Entry;
     updateMany(ids: string[], flags: UpdateManyFlags): Entry[];

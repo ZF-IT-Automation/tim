@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.resetDevServer = exports.startDevServer = exports._peekCooldown = exports.resetSyncCooldowns = exports.autoPull = exports.autoPush = exports.buildSyncContext = exports.runPull = exports.runPush = exports.pullCycle = exports.pushCycle = exports.PUSH_CHUNK = exports.flushQueue = exports.enqueue = exports.saveQueue = exports.loadQueue = exports.getQueuePath = exports.getSyncStatePath = exports.getSyncConfigPath = exports.defaultFileId = exports.getDeviceId = exports.saveSyncState = exports.loadSyncState = exports.clearConfig = exports.saveConfig = exports.loadConfig = exports.edgeCompositeKey = exports.parseStagingKey = exports.stagingKey = exports.envelopeToStaging = exports.stagingToEnvelope = exports.generateSalt = exports.decrypt = exports.encrypt = exports.deriveKey = exports.SyncApiError = exports.TimSyncClient = void 0;
+exports.resetDevServer = exports.startDevServer = exports._peekCooldown = exports.resetSyncCooldowns = exports.autoPull = exports.autoPush = exports.SECRET_PLACEHOLDER_TITLE = exports.isSecretPlaceholderPayload = exports.decryptSecretPayload = exports.encryptSecretPayload = exports.buildSyncContext = exports.runPull = exports.runPush = exports.pullCycle = exports.pushCycle = exports.PUSH_CHUNK = exports.flushQueue = exports.enqueue = exports.saveQueue = exports.loadQueue = exports.getQueuePath = exports.getSyncStatePath = exports.getSyncConfigPath = exports.defaultFileId = exports.getDeviceId = exports.saveSyncState = exports.loadSyncState = exports.clearConfig = exports.saveConfig = exports.loadConfig = exports.edgeCompositeKey = exports.parseStagingKey = exports.stagingKey = exports.envelopeToStaging = exports.stagingToEnvelope = exports.generateSalt = exports.decrypt = exports.encrypt = exports.deriveKey = exports.SyncApiError = exports.TimSyncClient = void 0;
 var client_js_1 = require("./client.js");
 Object.defineProperty(exports, "TimSyncClient", { enumerable: true, get: function () { return client_js_1.TimSyncClient; } });
 Object.defineProperty(exports, "SyncApiError", { enumerable: true, get: function () { return client_js_1.SyncApiError; } });
@@ -38,6 +38,10 @@ Object.defineProperty(exports, "pullCycle", { enumerable: true, get: function ()
 Object.defineProperty(exports, "runPush", { enumerable: true, get: function () { return sync_js_1.runPush; } });
 Object.defineProperty(exports, "runPull", { enumerable: true, get: function () { return sync_js_1.runPull; } });
 Object.defineProperty(exports, "buildSyncContext", { enumerable: true, get: function () { return sync_js_1.buildSyncContext; } });
+Object.defineProperty(exports, "encryptSecretPayload", { enumerable: true, get: function () { return sync_js_1.encryptSecretPayload; } });
+Object.defineProperty(exports, "decryptSecretPayload", { enumerable: true, get: function () { return sync_js_1.decryptSecretPayload; } });
+Object.defineProperty(exports, "isSecretPlaceholderPayload", { enumerable: true, get: function () { return sync_js_1.isSecretPlaceholderPayload; } });
+Object.defineProperty(exports, "SECRET_PLACEHOLDER_TITLE", { enumerable: true, get: function () { return sync_js_1.SECRET_PLACEHOLDER_TITLE; } });
 var auto_sync_js_1 = require("./auto-sync.js");
 Object.defineProperty(exports, "autoPush", { enumerable: true, get: function () { return auto_sync_js_1.autoPush; } });
 Object.defineProperty(exports, "autoPull", { enumerable: true, get: function () { return auto_sync_js_1.autoPull; } });

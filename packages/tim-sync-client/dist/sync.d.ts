@@ -11,6 +11,8 @@ export interface SyncCycleContext {
     salt: string;
     secretPassphrase?: string;
 }
+export declare const SECRET_PLACEHOLDER_TITLE = "\uD83D\uDD12 [secret]";
+export declare function isSecretPlaceholderPayload(payloadJson: string): boolean;
 export declare function encryptSecretPayload(payloadJson: string, secretEncrypt: (data: string) => string): string;
 export declare function decryptSecretPayload(payloadJson: string, secretDecrypt?: (data: string) => string): string;
 export declare function pushCycle(client: TimSyncClient, store: TimStore, state: SyncState, deviceId: string, encryptFn: (data: string) => string, secretEncrypt?: (data: string) => string): Promise<{

@@ -1,5 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.SECRET_PLACEHOLDER_TITLE = void 0;
+exports.isSecretPlaceholderPayload = isSecretPlaceholderPayload;
 exports.encryptSecretPayload = encryptSecretPayload;
 exports.decryptSecretPayload = decryptSecretPayload;
 exports.pushCycle = pushCycle;
@@ -53,6 +55,18 @@ function payloadIsSecret(payloadJson) {
         return false;
     }
 }
+exports.SECRET_PLACEHOLDER_TITLE = '🔒 [secret]';
+function isSecretPlaceholderPayload(payloadJson) {
+    try {
+        const payload = JSON.parse(payloadJson);
+        return (payload.title === exports.SECRET_PLACEHOLDER_TITLE &&
+            payload.content === '' &&
+            parsePayloadMetadata(payload.metadata).secret === true);
+    }
+    catch {
+        return false;
+    }
+}
 function encryptSecretPayload(payloadJson, secretEncrypt) {
     const payload = JSON.parse(payloadJson);
     const metaRaw = payload.metadata;
@@ -61,11 +75,7 @@ function encryptSecretPayload(payloadJson, secretEncrypt) {
         : { ...metaRaw };
     const encMeta = secretEncrypt(JSON.stringify(meta));
     const encrypted = {
-        id: payload.id,
-        parent_id: payload.parent_id,
-        created_at: payload.created_at,
-        updated_at: payload.updated_at,
-        depth: payload.depth,
+        ...payload,
         title: secretEncrypt(String(payload.title ?? '')),
         content: secretEncrypt(String(payload.content ?? '')),
         metadata: JSON.stringify({ secret: true, _enc: encMeta }),
@@ -134,7 +144,15 @@ function transformEnvelopeForPull(env, secretDecrypt) {
 }
 async function pushCycle(client, store, state, deviceId, encryptFn, secretEncrypt) {
     const db = store.getDb();
-    const rows = (0, tim_store_1.getUnackedStaging)(db);
+    const allRows = (0, tim_store_1.getUnackedStaging)(db);
+    const placeholderKeys = [];
+    const rows = allRows.filter((row) => {
+        if (row.entity_type === 'entry' && isSecretPlaceholderPayload(row.payload)) {
+            placeholderKeys.push(row.key);
+            return false;
+        }
+        return true;
+    });
     const qPath = (0, config_js_1.getQueuePath)(state.fileId);
     let queue = (0, queue_js_1.loadQueue)(qPath);
     if (rows.length > 0) {
@@ -158,16 +176,19 @@ async function pushCycle(client, store, state, deviceId, encryptFn, secretEncryp
             blobs: item.blobs,
         });
     });
-    const keysToAck = [];
+    const keysToAck = [...placeholderKeys];
+    let pushedCount = 0;
     for (const item of sent) {
-        for (const e of item.envelopes)
+        for (const e of item.envelopes) {
             keysToAck.push(e.key);
+            pushedCount++;
+        }
     }
     if (keysToAck.length > 0)
         (0, tim_store_1.ackStaging)(db, keysToAck);
     state.lastPush = new Date().toISOString();
     (0, config_js_1.saveSyncState)(state);
-    return { pushed: keysToAck.length, queued: !ok };
+    return { pushed: pushedCount, queued: !ok };
 }
 async function pullCycle(client, store, state, decryptFn, secretDecrypt) {
     const db = store.getDb();
