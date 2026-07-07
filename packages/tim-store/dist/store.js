@@ -230,7 +230,24 @@ class TimStore {
                 if (num > maxNum)
                     maxNum = num;
             }
-            return `P${String(maxNum + 1).padStart(4, '0')}`;
+            let candidateNum = maxNum + 1;
+            while (candidateNum < 9999) {
+                const candidate = `P${String(candidateNum).padStart(4, '0')}`;
+                if (candidate === 'P0000' || candidate === 'P9999') {
+                    candidateNum++;
+                    continue;
+                }
+                const dup = this.db.prepare(`
+          SELECT id FROM entries
+          WHERE json_extract(metadata, '$.kind') = 'project'
+            AND json_extract(metadata, '$.label') = ?
+            AND tombstoned_at IS NULL
+        `).get(candidate);
+                if (!dup)
+                    return candidate;
+                candidateNum++;
+            }
+            throw new Error('No available project labels');
         });
         return tx.immediate();
     }
@@ -1255,12 +1272,32 @@ class TimStore {
     // ─── Search ────────────────────────────────────────────
     async search(options) {
         const topK = options.topK ?? 10;
+        const searchType = options.searchType ?? 'hybrid';
         const patterns = this.loadActiveSuppressPatterns();
         const candidates = (await this.searchFts(options.query, topK * 3))
             .filter(e => !TimStore.matchesSuppressed(patterns, e));
+        if (searchType === 'fts') {
+            const ftsOnly = this.rankByUsage(candidates, topK);
+            const resolved = await this.resolveProjectLabel(options.query);
+            if (resolved.status === 'found') {
+                const row = this.db.prepare(`
+          SELECT * FROM entries
+          WHERE json_extract(metadata, '$.kind') = 'project'
+            AND json_extract(metadata, '$.label') = ?
+            AND irrelevant = 0
+            AND tombstoned_at IS NULL
+        `).get(resolved.label);
+                const proj = row ? rowToEntry(row) : null;
+                if (proj && !TimStore.matchesSuppressed(patterns, proj) && !ftsOnly.some(e => e.id === proj.id)) {
+                    return [proj, ...ftsOnly].slice(0, topK);
+                }
+            }
+            return ftsOnly;
+        }
         let queryVector = null;
         try {
-            if (process.env.TIM_EMBEDDING_DISABLED !== '1' && candidates.length > 0) {
+            const useVectors = searchType === 'vector' || searchType === 'hybrid';
+            if (useVectors && process.env.TIM_EMBEDDING_DISABLED !== '1' && candidates.length > 0) {
                 const placeholders = candidates.map(() => '?').join(', ');
                 const hasVectors = this.db.prepare(`
           SELECT 1 FROM entry_vectors
@@ -1282,7 +1319,9 @@ class TimStore {
         catch {
             // No fastembed — use pure FTS + usage
         }
-        const fts = await this.rankByHybrid(candidates, queryVector, topK);
+        const fts = searchType === 'vector' && !queryVector
+            ? []
+            : await this.rankByHybrid(candidates, queryVector, topK);
         // Labels/aliases live in metadata, not the FTS corpus. Merge a direct project hit.
         // Broader fix: index metadata.label + aliases in fts_entries (migration + triggers).
         const resolved = await this.resolveProjectLabel(options.query);

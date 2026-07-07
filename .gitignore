@@ -16,3 +16,10 @@ tmp/
 
 # Vitest cache (runtime, not source)
 **/node_modules/.vite/
+
+# Large model artifacts — ONNX models + tokenizer, never committed
+local_cache/
+
+# macOS AppleDouble metadata files (rsync artifact)
+._*
+

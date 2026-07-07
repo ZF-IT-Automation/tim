@@ -175,7 +175,7 @@ async function runSessionStart(store, params) {
         if (delta)
             briefingParts.push(delta);
     }
-    const updateLine = await (0, update_check_js_1.getUpdateCheckLine)();
+    const updateLine = await (0, update_check_js_1.getUpdateCheckLineBriefing)();
     if (updateLine)
         briefingParts.push(updateLine);
     const marker = (0, marker_js_1.readMarker)(params.cwd);

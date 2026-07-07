@@ -1236,19 +1236,6 @@ async function createMcpServer(options = {}) {
     // Plumbing tools called by the summarizer / hooks via MCP — handlers must
     // remain fully functional, but ListTools hides them by default so agents
     // don't see internal-only entries. Set TIM_EXPOSE_INTERNAL_TOOLS=1 to reveal.
-    server.setRequestHandler(types_js_1.InitializeRequestSchema, async (request) => {
-        try {
-            await (0, auto_init_js_1.runAutoInit)({ dbPath: DB_PATH });
-        }
-        catch {
-            // Non-fatal — client still gets a valid initialize response.
-        }
-        return {
-            protocolVersion: request.params.protocolVersion,
-            capabilities: { tools: {} },
-            serverInfo: { name: 'tim-mcp', version: '0.1.0-alpha' },
-        };
-    });
     server.setRequestHandler(types_js_1.ListToolsRequestSchema, async () => {
         const rememberEnabled = (0, tim_core_1.loadConfig)().remember?.enabled !== false;
         const defs = rememberEnabled
