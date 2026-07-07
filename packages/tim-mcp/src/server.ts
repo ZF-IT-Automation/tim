@@ -9,6 +9,7 @@ import type { Express } from 'express';
 import type { Server as HttpServer } from 'node:http';
 import {
   CallToolRequestSchema,
+  InitializeRequestSchema,
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
@@ -41,6 +42,7 @@ import { autoPush, autoPull, resetSyncCooldowns, loadConfig as loadSyncConfig } 
 import { validateWriteTags, supplementWriteTags } from './write-validate.js';
 import { handleTimRemember } from './remember-handler.js';
 import { buildInboxFallbackGuidance } from './session-guidance.js';
+import { runAutoInit } from './auto-init.js';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -1326,6 +1328,13 @@ export async function createMcpServer(
 ): Promise<Server> {
   const isHttp = options.transportMode === 'http';
   transportIsHttp = isHttp;
+
+  try {
+    await runAutoInit({ dbPath: DB_PATH });
+  } catch {
+    // Graceful degradation — server still starts.
+  }
+
   const server = new Server(
     {
       name: 'tim-mcp',
@@ -1351,6 +1360,19 @@ export async function createMcpServer(
   // Plumbing tools called by the summarizer / hooks via MCP — handlers must
   // remain fully functional, but ListTools hides them by default so agents
   // don't see internal-only entries. Set TIM_EXPOSE_INTERNAL_TOOLS=1 to reveal.
+  server.setRequestHandler(InitializeRequestSchema, async (request) => {
+    try {
+      await runAutoInit({ dbPath: DB_PATH });
+    } catch {
+      // Non-fatal — client still gets a valid initialize response.
+    }
+    return {
+      protocolVersion: request.params.protocolVersion,
+      capabilities: { tools: {} },
+      serverInfo: { name: 'tim-mcp', version: '0.1.0-alpha' },
+    };
+  });
+
   server.setRequestHandler(ListToolsRequestSchema, async () => {
     const rememberEnabled = loadConfig().remember?.enabled !== false;
     const defs = rememberEnabled
