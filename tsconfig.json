@@ -22,7 +22,8 @@
     { "path": "packages/tim-mcp" },
     { "path": "packages/tim-migrate" },
     { "path": "packages/tim-hooks" },
-    { "path": "packages/tim-summarizer" }
+    { "path": "packages/tim-summarizer" },
+    { "path": "packages/tim-skills" }
   ],
   "files": []
 }

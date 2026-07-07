@@ -11,7 +11,8 @@
     "packages/tim-mcp",
     "packages/tim-migrate",
     "packages/tim-hooks",
-    "packages/tim-summarizer"
+    "packages/tim-summarizer",
+    "packages/tim-skills"
   ],
   "scripts": {
     "prepare": "rm -rf packages/*/tsconfig.tsbuildinfo && npm run build",
@@ -22,9 +23,9 @@
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.12",
-    "@types/node": "^22.0.0",
-    "typescript": "^5.7.0",
-    "vitest": "^3.0.0"
+    "@types/node": "^22.20.0",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.7"
   },
   "dependencies": {
     "fastembed": "^2.1.0"
