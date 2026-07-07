@@ -62,6 +62,8 @@ export interface EntryMetadata {
   type?: MetadataType;
   kind?: string;
   label?: string;
+  /** When true, entry is secret (materialized on descendants). */
+  secret?: boolean;
   [key: string]: unknown;
 }
 
