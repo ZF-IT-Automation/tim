@@ -26,6 +26,7 @@ export {
 export { runMigrations, getCurrentVersion, MIGRATIONS } from './schema.js';
 export {
   SessionManager,
+  ensureProjectForPath,
   type Exchange,
   type ExchangeRole,
   type SessionStartParams,
@@ -36,6 +37,7 @@ export {
   type UntaggedBatch,
   type BatchFullInfo,
   type OnBatchFullHandler,
+  type EnsureProjectForPathResult,
 } from './session.js';
 export {
   deriveCounters,

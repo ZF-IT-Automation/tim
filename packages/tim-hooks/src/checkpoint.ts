@@ -6,12 +6,14 @@ import * as path from 'path';
 import {
   SessionManager,
   ensureInboxProject,
+  ensureProjectForPath,
   INBOX_PROJECT_LABEL,
   type Summarizer,
   type TimStore,
 } from 'tim-store';
 import { runConfiguredHooks, type HookEnv } from './hooks.js';
 import { getDeltaBriefing } from './delta.js';
+import { getUpdateCheckLine } from './update-check.js';
 import { readMarker, writeMarker, validateMarkerAgainstStore } from './marker.js';
 import {
   onSessionStop,
@@ -107,6 +109,10 @@ async function resolveSessionProjectId(
   }
   const cwdLabel = await resolveActiveProjectFromCwd(cwd, store);
   if (cwdLabel) return cwdLabel;
+
+  const auto = await ensureProjectForPath(store, cwd);
+  if (auto) return auto.label;
+
   const active = getActiveProjectLabel();
   if (active) {
     const validated = await validateMarkerAgainstStore(
@@ -184,12 +190,16 @@ export async function runSessionStart(
   const project = await store.read(projectId);
 
   let briefing: string | undefined;
+  const briefingParts: string[] = [];
   if (projectId !== INBOX_PROJECT_LABEL) {
     const delta = await getDeltaBriefing(store, projectId, {
       sessionId: params.sessionId,
     });
-    if (delta) briefing = delta;
+    if (delta) briefingParts.push(delta);
   }
+  const updateLine = await getUpdateCheckLine();
+  if (updateLine) briefingParts.push(updateLine);
+  if (briefingParts.length > 0) briefing = briefingParts.join('\n');
 
   return { session, project, briefing };
 }
