@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { clearConfig, saveConfig, loadConfig } from '../config.js';
+import { clearConfig, clearSyncConnection, saveConfig, loadConfig, saveSyncState, loadSyncState } from '../config.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
@@ -11,7 +11,7 @@ describe('sync config disconnect', () => {
     process.env.HOME = origHome!;
   });
 
-  it('clearConfig removes sync.json', () => {
+  it('clearSyncConnection removes sync.json and sync-state.json', () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tim-sync-cfg-'));
     process.env.HOME = tmp;
     saveConfig({
@@ -21,9 +21,12 @@ describe('sync config disconnect', () => {
       salt: 's',
       fileId: 'f1',
     });
+    saveSyncState({ fileId: 'f1', cursor: '2026-07-07T10:00:00.000Z|1', lastPush: null, lastPull: null });
     expect(loadConfig()).not.toBeNull();
-    expect(clearConfig()).toBe(true);
+    expect(loadSyncState()).not.toBeNull();
+    expect(clearSyncConnection()).toEqual({ config: true, state: true });
     expect(loadConfig()).toBeNull();
+    expect(loadSyncState()).toBeNull();
     fs.rmSync(tmp, { recursive: true, force: true });
   });
 });

@@ -4,7 +4,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { TenantRegistry } from '../tenant-registry.js';
 import { createFile, pushBlobs } from '../storage.js';
-import { startHostedSyncServer, type HostedServerHandle } from '../server.js';
+import { startHostedSyncServer, type HostedServerHandle, RegisterRateLimiter, createHostedSyncServer } from '../server.js';
 import { TIER_QUOTAS } from '../quotas.js';
 
 describe('tim-sync-server tenant isolation', () => {
@@ -81,10 +81,11 @@ describe('tim-sync-server HTTP', () => {
   let tmp: string;
   let handle: HostedServerHandle;
   let baseUrl: string;
+  const adminToken = 'test-admin-token';
 
   beforeEach(async () => {
     tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tim-sync-http-'));
-    handle = await startHostedSyncServer({ port: 0, dataDir: tmp });
+    handle = await startHostedSyncServer({ port: 0, dataDir: tmp, adminToken });
     baseUrl = `http://127.0.0.1:${handle.port}`;
   });
 
@@ -93,11 +94,11 @@ describe('tim-sync-server HTTP', () => {
     fs.rmSync(tmp, { recursive: true, force: true });
   });
 
-  it('POST /register returns token and tenant_id', async () => {
+  it('POST /register returns token and tenant_id with server-assigned free tier', async () => {
     const res = await fetch(`${baseUrl}/register`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tier: 'free' }),
+      body: JSON.stringify({ tier: 'pro' }),
     });
     expect(res.status).toBe(201);
     const body = await res.json() as { token: string; tenant_id: string; tier: string };
@@ -106,19 +107,101 @@ describe('tim-sync-server HTTP', () => {
     expect(body.tier).toBe('free');
   });
 
+  it('rate limits /register after 5 attempts per hour', async () => {
+    const limiter = new RegisterRateLimiter();
+    const limitedHandle = createHostedSyncServer({ port: 0, dataDir: tmp, adminToken }, limiter);
+    await new Promise<void>((resolve, reject) => {
+      limitedHandle.server.listen(0, () => resolve());
+      limitedHandle.server.on('error', reject);
+    });
+    const addr = limitedHandle.server.address();
+    const port = typeof addr === 'object' && addr ? addr.port : 0;
+    const url = `http://127.0.0.1:${port}/register`;
+
+    for (let i = 0; i < 5; i++) {
+      const res = await fetch(url, { method: 'POST', body: '{}' });
+      expect(res.status).toBe(201);
+    }
+    const blocked = await fetch(url, { method: 'POST', body: '{}' });
+    expect(blocked.status).toBe(429);
+
+    await limitedHandle.close();
+  });
+
   it('rejects unauthenticated /files', async () => {
     const res = await fetch(`${baseUrl}/files`);
     expect(res.status).toBe(401);
   });
 
-  it('GET /health reports uptime and aggregates', async () => {
+  it('GET /health is public without tenant aggregates', async () => {
     await fetch(`${baseUrl}/register`, { method: 'POST', body: '{}' });
     const res = await fetch(`${baseUrl}/health`);
     expect(res.status).toBe(200);
     const body = await res.json() as Record<string, unknown>;
     expect(body.ok).toBe(true);
     expect(typeof body.uptime_sec).toBe('number');
+    expect(body.tenant_count).toBeUndefined();
+  });
+
+  it('GET /health with admin token returns aggregates', async () => {
+    await fetch(`${baseUrl}/register`, { method: 'POST', body: '{}' });
+    const res = await fetch(`${baseUrl}/health`, {
+      headers: { Authorization: `Bearer ${adminToken}` },
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json() as Record<string, unknown>;
     expect(body.tenant_count).toBe(1);
+  });
+
+  it('POST /admin/promote upgrades tenant to pro', async () => {
+    const reg = await fetch(`${baseUrl}/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    });
+    const { token, tenant_id } = await reg.json() as { token: string; tenant_id: string };
+
+    const denied = await fetch(`${baseUrl}/admin/promote`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tenant_id, tier: 'pro' }),
+    });
+    expect(denied.status).toBe(401);
+
+    const promoted = await fetch(`${baseUrl}/admin/promote`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${adminToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ tenant_id, tier: 'pro' }),
+    });
+    expect(promoted.status).toBe(200);
+
+    const status = await fetch(`${baseUrl}/sync/status`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const body = await status.json() as { tier: string };
+    expect(body.tier).toBe('pro');
+  });
+
+  it('rejects request bodies over 10MB', async () => {
+    const reg = await fetch(`${baseUrl}/register`, { method: 'POST', body: '{}' });
+    const { token } = await reg.json() as { token: string };
+    const huge = 'x'.repeat(10 * 1024 * 1024 + 1);
+    const res = await fetch(`${baseUrl}/sync/push`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        file_id: 'f1',
+        idempotency_key: 'big',
+        blobs: [{ proposed_id: 'p', data: huge, device_id: 'd', updated_at: new Date().toISOString() }],
+      }),
+    });
+    expect(res.status).toBe(413);
   });
 
   it('authenticated sync status returns tier usage', async () => {

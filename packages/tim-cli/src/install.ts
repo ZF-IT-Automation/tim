@@ -2,7 +2,9 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-const HOME = os.homedir();
+function homeDir(): string {
+  return os.homedir();
+}
 
 export interface HostTool {
   id: string;
@@ -16,28 +18,28 @@ export const HOST_TOOLS: HostTool[] = [
   {
     id: 'claude-code',
     name: 'Claude Code',
-    detect: () => fs.existsSync(path.join(HOME, '.claude')),
+    detect: () => fs.existsSync(path.join(homeDir(), '.claude')),
     mcpConfigPath: (global) =>
-      global ? path.join(HOME, '.claude.json') : path.join(process.cwd(), '.mcp.json'),
+      global ? path.join(homeDir(), '.claude.json') : path.join(process.cwd(), '.mcp.json'),
     format: 'standard',
   },
   {
     id: 'cursor',
     name: 'Cursor',
-    detect: () => fs.existsSync(path.join(HOME, '.cursor')),
+    detect: () => fs.existsSync(path.join(homeDir(), '.cursor')),
     mcpConfigPath: (global) =>
       global
-        ? path.join(HOME, '.cursor', 'mcp.json')
+        ? path.join(homeDir(), '.cursor', 'mcp.json')
         : path.join(process.cwd(), '.cursor', 'mcp.json'),
     format: 'standard',
   },
   {
     id: 'opencode',
     name: 'OpenCode',
-    detect: () => fs.existsSync(path.join(HOME, '.config', 'opencode')),
+    detect: () => fs.existsSync(path.join(homeDir(), '.config', 'opencode')),
     mcpConfigPath: (global) =>
       global
-        ? path.join(HOME, '.config', 'opencode', 'opencode.json')
+        ? path.join(homeDir(), '.config', 'opencode', 'opencode.json')
         : path.join(process.cwd(), 'opencode.json'),
     format: 'opencode',
   },
@@ -45,11 +47,11 @@ export const HOST_TOOLS: HostTool[] = [
     id: 'gemini-cli',
     name: 'Gemini CLI',
     detect: () =>
-      fs.existsSync(path.join(HOME, '.gemini')) ||
-      fs.existsSync(path.join(HOME, '.config', 'gemini')),
+      fs.existsSync(path.join(homeDir(), '.gemini')) ||
+      fs.existsSync(path.join(homeDir(), '.config', 'gemini')),
     mcpConfigPath: (global) =>
       global
-        ? path.join(HOME, '.gemini', 'settings.json')
+        ? path.join(homeDir(), '.gemini', 'settings.json')
         : path.join(process.cwd(), '.gemini', 'settings.json'),
     format: 'standard',
   },
@@ -98,8 +100,12 @@ export function mergeMcpConfig(
   };
 }
 
-export function installMcpForHosts(dbPath: string, global = true): { tool: string; path: string }[] {
+export function installMcpForHosts(
+  dbPath: string,
+  global = true,
+): { installed: { tool: string; path: string }[]; skipped: { tool: string; path: string; reason: string }[] } {
   const installed: { tool: string; path: string }[] = [];
+  const skipped: { tool: string; path: string; reason: string }[] = [];
   for (const tool of detectInstalledHosts()) {
     const configPath = tool.mcpConfigPath(global);
     const dir = path.dirname(configPath);
@@ -109,12 +115,14 @@ export function installMcpForHosts(dbPath: string, global = true): { tool: strin
       try {
         existing = JSON.parse(fs.readFileSync(configPath, 'utf8')) as Record<string, unknown>;
       } catch {
-        existing = {};
+        skipped.push({ tool: tool.name, path: configPath, reason: 'config parse failed' });
+        continue;
       }
+      fs.copyFileSync(configPath, `${configPath}.backup.${Date.now()}`);
     }
     const merged = mergeMcpConfig(existing, buildTimMcpEntry(dbPath), tool.format);
     fs.writeFileSync(configPath, JSON.stringify(merged, null, 2));
     installed.push({ tool: tool.name, path: configPath });
   }
-  return installed;
+  return { installed, skipped };
 }

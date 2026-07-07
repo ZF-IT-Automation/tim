@@ -13,6 +13,8 @@ export {
   loadConfig,
   saveConfig,
   clearConfig,
+  clearSyncState,
+  clearSyncConnection,
   loadSyncState,
   saveSyncState,
   getDeviceId,

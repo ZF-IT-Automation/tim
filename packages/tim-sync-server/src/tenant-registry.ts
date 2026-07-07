@@ -40,6 +40,11 @@ export class TenantRegistry {
     return { id, token, tier, createdAt };
   }
 
+  setTenantTier(tenantId: string, tier: TenantTier): boolean {
+    const result = this.db.prepare('UPDATE tenants SET tier = ? WHERE id = ?').run(tier, tenantId);
+    return result.changes > 0;
+  }
+
   resolveToken(token: string): TenantRecord | null {
     const row = this.db.prepare(
       'SELECT id, token, tier, created_at FROM tenants WHERE token = ?',
@@ -50,6 +55,36 @@ export class TenantRegistry {
 
   tenantDbPath(tenantId: string): string {
     return path.join(this.dataDir, 'tenants', `${tenantId}.db`);
+  }
+
+  private migrateTenantDbIfNeeded(db: Database.Database): void {
+    const table = db.prepare(
+      "SELECT sql FROM sqlite_master WHERE type='table' AND name='blobs'",
+    ).get() as { sql: string } | undefined;
+    if (!table?.sql?.includes('UNIQUE(file_id, client_proposed_id)')) {
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_blobs_file_updated
+        ON blobs(file_id, updated_at, id);
+      `);
+      return;
+    }
+
+    db.exec(`
+      CREATE TABLE blobs_migrated (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        file_id TEXT NOT NULL,
+        client_proposed_id TEXT NOT NULL,
+        data TEXT NOT NULL,
+        device_id TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        deleted_at TEXT
+      );
+      INSERT INTO blobs_migrated (id, file_id, client_proposed_id, data, device_id, updated_at, deleted_at)
+      SELECT id, file_id, client_proposed_id, data, device_id, updated_at, deleted_at FROM blobs;
+      DROP TABLE blobs;
+      ALTER TABLE blobs_migrated RENAME TO blobs;
+      CREATE INDEX idx_blobs_file_updated ON blobs(file_id, updated_at, id);
+    `);
   }
 
   private initTenantDb(tenantId: string): void {
@@ -67,21 +102,25 @@ export class TenantRegistry {
         data TEXT NOT NULL,
         device_id TEXT NOT NULL,
         updated_at TEXT NOT NULL,
-        deleted_at TEXT,
-        UNIQUE(file_id, client_proposed_id)
+        deleted_at TEXT
       );
       CREATE TABLE IF NOT EXISTS idempotency (
         key TEXT PRIMARY KEY,
         created_at TEXT NOT NULL
       );
+      CREATE INDEX IF NOT EXISTS idx_blobs_file_updated
+        ON blobs(file_id, updated_at, id);
     `);
+    this.migrateTenantDbIfNeeded(db);
     db.close();
   }
 
   getTenantDb(tenantId: string): Database.Database {
     const p = this.tenantDbPath(tenantId);
     if (!fs.existsSync(p)) this.initTenantDb(tenantId);
-    return new Database(p);
+    const db = new Database(p);
+    this.migrateTenantDbIfNeeded(db);
+    return db;
   }
 
   getUsage(tenantId: string): QuotaUsage {
@@ -89,7 +128,13 @@ export class TenantRegistry {
     try {
       const row = db.prepare(`
         SELECT COUNT(*) AS c, COALESCE(SUM(LENGTH(data)), 0) AS bytes
-        FROM blobs WHERE deleted_at IS NULL
+        FROM blobs b
+        INNER JOIN (
+          SELECT client_proposed_id, MAX(id) AS max_id
+          FROM blobs
+          WHERE deleted_at IS NULL
+          GROUP BY client_proposed_id
+        ) latest ON b.id = latest.max_id
       `).get() as { c: number; bytes: number };
       return { entryCount: row.c, totalBytes: row.bytes };
     } finally {

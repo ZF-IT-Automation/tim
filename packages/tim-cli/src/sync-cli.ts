@@ -11,7 +11,7 @@ import {
   generateSalt,
   loadConfig,
   saveConfig,
-  clearConfig,
+  clearSyncConnection,
   loadSyncState,
   saveSyncState,
   getDeviceId,
@@ -225,9 +225,12 @@ export async function cmdSyncStatus(): Promise<void> {
 }
 
 export function cmdSyncDisconnect(): void {
-  const removed = clearConfig();
-  if (removed) {
-    console.log('✓ Disconnected — removed sync.json');
+  const removed = clearSyncConnection();
+  if (removed.config || removed.state) {
+    const parts: string[] = [];
+    if (removed.config) parts.push('sync.json');
+    if (removed.state) parts.push('sync-state.json');
+    console.log(`✓ Disconnected — removed ${parts.join(' and ')}`);
   } else {
     console.log('Sync: not configured');
   }

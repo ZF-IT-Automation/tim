@@ -57,6 +57,20 @@ export function clearConfig(): boolean {
   return true;
 }
 
+export function clearSyncState(): boolean {
+  const p = getSyncStatePath();
+  if (!fs.existsSync(p)) return false;
+  fs.unlinkSync(p);
+  return true;
+}
+
+export function clearSyncConnection(): { config: boolean; state: boolean } {
+  return {
+    config: clearConfig(),
+    state: clearSyncState(),
+  };
+}
+
 export function loadSyncState(): SyncState | null {
   const p = getSyncStatePath();
   if (!fs.existsSync(p)) return null;

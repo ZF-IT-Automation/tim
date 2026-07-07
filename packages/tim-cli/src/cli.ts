@@ -77,12 +77,16 @@ async function cmdInit() {
     console.log('✓ Agent registered: "default"');
   } catch {}
 
-  const installed = installMcpForHosts(dbPath, true);
+  const { installed, skipped } = installMcpForHosts(dbPath, true);
   if (installed.length > 0) {
     for (const i of installed) {
       console.log(`✓ MCP config: ${i.tool} → ${i.path}`);
     }
-  } else {
+  }
+  for (const s of skipped) {
+    console.error(`⚠ Skipped ${s.tool} (${s.path}): ${s.reason}`);
+  }
+  if (installed.length === 0) {
     const mcpConfig = {
       mcpServers: {
         tim: {
