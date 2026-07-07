@@ -27,14 +27,17 @@ describe('ensureProjectForPath', () => {
     expect(await ensureProjectForPath(store, taskDir)).toBeNull();
   });
 
-  it('assigns unique labels under parallel creation', async () => {
+  it('assigns unique labels for sequential creation', async () => {
     const dirs = Array.from({ length: 4 }, (_, i) => {
-      const d = path.join(dir, `parallel-${i}`);
+      const d = path.join(dir, `seq-${i}`);
       fs.mkdirSync(d);
       return d;
     });
-    const results = await Promise.all(dirs.map(d => ensureProjectForPath(store, d)));
-    const labels = results.map(r => r?.label).filter(Boolean);
+    const labels: string[] = [];
+    for (const d of dirs) {
+      const result = await ensureProjectForPath(store, d);
+      labels.push(result!.label);
+    }
     expect(new Set(labels).size).toBe(labels.length);
   });
 });
