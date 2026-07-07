@@ -46,6 +46,7 @@ const statusline_js_1 = require("./statusline.js");
 const record_commit_js_1 = require("./record-commit.js");
 const new_project_js_1 = require("./new-project.js");
 const hermes_statusline_install_js_1 = require("./hermes-statusline-install.js");
+const consolidate_js_1 = require("./consolidate.js");
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
 const os = __importStar(require("os"));
@@ -538,6 +539,9 @@ async function main() {
         }
         case 'root-entries':
             await cmdRootEntries(rest);
+            break;
+        case 'consolidate':
+            await (0, consolidate_js_1.cmdConsolidate)(rest);
             break;
         case '--version':
         case '-v':

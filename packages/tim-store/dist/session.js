@@ -587,6 +587,61 @@ class SessionManager {
         }
         return summary;
     }
+    /** Upsert session-summary-root content after checkpoint / rollup. */
+    async updateSessionSummary(sessionId, summaryText) {
+        const session = await this.store.read(sessionId);
+        if (!session || session.metadata.kind !== session_tree_js_1.KIND_SESSION) {
+            throw new Error(`Project session not found: ${sessionId}`);
+        }
+        let summaryNode = await (0, session_tree_js_1.findChildByKind)(this.store, sessionId, session_tree_js_1.KIND_SUMMARY_ROOT);
+        const now = new Date().toISOString();
+        if (summaryNode) {
+            await this.store.update(summaryNode.id, {
+                title: session_tree_js_1.SUMMARY_NODE_TITLE,
+                content: summaryText,
+                metadata: {
+                    ...summaryNode.metadata,
+                    kind: session_tree_js_1.KIND_SUMMARY_ROOT,
+                    summary: summaryText,
+                    date: now,
+                },
+            });
+            return (await this.store.read(summaryNode.id));
+        }
+        summaryNode = await this.store.write(summaryText, {
+            parentId: sessionId,
+            title: session_tree_js_1.SUMMARY_NODE_TITLE,
+            metadata: {
+                kind: session_tree_js_1.KIND_SUMMARY_ROOT,
+                sessionId,
+                summary: summaryText,
+                exchanges: 0,
+                date: now,
+            },
+            tags: [session_tree_js_1.SESSION_SUMMARY_TAG],
+        });
+        return summaryNode;
+    }
+    static PROJECT_STATS_MARKER = '## Project Stats';
+    /** Refresh project-root stats line (entry count + last activity). */
+    async updateProjectSummary(projectId) {
+        const project = await this.store.requireProject(projectId);
+        const stats = this.store.getProjectEntryStats(project.id);
+        const statsLine = `${stats.count} entries · Last activity: ${stats.lastActivity}`;
+        const existing = project.content ?? '';
+        const marker = SessionManager.PROJECT_STATS_MARKER;
+        const blockRe = new RegExp(`^${marker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\n.*$`, 'm');
+        const merged = blockRe.test(existing)
+            ? existing.replace(blockRe, `${marker}\n${statsLine}`)
+            : existing.trimEnd()
+                ? `${existing.trimEnd()}\n\n${marker}\n${statsLine}`
+                : `${marker}\n${statsLine}`;
+        await this.store.update(project.id, {
+            title: project.title,
+            content: merged,
+        });
+        return (await this.store.read(project.id));
+    }
 }
 exports.SessionManager = SessionManager;
 //# sourceMappingURL=session.js.map
