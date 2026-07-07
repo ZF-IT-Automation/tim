@@ -19,6 +19,19 @@ import {
 } from '../index.js';
 import { deriveKey, encrypt, decrypt } from '../crypto.js';
 
+// Isolate ~/.tim (sync-state.json, queues) from the real home and from other
+// test files — vitest runs each file in its own process, so the override is safe.
+const origHome = process.env.HOME;
+let tmpHome: string;
+beforeAll(() => {
+  tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'tim-secret-sync-home-'));
+  process.env.HOME = tmpHome;
+});
+afterAll(() => {
+  process.env.HOME = origHome;
+  fs.rmSync(tmpHome, { recursive: true, force: true });
+});
+
 describe('secret sync fixes', () => {
   describe('isSecretPlaceholderPayload', () => {
     it('detects local placeholder rows', () => {

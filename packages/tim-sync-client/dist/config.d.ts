@@ -18,6 +18,11 @@ export declare function getQueuePath(fileId: string): string;
 export declare function loadConfig(): SyncConfig | null;
 export declare function saveConfig(config: SyncConfig): void;
 export declare function clearConfig(): boolean;
+export declare function clearSyncState(): boolean;
+export declare function clearSyncConnection(): {
+    config: boolean;
+    state: boolean;
+};
 export declare function loadSyncState(): SyncState | null;
 export declare function saveSyncState(state: SyncState): void;
 export declare function getDeviceId(): string;

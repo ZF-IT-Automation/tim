@@ -1,4 +1,5 @@
-import { existsSync, readFileSync, writeFileSync, renameSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, rmSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { PushBlob } from './client.js';
 import type { TimEnvelope } from './envelope.js';
@@ -24,6 +25,7 @@ function save(path: string, q: QueueItem[]): void {
     return;
   }
   const tmp = `${path}.tmp`;
+  mkdirSync(dirname(path), { recursive: true });
   writeFileSync(tmp, JSON.stringify(q));
   renameSync(tmp, path);
 }

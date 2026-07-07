@@ -40,6 +40,18 @@ const path = __importStar(require("node:path"));
 const tim_store_1 = require("tim-store");
 const tim_store_2 = require("tim-store");
 const index_js_1 = require("../index.js");
+// Isolate ~/.tim (sync-state.json, queues) from the real home and from other
+// test files — vitest runs each file in its own process, so the override is safe.
+const origHome = process.env.HOME;
+let tmpHome;
+(0, vitest_1.beforeAll)(() => {
+    tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'tim-sync-int-home-'));
+    process.env.HOME = tmpHome;
+});
+(0, vitest_1.afterAll)(() => {
+    process.env.HOME = origHome;
+    fs.rmSync(tmpHome, { recursive: true, force: true });
+});
 (0, vitest_1.describe)('sync integration', () => {
     let server;
     let dbPath;

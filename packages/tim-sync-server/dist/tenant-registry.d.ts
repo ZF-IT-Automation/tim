@@ -11,8 +11,10 @@ export declare class TenantRegistry {
     private db;
     constructor(dataDir: string);
     register(tier?: TenantTier): TenantRecord;
+    setTenantTier(tenantId: string, tier: TenantTier): boolean;
     resolveToken(token: string): TenantRecord | null;
     tenantDbPath(tenantId: string): string;
+    private migrateTenantDbIfNeeded;
     private initTenantDb;
     getTenantDb(tenantId: string): Database.Database;
     getUsage(tenantId: string): QuotaUsage;

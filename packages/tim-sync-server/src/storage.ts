@@ -149,15 +149,18 @@ export function pullBlobs(
     const file = db.prepare('SELECT salt FROM files WHERE id = ?').get(fileId) as { salt: string } | undefined;
     if (!file) return { error: 'File not found', status: 404 };
 
+    // Page on the server-assigned monotonic id only. updated_at comes from
+    // client clocks (LWW timestamps) — ordering on it lets a device with a
+    // lagging clock insert blobs *behind* other devices' cursors, which are
+    // then never delivered. Rows are append-only, so id order is complete.
     const { updatedAt, id } = parsePullCursor(cursor);
     const rows = db.prepare(`
       SELECT id, client_proposed_id, data, deleted_at, updated_at
       FROM blobs
-      WHERE file_id = ?
-        AND (updated_at > ? OR (updated_at = ? AND id > ?))
-      ORDER BY updated_at ASC, id ASC
+      WHERE file_id = ? AND id > ?
+      ORDER BY id ASC
       LIMIT ?
-    `).all(fileId, updatedAt, updatedAt, id, pageSize + 1) as {
+    `).all(fileId, id, pageSize + 1) as {
       id: number;
       client_proposed_id: string;
       data: string;

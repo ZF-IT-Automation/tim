@@ -6,6 +6,7 @@ exports.saveQueue = saveQueue;
 exports.enqueue = enqueue;
 exports.flushQueue = flushQueue;
 const node_fs_1 = require("node:fs");
+const node_path_1 = require("node:path");
 const node_crypto_1 = require("node:crypto");
 exports.PUSH_CHUNK = 500;
 function loadQueue(path) {
@@ -20,6 +21,7 @@ function save(path, q) {
         return;
     }
     const tmp = `${path}.tmp`;
+    (0, node_fs_1.mkdirSync)((0, node_path_1.dirname)(path), { recursive: true });
     (0, node_fs_1.writeFileSync)(tmp, JSON.stringify(q));
     (0, node_fs_1.renameSync)(tmp, path);
 }

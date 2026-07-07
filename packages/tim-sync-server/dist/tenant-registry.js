@@ -67,6 +67,10 @@ class TenantRegistry {
         this.initTenantDb(id);
         return { id, token, tier, createdAt };
     }
+    setTenantTier(tenantId, tier) {
+        const result = this.db.prepare('UPDATE tenants SET tier = ? WHERE id = ?').run(tier, tenantId);
+        return result.changes > 0;
+    }
     resolveToken(token) {
         const row = this.db.prepare('SELECT id, token, tier, created_at FROM tenants WHERE token = ?').get(token);
         if (!row)
@@ -75,6 +79,32 @@ class TenantRegistry {
     }
     tenantDbPath(tenantId) {
         return path.join(this.dataDir, 'tenants', `${tenantId}.db`);
+    }
+    migrateTenantDbIfNeeded(db) {
+        const table = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='blobs'").get();
+        if (!table?.sql?.includes('UNIQUE(file_id, client_proposed_id)')) {
+            db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_blobs_file_updated
+        ON blobs(file_id, updated_at, id);
+      `);
+            return;
+        }
+        db.exec(`
+      CREATE TABLE blobs_migrated (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        file_id TEXT NOT NULL,
+        client_proposed_id TEXT NOT NULL,
+        data TEXT NOT NULL,
+        device_id TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        deleted_at TEXT
+      );
+      INSERT INTO blobs_migrated (id, file_id, client_proposed_id, data, device_id, updated_at, deleted_at)
+      SELECT id, file_id, client_proposed_id, data, device_id, updated_at, deleted_at FROM blobs;
+      DROP TABLE blobs;
+      ALTER TABLE blobs_migrated RENAME TO blobs;
+      CREATE INDEX idx_blobs_file_updated ON blobs(file_id, updated_at, id);
+    `);
     }
     initTenantDb(tenantId) {
         const db = new better_sqlite3_1.default(this.tenantDbPath(tenantId));
@@ -91,28 +121,38 @@ class TenantRegistry {
         data TEXT NOT NULL,
         device_id TEXT NOT NULL,
         updated_at TEXT NOT NULL,
-        deleted_at TEXT,
-        UNIQUE(file_id, client_proposed_id)
+        deleted_at TEXT
       );
       CREATE TABLE IF NOT EXISTS idempotency (
         key TEXT PRIMARY KEY,
         created_at TEXT NOT NULL
       );
+      CREATE INDEX IF NOT EXISTS idx_blobs_file_updated
+        ON blobs(file_id, updated_at, id);
     `);
+        this.migrateTenantDbIfNeeded(db);
         db.close();
     }
     getTenantDb(tenantId) {
         const p = this.tenantDbPath(tenantId);
         if (!fs.existsSync(p))
             this.initTenantDb(tenantId);
-        return new better_sqlite3_1.default(p);
+        const db = new better_sqlite3_1.default(p);
+        this.migrateTenantDbIfNeeded(db);
+        return db;
     }
     getUsage(tenantId) {
         const db = this.getTenantDb(tenantId);
         try {
             const row = db.prepare(`
         SELECT COUNT(*) AS c, COALESCE(SUM(LENGTH(data)), 0) AS bytes
-        FROM blobs WHERE deleted_at IS NULL
+        FROM blobs b
+        INNER JOIN (
+          SELECT client_proposed_id, MAX(id) AS max_id
+          FROM blobs
+          WHERE deleted_at IS NULL
+          GROUP BY client_proposed_id
+        ) latest ON b.id = latest.max_id
       `).get();
             return { entryCount: row.c, totalBytes: row.bytes };
         }

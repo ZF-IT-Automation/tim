@@ -77,6 +77,34 @@ describe('storage append-only sync propagation', () => {
     expect(page2.has_more).toBe(false);
   });
 
+  it('delivers blobs from a device with a lagging clock (updated_at older than cursor)', () => {
+    const tenant = registry.register('free');
+    createFile(registry, tenant.id, 'f1', 'salt');
+
+    // Device A (correct clock) pushes; device B pulls and advances its cursor.
+    pushBlobs(registry, tenant.id, 'free', 'f1', 'key-fast', [{
+      proposed_id: 'from-a',
+      data: 'a1',
+      device_id: 'device-a',
+      updated_at: '2026-07-07T12:00:00.000Z',
+    }]);
+    const pull1 = pullBlobs(registry, tenant.id, 'f1');
+    if ('error' in pull1) throw new Error('unexpected');
+
+    // Device C's clock is 5 minutes behind — its blob timestamps sort
+    // before B's cursor, but it must still be delivered.
+    pushBlobs(registry, tenant.id, 'free', 'f1', 'key-slow', [{
+      proposed_id: 'from-c',
+      data: 'c1',
+      device_id: 'device-c',
+      updated_at: '2026-07-07T11:55:00.000Z',
+    }]);
+    const pull2 = pullBlobs(registry, tenant.id, 'f1', pull1.next_cursor);
+    if ('error' in pull2) throw new Error('unexpected');
+    expect(pull2.blobs).toHaveLength(1);
+    expect((pull2.blobs[0] as { client_proposed_id: string }).client_proposed_id).toBe('from-c');
+  });
+
   it('idempotent push returns empty mappings on duplicate key', () => {
     const tenant = registry.register('free');
     createFile(registry, tenant.id, 'f1', 'salt');

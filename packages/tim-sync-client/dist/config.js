@@ -40,6 +40,8 @@ exports.getQueuePath = getQueuePath;
 exports.loadConfig = loadConfig;
 exports.saveConfig = saveConfig;
 exports.clearConfig = clearConfig;
+exports.clearSyncState = clearSyncState;
+exports.clearSyncConnection = clearSyncConnection;
 exports.loadSyncState = loadSyncState;
 exports.saveSyncState = saveSyncState;
 exports.getDeviceId = getDeviceId;
@@ -83,6 +85,19 @@ function clearConfig() {
         return false;
     fs.unlinkSync(p);
     return true;
+}
+function clearSyncState() {
+    const p = getSyncStatePath();
+    if (!fs.existsSync(p))
+        return false;
+    fs.unlinkSync(p);
+    return true;
+}
+function clearSyncConnection() {
+    return {
+        config: clearConfig(),
+        state: clearSyncState(),
+    };
 }
 function loadSyncState() {
     const p = getSyncStatePath();

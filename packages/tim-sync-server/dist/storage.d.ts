@@ -1,5 +1,6 @@
 import type { TenantRegistry } from './tenant-registry.js';
 import type { TenantTier } from './quotas.js';
+export declare const PULL_PAGE_SIZE = 100;
 export interface PushBlobInput {
     proposed_id: string;
     data: string;
@@ -25,7 +26,12 @@ export declare function pushBlobs(registry: TenantRegistry, tenantId: string, ti
     error: string;
     status: number;
 };
-export declare function pullBlobs(registry: TenantRegistry, tenantId: string, fileId: string, cursor?: string): {
+export declare function parsePullCursor(cursor?: string): {
+    updatedAt: string;
+    id: number;
+};
+export declare function formatPullCursor(updatedAt: string, id: number): string;
+export declare function pullBlobs(registry: TenantRegistry, tenantId: string, fileId: string, cursor?: string, pageSize?: number): {
     blobs: unknown[];
     salt?: string;
     next_cursor: string;
