@@ -93,4 +93,15 @@ export declare class SessionManager {
     /** Refresh project-root stats line (entry count + last activity). */
     updateProjectSummary(projectId: string): Promise<Entry>;
 }
+export interface EnsureProjectForPathResult {
+    label: string;
+    entry: Entry;
+    created: boolean;
+}
+/**
+ * Auto-create a project from a directory name when no .tim-project binding exists.
+ * Re-bind to an existing project with the same directory alias. Reversible via
+ * irrelevant flag on the project root.
+ */
+export declare function ensureProjectForPath(store: TimStore, cwd: string): Promise<EnsureProjectForPathResult | null>;
 //# sourceMappingURL=session.d.ts.map

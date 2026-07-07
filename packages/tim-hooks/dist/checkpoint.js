@@ -44,6 +44,8 @@ const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
 const tim_store_1 = require("tim-store");
 const hooks_js_1 = require("./hooks.js");
+const delta_js_1 = require("./delta.js");
+const update_check_js_1 = require("./update-check.js");
 const marker_js_1 = require("./marker.js");
 const session_hooks_js_1 = require("./session-hooks.js");
 /** Resolve active project label from TIM_PROJECT env or ~/.tim/active-project. */
@@ -111,6 +113,9 @@ async function resolveSessionProjectId(store, cwd, explicitProjectId) {
     const cwdLabel = await resolveActiveProjectFromCwd(cwd, store);
     if (cwdLabel)
         return cwdLabel;
+    const auto = await (0, tim_store_1.ensureProjectForPath)(store, cwd);
+    if (auto)
+        return auto.label;
     const active = getActiveProjectLabel();
     if (active) {
         const validated = await (0, marker_js_1.validateMarkerAgainstStore)({
@@ -160,7 +165,21 @@ async function runSessionStart(store, params) {
         TIM_PROJECT: projectId,
     });
     const project = await store.read(projectId);
-    return { session, project };
+    let briefing;
+    const briefingParts = [];
+    if (projectId !== tim_store_1.INBOX_PROJECT_LABEL) {
+        const delta = await (0, delta_js_1.getDeltaBriefing)(store, projectId, {
+            sessionId: params.sessionId,
+        });
+        if (delta)
+            briefingParts.push(delta);
+    }
+    const updateLine = await (0, update_check_js_1.getUpdateCheckLine)();
+    if (updateLine)
+        briefingParts.push(updateLine);
+    if (briefingParts.length > 0)
+        briefing = briefingParts.join('\n');
+    return { session, project, briefing };
 }
 async function runSessionEnd(store, sessionId, opts = {}) {
     const cwd = opts.env?.TIM_CWD ?? process.cwd();

@@ -58,6 +58,7 @@ const tim_sync_client_1 = require("tim-sync-client");
 const write_validate_js_1 = require("./write-validate.js");
 const remember_handler_js_1 = require("./remember-handler.js");
 const session_guidance_js_1 = require("./session-guidance.js");
+const auto_init_js_1 = require("./auto-init.js");
 const fs = __importStar(require("fs"));
 const os = __importStar(require("os"));
 const path = __importStar(require("path"));
@@ -300,6 +301,11 @@ const TimSessionLogSchema = zod_1.z.object({
 });
 const TimCheckpointSchema = zod_1.z.object({
     sessionId: zod_1.z.string(),
+});
+const TimHookPromptSubmitSchema = zod_1.z.object({
+    prompt: zod_1.z.string().min(1).describe('User prompt text for hybrid retrieval'),
+    project: zod_1.z.string().optional()
+        .describe('Scope retrieval/guard to a project label'),
 });
 const TimRenameEntrySchema = zod_1.z.object({
     oldId: zod_1.z.string().describe('Current entry ID'),
@@ -546,6 +552,13 @@ exports.TOOL_DEFS = [
         name: 'tim_checkpoint',
         description: 'Create a session checkpoint summary and run verify-before-decay.',
         schema: TimCheckpointSchema,
+        internal: true,
+    },
+    {
+        name: 'tim_hook_prompt_submit',
+        description: 'UserPromptSubmit hook: FTS retrieval (top-3) + guard warnings for action-like prompts. ' +
+            'Returns context lines for harness injection. Kill-switch: hooks.promptSubmit.enabled.',
+        schema: TimHookPromptSubmitSchema,
         internal: true,
     },
     {
@@ -1116,6 +1129,7 @@ const READ_TOOLS = new Set([
     'tim_export', 'tim_doctor', 'tim_sync', 'tim_load_project', 'tim_read_project',
     'tim_show',
     'tim_show_unsummarized', 'tim_show_all_unsummarized', 'tim_show_untagged',
+    'tim_hook_prompt_submit',
 ]);
 const REMEMBER_TOOLS = new Set(['tim_remember']);
 function scheduleAutoSync(toolName, s) {
@@ -1197,6 +1211,12 @@ function bestEffortTelemetry(label, fn) {
 async function createMcpServer(options = {}) {
     const isHttp = options.transportMode === 'http';
     transportIsHttp = isHttp;
+    try {
+        await (0, auto_init_js_1.runAutoInit)({ dbPath: DB_PATH });
+    }
+    catch {
+        // Graceful degradation — server still starts.
+    }
     const server = new index_js_1.Server({
         name: 'tim-mcp',
         version: '0.1.0-alpha',
@@ -1216,6 +1236,19 @@ async function createMcpServer(options = {}) {
     // Plumbing tools called by the summarizer / hooks via MCP — handlers must
     // remain fully functional, but ListTools hides them by default so agents
     // don't see internal-only entries. Set TIM_EXPOSE_INTERNAL_TOOLS=1 to reveal.
+    server.setRequestHandler(types_js_1.InitializeRequestSchema, async (request) => {
+        try {
+            await (0, auto_init_js_1.runAutoInit)({ dbPath: DB_PATH });
+        }
+        catch {
+            // Non-fatal — client still gets a valid initialize response.
+        }
+        return {
+            protocolVersion: request.params.protocolVersion,
+            capabilities: { tools: {} },
+            serverInfo: { name: 'tim-mcp', version: '0.1.0-alpha' },
+        };
+    });
     server.setRequestHandler(types_js_1.ListToolsRequestSchema, async () => {
         const rememberEnabled = (0, tim_core_1.loadConfig)().remember?.enabled !== false;
         const defs = rememberEnabled
@@ -2092,6 +2125,32 @@ async function createMcpServer(options = {}) {
                     const summary = await getSessions().checkpoint(sessionId);
                     return {
                         content: [{ type: 'text', text: formatToolResponse(summary) }],
+                    };
+                }
+                case 'tim_hook_prompt_submit': {
+                    const { prompt, project } = TimHookPromptSubmitSchema.parse(args);
+                    let projectLabel;
+                    if (project) {
+                        const resolved = await s.resolveProjectLabel(project);
+                        if (resolved.status === 'found')
+                            projectLabel = resolved.label;
+                    }
+                    else {
+                        const roots = await resolveRoots(s, undefined);
+                        if (roots.labels?.length === 1)
+                            projectLabel = roots.labels[0];
+                    }
+                    const result = await (0, tim_hooks_1.runPromptSubmit)(s, { prompt, projectLabel });
+                    if (!result) {
+                        return {
+                            content: [{ type: 'text', text: formatToolResponse({ context: null, lines: [] }) }],
+                        };
+                    }
+                    return {
+                        content: [{
+                                type: 'text',
+                                text: formatToolResponse({ context: result.context, lines: result.lines }),
+                            }],
                     };
                 }
                 case 'tim_rename_entry': {

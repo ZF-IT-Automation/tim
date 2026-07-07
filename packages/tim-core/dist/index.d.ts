@@ -178,6 +178,9 @@ export interface TimHooksConfig {
     sessionEnd?: string | string[];
     enabled?: boolean;
     timeoutMs?: number;
+    promptSubmit?: {
+        enabled?: boolean;
+    };
 }
 export interface TimConfig {
     dbPath: string;
@@ -219,6 +222,10 @@ export interface TimConfig {
         includeBatchSummaries?: boolean;
         searchType?: 'fts';
     };
+    /** Throttled npm version check on session start (default true). */
+    updateCheck?: boolean;
+    /** ISO timestamp of last registry check (config cache). */
+    updateCheckLastAt?: string;
 }
 export { type ProjectMetadata, type ResolveProjectResult, type SectionCandidate, type ResolveSectionResult, } from './project.js';
 export { InProcessEventBus } from './event-bus.js';

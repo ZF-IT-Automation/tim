@@ -264,23 +264,32 @@ function backupBeforeMigration(db, fromVersion) {
     }
 }
 function createTriggers(db) {
-    // FTS5 sync triggers — keep FTS index in sync with entries table
+    // FTS5 sync triggers — skip secret entries (metadata.secret=true)
     db.exec(`
-    CREATE TRIGGER IF NOT EXISTS entries_ai AFTER INSERT ON entries BEGIN
+    DROP TRIGGER IF EXISTS entries_ai;
+    DROP TRIGGER IF EXISTS entries_ad;
+    DROP TRIGGER IF EXISTS entries_au;
+    DROP TRIGGER IF EXISTS entries_au_del;
+    DROP TRIGGER IF EXISTS entries_au_ins;
+
+    CREATE TRIGGER entries_ai AFTER INSERT ON entries
+    WHEN json_extract(new.metadata,'$.secret') IS NULL OR json_extract(new.metadata,'$.secret')=0
+    BEGIN
       INSERT INTO fts_entries(rowid, title, content, tags)
       VALUES (new.rowid, new.title, new.content, new.tags);
     END;
 
-    CREATE TRIGGER IF NOT EXISTS entries_ad AFTER DELETE ON entries BEGIN
+    CREATE TRIGGER entries_ad AFTER DELETE ON entries BEGIN
       INSERT INTO fts_entries(fts_entries, rowid, title, content, tags)
       VALUES ('delete', old.rowid, old.title, old.content, old.tags);
     END;
 
-    CREATE TRIGGER IF NOT EXISTS entries_au AFTER UPDATE ON entries BEGIN
+    CREATE TRIGGER entries_au AFTER UPDATE ON entries BEGIN
       INSERT INTO fts_entries(fts_entries, rowid, title, content, tags)
       VALUES ('delete', old.rowid, old.title, old.content, old.tags);
       INSERT INTO fts_entries(rowid, title, content, tags)
-      VALUES (new.rowid, new.title, new.content, new.tags);
+      SELECT new.rowid, new.title, new.content, new.tags
+      WHERE json_extract(new.metadata,'$.secret') IS NULL OR json_extract(new.metadata,'$.secret')=0;
     END;
   `);
 }

@@ -9,12 +9,15 @@ export interface SyncCycleContext {
     deviceId: string;
     passphrase: string;
     salt: string;
+    secretPassphrase?: string;
 }
-export declare function pushCycle(client: TimSyncClient, store: TimStore, state: SyncState, deviceId: string, encryptFn: (data: string) => string): Promise<{
+export declare function encryptSecretPayload(payloadJson: string, secretEncrypt: (data: string) => string): string;
+export declare function decryptSecretPayload(payloadJson: string, secretDecrypt?: (data: string) => string): string;
+export declare function pushCycle(client: TimSyncClient, store: TimStore, state: SyncState, deviceId: string, encryptFn: (data: string) => string, secretEncrypt?: (data: string) => string): Promise<{
     pushed: number;
     queued: boolean;
 }>;
-export declare function pullCycle(client: TimSyncClient, store: TimStore, state: SyncState, decryptFn: (data: string) => string): Promise<{
+export declare function pullCycle(client: TimSyncClient, store: TimStore, state: SyncState, decryptFn: (data: string) => string, secretDecrypt?: (data: string) => string): Promise<{
     pulled: number;
     conflicts: number;
 }>;
@@ -31,5 +34,5 @@ export declare function buildSyncContext(store: TimStore, config: {
     token: string;
     salt: string;
     fileId: string;
-}, passphrase: string, deviceId: string): SyncCycleContext;
+}, passphrase: string, deviceId: string, secretPassphrase?: string): SyncCycleContext;
 //# sourceMappingURL=sync.d.ts.map

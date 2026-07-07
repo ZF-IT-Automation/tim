@@ -34,7 +34,9 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.SessionManager = void 0;
+exports.ensureProjectForPath = ensureProjectForPath;
 const os = __importStar(require("os"));
+const path = __importStar(require("path"));
 const session_tree_js_1 = require("./session-tree.js");
 const DEFAULT_SUMMARIZER = async (exchanges) => {
     if (exchanges.length === 0)
@@ -644,4 +646,57 @@ class SessionManager {
     }
 }
 exports.SessionManager = SessionManager;
+const AUTO_PROJECT_SECTIONS = [
+    { label: 'Tasks', content: 'Actionable work items and open tasks' },
+    { label: 'Bugs', content: 'Bug and error tracking' },
+    { label: 'Lessons', content: 'Lessons learned and pitfalls' },
+    { label: 'Ideas', content: 'Brainstorming and undecided proposals' },
+    { label: 'Decisions', content: 'Architecture and project decisions' },
+];
+async function nextAutoProjectLabel(store) {
+    const projects = await store.listProjects();
+    let maxNum = 0;
+    for (const p of projects) {
+        const match = /^P(\d{4})$/.exec(p.label);
+        if (!match)
+            continue;
+        const num = parseInt(match[1], 10);
+        if (p.label === 'P0000' || p.label === 'P9999')
+            continue;
+        if (num > maxNum)
+            maxNum = num;
+    }
+    return `P${String(maxNum + 1).padStart(4, '0')}`;
+}
+/**
+ * Auto-create a project from a directory name when no .tim-project binding exists.
+ * Re-bind to an existing project with the same directory alias. Reversible via
+ * irrelevant flag on the project root.
+ */
+async function ensureProjectForPath(store, cwd) {
+    const dirName = path.basename(path.resolve(cwd));
+    if (!dirName || dirName === '.' || dirName === '/')
+        return null;
+    const alias = dirName.toLowerCase();
+    const resolved = await store.resolveProjectLabel(alias);
+    if (resolved.status === 'found') {
+        const entry = await store.read(resolved.label);
+        if (!entry || entry.irrelevant)
+            return null;
+        return { label: resolved.label, entry, created: false };
+    }
+    const label = await nextAutoProjectLabel(store);
+    const entry = await store.createProject(label, {
+        content: `${dirName} | Active`,
+        metadata: { name: dirName, path: cwd, auto_created: true },
+        aliases: [alias],
+    });
+    for (const section of AUTO_PROJECT_SECTIONS) {
+        await store.write(section.content, {
+            parentId: entry.id,
+            metadata: { kind: 'section', label: section.label },
+        });
+    }
+    return { label, entry, created: true };
+}
 //# sourceMappingURL=session.js.map

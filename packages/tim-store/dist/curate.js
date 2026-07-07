@@ -4,6 +4,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.CurateManager = void 0;
 const metadata_coerce_js_1 = require("./metadata-coerce.js");
+const secret_js_1 = require("./secret.js");
 // ─── Helpers ─────────────────────────────────────────────
 function rowToEntry(row) {
     return {
@@ -195,7 +196,11 @@ class CurateManager {
             stageEntries(this.db, affectedIds.map(r => r.id));
             return rowToEntry(getEntry(this.db, id));
         });
-        return transaction();
+        const result = transaction();
+        if ((0, secret_js_1.parentIsSecret)(this.db, newParentId)) {
+            (0, secret_js_1.materializeSecretSubtreeSync)(this.db, id);
+        }
+        return result;
     }
     updateMany(ids, flags) {
         if (ids.length === 0)

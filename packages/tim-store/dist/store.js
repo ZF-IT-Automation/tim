@@ -20,6 +20,7 @@ const curate_js_1 = require("./curate.js");
 const consolidate_js_1 = require("./consolidate.js");
 const metadata_coerce_js_1 = require("./metadata-coerce.js");
 const sync_methods_js_1 = require("./sync-methods.js");
+const secret_js_1 = require("./secret.js");
 /**
  * Sanitize a user-supplied query string into a safe FTS5 MATCH expression.
  *
@@ -869,6 +870,12 @@ class TimStore {
     }
     /** Synchronous write for use inside `runExclusive` transactions. */
     writeSync(content, options = {}) {
+        if (options.parentId && (0, secret_js_1.parentIsSecret)(this.db, options.parentId)) {
+            options = {
+                ...options,
+                metadata: { ...(options.metadata ?? {}), secret: true },
+            };
+        }
         const { entry, now, timestamp } = this.buildEntryRow(content, options);
         this.insertEntrySync(entry);
         this.insertStagingSync(entry, timestamp, options.confidence ?? 1.0);
@@ -1000,6 +1007,12 @@ class TimStore {
             console.warn(`[tim-store] Deprecated status/priority tags stripped: ${removedTags.join(', ')}`);
         }
         options = { ...options, tags: cleanTags };
+        if (options.parentId && (0, secret_js_1.parentIsSecret)(this.db, options.parentId)) {
+            options = {
+                ...options,
+                metadata: { ...(options.metadata ?? {}), secret: true },
+            };
+        }
         const { entry, now, timestamp } = this.buildEntryRow(content, options);
         this.insertEntrySync(entry);
         this.insertStagingSync(entry, timestamp, options.confidence ?? 1.0);

@@ -10,6 +10,8 @@ export interface SessionEndOptions {
 export interface SessionStartResult {
     session: Entry;
     project: Entry | null;
+    /** Optional briefing supplement (delta, update check, …). */
+    briefing?: string;
 }
 /** Resolve active project label from TIM_PROJECT env or ~/.tim/active-project. */
 export declare function getActiveProjectLabel(): string | null;

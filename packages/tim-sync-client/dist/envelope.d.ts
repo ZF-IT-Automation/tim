@@ -6,6 +6,8 @@ export interface TimEnvelope {
     lww: string;
     deleted: boolean;
     payload: string;
+    /** Inner secret-layer encryption applied to entry payload fields. */
+    is_encrypted?: boolean;
 }
 export interface StagingRow {
     key: string;
