@@ -73,6 +73,25 @@ function payloadIsSecret(payloadJson: string): boolean {
   }
 }
 
+export const SECRET_PLACEHOLDER_TITLE = '🔒 [secret]';
+
+export function isSecretPlaceholderPayload(payloadJson: string): boolean {
+  try {
+    const payload = JSON.parse(payloadJson) as {
+      title?: string;
+      content?: string;
+      metadata?: unknown;
+    };
+    return (
+      payload.title === SECRET_PLACEHOLDER_TITLE &&
+      payload.content === '' &&
+      parsePayloadMetadata(payload.metadata).secret === true
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function encryptSecretPayload(
   payloadJson: string,
   secretEncrypt: (data: string) => string,
@@ -87,11 +106,7 @@ export function encryptSecretPayload(
   const encMeta = secretEncrypt(JSON.stringify(meta));
 
   const encrypted = {
-    id: payload.id,
-    parent_id: payload.parent_id,
-    created_at: payload.created_at,
-    updated_at: payload.updated_at,
-    depth: payload.depth,
+    ...payload,
     title: secretEncrypt(String(payload.title ?? '')),
     content: secretEncrypt(String(payload.content ?? '')),
     metadata: JSON.stringify({ secret: true, _enc: encMeta }),
@@ -188,7 +203,15 @@ export async function pushCycle(
   secretEncrypt?: (data: string) => string,
 ): Promise<{ pushed: number; queued: boolean }> {
   const db = store.getDb();
-  const rows = getUnackedStaging(db);
+  const allRows = getUnackedStaging(db);
+  const placeholderKeys: string[] = [];
+  const rows = allRows.filter((row) => {
+    if (row.entity_type === 'entry' && isSecretPlaceholderPayload(row.payload)) {
+      placeholderKeys.push(row.key);
+      return false;
+    }
+    return true;
+  });
   const qPath = getQueuePath(state.fileId);
   let queue = loadQueue(qPath);
 
@@ -215,16 +238,20 @@ export async function pushCycle(
     });
   });
 
-  const keysToAck: string[] = [];
+  const keysToAck: string[] = [...placeholderKeys];
+  let pushedCount = 0;
   for (const item of sent) {
-    for (const e of item.envelopes) keysToAck.push(e.key);
+    for (const e of item.envelopes) {
+      keysToAck.push(e.key);
+      pushedCount++;
+    }
   }
   if (keysToAck.length > 0) ackStaging(db, keysToAck);
 
   state.lastPush = new Date().toISOString();
   saveSyncState(state);
 
-  return { pushed: keysToAck.length, queued: !ok };
+  return { pushed: pushedCount, queued: !ok };
 }
 
 export async function pullCycle(

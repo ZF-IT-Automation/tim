@@ -21,9 +21,13 @@ export async function cmdSecret(args: string[]): Promise<void> {
           console.error('Usage: tim secret set <id>');
           process.exit(1);
         }
+        const exists = db.prepare('SELECT id FROM entries WHERE id = ?').get(id);
+        if (!exists) {
+          console.error(`Entry not found: ${id}`);
+          process.exit(1);
+        }
         const count = await setSecretSubtree(store, id);
-        const total = count > 0 ? count : 1;
-        console.log(`✓ Secret set on ${id} (+${total - 1} descendants)`);
+        console.log(`✓ Secret set on ${id} (+${count - 1} descendants)`);
         break;
       }
       case 'status': {
@@ -75,6 +79,7 @@ export async function cmdSecret(args: string[]): Promise<void> {
       }
       default:
         console.error('Usage: tim secret <set|status|list> ...');
+        console.error('Note: secret is one-directional — there is no unset command.');
         process.exit(1);
     }
   } finally {

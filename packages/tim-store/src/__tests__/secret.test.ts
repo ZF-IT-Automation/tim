@@ -79,4 +79,19 @@ describe('secret nodes', () => {
       .all('become') as { rowid: number }[];
     expect(fts.length).toBe(0);
   });
+
+  it('update and delete secret entry does not corrupt FTS index', async () => {
+    const entry = await store.write('Secret lifecycle', {
+      id: 'SEC-LIFE',
+      metadata: { secret: true },
+    });
+    const db = store.getDb();
+
+    await store.update(entry.id, { title: 'Updated secret title' });
+    expect(() => db.prepare('SELECT count(*) AS c FROM fts_entries').get()).not.toThrow();
+
+    await store.delete(entry.id);
+    expect(() => db.prepare('SELECT count(*) AS c FROM fts_entries').get()).not.toThrow();
+    expect(await store.read(entry.id)).toBeNull();
+  });
 });

@@ -283,14 +283,17 @@ export function createTriggers(db: Database.Database): void {
       VALUES (new.rowid, new.title, new.content, new.tags);
     END;
 
-    CREATE TRIGGER entries_ad AFTER DELETE ON entries BEGIN
+    CREATE TRIGGER entries_ad AFTER DELETE ON entries
+    WHEN json_extract(old.metadata,'$.secret') IS NULL OR json_extract(old.metadata,'$.secret')=0
+    BEGIN
       INSERT INTO fts_entries(fts_entries, rowid, title, content, tags)
       VALUES ('delete', old.rowid, old.title, old.content, old.tags);
     END;
 
     CREATE TRIGGER entries_au AFTER UPDATE ON entries BEGIN
       INSERT INTO fts_entries(fts_entries, rowid, title, content, tags)
-      VALUES ('delete', old.rowid, old.title, old.content, old.tags);
+      SELECT 'delete', old.rowid, old.title, old.content, old.tags
+      WHERE json_extract(old.metadata,'$.secret') IS NULL OR json_extract(old.metadata,'$.secret')=0;
       INSERT INTO fts_entries(rowid, title, content, tags)
       SELECT new.rowid, new.title, new.content, new.tags
       WHERE json_extract(new.metadata,'$.secret') IS NULL OR json_extract(new.metadata,'$.secret')=0;

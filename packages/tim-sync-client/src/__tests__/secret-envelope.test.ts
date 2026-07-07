@@ -20,11 +20,17 @@ describe('secret envelope encryption', () => {
     parent_id: null,
     created_at: '2026-01-01T00:00:00.000Z',
     updated_at: '2026-01-01T00:00:00.000Z',
+    accessed_at: '2026-01-01T00:00:00.000Z',
     depth: 1,
     title: 'My secret title',
     content: 'Sensitive body text',
     content_type: 'text',
     confidence: 1,
+    decay_rate: 0,
+    visibility: 1,
+    irrelevant: 0,
+    favorite: 0,
+    tombstoned_at: null,
     tags: '[]',
     metadata: JSON.stringify({ secret: true, kind: 'note' }),
   });
@@ -49,6 +55,9 @@ describe('secret envelope encryption', () => {
     expect(parsed.id).toBe('SEC-001');
     expect(parsed.parent_id).toBeNull();
     expect(parsed.depth).toBe(1);
+    expect(parsed.content_type).toBe('text');
+    expect(parsed.accessed_at).toBe('2026-01-01T00:00:00.000Z');
+    expect(parsed.tags).toBe('[]');
     expect(JSON.parse(parsed.metadata).secret).toBe(true);
 
     const wire: TimEnvelope = { ...env, payload: encryptedPayload, is_encrypted: true };
@@ -62,6 +71,9 @@ describe('secret envelope encryption', () => {
 
     expect(parsed.title).toBe('My secret title');
     expect(parsed.content).toBe('Sensitive body text');
+    expect(parsed.content_type).toBe('text');
+    expect(parsed.accessed_at).toBe('2026-01-01T00:00:00.000Z');
+    expect(parsed.tags).toBe('[]');
     const meta = JSON.parse(parsed.metadata);
     expect(meta.secret).toBe(true);
     expect(meta.kind).toBe('note');

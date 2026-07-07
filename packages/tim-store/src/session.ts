@@ -1,4 +1,5 @@
 import type { Entry } from 'tim-core';
+import { loadConfig } from 'tim-core';
 import type { TimStore } from './store.js';
 import * as os from 'os';
 import * as path from 'path';
@@ -799,16 +800,18 @@ const AUTO_PROJECT_SECTIONS = [
 ] as const;
 
 async function nextAutoProjectLabel(store: TimStore): Promise<string> {
-  const projects = await store.listProjects();
-  let maxNum = 0;
-  for (const p of projects) {
-    const match = /^P(\d{4})$/.exec(p.label);
-    if (!match) continue;
-    const num = parseInt(match[1], 10);
-    if (p.label === 'P0000' || p.label === 'P9999') continue;
-    if (num > maxNum) maxNum = num;
-  }
-  return `P${String(maxNum + 1).padStart(4, '0')}`;
+  return store.allocateNextProjectLabel();
+}
+
+function isAutoProjectBlocked(cwd: string): boolean {
+  const resolved = path.resolve(cwd);
+  const home = path.resolve(os.homedir());
+  if (resolved === home) return true;
+  if (resolved === '/tmp' || resolved.startsWith('/tmp/')) return true;
+  if (resolved === '/var/tmp' || resolved.startsWith('/var/tmp/')) return true;
+  const tasksDir = path.join(home, 'projects', 'tasks');
+  if (resolved === tasksDir || resolved.startsWith(`${tasksDir}${path.sep}`)) return true;
+  return false;
 }
 
 export interface EnsureProjectForPathResult {
@@ -826,30 +829,46 @@ export async function ensureProjectForPath(
   store: TimStore,
   cwd: string,
 ): Promise<EnsureProjectForPathResult | null> {
-  const dirName = path.basename(path.resolve(cwd));
+  const config = loadConfig();
+  if (config.autoProject === false) return null;
+
+  const resolvedPath = path.resolve(cwd);
+  if (isAutoProjectBlocked(resolvedPath)) return null;
+
+  const dirName = path.basename(resolvedPath);
   if (!dirName || dirName === '.' || dirName === '/') return null;
 
+  const byPath = await store.findProjectByPath(resolvedPath);
+  if (byPath && !byPath.irrelevant) {
+    const label = typeof byPath.metadata.label === 'string' ? byPath.metadata.label : byPath.id;
+    return { label, entry: byPath, created: false };
+  }
+
   const alias = dirName.toLowerCase();
-  const resolved = await store.resolveProjectLabel(alias);
-  if (resolved.status === 'found') {
-    const entry = await store.read(resolved.label);
-    if (!entry || entry.irrelevant) return null;
-    return { label: resolved.label, entry, created: false };
+  const maxAttempts = 3;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const label = await nextAutoProjectLabel(store);
+    try {
+      const entry = await store.createProject(label, {
+        content: `${dirName} | Active`,
+        metadata: { name: dirName, path: resolvedPath, auto_created: true },
+        aliases: [alias],
+      });
+
+      for (const section of AUTO_PROJECT_SECTIONS) {
+        await store.write(section.content, {
+          parentId: entry.id,
+          metadata: { kind: 'section', label: section.label },
+        });
+      }
+
+      return { label, entry, created: true };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (attempt < maxAttempts - 1 && msg.includes('already exists')) continue;
+      throw err;
+    }
   }
 
-  const label = await nextAutoProjectLabel(store);
-  const entry = await store.createProject(label, {
-    content: `${dirName} | Active`,
-    metadata: { name: dirName, path: cwd, auto_created: true },
-    aliases: [alias],
-  });
-
-  for (const section of AUTO_PROJECT_SECTIONS) {
-    await store.write(section.content, {
-      parentId: entry.id,
-      metadata: { kind: 'section', label: section.label },
-    });
-  }
-
-  return { label, entry, created: true };
+  return null;
 }

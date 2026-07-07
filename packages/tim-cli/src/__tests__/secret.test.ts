@@ -50,4 +50,14 @@ describe('cmdSecret', () => {
     const out = logs.join('\n');
     expect(out).toMatch(/secret: true \(inherited from ROOT-1\)/);
   });
+
+  it('set on non-existent id reports error', async () => {
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {
+      throw new Error('process.exit');
+    }) as never);
+
+    await expect(cmdSecret(['set', 'MISSING-ID'])).rejects.toThrow('process.exit');
+    expect(errors.join('\n')).toContain('Entry not found: MISSING-ID');
+    exitSpy.mockRestore();
+  });
 });

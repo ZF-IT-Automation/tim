@@ -74,6 +74,33 @@ describe('CurateManager', () => {
       const movedGrand = await store.read(grandchild.id);
       expect(movedGrand!.depth).toBe(4);
     });
+
+    it('materializes secret inside transaction when moved under secret parent', async () => {
+      const deviceStore = new TimStore(':memory:', { deviceId: 'device-abc' });
+      const secretParent = await deviceStore.write('Secret parent', {
+        metadata: { secret: true },
+      });
+      const child = await deviceStore.write('Will inherit', { parentId: null });
+      const grand = await deviceStore.write('Grandchild', { parentId: child.id });
+
+      deviceStore.curate().moveEntry(child.id, secretParent.id);
+
+      const db = deviceStore.getDb();
+      for (const id of [child.id, grand.id]) {
+        const row = db.prepare('SELECT metadata, lww_device FROM entries WHERE id = ?').get(id) as {
+          metadata: string;
+          lww_device: string;
+        };
+        expect(JSON.parse(row.metadata).secret).toBe(true);
+        expect(row.lww_device).toBe('device-abc');
+      }
+
+      const staging = db.prepare('SELECT lww_device FROM staging WHERE key = ?').get(child.id) as {
+        lww_device: string;
+      };
+      expect(staging.lww_device).toBe('device-abc');
+      deviceStore.close();
+    });
   });
 
   describe('updateMany', () => {

@@ -24,6 +24,17 @@ export {
   type SyncState,
 } from './config.js';
 export { loadQueue, saveQueue, enqueue, flushQueue, PUSH_CHUNK, type QueueItem } from './queue.js';
-export { pushCycle, pullCycle, runPush, runPull, buildSyncContext, type SyncCycleContext } from './sync.js';
+export {
+  pushCycle,
+  pullCycle,
+  runPush,
+  runPull,
+  buildSyncContext,
+  encryptSecretPayload,
+  decryptSecretPayload,
+  isSecretPlaceholderPayload,
+  SECRET_PLACEHOLDER_TITLE,
+  type SyncCycleContext,
+} from './sync.js';
 export { autoPush, autoPull, resetSyncCooldowns, _peekCooldown } from './auto-sync.js';
 export { startDevServer, resetDevServer } from './dev-server.js';

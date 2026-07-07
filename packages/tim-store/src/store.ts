@@ -2,6 +2,7 @@
 // SQLite-backed MemoryInterface implementation.
 
 import Database from 'better-sqlite3';
+import * as path from 'node:path';
 import { ulid } from 'ulid';
 import { formatEntryId } from './entry-id.js';
 import type {
@@ -233,6 +234,43 @@ export class TimStore implements MemoryInterface {
       }
       return child;
     });
+  }
+
+  /** Find auto-created project bound to an exact filesystem path. */
+  async findProjectByPath(projectPath: string): Promise<Entry | null> {
+    const resolved = path.resolve(projectPath);
+    const row = this.db.prepare(`
+      SELECT * FROM entries
+      WHERE json_extract(metadata, '$.kind') = 'project'
+        AND json_extract(metadata, '$.path') = ?
+        AND irrelevant = 0
+        AND tombstoned_at IS NULL
+    `).get(resolved) as RowEntry | undefined;
+    return row ? rowToEntry(row) : null;
+  }
+
+  /**
+   * Allocate the next P-label under an immediate SQLite transaction lock.
+   * Skips reserved labels P0000 and P9999.
+   */
+  allocateNextProjectLabel(): string {
+    const tx = this.db.transaction(() => {
+      const rows = this.db.prepare(`
+        SELECT json_extract(metadata, '$.label') AS label FROM entries
+        WHERE json_extract(metadata, '$.kind') = 'project'
+          AND tombstoned_at IS NULL
+      `).all() as { label: string }[];
+      let maxNum = 0;
+      for (const row of rows) {
+        const match = /^P(\d{4})$/.exec(row.label);
+        if (!match) continue;
+        const num = parseInt(match[1]!, 10);
+        if (row.label === 'P0000' || row.label === 'P9999') continue;
+        if (num > maxNum) maxNum = num;
+      }
+      return `P${String(maxNum + 1).padStart(4, '0')}`;
+    });
+    return tx.immediate();
   }
 
   async createProject(
@@ -1016,7 +1054,7 @@ export class TimStore implements MemoryInterface {
   }
 
   curate(): CurateManager {
-    return new CurateManager(this.db);
+    return new CurateManager(this.db, this.deviceId);
   }
 
   consolidate(): ConsolidationManager {

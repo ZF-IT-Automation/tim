@@ -3,12 +3,8 @@ import type { TimStore } from './store.js';
 
 function rowHasSecret(metadataJson: string): boolean {
   try {
-    return (
-      (JSON.parse(metadataJson) as { secret?: boolean }).secret === true ||
-      Number(
-        (JSON.parse(metadataJson) as Record<string, unknown>).secret,
-      ) === 1
-    );
+    const meta = JSON.parse(metadataJson) as { secret?: boolean | number };
+    return meta.secret === true || Number(meta.secret) === 1;
   } catch {
     return false;
   }
