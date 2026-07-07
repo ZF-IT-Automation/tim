@@ -11,6 +11,7 @@ import {
   type TimStore,
 } from 'tim-store';
 import { runConfiguredHooks, type HookEnv } from './hooks.js';
+import { getDeltaBriefing } from './delta.js';
 import { readMarker, writeMarker, validateMarkerAgainstStore } from './marker.js';
 import {
   onSessionStop,
@@ -27,6 +28,8 @@ export interface SessionEndOptions {
 export interface SessionStartResult {
   session: Entry;
   project: Entry | null;
+  /** Optional briefing supplement (delta, update check, …). */
+  briefing?: string;
 }
 
 /** Resolve active project label from TIM_PROJECT env or ~/.tim/active-project. */
@@ -180,7 +183,15 @@ export async function runSessionStart(
 
   const project = await store.read(projectId);
 
-  return { session, project };
+  let briefing: string | undefined;
+  if (projectId !== INBOX_PROJECT_LABEL) {
+    const delta = await getDeltaBriefing(store, projectId, {
+      sessionId: params.sessionId,
+    });
+    if (delta) briefing = delta;
+  }
+
+  return { session, project, briefing };
 }
 
 export async function runSessionEnd(

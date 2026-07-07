@@ -8,6 +8,9 @@ export interface HooksConfig {
   sessionEnd?: string | string[];
   enabled?: boolean;
   timeoutMs?: number;
+  promptSubmit?: {
+    enabled?: boolean;
+  };
 }
 
 export interface RememberConfig {
