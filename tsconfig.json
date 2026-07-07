@@ -18,6 +18,7 @@
     { "path": "packages/tim-core" },
     { "path": "packages/tim-store" },
     { "path": "packages/tim-sync-client" },
+    { "path": "packages/tim-sync-server" },
     { "path": "packages/tim-cli" },
     { "path": "packages/tim-mcp" },
     { "path": "packages/tim-migrate" },

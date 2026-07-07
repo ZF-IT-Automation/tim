@@ -190,14 +190,15 @@ const index_js_1 = require("../index.js");
             : null;
         try {
             // No marker in `sub` → cwd-only binding must NOT find parent's P0042.
-            // Falls through to Inbox (P0000) per resolveSessionProjectId contract.
+            // Auto-project creates from basename "inner" before Inbox fallback.
             const { project } = await (0, index_js_1.runSessionStart)(store, {
                 sessionId: 'sess-sub',
                 agentName: 'a',
                 cwd: sub,
                 harness: 'test',
             });
-            (0, vitest_1.expect)(project?.metadata.label ?? project?.id).toBe('P0000');
+            (0, vitest_1.expect)(project?.metadata.label ?? project?.id).toMatch(/^P\d{4}$/);
+            (0, vitest_1.expect)(project?.metadata.label ?? project?.id).not.toBe('P0042');
         }
         finally {
             if (originalEnv === undefined)

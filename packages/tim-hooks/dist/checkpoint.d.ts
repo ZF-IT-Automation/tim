@@ -38,6 +38,7 @@ export declare function loadProjectContext(store: TimStore): Promise<Entry | nul
 export declare function runCheckpoint(store: TimStore, sessionId: string, opts?: {
     summarize?: Summarizer;
     runDecay?: boolean;
+    handoffNote?: string;
 }): Promise<Entry>;
 export declare function runSessionStart(store: TimStore, params: {
     sessionId: string;

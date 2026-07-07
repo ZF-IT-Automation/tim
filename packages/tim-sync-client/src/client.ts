@@ -83,6 +83,26 @@ export class TimSyncClient {
     }
   }
 
+  async healthDetails(): Promise<Record<string, unknown> | null> {
+    const r = await this.request<Record<string, unknown>>('/health');
+    return r.ok ? r.data : null;
+  }
+
+  async register(tier: 'free' | 'pro' = 'free'): Promise<{ token: string; tenant_id: string; tier: string }> {
+    const r = await this.request<{ token: string; tenant_id: string; tier: string }>('/register', {
+      method: 'POST',
+      body: JSON.stringify({ tier }),
+    });
+    if (!r.ok) throw new Error(r.error);
+    return r.data;
+  }
+
+  async syncStatus(): Promise<{ tier: string; entry_count: number; total_bytes: number }> {
+    const r = await this.request<{ tier: string; entry_count: number; total_bytes: number }>('/sync/status');
+    if (!r.ok) throw new Error(r.error);
+    return r.data;
+  }
+
   async listFiles(): Promise<TimFile[]> {
     const r = await this.request<{ files: TimFile[] }>('/files');
     if (!r.ok) {

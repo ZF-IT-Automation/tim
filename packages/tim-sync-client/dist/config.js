@@ -39,6 +39,7 @@ exports.getDeviceIdPath = getDeviceIdPath;
 exports.getQueuePath = getQueuePath;
 exports.loadConfig = loadConfig;
 exports.saveConfig = saveConfig;
+exports.clearConfig = clearConfig;
 exports.loadSyncState = loadSyncState;
 exports.saveSyncState = saveSyncState;
 exports.getDeviceId = getDeviceId;
@@ -75,6 +76,13 @@ function saveConfig(config) {
     if (!fs.existsSync(dir))
         fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(getSyncConfigPath(), JSON.stringify(config, null, 2), { mode: 0o600 });
+}
+function clearConfig() {
+    const p = getSyncConfigPath();
+    if (!fs.existsSync(p))
+        return false;
+    fs.unlinkSync(p);
+    return true;
 }
 function loadSyncState() {
     const p = getSyncStatePath();

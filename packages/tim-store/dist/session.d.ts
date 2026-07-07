@@ -86,6 +86,7 @@ export declare class SessionManager {
     checkpoint(sessionId: string, opts?: {
         summarize?: Summarizer;
         runDecay?: boolean;
+        handoffNote?: string;
     }): Promise<Entry>;
     /** Upsert session-summary-root content after checkpoint / rollup. */
     updateSessionSummary(sessionId: string, summaryText: string): Promise<Entry>;

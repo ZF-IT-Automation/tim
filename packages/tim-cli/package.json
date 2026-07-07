@@ -9,10 +9,6 @@
   "files": [
     "dist"
   ],
-  "scripts": {
-    "build": "tsc",
-    "test": "vitest run"
-  },
   "dependencies": {
     "tim-core": "*",
     "tim-store": "*",
@@ -20,6 +16,12 @@
     "tim-hooks": "*",
     "tim-migrate": "*",
     "tim-summarizer": "*",
+    "tim-skills": "*",
     "better-sqlite3": "^11.7.0"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "postinstall": "node -e \"try{require('./dist/update-skills.js').updateSkills()}catch(e){}\""
   }
 }

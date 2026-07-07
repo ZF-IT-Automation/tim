@@ -14,8 +14,11 @@ import {
   readMarker,
   writeMarker,
   rebalanceBatch,
+  afterExchangeLogged,
   type ProjectMarker,
 } from 'tim-hooks';
+import { installMcpForHosts } from './install.js';
+import { cmdUserInit, cmdUserProfile, cmdUpdateSkills } from './user.js';
 import { tim_export, tim_import, exportToMarkdown, migrateTagsToTypes } from 'tim-migrate';
 import { cmdSync } from './sync-cli.js';
 import { cmdSnapshot } from './snapshot.js';
@@ -74,23 +77,30 @@ async function cmdInit() {
     console.log('✓ Agent registered: "default"');
   } catch {}
 
-  const mcpConfig = {
-    mcpServers: {
-      tim: {
-        command: 'npx',
-        args: ['tim-mcp'],
-        env: { TIM_DB_PATH: dbPath },
+  const installed = installMcpForHosts(dbPath, true);
+  if (installed.length > 0) {
+    for (const i of installed) {
+      console.log(`✓ MCP config: ${i.tool} → ${i.path}`);
+    }
+  } else {
+    const mcpConfig = {
+      mcpServers: {
+        tim: {
+          command: 'npx',
+          args: ['tim-mcp'],
+          env: { TIM_DB_PATH: dbPath },
+        },
       },
-    },
-  };
-  fs.writeFileSync(
-    path.join(timDir, 'mcp.json'),
-    JSON.stringify(mcpConfig, null, 2)
-  );
+    };
+    fs.writeFileSync(
+      path.join(timDir, 'mcp.json'),
+      JSON.stringify(mcpConfig, null, 2),
+    );
+    console.log(`✓ MCP config written: ${timDir}/mcp.json`);
+  }
 
   const health = await store.health();
   console.log(`✓ Database created: ${dbPath}`);
-  console.log(`✓ MCP config written: ${timDir}/mcp.json`);
   console.log(`✓ Health: ${health.totalEntries} entries, FTS5=${health.ftsIntegrity ? 'OK' : 'BROKEN'}`);
   console.log(`\nTIM ready. Connect your MCP client to ${timDir}/mcp.json`);
 
@@ -296,7 +306,8 @@ async function cmdHook(args: string[]) {
           { role: 'user', content: userText },
           { role: 'agent', content: agentText },
         ]);
-        console.log(JSON.stringify({ count: entries.length }, null, 2));
+        const cadence = await afterExchangeLogged(store, sessionId, flags.cwd || process.cwd());
+        console.log(JSON.stringify({ count: entries.length, cadence }, null, 2));
         break;
       }
 
@@ -345,7 +356,9 @@ async function cmdCheckpoint(args: string[]) {
   const store = new TimStore(getDbPath(config));
 
   try {
-    const summary = await runCheckpoint(store, sessionId);
+    const summary = await runCheckpoint(store, sessionId, {
+      handoffNote: flags['handoff-note'],
+    });
     console.log(JSON.stringify({ summary }, null, 2));
   } finally {
     store.close();
@@ -579,6 +592,19 @@ async function main() {
     case 'secret':
       await cmdSecret(rest);
       break;
+    case 'user': {
+      const sub = rest[0];
+      if (sub === 'init') await cmdUserInit();
+      else if (sub === 'profile') await cmdUserProfile();
+      else {
+        console.error('Usage: tim user <init|profile>');
+        process.exit(1);
+      }
+      break;
+    }
+    case 'update-skills':
+      await cmdUpdateSkills();
+      break;
     case '--version':
     case '-v':
       console.log('tim v0.1.0-alpha');
@@ -609,11 +635,15 @@ Commands:
   migrate tags-to-types   Convert legacy #rule / #human tags to metadata.type (--dry-run, --sample-limit N)
   snapshot                 Snapshot the live TIM DB to /tmp/tim-snapshots/ (SQLite backup API)
   restore                  Restore TIM DB from a snapshot (--from, --list, --dry-run, --force)
-  sync connect            Connect to o9k-sync server
+  sync connect            Connect to hosted sync (use --register for new tenant)
+  sync disconnect         Remove local sync configuration
   sync push               Push unacked staging to server
   sync pull               Pull remote changes
   sync status             Show sync configuration and health
   sync dev                Start local dev sync server (port 3100)
+  user init               Create human profile scaffold (H0000)
+  user profile            Show human profile tree summary
+  update-skills           Copy TIM skills to detected AI hosts
   --help                Show this help`);
       break;
     default:

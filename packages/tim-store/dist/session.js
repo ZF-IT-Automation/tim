@@ -571,6 +571,7 @@ class SessionManager {
                 kind: 'checkpoint',
                 sessionId,
                 count: exchanges.length,
+                ...(opts.handoffNote ? { handoff_note: opts.handoffNote } : {}),
             },
             tags: [session_tree_js_1.SESSION_SUMMARY_TAG, session_tree_js_1.BATCH_SUMMARY_TAG, '#checkpoint'],
         });

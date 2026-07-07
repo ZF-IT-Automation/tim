@@ -23,6 +23,8 @@ import {
   foldBatchSummaries,
   ErrorLogger,
   validateTagsDeprecated,
+  estimateProjectTokens,
+  listProjectTokenEstimates,
   type TaskRecord,
 } from 'tim-store';
 import { formatProjectOutput, type ProjectSchema } from './project-output.js';
@@ -33,6 +35,7 @@ import { resolveEntryTaskStatus } from './task-status.js';
 import {
   findMarker,
   getActiveProjectLabel,
+  getBriefingMaxTokens,
   maybeSpawnSummarizer,
   runPromptSubmit,
   syncNearestProjectMarker,
@@ -2126,8 +2129,25 @@ export async function createMcpServer(
         case 'tim_stats': {
           const { root, kind, buckets } = TimStatsSchema.parse(args);
           const stats = await s.getContentStats(root, kind, buckets);
+          const maxTokens = getBriefingMaxTokens(loadConfig());
+          const scopedEstimate = root
+            ? await estimateProjectTokens(s, root, maxTokens)
+            : null;
+          const projectEstimates = root
+            ? (scopedEstimate ? [scopedEstimate] : [])
+            : await listProjectTokenEstimates(s, maxTokens);
+          const payload = {
+            ...stats,
+            tokenBudget: {
+              maxTokens,
+              briefingMaxTokens: maxTokens,
+              projectEstimates,
+              scopedEstimate,
+              overBudgetProjects: projectEstimates.filter(p => p.overBriefingBudget).map(p => p.label),
+            },
+          };
           return {
-            content: [{ type: 'text', text: formatToolResponse(stats) }],
+            content: [{ type: 'text', text: formatToolResponse(payload) }],
           };
         }
 

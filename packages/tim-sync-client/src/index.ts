@@ -12,6 +12,7 @@ export {
 export {
   loadConfig,
   saveConfig,
+  clearConfig,
   loadSyncState,
   saveSyncState,
   getDeviceId,

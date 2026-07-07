@@ -314,6 +314,12 @@ export interface TimConfig {
   updateCheck?: boolean;
   /** ISO timestamp of last registry check (config cache). */
   updateCheckLastAt?: string;
+  checkpoint?: {
+    everyN?: number;
+  };
+  briefing?: {
+    maxTokens?: number;
+  };
 }
 
 export {

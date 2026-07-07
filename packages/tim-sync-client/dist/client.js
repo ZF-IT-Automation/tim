@@ -48,6 +48,25 @@ class TimSyncClient {
             return false;
         }
     }
+    async healthDetails() {
+        const r = await this.request('/health');
+        return r.ok ? r.data : null;
+    }
+    async register(tier = 'free') {
+        const r = await this.request('/register', {
+            method: 'POST',
+            body: JSON.stringify({ tier }),
+        });
+        if (!r.ok)
+            throw new Error(r.error);
+        return r.data;
+    }
+    async syncStatus() {
+        const r = await this.request('/sync/status');
+        if (!r.ok)
+            throw new Error(r.error);
+        return r.data;
+    }
     async listFiles() {
         const r = await this.request('/files');
         if (!r.ok) {

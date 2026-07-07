@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.DEFAULT_SUMMARIZER_TIMEOUT_SEC = exports.summarizerLogPath = exports.detachedSpawner = exports.spawnSummarizer = exports.buildSummarizerCommand = exports.maybeSpawnSummarizer = exports.onSessionStop = exports.rebalanceBatch = exports.isSessionLocked = exports.LOCK_TTL_MS = exports.MARKER_LOCK = exports.MARKER_VERSION = exports.MARKER_FILENAME = exports.CANONICAL_PROJECT_FILENAME = exports.canonicalProjectPath = exports.markerPath = exports.releaseLock = exports.acquireLock = exports.INBOX_LABEL = exports.validateProjectLabel = exports.validateMarkerAgainstStore = exports.syncNearestProjectMarker = exports.reconcileMarker = exports.buildSessionDirective = exports.buildLoadDirective = exports.findMarkerOptionsFromEnv = exports.findMarker = exports.detectProject = exports.writeMarker = exports.readMarker = exports.runPromptSubmit = exports.getUpdateCheckLine = exports.getDeltaBriefing = exports.getActiveProjectLabel = exports.loadProjectContext = exports.runSessionEnd = exports.runSessionStart = exports.runCheckpoint = exports.embedUnembeddedEntries = exports.runConfiguredHooks = exports.runHooks = exports.runHookScript = void 0;
+exports.DEFAULT_SUMMARIZER_TIMEOUT_SEC = exports.summarizerLogPath = exports.detachedSpawner = exports.spawnSummarizer = exports.buildSummarizerCommand = exports.maybeSpawnSummarizer = exports.onSessionStop = exports.rebalanceBatch = exports.isSessionLocked = exports.LOCK_TTL_MS = exports.MARKER_LOCK = exports.MARKER_VERSION = exports.MARKER_FILENAME = exports.CANONICAL_PROJECT_FILENAME = exports.canonicalProjectPath = exports.markerPath = exports.releaseLock = exports.acquireLock = exports.INBOX_LABEL = exports.validateProjectLabel = exports.validateMarkerAgainstStore = exports.syncNearestProjectMarker = exports.reconcileMarker = exports.buildSessionDirective = exports.buildLoadDirective = exports.findMarkerOptionsFromEnv = exports.findMarker = exports.detectProject = exports.writeMarker = exports.readMarker = exports.runPromptSubmit = exports.afterExchangeLogged = exports.DEFAULT_BRIEFING_MAX_TOKENS = exports.DEFAULT_CHECKPOINT_EVERY_N = exports.checkpointCadenceReminder = exports.shouldAutoCheckpoint = exports.getBriefingMaxTokens = exports.getCheckpointEveryN = exports.getDeltaBriefing = exports.getActiveProjectLabel = exports.loadProjectContext = exports.runSessionEnd = exports.runSessionStart = exports.runCheckpoint = exports.embedUnembeddedEntries = exports.runConfiguredHooks = exports.runHooks = exports.runHookScript = void 0;
 var hooks_js_1 = require("./hooks.js");
 Object.defineProperty(exports, "runHookScript", { enumerable: true, get: function () { return hooks_js_1.runHookScript; } });
 Object.defineProperty(exports, "runHooks", { enumerable: true, get: function () { return hooks_js_1.runHooks; } });
@@ -14,8 +14,15 @@ Object.defineProperty(exports, "loadProjectContext", { enumerable: true, get: fu
 Object.defineProperty(exports, "getActiveProjectLabel", { enumerable: true, get: function () { return checkpoint_js_1.getActiveProjectLabel; } });
 var delta_js_1 = require("./delta.js");
 Object.defineProperty(exports, "getDeltaBriefing", { enumerable: true, get: function () { return delta_js_1.getDeltaBriefing; } });
-var update_check_js_1 = require("./update-check.js");
-Object.defineProperty(exports, "getUpdateCheckLine", { enumerable: true, get: function () { return update_check_js_1.getUpdateCheckLine; } });
+var cadence_js_1 = require("./cadence.js");
+Object.defineProperty(exports, "getCheckpointEveryN", { enumerable: true, get: function () { return cadence_js_1.getCheckpointEveryN; } });
+Object.defineProperty(exports, "getBriefingMaxTokens", { enumerable: true, get: function () { return cadence_js_1.getBriefingMaxTokens; } });
+Object.defineProperty(exports, "shouldAutoCheckpoint", { enumerable: true, get: function () { return cadence_js_1.shouldAutoCheckpoint; } });
+Object.defineProperty(exports, "checkpointCadenceReminder", { enumerable: true, get: function () { return cadence_js_1.checkpointCadenceReminder; } });
+Object.defineProperty(exports, "DEFAULT_CHECKPOINT_EVERY_N", { enumerable: true, get: function () { return cadence_js_1.DEFAULT_CHECKPOINT_EVERY_N; } });
+Object.defineProperty(exports, "DEFAULT_BRIEFING_MAX_TOKENS", { enumerable: true, get: function () { return cadence_js_1.DEFAULT_BRIEFING_MAX_TOKENS; } });
+var cadence_runner_js_1 = require("./cadence-runner.js");
+Object.defineProperty(exports, "afterExchangeLogged", { enumerable: true, get: function () { return cadence_runner_js_1.afterExchangeLogged; } });
 var prompt_submit_js_1 = require("./prompt-submit.js");
 Object.defineProperty(exports, "runPromptSubmit", { enumerable: true, get: function () { return prompt_submit_js_1.runPromptSubmit; } });
 var marker_js_1 = require("./marker.js");

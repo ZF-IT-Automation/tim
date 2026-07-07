@@ -95,6 +95,19 @@ const index_js_1 = require("../index.js");
             const edges = await store.getEdges(summary.id, 'outgoing');
             (0, vitest_1.expect)(edges.some(e => e.type === 'summarizes' && e.targetId === 'sess-cp')).toBe(true);
         });
+        (0, vitest_1.it)('stores handoff_note in checkpoint metadata when provided', async () => {
+            await sessions.sessionStart({
+                sessionId: 'sess-handoff',
+                agentName: 'agent',
+                cwd: '/',
+                harness: 'test',
+            });
+            await sessions.sessionLog('sess-handoff', [{ role: 'user', content: 'hi' }]);
+            const summary = await sessions.checkpoint('sess-handoff', {
+                handoffNote: 'done: x | wip: y | next: z',
+            });
+            (0, vitest_1.expect)(summary.metadata.handoff_note).toBe('done: x | wip: y | next: z');
+        });
         (0, vitest_1.it)('runs decay only after summary is durable', async () => {
             const old = await store.write('old entry', {
                 metadata: { kind: 'exchange' },

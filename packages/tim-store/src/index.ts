@@ -115,3 +115,17 @@ export {
   ensureSecretInheritance,
   materializeSecretSubtreeSync,
 } from './secret.js';
+export {
+  ensureHumanProfile,
+  getHumanProfileSummary,
+  HUMAN_ROOT_LABEL,
+  HUMAN_SECTIONS,
+  type HumanProfileNode,
+} from './user.js';
+export {
+  charsToTokens,
+  estimateProjectTokens,
+  listProjectTokenEstimates,
+  CHARS_PER_TOKEN,
+  type ProjectTokenEstimate,
+} from './token-budget.js';

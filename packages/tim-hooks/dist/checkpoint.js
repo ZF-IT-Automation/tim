@@ -40,6 +40,7 @@ exports.runCheckpoint = runCheckpoint;
 exports.runSessionStart = runSessionStart;
 exports.runSessionEnd = runSessionEnd;
 const tim_core_1 = require("tim-core");
+const cadence_js_1 = require("./cadence.js");
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
 const tim_store_1 = require("tim-store");
@@ -113,9 +114,6 @@ async function resolveSessionProjectId(store, cwd, explicitProjectId) {
     const cwdLabel = await resolveActiveProjectFromCwd(cwd, store);
     if (cwdLabel)
         return cwdLabel;
-    const auto = await (0, tim_store_1.ensureProjectForPath)(store, cwd);
-    if (auto)
-        return auto.label;
     const active = getActiveProjectLabel();
     if (active) {
         const validated = await (0, marker_js_1.validateMarkerAgainstStore)({
@@ -129,6 +127,9 @@ async function resolveSessionProjectId(store, cwd, explicitProjectId) {
         if (validated)
             return validated.project;
     }
+    const auto = await (0, tim_store_1.ensureProjectForPath)(store, cwd);
+    if (auto)
+        return auto.label;
     await (0, tim_store_1.ensureInboxProject)(store);
     return tim_store_1.INBOX_PROJECT_LABEL;
 }
@@ -177,6 +178,13 @@ async function runSessionStart(store, params) {
     const updateLine = await (0, update_check_js_1.getUpdateCheckLine)();
     if (updateLine)
         briefingParts.push(updateLine);
+    const marker = (0, marker_js_1.readMarker)(params.cwd);
+    if (marker && marker.exchanges > 0) {
+        const everyN = (0, cadence_js_1.getCheckpointEveryN)((0, tim_core_1.loadConfig)());
+        const reminder = (0, cadence_js_1.checkpointCadenceReminder)(marker.exchanges, everyN);
+        if (reminder)
+            briefingParts.push(reminder);
+    }
     if (briefingParts.length > 0)
         briefing = briefingParts.join('\n');
     return { session, project, briefing };

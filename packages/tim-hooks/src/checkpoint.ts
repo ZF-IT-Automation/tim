@@ -1,6 +1,11 @@
 import type { Entry } from 'tim-core';
 import type { HooksConfig } from 'tim-core';
 import { getTimDir, loadConfig } from 'tim-core';
+import {
+  getCheckpointEveryN,
+  shouldAutoCheckpoint,
+  checkpointCadenceReminder,
+} from './cadence.js';
 import * as fs from 'fs';
 import * as path from 'path';
 import {
@@ -136,7 +141,7 @@ async function resolveSessionProjectId(
 export async function runCheckpoint(
   store: TimStore,
   sessionId: string,
-  opts: { summarize?: Summarizer; runDecay?: boolean } = {},
+  opts: { summarize?: Summarizer; runDecay?: boolean; handoffNote?: string } = {},
 ): Promise<Entry> {
   const sessions = new SessionManager(store);
   return sessions.checkpoint(sessionId, opts);
@@ -200,6 +205,14 @@ export async function runSessionStart(
   }
   const updateLine = await getUpdateCheckLine();
   if (updateLine) briefingParts.push(updateLine);
+
+  const marker = readMarker(params.cwd);
+  if (marker && marker.exchanges > 0) {
+    const everyN = getCheckpointEveryN(loadConfig());
+    const reminder = checkpointCadenceReminder(marker.exchanges, everyN);
+    if (reminder) briefingParts.push(reminder);
+  }
+
   if (briefingParts.length > 0) briefing = briefingParts.join('\n');
 
   return { session, project, briefing };

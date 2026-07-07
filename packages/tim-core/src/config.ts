@@ -58,6 +58,12 @@ const DEFAULT_CONFIG: TimConfigFile = {
     includeBatchSummaries: true,
     searchType: 'fts',
   },
+  checkpoint: {
+    everyN: 20,
+  },
+  briefing: {
+    maxTokens: 9000,
+  },
 };
 
 export function getTimDir(): string {
@@ -87,6 +93,14 @@ export function loadConfig(): TimConfigFile {
         ...DEFAULT_CONFIG.remember,
         ...raw.remember,
         chain: raw.remember?.chain ?? DEFAULT_CONFIG.remember?.chain,
+      },
+      checkpoint: {
+        ...DEFAULT_CONFIG.checkpoint,
+        ...raw.checkpoint,
+      },
+      briefing: {
+        ...DEFAULT_CONFIG.briefing,
+        ...raw.briefing,
       },
     };
   } catch {

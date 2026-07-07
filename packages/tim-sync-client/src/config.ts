@@ -50,6 +50,13 @@ export function saveConfig(config: SyncConfig): void {
   fs.writeFileSync(getSyncConfigPath(), JSON.stringify(config, null, 2), { mode: 0o600 });
 }
 
+export function clearConfig(): boolean {
+  const p = getSyncConfigPath();
+  if (!fs.existsSync(p)) return false;
+  fs.unlinkSync(p);
+  return true;
+}
+
 export function loadSyncState(): SyncState | null {
   const p = getSyncStatePath();
   if (!fs.existsSync(p)) return null;

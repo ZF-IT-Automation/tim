@@ -38,6 +38,8 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const tim_store_1 = require("tim-store");
 const tim_core_1 = require("tim-core");
 const tim_hooks_1 = require("tim-hooks");
+const install_js_1 = require("./install.js");
+const user_js_1 = require("./user.js");
 const tim_migrate_1 = require("tim-migrate");
 const sync_cli_js_1 = require("./sync-cli.js");
 const snapshot_js_1 = require("./snapshot.js");
@@ -88,19 +90,27 @@ async function cmdInit() {
         console.log('✓ Agent registered: "default"');
     }
     catch { }
-    const mcpConfig = {
-        mcpServers: {
-            tim: {
-                command: 'npx',
-                args: ['tim-mcp'],
-                env: { TIM_DB_PATH: dbPath },
+    const installed = (0, install_js_1.installMcpForHosts)(dbPath, true);
+    if (installed.length > 0) {
+        for (const i of installed) {
+            console.log(`✓ MCP config: ${i.tool} → ${i.path}`);
+        }
+    }
+    else {
+        const mcpConfig = {
+            mcpServers: {
+                tim: {
+                    command: 'npx',
+                    args: ['tim-mcp'],
+                    env: { TIM_DB_PATH: dbPath },
+                },
             },
-        },
-    };
-    fs.writeFileSync(path.join(timDir, 'mcp.json'), JSON.stringify(mcpConfig, null, 2));
+        };
+        fs.writeFileSync(path.join(timDir, 'mcp.json'), JSON.stringify(mcpConfig, null, 2));
+        console.log(`✓ MCP config written: ${timDir}/mcp.json`);
+    }
     const health = await store.health();
     console.log(`✓ Database created: ${dbPath}`);
-    console.log(`✓ MCP config written: ${timDir}/mcp.json`);
     console.log(`✓ Health: ${health.totalEntries} entries, FTS5=${health.ftsIntegrity ? 'OK' : 'BROKEN'}`);
     console.log(`\nTIM ready. Connect your MCP client to ${timDir}/mcp.json`);
     store.close();
@@ -292,7 +302,8 @@ async function cmdHook(args) {
                     { role: 'user', content: userText },
                     { role: 'agent', content: agentText },
                 ]);
-                console.log(JSON.stringify({ count: entries.length }, null, 2));
+                const cadence = await (0, tim_hooks_1.afterExchangeLogged)(store, sessionId, flags.cwd || process.cwd());
+                console.log(JSON.stringify({ count: entries.length, cadence }, null, 2));
                 break;
             }
             default:
@@ -334,7 +345,9 @@ async function cmdCheckpoint(args) {
     const config = (0, tim_core_1.loadConfig)();
     const store = new tim_store_1.TimStore(getDbPath(config));
     try {
-        const summary = await (0, tim_hooks_1.runCheckpoint)(store, sessionId);
+        const summary = await (0, tim_hooks_1.runCheckpoint)(store, sessionId, {
+            handoffNote: flags['handoff-note'],
+        });
         console.log(JSON.stringify({ summary }, null, 2));
     }
     finally {
@@ -547,6 +560,21 @@ async function main() {
         case 'secret':
             await (0, secret_js_1.cmdSecret)(rest);
             break;
+        case 'user': {
+            const sub = rest[0];
+            if (sub === 'init')
+                await (0, user_js_1.cmdUserInit)();
+            else if (sub === 'profile')
+                await (0, user_js_1.cmdUserProfile)();
+            else {
+                console.error('Usage: tim user <init|profile>');
+                process.exit(1);
+            }
+            break;
+        }
+        case 'update-skills':
+            await (0, user_js_1.cmdUpdateSkills)();
+            break;
         case '--version':
         case '-v':
             console.log('tim v0.1.0-alpha');
@@ -577,11 +605,15 @@ Commands:
   migrate tags-to-types   Convert legacy #rule / #human tags to metadata.type (--dry-run, --sample-limit N)
   snapshot                 Snapshot the live TIM DB to /tmp/tim-snapshots/ (SQLite backup API)
   restore                  Restore TIM DB from a snapshot (--from, --list, --dry-run, --force)
-  sync connect            Connect to o9k-sync server
+  sync connect            Connect to hosted sync (use --register for new tenant)
+  sync disconnect         Remove local sync configuration
   sync push               Push unacked staging to server
   sync pull               Pull remote changes
   sync status             Show sync configuration and health
   sync dev                Start local dev sync server (port 3100)
+  user init               Create human profile scaffold (H0000)
+  user profile            Show human profile tree summary
+  update-skills           Copy TIM skills to detected AI hosts
   --help                Show this help`);
             break;
         default:

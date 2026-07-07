@@ -1,0 +1,18 @@
+{
+  "name": "tim-sync-server",
+  "version": "0.1.0-alpha",
+  "description": "TIM hosted sync server — multi-tenant blind sync with quotas",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "tim-sync-server": "dist/cli.js"
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.9.1"
+  }
+}

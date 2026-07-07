@@ -1945,8 +1945,25 @@ async function createMcpServer(options = {}) {
                 case 'tim_stats': {
                     const { root, kind, buckets } = TimStatsSchema.parse(args);
                     const stats = await s.getContentStats(root, kind, buckets);
+                    const maxTokens = (0, tim_hooks_1.getBriefingMaxTokens)((0, tim_core_1.loadConfig)());
+                    const scopedEstimate = root
+                        ? await (0, tim_store_1.estimateProjectTokens)(s, root, maxTokens)
+                        : null;
+                    const projectEstimates = root
+                        ? (scopedEstimate ? [scopedEstimate] : [])
+                        : await (0, tim_store_1.listProjectTokenEstimates)(s, maxTokens);
+                    const payload = {
+                        ...stats,
+                        tokenBudget: {
+                            maxTokens,
+                            briefingMaxTokens: maxTokens,
+                            projectEstimates,
+                            scopedEstimate,
+                            overBudgetProjects: projectEstimates.filter(p => p.overBriefingBudget).map(p => p.label),
+                        },
+                    };
                     return {
-                        content: [{ type: 'text', text: formatToolResponse(stats) }],
+                        content: [{ type: 'text', text: formatToolResponse(payload) }],
                     };
                 }
                 case 'tim_section_children': {

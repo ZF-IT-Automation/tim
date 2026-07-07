@@ -3,6 +3,7 @@ import {
   TIM_USING_SKILL,
   TIM_REMEMBER_SKILL,
   TIM_SESSION_START_SKILL,
+  TIM_HANDOFF_SKILL,
   listSkills,
 } from '../index.js';
 
@@ -33,8 +34,15 @@ describe('weak-model skills', () => {
     expect(lineCount(TIM_SESSION_START_SKILL.content)).toBeLessThanOrEqual(50);
   });
 
-  it('listSkills returns all four skills', () => {
+  it('tim-handoff describes checkpoint handoff flow', () => {
+    expect(TIM_HANDOFF_SKILL.content).toContain('handoff');
+    expect(TIM_HANDOFF_SKILL.content).toContain('checkpoint');
+    expect(lineCount(TIM_HANDOFF_SKILL.content)).toBeLessThanOrEqual(50);
+  });
+
+  it('listSkills returns all five skills', () => {
     expect(listSkills().map(s => s.name)).toEqual([
+      'tim-handoff',
       'tim-explain',
       'tim-using',
       'tim-remember',

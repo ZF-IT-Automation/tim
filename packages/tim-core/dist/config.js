@@ -69,6 +69,12 @@ const DEFAULT_CONFIG = {
         includeBatchSummaries: true,
         searchType: 'fts',
     },
+    checkpoint: {
+        everyN: 20,
+    },
+    briefing: {
+        maxTokens: 9000,
+    },
 };
 function getTimDir() {
     return path.join(os.homedir(), '.tim');
@@ -94,6 +100,14 @@ function loadConfig() {
                 ...DEFAULT_CONFIG.remember,
                 ...raw.remember,
                 chain: raw.remember?.chain ?? DEFAULT_CONFIG.remember?.chain,
+            },
+            checkpoint: {
+                ...DEFAULT_CONFIG.checkpoint,
+                ...raw.checkpoint,
+            },
+            briefing: {
+                ...DEFAULT_CONFIG.briefing,
+                ...raw.briefing,
             },
         };
     }

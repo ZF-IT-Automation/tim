@@ -671,7 +671,7 @@ export class SessionManager {
 
   async checkpoint(
     sessionId: string,
-    opts: { summarize?: Summarizer; runDecay?: boolean } = {},
+    opts: { summarize?: Summarizer; runDecay?: boolean; handoffNote?: string } = {},
   ): Promise<Entry> {
     const session = await this.store.read(sessionId);
     if (!session || session.metadata.kind !== 'session') {
@@ -699,6 +699,7 @@ export class SessionManager {
         kind: 'checkpoint',
         sessionId,
         count: exchanges.length,
+        ...(opts.handoffNote ? { handoff_note: opts.handoffNote } : {}),
       },
       tags: [SESSION_SUMMARY_TAG, BATCH_SUMMARY_TAG, '#checkpoint'],
     });

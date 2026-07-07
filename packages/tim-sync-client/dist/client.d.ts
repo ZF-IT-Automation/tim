@@ -44,6 +44,17 @@ export declare class TimSyncClient {
     constructor(baseUrl: string, apiKey: string);
     private request;
     health(): Promise<boolean>;
+    healthDetails(): Promise<Record<string, unknown> | null>;
+    register(tier?: 'free' | 'pro'): Promise<{
+        token: string;
+        tenant_id: string;
+        tier: string;
+    }>;
+    syncStatus(): Promise<{
+        tier: string;
+        entry_count: number;
+        total_bytes: number;
+    }>;
     listFiles(): Promise<TimFile[]>;
     createFile(id: string, salt: string): Promise<TimFile>;
     push(req: PushRequest): Promise<PushResponse>;

@@ -11,6 +11,7 @@ import {
   generateSalt,
   loadConfig,
   saveConfig,
+  clearConfig,
   loadSyncState,
   saveSyncState,
   getDeviceId,
@@ -62,14 +63,33 @@ export async function cmdSyncConnect(args: string[]): Promise<void> {
       || 'http://localhost:3100'
     );
 
-    const userId = flags['user-id']
-      ?? (await rl.question('User ID: ')).trim();
-    if (!userId) {
-      console.error('User ID is required');
+    const clientProbe = new TimSyncClient(serverUrl, '');
+    const healthy = await clientProbe.health();
+    if (!healthy) {
+      console.error(`Cannot reach sync server at ${serverUrl}`);
       process.exit(1);
     }
 
-    const token = flags.token ?? userId;
+    let userId = flags['user-id']?.trim() ?? '';
+    let token = flags.token?.trim() ?? '';
+
+    if (flags.register === 'true' || (!token && !flags['user-id'])) {
+      const tier = flags.tier === 'pro' ? 'pro' : 'free';
+      const reg = await clientProbe.register(tier);
+      token = reg.token;
+      userId = reg.tenant_id;
+      console.log(`✓ Registered tenant ${userId} (${reg.tier})`);
+    } else {
+      if (!userId) {
+        userId = (await rl.question('User ID: ')).trim();
+      }
+      if (!userId) {
+        console.error('User ID is required (or use --register)');
+        process.exit(1);
+      }
+      if (!token) token = userId;
+    }
+
     const passphrase = flags.passphrase
       ?? await promptHidden(rl, 'Passphrase: ');
     if (!passphrase) {
@@ -78,11 +98,6 @@ export async function cmdSyncConnect(args: string[]): Promise<void> {
     }
 
     const client = new TimSyncClient(serverUrl, token);
-    const healthy = await client.health();
-    if (!healthy) {
-      console.error(`Cannot reach sync server at ${serverUrl}`);
-      process.exit(1);
-    }
 
     const salt = generateSalt();
     try {
@@ -175,6 +190,12 @@ export async function cmdSyncStatus(): Promise<void> {
 
   const client = new TimSyncClient(config.serverUrl, config.token);
   const healthy = await client.health();
+  let remoteStatus: { tier?: string; entry_count?: number; total_bytes?: number } = {};
+  try {
+    remoteStatus = await client.syncStatus();
+  } catch {
+    /* legacy dev server may not expose /sync/status */
+  }
 
   let unacked = 0;
   if (fs.existsSync(getDbPath())) {
@@ -196,6 +217,20 @@ export async function cmdSyncStatus(): Promise<void> {
   console.log(`Last pull: ${state?.lastPull ?? 'never'}`);
   console.log(`Cursor: ${state?.cursor ?? '(none)'}`);
   console.log(`Config: ${timDir}/sync.json`);
+  if (remoteStatus.tier) {
+    console.log(`Tier: ${remoteStatus.tier}`);
+    console.log(`Remote entries: ${remoteStatus.entry_count ?? 0}`);
+    console.log(`Remote bytes: ${remoteStatus.total_bytes ?? 0}`);
+  }
+}
+
+export function cmdSyncDisconnect(): void {
+  const removed = clearConfig();
+  if (removed) {
+    console.log('✓ Disconnected — removed sync.json');
+  } else {
+    console.log('Sync: not configured');
+  }
 }
 
 export async function cmdSyncDev(args: string[]): Promise<void> {
@@ -218,12 +253,15 @@ export async function cmdSync(sub: string | undefined, args: string[]): Promise<
     case 'status':
       await cmdSyncStatus();
       break;
+    case 'disconnect':
+      cmdSyncDisconnect();
+      break;
     case 'dev':
       await cmdSyncDev(args);
       break;
     default:
       console.error(`Unknown sync command: ${sub ?? '(none)'}`);
-      console.error('Usage: tim sync <connect|push|pull|status|dev> [options]');
+      console.error('Usage: tim sync <connect|disconnect|push|pull|status|dev> [options]');
       process.exit(1);
   }
 }

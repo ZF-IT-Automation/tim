@@ -7,6 +7,7 @@
     "packages/tim-core",
     "packages/tim-store",
     "packages/tim-sync-client",
+    "packages/tim-sync-server",
     "packages/tim-cli",
     "packages/tim-mcp",
     "packages/tim-migrate",

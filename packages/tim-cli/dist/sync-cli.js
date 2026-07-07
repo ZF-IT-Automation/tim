@@ -38,6 +38,7 @@ exports.cmdSyncConnect = cmdSyncConnect;
 exports.cmdSyncPush = cmdSyncPush;
 exports.cmdSyncPull = cmdSyncPull;
 exports.cmdSyncStatus = cmdSyncStatus;
+exports.cmdSyncDisconnect = cmdSyncDisconnect;
 exports.cmdSyncDev = cmdSyncDev;
 exports.cmdSync = cmdSync;
 const fs = __importStar(require("node:fs"));
@@ -80,13 +81,32 @@ async function cmdSyncConnect(args) {
         const fileId = (0, tim_sync_client_1.defaultFileId)(deviceId);
         const serverUrl = flags['server-url'] ?? ((await rl.question('Sync server URL [http://localhost:3100]: ')).trim()
             || 'http://localhost:3100');
-        const userId = flags['user-id']
-            ?? (await rl.question('User ID: ')).trim();
-        if (!userId) {
-            console.error('User ID is required');
+        const clientProbe = new tim_sync_client_1.TimSyncClient(serverUrl, '');
+        const healthy = await clientProbe.health();
+        if (!healthy) {
+            console.error(`Cannot reach sync server at ${serverUrl}`);
             process.exit(1);
         }
-        const token = flags.token ?? userId;
+        let userId = flags['user-id']?.trim() ?? '';
+        let token = flags.token?.trim() ?? '';
+        if (flags.register === 'true' || (!token && !flags['user-id'])) {
+            const tier = flags.tier === 'pro' ? 'pro' : 'free';
+            const reg = await clientProbe.register(tier);
+            token = reg.token;
+            userId = reg.tenant_id;
+            console.log(`✓ Registered tenant ${userId} (${reg.tier})`);
+        }
+        else {
+            if (!userId) {
+                userId = (await rl.question('User ID: ')).trim();
+            }
+            if (!userId) {
+                console.error('User ID is required (or use --register)');
+                process.exit(1);
+            }
+            if (!token)
+                token = userId;
+        }
         const passphrase = flags.passphrase
             ?? await promptHidden(rl, 'Passphrase: ');
         if (!passphrase) {
@@ -94,11 +114,6 @@ async function cmdSyncConnect(args) {
             process.exit(1);
         }
         const client = new tim_sync_client_1.TimSyncClient(serverUrl, token);
-        const healthy = await client.health();
-        if (!healthy) {
-            console.error(`Cannot reach sync server at ${serverUrl}`);
-            process.exit(1);
-        }
         const salt = (0, tim_sync_client_1.generateSalt)();
         try {
             await client.createFile(fileId, salt);
@@ -185,6 +200,13 @@ async function cmdSyncStatus() {
     }
     const client = new tim_sync_client_1.TimSyncClient(config.serverUrl, config.token);
     const healthy = await client.health();
+    let remoteStatus = {};
+    try {
+        remoteStatus = await client.syncStatus();
+    }
+    catch {
+        /* legacy dev server may not expose /sync/status */
+    }
     let unacked = 0;
     if (fs.existsSync(getDbPath())) {
         const store = new tim_store_1.TimStore(getDbPath());
@@ -205,6 +227,20 @@ async function cmdSyncStatus() {
     console.log(`Last pull: ${state?.lastPull ?? 'never'}`);
     console.log(`Cursor: ${state?.cursor ?? '(none)'}`);
     console.log(`Config: ${timDir}/sync.json`);
+    if (remoteStatus.tier) {
+        console.log(`Tier: ${remoteStatus.tier}`);
+        console.log(`Remote entries: ${remoteStatus.entry_count ?? 0}`);
+        console.log(`Remote bytes: ${remoteStatus.total_bytes ?? 0}`);
+    }
+}
+function cmdSyncDisconnect() {
+    const removed = (0, tim_sync_client_1.clearConfig)();
+    if (removed) {
+        console.log('✓ Disconnected — removed sync.json');
+    }
+    else {
+        console.log('Sync: not configured');
+    }
 }
 async function cmdSyncDev(args) {
     const flags = parseSyncArgs(args);
@@ -225,12 +261,15 @@ async function cmdSync(sub, args) {
         case 'status':
             await cmdSyncStatus();
             break;
+        case 'disconnect':
+            cmdSyncDisconnect();
+            break;
         case 'dev':
             await cmdSyncDev(args);
             break;
         default:
             console.error(`Unknown sync command: ${sub ?? '(none)'}`);
-            console.error('Usage: tim sync <connect|push|pull|status|dev> [options]');
+            console.error('Usage: tim sync <connect|disconnect|push|pull|status|dev> [options]');
             process.exit(1);
     }
 }

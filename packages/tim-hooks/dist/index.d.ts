@@ -1,7 +1,8 @@
 export { runHookScript, runHooks, runConfiguredHooks, embedUnembeddedEntries, type HookEnv, type HookRunResult, type RunHooksOptions, } from './hooks.js';
 export { runCheckpoint, runSessionStart, runSessionEnd, loadProjectContext, getActiveProjectLabel, type SessionEndOptions, type SessionStartResult, } from './checkpoint.js';
 export { getDeltaBriefing, type DeltaBriefingOptions } from './delta.js';
-export { getUpdateCheckLine } from './update-check.js';
+export { getCheckpointEveryN, getBriefingMaxTokens, shouldAutoCheckpoint, checkpointCadenceReminder, DEFAULT_CHECKPOINT_EVERY_N, DEFAULT_BRIEFING_MAX_TOKENS, } from './cadence.js';
+export { afterExchangeLogged, type CadenceResult } from './cadence-runner.js';
 export { runPromptSubmit, type PromptSubmitParams, type PromptSubmitResult, } from './prompt-submit.js';
 export { readMarker, writeMarker, detectProject, findMarker, findMarkerOptionsFromEnv, buildLoadDirective, buildSessionDirective, reconcileMarker, syncNearestProjectMarker, validateMarkerAgainstStore, validateProjectLabel, INBOX_LABEL, acquireLock, releaseLock, markerPath, canonicalProjectPath, CANONICAL_PROJECT_FILENAME, MARKER_FILENAME, MARKER_VERSION, MARKER_LOCK, LOCK_TTL_MS, isSessionLocked, type ProjectMarker, type ProjectMarkerInput, type MarkerLocation, type FindMarkerOptions, } from './marker.js';
 export { rebalanceBatch, type RebalanceResult, type RebalanceSkip, } from './rebalance.js';

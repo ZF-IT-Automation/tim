@@ -14,4 +14,6 @@ export { formatEntryId, sessionShortFromMetadata } from './entry-id.js';
 export { ackStaging, applyRemoteEntry, applyRemoteEdge, getUnackedStaging, recordFromPayload, type StagingRow, } from './sync-methods.js';
 export { coerceMetadataBooleans, isTaskMarker, normalizeTaskValue, metadataNeedsCoercion, parseAndCoerceMetadata, BOOLEAN_METADATA_KEYS, } from './metadata-coerce.js';
 export { isSecret, parentIsSecret, findSecretSource, setSecretSubtree, ensureSecretInheritance, materializeSecretSubtreeSync, } from './secret.js';
+export { ensureHumanProfile, getHumanProfileSummary, HUMAN_ROOT_LABEL, HUMAN_SECTIONS, type HumanProfileNode, } from './user.js';
+export { charsToTokens, estimateProjectTokens, listProjectTokenEstimates, CHARS_PER_TOKEN, type ProjectTokenEstimate, } from './token-budget.js';
 //# sourceMappingURL=index.d.ts.map
