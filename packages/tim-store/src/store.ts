@@ -17,6 +17,7 @@ import { CurateManager } from './curate.js';
 import { ConsolidationManager } from './consolidate.js';
 import { metadataNeedsCoercion, parseAndCoerceMetadata } from './metadata-coerce.js';
 import { recordFromPayload, entryLocalLwwTimestamp, edgeLocalLwwTimestamp } from './sync-methods.js';
+import { parentIsSecret } from './secret.js';
 
 /**
  * Sanitize a user-supplied query string into a safe FTS5 MATCH expression.
@@ -1034,6 +1035,12 @@ export class TimStore implements MemoryInterface {
 
   /** Synchronous write for use inside `runExclusive` transactions. */
   writeSync(content: string, options: WriteOptions = {}): Entry {
+    if (options.parentId && parentIsSecret(this.db, options.parentId)) {
+      options = {
+        ...options,
+        metadata: { ...(options.metadata ?? {}), secret: true },
+      };
+    }
     const { entry, now, timestamp } = this.buildEntryRow(content, options);
     this.insertEntrySync(entry);
     this.insertStagingSync(entry, timestamp, options.confidence ?? 1.0);
@@ -1194,6 +1201,13 @@ export class TimStore implements MemoryInterface {
       console.warn(`[tim-store] Deprecated status/priority tags stripped: ${removedTags.join(', ')}`);
     }
     options = { ...options, tags: cleanTags };
+
+    if (options.parentId && parentIsSecret(this.db, options.parentId)) {
+      options = {
+        ...options,
+        metadata: { ...(options.metadata ?? {}), secret: true },
+      };
+    }
 
     const { entry, now, timestamp } = this.buildEntryRow(content, options);
     this.insertEntrySync(entry);

@@ -9,7 +9,7 @@ import { resolveLWW } from 'tim-core';
 import type { StagingRecord } from 'tim-core';
 import { TimSyncClient } from './client.js';
 import { deriveKey, encrypt, decrypt } from './crypto.js';
-import { stagingToEnvelope, envelopeToStaging } from './envelope.js';
+import { stagingToEnvelope, envelopeToStaging, type TimEnvelope } from './envelope.js';
 import {
   getQueuePath,
   loadSyncState,
@@ -27,6 +27,7 @@ export interface SyncCycleContext {
   deviceId: string;
   passphrase: string;
   salt: string;
+  secretPassphrase?: string;
 }
 
 function makeEncrypt(passphrase: string, salt: string): (data: string) => string {
@@ -39,12 +40,152 @@ function makeDecrypt(passphrase: string, salt: string): (data: string) => string
   return (data: string) => decrypt(data, key);
 }
 
+function makeSecretEncrypt(secretPassphrase: string, salt: string): (data: string) => string {
+  const key = deriveKey(secretPassphrase, salt);
+  return (data: string) => encrypt(data, key);
+}
+
+function makeSecretDecrypt(secretPassphrase: string, salt: string): (data: string) => string {
+  const key = deriveKey(secretPassphrase, salt);
+  return (data: string) => decrypt(data, key);
+}
+
+function parsePayloadMetadata(metadata: unknown): { secret?: boolean } {
+  if (typeof metadata === 'string') {
+    try {
+      return JSON.parse(metadata) as { secret?: boolean };
+    } catch {
+      return {};
+    }
+  }
+  if (metadata && typeof metadata === 'object') {
+    return metadata as { secret?: boolean };
+  }
+  return {};
+}
+
+function payloadIsSecret(payloadJson: string): boolean {
+  try {
+    const payload = JSON.parse(payloadJson) as { metadata?: unknown };
+    return parsePayloadMetadata(payload.metadata).secret === true;
+  } catch {
+    return false;
+  }
+}
+
+export function encryptSecretPayload(
+  payloadJson: string,
+  secretEncrypt: (data: string) => string,
+): string {
+  const payload = JSON.parse(payloadJson) as Record<string, unknown>;
+  const metaRaw = payload.metadata;
+  const meta =
+    typeof metaRaw === 'string'
+      ? (JSON.parse(metaRaw) as Record<string, unknown>)
+      : { ...(metaRaw as Record<string, unknown>) };
+
+  const encMeta = secretEncrypt(JSON.stringify(meta));
+
+  const encrypted = {
+    id: payload.id,
+    parent_id: payload.parent_id,
+    created_at: payload.created_at,
+    updated_at: payload.updated_at,
+    depth: payload.depth,
+    title: secretEncrypt(String(payload.title ?? '')),
+    content: secretEncrypt(String(payload.content ?? '')),
+    metadata: JSON.stringify({ secret: true, _enc: encMeta }),
+  };
+
+  return JSON.stringify(encrypted);
+}
+
+export function decryptSecretPayload(
+  payloadJson: string,
+  secretDecrypt?: (data: string) => string,
+): string {
+  const payload = JSON.parse(payloadJson) as Record<string, unknown>;
+
+  if (!secretDecrypt) {
+    const metaRaw = payload.metadata;
+    let enc: unknown;
+    if (typeof metaRaw === 'string') {
+      try {
+        enc = (JSON.parse(metaRaw) as { _enc?: unknown })._enc;
+      } catch {
+        enc = undefined;
+      }
+    } else if (metaRaw && typeof metaRaw === 'object') {
+      enc = (metaRaw as { _enc?: unknown })._enc;
+    }
+
+    const placeholder = {
+      ...payload,
+      title: '🔒 [secret]',
+      content: '',
+      metadata: JSON.stringify(
+        enc !== undefined ? { secret: true, _enc: enc } : { secret: true },
+      ),
+    };
+    return JSON.stringify(placeholder);
+  }
+
+  const metaRaw = payload.metadata;
+  let encBlob: string | undefined;
+  if (typeof metaRaw === 'string') {
+    encBlob = (JSON.parse(metaRaw) as { _enc?: string })._enc;
+  } else if (metaRaw && typeof metaRaw === 'object') {
+    encBlob = (metaRaw as { _enc?: string })._enc;
+  }
+
+  const fullMeta = encBlob ? JSON.parse(secretDecrypt(encBlob)) : { secret: true };
+
+  const decrypted = {
+    ...payload,
+    title: secretDecrypt(String(payload.title ?? '')),
+    content: secretDecrypt(String(payload.content ?? '')),
+    metadata: JSON.stringify(fullMeta),
+  };
+
+  return JSON.stringify(decrypted);
+}
+
+function transformEnvelopeForPush(
+  env: TimEnvelope,
+  secretEncrypt?: (data: string) => string,
+): TimEnvelope {
+  if (!secretEncrypt || env.type !== 'entry' || env.deleted || !payloadIsSecret(env.payload)) {
+    return env;
+  }
+
+  return {
+    ...env,
+    payload: encryptSecretPayload(env.payload, secretEncrypt),
+    is_encrypted: true,
+  };
+}
+
+function transformEnvelopeForPull(
+  env: TimEnvelope,
+  secretDecrypt?: (data: string) => string,
+): TimEnvelope {
+  if (!env.is_encrypted || env.type !== 'entry') {
+    return env;
+  }
+
+  return {
+    ...env,
+    payload: decryptSecretPayload(env.payload, secretDecrypt),
+  };
+}
+
 export async function pushCycle(
   client: TimSyncClient,
   store: TimStore,
   state: SyncState,
   deviceId: string,
   encryptFn: (data: string) => string,
+  secretEncrypt?: (data: string) => string,
 ): Promise<{ pushed: number; queued: boolean }> {
   const db = store.getDb();
   const rows = getUnackedStaging(db);
@@ -52,7 +193,9 @@ export async function pushCycle(
   let queue = loadQueue(qPath);
 
   if (rows.length > 0) {
-    const envelopes = rows.map(stagingToEnvelope);
+    const envelopes = rows
+      .map(stagingToEnvelope)
+      .map((e) => transformEnvelopeForPush(e, secretEncrypt));
     const blobs = envelopes.map((e) => ({
       proposed_id: e.key,
       data: encryptFn(JSON.stringify(e)),
@@ -89,6 +232,7 @@ export async function pullCycle(
   store: TimStore,
   state: SyncState,
   decryptFn: (data: string) => string,
+  secretDecrypt?: (data: string) => string,
 ): Promise<{ pulled: number; conflicts: number }> {
   const db = store.getDb();
   let cursor = state.cursor ?? undefined;
@@ -103,7 +247,8 @@ export async function pullCycle(
     }
 
     for (const blob of res.blobs) {
-      const env = JSON.parse(decryptFn(blob.data)) as ReturnType<typeof stagingToEnvelope>;
+      let env = JSON.parse(decryptFn(blob.data)) as TimEnvelope;
+      env = transformEnvelopeForPull(env, secretDecrypt);
       const remote = envelopeToStaging(env, blob.client_proposed_id ?? 'remote');
 
       if (env.type === 'entry') {
@@ -181,12 +326,18 @@ export async function pullCycle(
 
 export async function runPush(ctx: SyncCycleContext): Promise<{ pushed: number; queued: boolean }> {
   const enc = makeEncrypt(ctx.passphrase, ctx.salt);
-  return pushCycle(ctx.client, ctx.store, ctx.state, ctx.deviceId, enc);
+  const secretEnc = ctx.secretPassphrase
+    ? makeSecretEncrypt(ctx.secretPassphrase, ctx.salt)
+    : undefined;
+  return pushCycle(ctx.client, ctx.store, ctx.state, ctx.deviceId, enc, secretEnc);
 }
 
 export async function runPull(ctx: SyncCycleContext): Promise<{ pulled: number; conflicts: number }> {
   const dec = makeDecrypt(ctx.passphrase, ctx.salt);
-  return pullCycle(ctx.client, ctx.store, ctx.state, dec);
+  const secretDec = ctx.secretPassphrase
+    ? makeSecretDecrypt(ctx.secretPassphrase, ctx.salt)
+    : undefined;
+  return pullCycle(ctx.client, ctx.store, ctx.state, dec, secretDec);
 }
 
 export function buildSyncContext(
@@ -194,6 +345,7 @@ export function buildSyncContext(
   config: { serverUrl: string; token: string; salt: string; fileId: string },
   passphrase: string,
   deviceId: string,
+  secretPassphrase?: string,
 ): SyncCycleContext {
   const state = loadSyncState() ?? {
     fileId: config.fileId,
@@ -209,5 +361,6 @@ export function buildSyncContext(
     deviceId,
     passphrase,
     salt: config.salt,
+    secretPassphrase,
   };
 }

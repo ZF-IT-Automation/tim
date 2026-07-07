@@ -105,3 +105,11 @@ export {
   parseAndCoerceMetadata,
   BOOLEAN_METADATA_KEYS,
 } from './metadata-coerce.js';
+export {
+  isSecret,
+  parentIsSecret,
+  findSecretSource,
+  setSecretSubtree,
+  ensureSecretInheritance,
+  materializeSecretSubtreeSync,
+} from './secret.js';
