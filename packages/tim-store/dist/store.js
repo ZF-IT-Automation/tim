@@ -10,12 +10,14 @@ exports.sanitizeFtsQuery = sanitizeFtsQuery;
 exports.titleSimilarity = titleSimilarity;
 exports.runBenchmark = runBenchmark;
 exports.splitTitleBody = splitTitleBody;
+exports.cosineSimilarity = cosineSimilarity;
 const better_sqlite3_1 = __importDefault(require("better-sqlite3"));
 const ulid_1 = require("ulid");
 const entry_id_js_1 = require("./entry-id.js");
 const tim_core_1 = require("tim-core");
 const schema_js_1 = require("./schema.js");
 const curate_js_1 = require("./curate.js");
+const consolidate_js_1 = require("./consolidate.js");
 const metadata_coerce_js_1 = require("./metadata-coerce.js");
 const sync_methods_js_1 = require("./sync-methods.js");
 /**
@@ -393,12 +395,6 @@ class TimStore {
         loadChildren(project.id, 1, true, false);
         return { project, children, truncated };
     }
-    /**
-     * Count sessions recorded under a project (by label or id). One session
-     * entry (kind=session) is created per session start, so this is the
-     * "sessions so far" count used to gate periodic project-summary generation.
-     * Kinds are literals to avoid a session-tree → store import cycle.
-     */
     async countSessionSummaries(projectLabel) {
         const project = await this.read(projectLabel);
         if (!project)
@@ -419,6 +415,26 @@ class TimStore {
         AND tombstoned_at IS NULL
     `).get(sessionsRoot.id);
         return row.n;
+    }
+    /** Count live descendants of a project node + latest created_at. */
+    getProjectEntryStats(projectId) {
+        const row = this.db.prepare(`
+      WITH RECURSIVE descendants AS (
+        SELECT id, created_at FROM entries
+        WHERE parent_id = ?
+          AND tombstoned_at IS NULL
+          AND irrelevant = 0
+        UNION ALL
+        SELECT e.id, e.created_at FROM entries e
+        INNER JOIN descendants d ON e.parent_id = d.id
+        WHERE e.tombstoned_at IS NULL AND e.irrelevant = 0
+      )
+      SELECT COUNT(*) AS n, MAX(created_at) AS last FROM descendants
+    `).get(projectId);
+        return {
+            count: row.n ?? 0,
+            lastActivity: row.last ?? new Date(0).toISOString(),
+        };
     }
     async getChildren(parentId, filter) {
         let sql = `
@@ -454,7 +470,8 @@ class TimStore {
      * Projects ordered by most recent session activity — used by the
      * tim_session_start Inbox fallback to offer a binding choice when no
      * `.tim-project` marker resolved. Groups kind=session entries by their
-     * `project_ref` label and joins the project entry for its title.
+     * `project_ref` label and joins the project entry for its title; labels
+     * whose project entry is deleted (soft or hard) drop out with the join.
      * The Inbox itself ('P0000' — literal to avoid a session-tree → store
      * import cycle) is excluded: falling back to it is what triggered the call.
      */
@@ -471,10 +488,11 @@ class TimStore {
           AND tombstoned_at IS NULL
         GROUP BY label
       ) sub
-      LEFT JOIN entries p
+      INNER JOIN entries p
         ON json_extract(p.metadata, '$.kind') = 'project'
         AND json_extract(p.metadata, '$.label') = sub.label
         AND p.tombstoned_at IS NULL
+        AND p.irrelevant = 0
       WHERE sub.label != 'P0000'
       ORDER BY sub.last_active DESC
       LIMIT ?
@@ -837,6 +855,9 @@ class TimStore {
     }
     curate() {
         return new curate_js_1.CurateManager(this.db);
+    }
+    consolidate() {
+        return new consolidate_js_1.ConsolidationManager(this.db, this);
     }
     /** @internal Exposed for tests */
     getDb() {

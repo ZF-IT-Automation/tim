@@ -592,7 +592,8 @@ export class TimStore implements MemoryInterface {
    * Projects ordered by most recent session activity — used by the
    * tim_session_start Inbox fallback to offer a binding choice when no
    * `.tim-project` marker resolved. Groups kind=session entries by their
-   * `project_ref` label and joins the project entry for its title.
+   * `project_ref` label and joins the project entry for its title; labels
+   * whose project entry is deleted (soft or hard) drop out with the join.
    * The Inbox itself ('P0000' — literal to avoid a session-tree → store
    * import cycle) is excluded: falling back to it is what triggered the call.
    */
@@ -611,10 +612,11 @@ export class TimStore implements MemoryInterface {
           AND tombstoned_at IS NULL
         GROUP BY label
       ) sub
-      LEFT JOIN entries p
+      INNER JOIN entries p
         ON json_extract(p.metadata, '$.kind') = 'project'
         AND json_extract(p.metadata, '$.label') = sub.label
         AND p.tombstoned_at IS NULL
+        AND p.irrelevant = 0
       WHERE sub.label != 'P0000'
       ORDER BY sub.last_active DESC
       LIMIT ?

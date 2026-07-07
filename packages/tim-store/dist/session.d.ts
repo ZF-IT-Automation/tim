@@ -87,5 +87,10 @@ export declare class SessionManager {
         summarize?: Summarizer;
         runDecay?: boolean;
     }): Promise<Entry>;
+    /** Upsert session-summary-root content after checkpoint / rollup. */
+    updateSessionSummary(sessionId: string, summaryText: string): Promise<Entry>;
+    private static readonly PROJECT_STATS_MARKER;
+    /** Refresh project-root stats line (entry count + last activity). */
+    updateProjectSummary(projectId: string): Promise<Entry>;
 }
 //# sourceMappingURL=session.d.ts.map

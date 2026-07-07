@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import type { Entry, Edge, EdgeType, ReadOptions, WriteOptions, DecayOptions, SearchOptions, MemoryInterface, HealthReport, MemoryStats, ContentStats, AgentIdentity, StagingRecord, EventBus, ResolveProjectResult, ResolveSectionResult } from 'tim-core';
 import { CurateManager } from './curate.js';
+import { ConsolidationManager } from './consolidate.js';
 /**
  * Sanitize a user-supplied query string into a safe FTS5 MATCH expression.
  *
@@ -112,13 +113,12 @@ export declare class TimStore implements MemoryInterface {
     /** Resolve label/alias/id to a project entry; throws on missing or ambiguous. */
     requireProject(projectId: string): Promise<Entry>;
     loadProject(label: string, options?: LoadProjectOptions): Promise<LoadProjectResult | null>;
-    /**
-     * Count sessions recorded under a project (by label or id). One session
-     * entry (kind=session) is created per session start, so this is the
-     * "sessions so far" count used to gate periodic project-summary generation.
-     * Kinds are literals to avoid a session-tree → store import cycle.
-     */
     countSessionSummaries(projectLabel: string): Promise<number>;
+    /** Count live descendants of a project node + latest created_at. */
+    getProjectEntryStats(projectId: string): {
+        count: number;
+        lastActivity: string;
+    };
     getChildren(parentId: string, filter?: {
         metadataKind?: string;
     }): Promise<Entry[]>;
@@ -128,7 +128,8 @@ export declare class TimStore implements MemoryInterface {
      * Projects ordered by most recent session activity — used by the
      * tim_session_start Inbox fallback to offer a binding choice when no
      * `.tim-project` marker resolved. Groups kind=session entries by their
-     * `project_ref` label and joins the project entry for its title.
+     * `project_ref` label and joins the project entry for its title; labels
+     * whose project entry is deleted (soft or hard) drop out with the join.
      * The Inbox itself ('P0000' — literal to avoid a session-tree → store
      * import cycle) is excluded: falling back to it is what triggered the call.
      */
@@ -191,6 +192,7 @@ export declare class TimStore implements MemoryInterface {
     private findProjectLabelForParent;
     close(): void;
     curate(): CurateManager;
+    consolidate(): ConsolidationManager;
     /** @internal Exposed for tests */
     getDb(): Database.Database;
     /** Run `fn` inside a single exclusive DB transaction (serializes concurrent callers). */
@@ -344,4 +346,6 @@ export declare function splitTitleBody(content: string, explicitTitle?: string):
     title: string;
     body: string;
 };
+/** Cosine similarity between two same-length vectors. Range: [-1, 1]. */
+export declare function cosineSimilarity(a: Float32Array, b: Float32Array): number;
 //# sourceMappingURL=store.d.ts.map

@@ -859,5 +859,27 @@ describe('SessionManager', () => {
       const recents = await store.recentActiveProjects(2);
       expect(recents.map(r => r.label)).toEqual(['P0083', 'P0082']);
     });
+
+    it('drops projects whose project entry was deleted (soft or hard)', async () => {
+      vi.useFakeTimers();
+      await store.createProject('P0091', { content: 'Kept' });
+      const soft = await store.createProject('P0092', { content: 'Soft-deleted' });
+      const hard = await store.createProject('P0093', { content: 'Hard-deleted' });
+      for (const [i, label] of (['P0091', 'P0092', 'P0093'] as const).entries()) {
+        vi.setSystemTime(new Date(`2026-07-0${i + 1}T10:00:00Z`));
+        await sessions.startProjectSession({
+          sessionId: `s-del-${label}`,
+          projectId: label,
+          agentName: 'a',
+          cwd: '/',
+          harness: 't',
+        });
+      }
+      await store.delete(soft.id);
+      await store.delete(hard.id, true);
+
+      const recents = await store.recentActiveProjects(5);
+      expect(recents.map(r => r.label)).toEqual(['P0091']);
+    });
   });
 });
