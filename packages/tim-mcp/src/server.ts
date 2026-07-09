@@ -2476,14 +2476,14 @@ export async function createMcpServer(
                 }
               }
               if (duplicateCount > 0) {
-                findings.push(`${label}: ${duplicateCount} duplicate section title groups`);
+                findings.push(`${label}: ${duplicateCount} duplicate direct child title groups`);
                 if (includeRepairPlan) {
                   for (const duplicate of structure.duplicateSections as Array<{ title: string; count: number }>) {
                     repairActions.push({
                       tool: 'tim_project_structure',
                       args: { label },
-                      reason: `${label}: inspect duplicate section group ${duplicate.title} before merge or rename`,
-                      note: `Duplicate section title '${duplicate.title}' occurs ${duplicate.count} times; review and resolve manually`,
+                      reason: `${label}: inspect duplicate direct child title group ${duplicate.title} before merge or rename`,
+                      note: `Duplicate direct child title '${duplicate.title}' occurs ${duplicate.count} times; review and resolve manually`,
                     });
                   }
                 }
