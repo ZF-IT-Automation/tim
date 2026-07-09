@@ -155,7 +155,7 @@ export async function embedUnembeddedEntries(
   if (entries.length === 0) return 0;
 
   try {
-    const { EmbeddingModel, FlagEmbedding } = await import('fastembed');
+    const { EmbeddingModel, FlagEmbedding } = await loadFastembed();
     const modelEnum = resolveEmbeddingModelEnum(modelName, EmbeddingModel);
     const embedder = await FlagEmbedding.init({ model: modelEnum });
 
@@ -179,4 +179,8 @@ export async function embedUnembeddedEntries(
     console.debug('[tim-hooks] embedUnembeddedEntries: embedding not available:', (err as Error).message);
     return 0;
   }
+}
+
+async function loadFastembed() {
+  return import('fastembed');
 }
