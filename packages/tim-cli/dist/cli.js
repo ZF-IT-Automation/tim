@@ -50,6 +50,7 @@ const new_project_js_1 = require("./new-project.js");
 const hermes_statusline_install_js_1 = require("./hermes-statusline-install.js");
 const consolidate_js_1 = require("./consolidate.js");
 const secret_js_1 = require("./secret.js");
+const release_check_js_1 = require("./release-check.js");
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
 const os = __importStar(require("os"));
@@ -116,6 +117,9 @@ function printCommandHelp(cmd) {
             return;
         case 'restore':
             console.log(`Usage: tim restore [--from <path>] [--list] [--dry-run] [--force]`);
+            return;
+        case 'release-check':
+            console.log(`Usage: tim release-check [--beta] [--json]`);
             return;
         case 'root-entries':
             console.log(`Usage: tim root-entries [--type <type>] [--tag <tag>] [--format json|content]`);
@@ -528,6 +532,30 @@ async function cmdRootEntries(args) {
         store.close();
     }
 }
+async function cmdReleaseCheck(args) {
+    const flags = parseArgs(args);
+    const summary = await (0, release_check_js_1.runReleaseCheck)({
+        beta: flags.beta === 'true',
+        skipTests: flags['skip-tests'] === 'true',
+    });
+    if (flags.json === 'true') {
+        console.log(JSON.stringify(summary, null, 2));
+    }
+    else {
+        console.log(`Release check: ${summary.status}`);
+        if (summary.blockers.length) {
+            for (const blocker of summary.blockers) {
+                console.log(`- ${blocker}`);
+            }
+        }
+        for (const result of summary.results) {
+            console.log(`${result.ok ? '✓' : '✗'} ${result.id}: ${result.detail}`);
+        }
+    }
+    if (summary.status === 'BLOCKER') {
+        process.exit(1);
+    }
+}
 async function main() {
     const cmd = process.argv[2] || 'init';
     const rest = process.argv.slice(3);
@@ -642,6 +670,13 @@ async function main() {
             }
             await (0, restore_js_1.cmdRestore)(rest);
             break;
+        case 'release-check':
+            if (hasHelpFlag(rest)) {
+                printCommandHelp(cmd);
+                break;
+            }
+            await cmdReleaseCheck(rest);
+            break;
         case 'sync': {
             const sub = rest[0];
             await (0, sync_cli_js_1.cmdSync)(sub, rest.slice(1));
@@ -705,6 +740,7 @@ Commands:
   migrate tags-to-types   Convert legacy #rule / #human tags to metadata.type (--dry-run, --sample-limit N)
   snapshot                 Snapshot the live TIM DB to /tmp/tim-snapshots/ (SQLite backup API)
   restore                  Restore TIM DB from a snapshot (--from, --list, --dry-run, --force)
+  release-check           Verify release gates and smoke checks (--beta, --json, --skip-tests true)
   sync connect            Connect to hosted sync (use --register for new tenant)
   sync disconnect         Remove local sync configuration
   sync push               Push unacked staging to server

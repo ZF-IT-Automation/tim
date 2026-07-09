@@ -1,0 +1,46 @@
+{
+  "status": "OK",
+  "blockers": [],
+  "results": [
+    {
+      "id": "git-clean",
+      "ok": true,
+      "detail": "clean"
+    },
+    {
+      "id": "build",
+      "ok": true,
+      "detail": "ok"
+    },
+    {
+      "id": "tests",
+      "ok": true,
+      "detail": "ok"
+    },
+    {
+      "id": "pack",
+      "ok": true,
+      "detail": "ok"
+    },
+    {
+      "id": "cli-smoke",
+      "ok": true,
+      "detail": "ok"
+    },
+    {
+      "id": "mcp-smoke",
+      "ok": true,
+      "detail": "ok"
+    },
+    {
+      "id": "large-files",
+      "ok": true,
+      "detail": "ok"
+    },
+    {
+      "id": "git-clean-after",
+      "ok": true,
+      "detail": "clean"
+    }
+  ]
+}

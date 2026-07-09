@@ -1,1 +1,0 @@
-{"root":["./src/cli.ts","./src/consolidate.ts","./src/git-commit.ts","./src/hermes-statusline-install.ts","./src/install.ts","./src/new-project.ts","./src/record-commit.ts","./src/restore.ts","./src/secret.ts","./src/snapshot.ts","./src/statusline.ts","./src/sync-cli.ts","./src/update-skills.ts","./src/user.ts"],"version":"5.9.3"}

@@ -32,6 +32,7 @@ import {
 } from './hermes-statusline-install.js';
 import { cmdConsolidate } from './consolidate.js';
 import { cmdSecret } from './secret.js';
+import { runReleaseCheck } from './release-check.js';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -102,6 +103,9 @@ function printCommandHelp(cmd: string): void {
       return;
     case 'restore':
       console.log(`Usage: tim restore [--from <path>] [--list] [--dry-run] [--force]`);
+      return;
+    case 'release-check':
+      console.log(`Usage: tim release-check [--beta] [--json]`);
       return;
     case 'root-entries':
       console.log(`Usage: tim root-entries [--type <type>] [--tag <tag>] [--format json|content]`);
@@ -561,6 +565,32 @@ async function cmdRootEntries(args: string[]) {
   }
 }
 
+async function cmdReleaseCheck(args: string[]) {
+  const flags = parseArgs(args);
+  const summary = await runReleaseCheck({
+    beta: flags.beta === 'true',
+    skipTests: flags['skip-tests'] === 'true',
+  });
+
+  if (flags.json === 'true') {
+    console.log(JSON.stringify(summary, null, 2));
+  } else {
+    console.log(`Release check: ${summary.status}`);
+    if (summary.blockers.length) {
+      for (const blocker of summary.blockers) {
+        console.log(`- ${blocker}`);
+      }
+    }
+    for (const result of summary.results) {
+      console.log(`${result.ok ? '✓' : '✗'} ${result.id}: ${result.detail}`);
+    }
+  }
+
+  if (summary.status === 'BLOCKER') {
+    process.exit(1);
+  }
+}
+
 async function main() {
   const cmd = process.argv[2] || 'init';
   const rest = process.argv.slice(3);
@@ -677,6 +707,13 @@ async function main() {
       }
       await cmdRestore(rest);
       break;
+    case 'release-check':
+      if (hasHelpFlag(rest)) {
+        printCommandHelp(cmd);
+        break;
+      }
+      await cmdReleaseCheck(rest);
+      break;
     case 'sync': {
       const sub = rest[0];
       await cmdSync(sub, rest.slice(1));
@@ -738,6 +775,7 @@ Commands:
   migrate tags-to-types   Convert legacy #rule / #human tags to metadata.type (--dry-run, --sample-limit N)
   snapshot                 Snapshot the live TIM DB to /tmp/tim-snapshots/ (SQLite backup API)
   restore                  Restore TIM DB from a snapshot (--from, --list, --dry-run, --force)
+  release-check           Verify release gates and smoke checks (--beta, --json, --skip-tests true)
   sync connect            Connect to hosted sync (use --register for new tenant)
   sync disconnect         Remove local sync configuration
   sync push               Push unacked staging to server

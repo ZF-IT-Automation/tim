@@ -29,7 +29,7 @@ node packages/tim-cli/dist/cli.js statusline
 
 ---
 
-## Command Overview (25 commands)
+## Command Overview (26 commands)
 
 ### Top-Level Summary
 
@@ -53,13 +53,14 @@ node packages/tim-cli/dist/cli.js statusline
 | 16 | `tim migrate tags-to-types` | Convert legacy `#rule` / `#human` tags to `metadata.type` |
 | 17 | `tim snapshot` | Snapshot live DB to `/tmp/tim-snapshots/` (SQLite backup) |
 | 18 | `tim restore` | Restore DB from a snapshot |
-| 19 | `tim sync connect` | Connect to o9k-sync server |
-| 20 | `tim sync push` | Push unacked staging to server |
-| 21 | `tim sync pull` | Pull remote changes |
-| 22 | `tim sync status` | Show sync configuration and health |
-| 23 | `tim sync dev` | Start local dev sync server (port 3100) |
-| 24 | `tim --help` | Show top-level help |
-| 25 | `tim hook log` | Log a single exchange to a session |
+| 19 | `tim release-check` | Verify release gates, beta smoke checks, and packaging safety |
+| 20 | `tim sync connect` | Connect to o9k-sync server |
+| 21 | `tim sync push` | Push unacked staging to server |
+| 22 | `tim sync pull` | Pull remote changes |
+| 23 | `tim sync status` | Show sync configuration and health |
+| 24 | `tim sync dev` | Start local dev sync server (port 3100) |
+| 25 | `tim --help` | Show top-level help |
+| 26 | `tim hook log` | Log a single exchange to a session |
 
 ---
 
@@ -433,7 +434,37 @@ use --force to override (NOT recommended unless you know what you are doing)
 
 ---
 
-### 19-22. `tim sync` Subcommands
+### 19. `tim release-check [--beta] [--json] [--skip-tests true]`
+
+Run the release gate sequence before tagging or packaging.
+
+**Beta mode** adds the smoke checks after the core build/test/pack gates.
+`--skip-tests true` keeps the expensive `npm test` gate out of a fast preflight
+when you already ran it.
+
+**JSON output** (`samples/tim-release-check-beta.json`):
+```json
+{
+  "status": "OK",
+  "blockers": [],
+  "results": [
+    { "id": "git-clean", "ok": true, "detail": "clean" },
+    { "id": "build", "ok": true, "detail": "ok" },
+    { "id": "tests", "ok": true, "detail": "ok" },
+    { "id": "pack", "ok": true, "detail": "ok" },
+    { "id": "cli-smoke", "ok": true, "detail": "ok" },
+    { "id": "mcp-smoke", "ok": true, "detail": "ok" },
+    { "id": "large-files", "ok": true, "detail": "ok" },
+    { "id": "git-clean-after", "ok": true, "detail": "clean" }
+  ]
+}
+```
+
+**Note:** `tim release-check --help` prints usage and exits before any DB work.
+
+---
+
+### 20-23. `tim sync` Subcommands
 
 Distributed sync for multi-device TIM setups.
 
@@ -488,6 +519,7 @@ All outputs saved under `samples/`:
 | `samples/tim-resolve-session-help.txt` | `tim resolve-session --help` | 1 |
 | `samples/tim-record-commit-help.txt` | `tim record-commit --help` | 3 |
 | `samples/tim-bind-project-help.txt` | `tim bind-project --help` | 1 |
+| `samples/tim-release-check-beta.json` | `tim release-check --beta --json` | 46 |
 | `samples/tim-export-help.txt` | `tim export --help` | 1 |
 | `samples/tim-import-help.txt` | `tim import --help` | 1 |
 | `samples/tim-hook-help.txt` | `tim hook --help` | 5 |

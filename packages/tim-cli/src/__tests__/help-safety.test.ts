@@ -67,6 +67,17 @@ describe('tim CLI help safety', () => {
     expect(fs.existsSync(dbPath)).toBe(false);
   });
 
+  it('release-check --help does not open or create the database', () => {
+    const result = run(['release-check', '--help'], {
+      HOME: homeDir,
+      TIM_DB_PATH: dbPath,
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('Usage: tim release-check');
+    expect(fs.existsSync(dbPath)).toBe(false);
+  });
+
   it('import --help does not open or create the database', () => {
     const result = run(['import', '--help'], {
       HOME: homeDir,
