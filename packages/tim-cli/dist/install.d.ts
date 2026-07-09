@@ -25,4 +25,15 @@ export declare function installMcpForHosts(dbPath: string, global?: boolean): {
         reason: string;
     }[];
 };
+export declare function installMcpForHostTool(tool: HostTool, dbPath: string, global?: boolean): {
+    installed: {
+        tool: string;
+        path: string;
+    }[];
+    skipped: {
+        tool: string;
+        path: string;
+        reason: string;
+    }[];
+};
 //# sourceMappingURL=install.d.ts.map

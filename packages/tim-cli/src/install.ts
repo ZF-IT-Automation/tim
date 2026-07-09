@@ -107,22 +107,34 @@ export function installMcpForHosts(
   const installed: { tool: string; path: string }[] = [];
   const skipped: { tool: string; path: string; reason: string }[] = [];
   for (const tool of detectInstalledHosts()) {
-    const configPath = tool.mcpConfigPath(global);
-    const dir = path.dirname(configPath);
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    let existing: Record<string, unknown> = {};
-    if (fs.existsSync(configPath)) {
-      try {
-        existing = JSON.parse(fs.readFileSync(configPath, 'utf8')) as Record<string, unknown>;
-      } catch {
-        skipped.push({ tool: tool.name, path: configPath, reason: 'config parse failed' });
-        continue;
-      }
-      fs.copyFileSync(configPath, `${configPath}.backup.${Date.now()}`);
-    }
-    const merged = mergeMcpConfig(existing, buildTimMcpEntry(dbPath), tool.format);
-    fs.writeFileSync(configPath, JSON.stringify(merged, null, 2));
-    installed.push({ tool: tool.name, path: configPath });
+    const result = installMcpForHostTool(tool, dbPath, global);
+    installed.push(...result.installed);
+    skipped.push(...result.skipped);
   }
   return { installed, skipped };
+}
+
+export function installMcpForHostTool(
+  tool: HostTool,
+  dbPath: string,
+  global = true,
+): { installed: { tool: string; path: string }[]; skipped: { tool: string; path: string; reason: string }[] } {
+  const configPath = tool.mcpConfigPath(global);
+  const dir = path.dirname(configPath);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  let existing: Record<string, unknown> = {};
+  if (fs.existsSync(configPath)) {
+    try {
+      existing = JSON.parse(fs.readFileSync(configPath, 'utf8')) as Record<string, unknown>;
+    } catch {
+      return {
+        installed: [],
+        skipped: [{ tool: tool.name, path: configPath, reason: 'config parse failed' }],
+      };
+    }
+    fs.copyFileSync(configPath, `${configPath}.backup.${Date.now()}`);
+  }
+  const merged = mergeMcpConfig(existing, buildTimMcpEntry(dbPath), tool.format);
+  fs.writeFileSync(configPath, JSON.stringify(merged, null, 2));
+  return { installed: [{ tool: tool.name, path: configPath }], skipped: [] };
 }

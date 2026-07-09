@@ -33,12 +33,13 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.updateSkillsForHost = updateSkillsForHost;
 exports.updateSkills = updateSkills;
 const fs = __importStar(require("node:fs"));
 const path = __importStar(require("node:path"));
 const install_js_1 = require("./install.js");
-function updateSkills() {
-    const srcRoot = (() => {
+function bundledSkillsDir() {
+    return (() => {
         const candidates = [
             path.join(process.cwd(), 'packages', 'tim-skills', 'skills'),
             path.join(__dirname, '..', '..', 'tim-skills', 'skills'),
@@ -50,12 +51,42 @@ function updateSkills() {
         }
         throw new Error('Bundled skills directory not found');
     })();
+}
+function copySkillsTo(srcRoot, skillsBase) {
     const skillNames = fs.readdirSync(srcRoot).filter(name => {
         const p = path.join(srcRoot, name);
         return fs.statSync(p).isDirectory() && fs.existsSync(path.join(p, 'SKILL.md'));
     });
+    if (!fs.existsSync(skillsBase))
+        fs.mkdirSync(skillsBase, { recursive: true });
     const copied = [];
+    for (const name of skillNames) {
+        const from = path.join(srcRoot, name);
+        const to = path.join(skillsBase, name);
+        fs.cpSync(from, to, { recursive: true });
+        copied.push({ skill: name, target: to });
+    }
+    return copied;
+}
+function updateSkillsForHost(host) {
+    const srcRoot = bundledSkillsDir();
+    const home = process.env.HOME ?? '';
+    const skillsBase = host === 'claude'
+        ? path.join(home, '.claude', 'skills')
+        : host === 'codex'
+            ? path.join(process.env.CODEX_HOME ?? path.join(home, '.codex'), 'skills')
+            : host === 'hermes'
+                ? path.join(home, '.hermes', 'skills')
+                : null;
+    if (!skillsBase) {
+        return { copied: [], skipped: ['Cursor has no TIM skill install path; use MCP guidance instead'] };
+    }
+    return { copied: copySkillsTo(srcRoot, skillsBase), skipped: [] };
+}
+function updateSkills() {
+    const srcRoot = bundledSkillsDir();
     const skipped = [];
+    const copied = [];
     for (const tool of install_js_1.HOST_TOOLS) {
         if (!tool.detect())
             continue;
@@ -68,14 +99,7 @@ function updateSkills() {
             skipped.push(`${tool.name} (no skills dir)`);
             continue;
         }
-        if (!fs.existsSync(skillsBase))
-            fs.mkdirSync(skillsBase, { recursive: true });
-        for (const name of skillNames) {
-            const from = path.join(srcRoot, name);
-            const to = path.join(skillsBase, name);
-            fs.cpSync(from, to, { recursive: true });
-            copied.push({ skill: name, target: to });
-        }
+        copied.push(...copySkillsTo(srcRoot, skillsBase));
     }
     if (copied.length === 0 && skipped.length === 0) {
         skipped.push('No supported hosts detected');

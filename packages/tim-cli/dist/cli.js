@@ -53,6 +53,7 @@ const consolidate_js_1 = require("./consolidate.js");
 const secret_js_1 = require("./secret.js");
 const release_check_js_1 = require("./release-check.js");
 const migrate_from_hmem_js_1 = require("./migrate-from-hmem.js");
+const setup_agent_js_1 = require("./setup-agent.js");
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
 const os = __importStar(require("os"));
@@ -125,6 +126,9 @@ function printCommandHelp(cmd) {
             return;
         case 'release-check':
             console.log(`Usage: tim release-check [--beta] [--json]`);
+            return;
+        case 'setup-agent':
+            console.log(`Usage: tim setup-agent --host claude|codex|cursor|hermes [--dry-run]`);
             return;
         case 'root-entries':
             console.log(`Usage: tim root-entries [--type <type>] [--tag <tag>] [--format json|content]`);
@@ -694,6 +698,13 @@ async function main() {
             }
             await cmdReleaseCheck(rest);
             break;
+        case 'setup-agent':
+            if (hasHelpFlag(rest)) {
+                printCommandHelp(cmd);
+                break;
+            }
+            await (0, setup_agent_js_1.cmdSetupAgent)(rest);
+            break;
         case 'sync': {
             const sub = rest[0];
             await (0, sync_cli_js_1.cmdSync)(sub, rest.slice(1));
@@ -759,6 +770,7 @@ Commands:
   snapshot                 Snapshot the live TIM DB to /tmp/tim-snapshots/ (SQLite backup API)
   restore                  Restore TIM DB from a snapshot (--from, --list, --dry-run, --force)
   release-check           Verify release gates and smoke checks (--beta, --json, --skip-tests true)
+  setup-agent             Install MCP/skills/hooks for one agent host (--host, --dry-run)
   sync connect            Connect to hosted sync (use --register for new tenant)
   sync disconnect         Remove local sync configuration
   sync push               Push unacked staging to server

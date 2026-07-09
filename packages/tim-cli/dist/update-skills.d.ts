@@ -5,5 +5,6 @@ export interface UpdateSkillsResult {
     }[];
     skipped: string[];
 }
+export declare function updateSkillsForHost(host: 'claude' | 'codex' | 'cursor' | 'hermes'): UpdateSkillsResult;
 export declare function updateSkills(): UpdateSkillsResult;
 //# sourceMappingURL=update-skills.d.ts.map

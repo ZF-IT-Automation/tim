@@ -29,7 +29,7 @@ node packages/tim-cli/dist/cli.js statusline
 
 ---
 
-## Command Overview (27 commands)
+## Command Overview (28 commands)
 
 ### Top-Level Summary
 
@@ -55,13 +55,14 @@ node packages/tim-cli/dist/cli.js statusline
 | 18 | `tim snapshot` | Snapshot live DB to `/tmp/tim-snapshots/` (SQLite backup) |
 | 19 | `tim restore` | Restore DB from a snapshot |
 | 20 | `tim release-check` | Verify release gates, beta smoke checks, and packaging safety |
-| 21 | `tim sync connect` | Connect to o9k-sync server |
-| 22 | `tim sync push` | Push unacked staging to server |
-| 23 | `tim sync pull` | Pull remote changes |
-| 24 | `tim sync status` | Show sync configuration and health |
-| 25 | `tim sync dev` | Start local dev sync server (port 3100) |
-| 26 | `tim --help` | Show top-level help |
-| 27 | `tim hook log` | Log a single exchange to a session |
+| 21 | `tim setup-agent` | Install TIM MCP, skills, hooks, and smoke guidance for one agent host |
+| 22 | `tim sync connect` | Connect to o9k-sync server |
+| 23 | `tim sync push` | Push unacked staging to server |
+| 24 | `tim sync pull` | Pull remote changes |
+| 25 | `tim sync status` | Show sync configuration and health |
+| 26 | `tim sync dev` | Start local dev sync server (port 3100) |
+| 27 | `tim --help` | Show top-level help |
+| 28 | `tim hook log` | Log a single exchange to a session |
 
 ---
 
@@ -490,7 +491,31 @@ when you already ran it.
 
 ---
 
-### 21-24. `tim sync` Subcommands
+### 21. `tim setup-agent --host claude|codex|cursor|hermes [--dry-run]`
+
+Install TIM for one agent host. The command prints a JSON report covering MCP
+config, copied skills, host hooks, and a doctor-style smoke status.
+
+```bash
+tim setup-agent --host codex --dry-run
+tim setup-agent --host codex
+```
+
+**Host behavior:**
+
+| Host | MCP | Skills | Hooks |
+|------|-----|--------|-------|
+| `claude` | Writes Claude Code JSON MCP config | Copies bundled TIM skills to `~/.claude/skills` | No extra hook install |
+| `codex` | Writes `[mcp_servers.tim]` to `~/.codex/config.toml` with backup | Copies bundled TIM skills to `$CODEX_HOME/skills` or `~/.codex/skills` | No extra hook install |
+| `cursor` | Writes Cursor JSON MCP config | Reports manual skill guidance | No extra hook install |
+| `hermes` | Reports manual MCP guidance | Copies bundled TIM skills to `~/.hermes/skills` | Installs Hermes TIM statusline hooks |
+
+Use `--dry-run` first when configuring a real user environment. It does not
+open or create the TIM DB.
+
+---
+
+### 22-25. `tim sync` Subcommands
 
 Distributed sync for multi-device TIM setups.
 

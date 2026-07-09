@@ -38,6 +38,7 @@ exports.detectInstalledHosts = detectInstalledHosts;
 exports.buildTimMcpEntry = buildTimMcpEntry;
 exports.mergeMcpConfig = mergeMcpConfig;
 exports.installMcpForHosts = installMcpForHosts;
+exports.installMcpForHostTool = installMcpForHostTool;
 const fs = __importStar(require("node:fs"));
 const os = __importStar(require("node:os"));
 const path = __importStar(require("node:path"));
@@ -115,25 +116,32 @@ function installMcpForHosts(dbPath, global = true) {
     const installed = [];
     const skipped = [];
     for (const tool of detectInstalledHosts()) {
-        const configPath = tool.mcpConfigPath(global);
-        const dir = path.dirname(configPath);
-        if (!fs.existsSync(dir))
-            fs.mkdirSync(dir, { recursive: true });
-        let existing = {};
-        if (fs.existsSync(configPath)) {
-            try {
-                existing = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-            }
-            catch {
-                skipped.push({ tool: tool.name, path: configPath, reason: 'config parse failed' });
-                continue;
-            }
-            fs.copyFileSync(configPath, `${configPath}.backup.${Date.now()}`);
-        }
-        const merged = mergeMcpConfig(existing, buildTimMcpEntry(dbPath), tool.format);
-        fs.writeFileSync(configPath, JSON.stringify(merged, null, 2));
-        installed.push({ tool: tool.name, path: configPath });
+        const result = installMcpForHostTool(tool, dbPath, global);
+        installed.push(...result.installed);
+        skipped.push(...result.skipped);
     }
     return { installed, skipped };
+}
+function installMcpForHostTool(tool, dbPath, global = true) {
+    const configPath = tool.mcpConfigPath(global);
+    const dir = path.dirname(configPath);
+    if (!fs.existsSync(dir))
+        fs.mkdirSync(dir, { recursive: true });
+    let existing = {};
+    if (fs.existsSync(configPath)) {
+        try {
+            existing = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        }
+        catch {
+            return {
+                installed: [],
+                skipped: [{ tool: tool.name, path: configPath, reason: 'config parse failed' }],
+            };
+        }
+        fs.copyFileSync(configPath, `${configPath}.backup.${Date.now()}`);
+    }
+    const merged = mergeMcpConfig(existing, buildTimMcpEntry(dbPath), tool.format);
+    fs.writeFileSync(configPath, JSON.stringify(merged, null, 2));
+    return { installed: [{ tool: tool.name, path: configPath }], skipped: [] };
 }
 //# sourceMappingURL=install.js.map

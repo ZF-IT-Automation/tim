@@ -88,4 +88,15 @@ describe('tim CLI help safety', () => {
     expect(result.stdout).toContain('Usage: tim import');
     expect(fs.existsSync(dbPath)).toBe(false);
   });
+
+  it('setup-agent --help does not open or create the database', () => {
+    const result = run(['setup-agent', '--help'], {
+      HOME: homeDir,
+      TIM_DB_PATH: dbPath,
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('Usage: tim setup-agent');
+    expect(fs.existsSync(dbPath)).toBe(false);
+  });
 });
