@@ -270,6 +270,8 @@ const TimImportAuditSchema = zod_1.z.object({
     expectedSections: zod_1.z.array(zod_1.z.string()).optional().default([
         'Overview', 'Context', 'Decisions', 'Tasks', 'Bugs', 'Errors', 'Log', 'Next Steps', 'Ideas', 'Rules',
     ]),
+    includeRepairPlan: zod_1.z.boolean().optional().default(false)
+        .describe('If true, include suggested tool calls. Does not execute them.'),
 });
 const TimDryRunMoveSchema = zod_1.z.object({
     id: zod_1.z.string().describe('Entry ID to move'),
@@ -2216,7 +2218,7 @@ async function createMcpServer(options = {}) {
                     return { content: [{ type: 'text', text: formatToolResponse(structure) }] };
                 }
                 case 'tim_import_audit': {
-                    const { source, labels, expectedSections } = TimImportAuditSchema.parse(args);
+                    const { source, labels, expectedSections, includeRepairPlan } = TimImportAuditSchema.parse(args);
                     const manifest = source && fs.existsSync(source) ? (0, tim_migrate_1.inspectHmemManifest)(source) : null;
                     const auditLabels = labels.length > 0
                         ? labels
@@ -2226,6 +2228,7 @@ async function createMcpServer(options = {}) {
                     const health = await s.health();
                     const projects = [];
                     const findings = [];
+                    const repairActions = [];
                     for (const label of auditLabels) {
                         try {
                             const structure = await buildProjectStructure(s, label);
@@ -2235,9 +2238,27 @@ async function createMcpServer(options = {}) {
                             const duplicateCount = structure.duplicateSections.length;
                             if (missingSections.length > 0) {
                                 findings.push(`${label}: missing sections: ${missingSections.join(', ')}`);
+                                if (includeRepairPlan) {
+                                    for (const title of missingSections) {
+                                        repairActions.push({
+                                            tool: 'tim_repair_section',
+                                            args: { project: label, title },
+                                            reason: `${label}: create missing section ${title}`,
+                                        });
+                                    }
+                                }
                             }
                             if (looseCount > 0) {
                                 findings.push(`${label}: ${looseCount} loose direct children under project root`);
+                                if (includeRepairPlan) {
+                                    for (const loose of structure.looseDirectChildren) {
+                                        repairActions.push({
+                                            tool: 'tim_dry_run_move',
+                                            args: { id: loose.id, newParentId: '<choose-section-id>' },
+                                            reason: `${label}: loose child requires human section choice`,
+                                        });
+                                    }
+                                }
                             }
                             if (duplicateCount > 0) {
                                 findings.push(`${label}: ${duplicateCount} duplicate section title groups`);
@@ -2275,6 +2296,10 @@ async function createMcpServer(options = {}) {
                                         'tim_update',
                                         'tim_link',
                                     ],
+                                    repairPlan: includeRepairPlan ? {
+                                        applyAutomatically: false,
+                                        actions: repairActions,
+                                    } : undefined,
                                 }),
                             }],
                     };

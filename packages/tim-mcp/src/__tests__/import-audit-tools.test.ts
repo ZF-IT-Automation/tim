@@ -147,11 +147,16 @@ describe('hmem import audit MCP tools', () => {
   it('tim_import_audit flags missing project sections after import', async () => {
     parsePayload(await client.callTool('tim_import', { source: hmemPath, deduplicate: true }));
 
-    const audit = parsePayload(await client.callTool('tim_import_audit', { source: hmemPath }));
+    const audit = parsePayload(await client.callTool('tim_import_audit', {
+      source: hmemPath,
+      includeRepairPlan: true,
+    }));
     expect(audit.projects[0].label).toBe('P0100');
     expect(audit.projects[0].missingSections).toContain('Tasks');
     expect(audit.findings.some((f: string) => f.includes('P0100'))).toBe(true);
     expect(audit.suggestedTools).toContain('tim_repair_section');
+    expect(audit.repairPlan.actions.some((a: any) => a.tool === 'tim_repair_section')).toBe(true);
+    expect(audit.repairPlan.applyAutomatically).toBe(false);
   });
 
   it('tim_repair_section creates sections and can move children safely', async () => {

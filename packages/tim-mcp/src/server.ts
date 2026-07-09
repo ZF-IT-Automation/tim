@@ -286,6 +286,8 @@ const TimImportAuditSchema = z.object({
   expectedSections: z.array(z.string()).optional().default([
     'Overview', 'Context', 'Decisions', 'Tasks', 'Bugs', 'Errors', 'Log', 'Next Steps', 'Ideas', 'Rules',
   ]),
+  includeRepairPlan: z.boolean().optional().default(false)
+    .describe('If true, include suggested tool calls. Does not execute them.'),
 });
 
 const TimDryRunMoveSchema = z.object({
@@ -2424,7 +2426,7 @@ export async function createMcpServer(
         }
 
         case 'tim_import_audit': {
-          const { source, labels, expectedSections } = TimImportAuditSchema.parse(args);
+          const { source, labels, expectedSections, includeRepairPlan } = TimImportAuditSchema.parse(args);
           const manifest = source && fs.existsSync(source) ? inspectHmemManifest(source) : null;
           const auditLabels = labels.length > 0
             ? labels
@@ -2434,6 +2436,7 @@ export async function createMcpServer(
           const health = await s.health();
           const projects = [];
           const findings: string[] = [];
+          const repairActions: Array<{ tool: string; args: Record<string, unknown>; reason: string }> = [];
 
           for (const label of auditLabels) {
             try {
@@ -2444,9 +2447,27 @@ export async function createMcpServer(
               const duplicateCount = (structure.duplicateSections as unknown[]).length;
               if (missingSections.length > 0) {
                 findings.push(`${label}: missing sections: ${missingSections.join(', ')}`);
+                if (includeRepairPlan) {
+                  for (const title of missingSections) {
+                    repairActions.push({
+                      tool: 'tim_repair_section',
+                      args: { project: label, title },
+                      reason: `${label}: create missing section ${title}`,
+                    });
+                  }
+                }
               }
               if (looseCount > 0) {
                 findings.push(`${label}: ${looseCount} loose direct children under project root`);
+                if (includeRepairPlan) {
+                  for (const loose of structure.looseDirectChildren as Array<{ id: string }>) {
+                    repairActions.push({
+                      tool: 'tim_dry_run_move',
+                      args: { id: loose.id, newParentId: '<choose-section-id>' },
+                      reason: `${label}: loose child requires human section choice`,
+                    });
+                  }
+                }
               }
               if (duplicateCount > 0) {
                 findings.push(`${label}: ${duplicateCount} duplicate section title groups`);
@@ -2484,6 +2505,10 @@ export async function createMcpServer(
                   'tim_update',
                   'tim_link',
                 ],
+                repairPlan: includeRepairPlan ? {
+                  applyAutomatically: false,
+                  actions: repairActions,
+                } : undefined,
               }),
             }],
           };
