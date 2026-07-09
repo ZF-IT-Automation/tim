@@ -1832,6 +1832,8 @@ class TimStore {
     // ─── Health ────────────────────────────────────────────
     async health() {
         const issues = [];
+        const blockers = [];
+        const warnings = [];
         // Broken links: edges referencing deleted/tombstoned entries
         const brokenLinks = this.db.prepare(`
       SELECT COUNT(*) as count FROM edges e
@@ -1841,7 +1843,9 @@ class TimStore {
          OR t.id IS NULL OR t.tombstoned_at IS NOT NULL
     `).get();
         if (brokenLinks.count > 0) {
-            issues.push(`${brokenLinks.count} broken links`);
+            const message = `${brokenLinks.count} broken links`;
+            warnings.push(message);
+            issues.push(message);
         }
         // Orphan entries: live entries whose parent_id references a missing or
         // tombstoned parent. Leaves without edges are normal tree nodes, NOT
@@ -1857,7 +1861,9 @@ class TimStore {
         )
     `).get();
         if (orphans.count > 0) {
-            issues.push(`${orphans.count} orphan entries`);
+            const message = `${orphans.count} orphan entries`;
+            warnings.push(message);
+            issues.push(message);
         }
         // FTS integrity
         let ftsOk = true;
@@ -1866,7 +1872,9 @@ class TimStore {
         }
         catch {
             ftsOk = false;
-            issues.push('FTS5 index integrity failure');
+            const message = 'FTS5 index integrity failure';
+            blockers.push(message);
+            issues.push(message);
         }
         // Counts
         const totalEntries = this.db.prepare('SELECT COUNT(*) as count FROM entries WHERE irrelevant = 0').get().count;
@@ -1888,9 +1896,15 @@ class TimStore {
           ))) / 86400.0 AS INTEGER) > ?
     `).get(...tim_core_1.SCHEMA_KINDS, threshold);
         if (stale.count > 0) {
-            issues.push(`${stale.count} stale entries (older than ${threshold}d, unverified)`);
+            const message = `${stale.count} stale entries (older than ${threshold}d, unverified)`;
+            warnings.push(message);
+            issues.push(message);
         }
+        const status = blockers.length > 0 ? 'BLOCKER' : warnings.length > 0 ? 'WARN' : 'OK';
         return {
+            status,
+            blockers,
+            warnings,
             brokenLinks: brokenLinks.count,
             orphanEntries: orphans.count,
             ftsIntegrity: ftsOk,

@@ -2257,6 +2257,9 @@ async function createMcpServer(options = {}) {
                                     manifest,
                                     projects,
                                     health: {
+                                        status: health.status,
+                                        blockers: health.blockers,
+                                        warnings: health.warnings,
                                         brokenLinks: health.brokenLinks,
                                         orphanEntries: health.orphanEntries,
                                         ftsIntegrity: health.ftsIntegrity,
@@ -2334,8 +2337,11 @@ async function createMcpServer(options = {}) {
                     const text = [
                         `TIM Doctor — ${DB_PATH}`,
                         `Entries: ${stats.totalEntries} | Edges: ${stats.totalEdges}`,
+                        `Status: ${report.status}`,
                         `Broken links: ${report.brokenLinks} | Orphans: ${report.orphanEntries}`,
                         `FTS5: ${report.ftsIntegrity ? 'OK' : 'BROKEN'}`,
+                        report.blockers.length ? `BLOCKERS: ${report.blockers.join('; ')}` : null,
+                        report.warnings.length ? `WARNINGS: ${report.warnings.join('; ')}` : null,
                         `Agents registered: ${agents.length}`,
                         `Errors (24h): ${errorStats.totalErrors} | Rate: ${errorStats.errorRate}/h`,
                         errorStats.alerts.length > 0 ? `⚠ Alerts: ${errorStats.alerts.join('; ')}` : null,

@@ -2,6 +2,7 @@
 // These types define the contract that all modules must implement.
 
 import { ulid } from 'ulid';
+import type { HealthReport } from './types.js';
 
 // ─── Entry ────────────────────────────────────────────────
 
@@ -21,6 +22,8 @@ export {
   type TaskMetadata,
   type RuleMetadata,
   type BugMetadata,
+  type HealthSeverity,
+  type HealthReport,
   isBuiltinMetadataType,
   isBuiltinType,
   isMetadataType,
@@ -177,16 +180,6 @@ export interface MemoryInterface {
 }
 
 // ─── Health / Stats ───────────────────────────────────────
-
-export interface HealthReport {
-  brokenLinks: number;
-  orphanEntries: number;
-  ftsIntegrity: boolean;
-  totalEntries: number;
-  totalEdges: number;
-  staleEntries: number;
-  issues: string[];
-}
 
 export interface MemoryStats {
   totalEntries: number;

@@ -45,6 +45,19 @@ export declare const DEPRECATED_STATUS_TAGS: Set<string>;
 export declare const DEPRECATED_PRIORITY_TAGS: Set<string>;
 export declare const DEPRECATED_TAGS: Set<string>;
 export declare function isDeprecatedTag(tag: string): boolean;
+export type HealthSeverity = 'OK' | 'WARN' | 'BLOCKER';
+export interface HealthReport {
+    status: HealthSeverity;
+    blockers: string[];
+    warnings: string[];
+    brokenLinks: number;
+    orphanEntries: number;
+    ftsIntegrity: boolean;
+    totalEntries: number;
+    totalEdges: number;
+    staleEntries: number;
+    issues: string[];
+}
 export declare function stripDeprecatedTags(tags: string[]): {
     clean: string[];
     removed: string[];

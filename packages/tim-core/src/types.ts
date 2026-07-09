@@ -105,6 +105,21 @@ export function isDeprecatedTag(tag: string): boolean {
   return DEPRECATED_TAGS.has(tag.toLowerCase());
 }
 
+export type HealthSeverity = 'OK' | 'WARN' | 'BLOCKER';
+
+export interface HealthReport {
+  status: HealthSeverity;
+  blockers: string[];
+  warnings: string[];
+  brokenLinks: number;
+  orphanEntries: number;
+  ftsIntegrity: boolean;
+  totalEntries: number;
+  totalEdges: number;
+  staleEntries: number;
+  issues: string[];
+}
+
 export function stripDeprecatedTags(tags: string[]): { clean: string[]; removed: string[] } {
   const clean: string[] = [];
   const removed: string[] = [];

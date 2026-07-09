@@ -173,6 +173,7 @@ async function cmdDoctor() {
     console.log(`DB: ${getDbPath(config)}`);
     console.log(`Entries: ${stats.totalEntries} | Edges: ${stats.totalEdges}`);
     console.log(`Confidence avg: ${stats.avgConfidence?.toFixed(2) ?? 'N/A'}`);
+    console.log(`Status: ${health.status}`);
     console.log(`Broken links: ${health.brokenLinks}`);
     console.log(`Orphan entries: ${health.orphanEntries}`);
     console.log(`FTS5: ${health.ftsIntegrity ? '✓' : '✗ BROKEN'}`);

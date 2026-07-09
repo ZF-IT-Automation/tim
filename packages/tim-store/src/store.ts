@@ -2151,6 +2151,8 @@ export class TimStore implements MemoryInterface {
 
   async health(): Promise<HealthReport> {
     const issues: string[] = [];
+    const blockers: string[] = [];
+    const warnings: string[] = [];
 
     // Broken links: edges referencing deleted/tombstoned entries
     const brokenLinks = this.db.prepare(`
@@ -2161,7 +2163,9 @@ export class TimStore implements MemoryInterface {
          OR t.id IS NULL OR t.tombstoned_at IS NOT NULL
     `).get() as { count: number };
     if (brokenLinks.count > 0) {
-      issues.push(`${brokenLinks.count} broken links`);
+      const message = `${brokenLinks.count} broken links`;
+      warnings.push(message);
+      issues.push(message);
     }
 
     // Orphan entries: live entries whose parent_id references a missing or
@@ -2178,7 +2182,9 @@ export class TimStore implements MemoryInterface {
         )
     `).get() as { count: number };
     if (orphans.count > 0) {
-      issues.push(`${orphans.count} orphan entries`);
+      const message = `${orphans.count} orphan entries`;
+      warnings.push(message);
+      issues.push(message);
     }
 
     // FTS integrity
@@ -2187,7 +2193,9 @@ export class TimStore implements MemoryInterface {
       this.db.prepare("INSERT INTO fts_entries(fts_entries) VALUES ('integrity-check')").run();
     } catch {
       ftsOk = false;
-      issues.push('FTS5 index integrity failure');
+      const message = 'FTS5 index integrity failure';
+      blockers.push(message);
+      issues.push(message);
     }
 
     // Counts
@@ -2211,10 +2219,17 @@ export class TimStore implements MemoryInterface {
           ))) / 86400.0 AS INTEGER) > ?
     `).get(...SCHEMA_KINDS, threshold) as { count: number };
     if (stale.count > 0) {
-      issues.push(`${stale.count} stale entries (older than ${threshold}d, unverified)`);
+      const message = `${stale.count} stale entries (older than ${threshold}d, unverified)`;
+      warnings.push(message);
+      issues.push(message);
     }
 
+    const status = blockers.length > 0 ? 'BLOCKER' : warnings.length > 0 ? 'WARN' : 'OK';
+
     return {
+      status,
+      blockers,
+      warnings,
       brokenLinks: brokenLinks.count,
       orphanEntries: orphans.count,
       ftsIntegrity: ftsOk,
