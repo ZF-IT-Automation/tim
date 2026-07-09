@@ -1,4 +1,5 @@
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import { HOST_TOOLS } from './install.js';
 
@@ -6,6 +7,8 @@ export interface UpdateSkillsResult {
   copied: { skill: string; target: string }[];
   skipped: string[];
 }
+
+export type SkillsHost = 'claude' | 'codex' | 'cursor' | 'hermes';
 
 function bundledSkillsDir(): string {
   return (() => {
@@ -38,17 +41,22 @@ function copySkillsTo(srcRoot: string, skillsBase: string): { skill: string; tar
   return copied;
 }
 
-export function updateSkillsForHost(host: 'claude' | 'codex' | 'cursor' | 'hermes'): UpdateSkillsResult {
-  const srcRoot = bundledSkillsDir();
-  const home = process.env.HOME ?? '';
-  const skillsBase =
+export function resolveHostSkillsBase(host: SkillsHost): string | null {
+  const home = process.env.HOME || os.homedir();
+  return (
     host === 'claude'
       ? path.join(home, '.claude', 'skills')
       : host === 'codex'
         ? path.join(process.env.CODEX_HOME ?? path.join(home, '.codex'), 'skills')
         : host === 'hermes'
           ? path.join(home, '.hermes', 'skills')
-          : null;
+          : null
+  );
+}
+
+export function updateSkillsForHost(host: SkillsHost): UpdateSkillsResult {
+  const srcRoot = bundledSkillsDir();
+  const skillsBase = resolveHostSkillsBase(host);
 
   if (!skillsBase) {
     return { copied: [], skipped: ['Cursor has no TIM skill install path; use MCP guidance instead'] };
@@ -60,13 +68,14 @@ export function updateSkills(): UpdateSkillsResult {
   const srcRoot = bundledSkillsDir();
   const skipped: string[] = [];
   const copied: { skill: string; target: string }[] = [];
+  const home = process.env.HOME || os.homedir();
 
   for (const tool of HOST_TOOLS) {
     if (!tool.detect()) continue;
     const skillsBase = tool.id === 'claude-code'
-      ? path.join(process.env.HOME ?? '', '.claude', 'skills')
+      ? path.join(home, '.claude', 'skills')
       : tool.id === 'opencode'
-        ? path.join(process.env.HOME ?? '', '.config', 'opencode', 'skills')
+        ? path.join(home, '.config', 'opencode', 'skills')
         : null;
     if (!skillsBase) {
       skipped.push(`${tool.name} (no skills dir)`);

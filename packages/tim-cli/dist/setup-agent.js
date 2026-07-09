@@ -84,15 +84,18 @@ function hostTool(host) {
     const id = host === 'claude' ? 'claude-code' : host === 'cursor' ? 'cursor' : null;
     return id ? (install_js_1.HOST_TOOLS.find(tool => tool.id === id) ?? null) : null;
 }
+function tomlString(value) {
+    return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+}
 function buildCodexMcpConfig(dbPath) {
     const entry = (0, install_js_1.buildTimMcpEntry)(dbPath);
     return [
         '[mcp_servers.tim]',
-        `command = "${entry.command}"`,
-        `args = [${entry.args.map(arg => `"${arg}"`).join(', ')}]`,
+        `command = ${tomlString(entry.command)}`,
+        `args = [${entry.args.map(arg => tomlString(arg)).join(', ')}]`,
         '',
         '[mcp_servers.tim.env]',
-        `TIM_DB_PATH = "${dbPath}"`,
+        `TIM_DB_PATH = ${tomlString(dbPath)}`,
     ].join('\n');
 }
 function replaceCodexTimMcpBlock(existing, block) {

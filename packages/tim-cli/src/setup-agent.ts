@@ -56,15 +56,19 @@ function hostTool(host: AgentHost): HostTool | null {
   return id ? (HOST_TOOLS.find(tool => tool.id === id) ?? null) : null;
 }
 
+function tomlString(value: string): string {
+  return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+}
+
 export function buildCodexMcpConfig(dbPath: string): string {
   const entry = buildTimMcpEntry(dbPath);
   return [
     '[mcp_servers.tim]',
-    `command = "${entry.command}"`,
-    `args = [${entry.args.map(arg => `"${arg}"`).join(', ')}]`,
+    `command = ${tomlString(entry.command)}`,
+    `args = [${entry.args.map(arg => tomlString(arg)).join(', ')}]`,
     '',
     '[mcp_servers.tim.env]',
-    `TIM_DB_PATH = "${dbPath}"`,
+    `TIM_DB_PATH = ${tomlString(dbPath)}`,
   ].join('\n');
 }
 

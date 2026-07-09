@@ -22,6 +22,11 @@ describe('setup-agent planner', () => {
     expect(buildCodexMcpConfig('/tmp/tim.db')).toContain('TIM_DB_PATH = "/tmp/tim.db"');
   });
 
+  it('escapes codex TOML string values', () => {
+    const config = buildCodexMcpConfig('C:\\Users\\Agent\\"tim".db');
+    expect(config).toContain('TIM_DB_PATH = "C:\\\\Users\\\\Agent\\\\\\"tim\\".db"');
+  });
+
   it('replaces existing codex TIM MCP block without dropping unrelated sections', () => {
     const existing = [
       'model = "gpt-5.5"',
