@@ -31,6 +31,21 @@ export function buildMigrateFromHmemPlan(
   ];
 }
 
+export function evaluateDryRunGate(report: { format: string; warnings: string[] }): string[] {
+  const blockers: string[] = [];
+  if (report.format === 'unknown') {
+    blockers.push('Dry-run could not identify the source hmem format.');
+  }
+  for (const warning of report.warnings) {
+    blockers.push(`Dry-run warning: ${warning}`);
+  }
+  return blockers;
+}
+
+export function buildImportAuditArgs(source: string): { source: string; includeRepairPlan: true } {
+  return { source, includeRepairPlan: true };
+}
+
 function getDbPath(config: TimConfigFile): string {
   return process.env.TIM_DB_PATH || config.dbPath || path.join(os.homedir(), '.tim', 'tim.db');
 }
@@ -92,6 +107,7 @@ export async function cmdMigrateFromHmem(args: string[]): Promise<void> {
   } finally {
     store.close();
   }
+  const dryRunBlockers = evaluateDryRunGate(dryRunReport);
 
   if (dryRunOnly) {
     console.log(JSON.stringify({
@@ -102,12 +118,30 @@ export async function cmdMigrateFromHmem(args: string[]): Promise<void> {
       plan: plan.filter(step => step.id === 'manifest' || step.id === 'dry-run' || step.id === 'handoff'),
       manifest,
       dryRunReport,
+      dryRunBlockers,
       nextSteps: [
         'Run without --dry-run to snapshot the TIM database and import.',
         'After live import, run MCP tool tim_import_audit for structure verification.',
       ],
     }, null, 2));
     return;
+  }
+
+  if (dryRunBlockers.length > 0) {
+    console.error(JSON.stringify({
+      sourcePath,
+      dbPath,
+      dryRun: false,
+      blocked: true,
+      manifest,
+      dryRunReport,
+      blockers: dryRunBlockers,
+      nextSteps: [
+        'Resolve the dry-run blockers or inspect the source .hmem before retrying.',
+        'Run with --dry-run to review the full manifest and dry-run report without writing.',
+      ],
+    }, null, 2));
+    process.exit(1);
   }
 
   const snapshot = await runSnapshot({ dbPath, quiet: true });
@@ -147,7 +181,7 @@ export async function cmdMigrateFromHmem(args: string[]): Promise<void> {
       },
       audit: {
         tool: 'tim_import_audit',
-        args: { sourcePath, includeRepairPlan: true },
+        args: buildImportAuditArgs(sourcePath),
         guidance: 'Run the MCP tool after import. If it reports WARNING/BLOCKER, apply the repairPlan manually or with an explicit follow-up.',
       },
       warnings,

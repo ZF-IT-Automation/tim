@@ -34,6 +34,8 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.buildMigrateFromHmemPlan = buildMigrateFromHmemPlan;
+exports.evaluateDryRunGate = evaluateDryRunGate;
+exports.buildImportAuditArgs = buildImportAuditArgs;
 exports.cmdMigrateFromHmem = cmdMigrateFromHmem;
 const fs = __importStar(require("node:fs"));
 const os = __importStar(require("node:os"));
@@ -53,6 +55,19 @@ function buildMigrateFromHmemPlan(source, opts = {}) {
         { id: 'doctor', description: 'Run TIM doctor' },
         { id: 'handoff', description: 'Print source, snapshot, counts, warnings, next steps' },
     ];
+}
+function evaluateDryRunGate(report) {
+    const blockers = [];
+    if (report.format === 'unknown') {
+        blockers.push('Dry-run could not identify the source hmem format.');
+    }
+    for (const warning of report.warnings) {
+        blockers.push(`Dry-run warning: ${warning}`);
+    }
+    return blockers;
+}
+function buildImportAuditArgs(source) {
+    return { source, includeRepairPlan: true };
 }
 function getDbPath(config) {
     return process.env.TIM_DB_PATH || config.dbPath || path.join(os.homedir(), '.tim', 'tim.db');
@@ -110,6 +125,7 @@ async function cmdMigrateFromHmem(args) {
     finally {
         store.close();
     }
+    const dryRunBlockers = evaluateDryRunGate(dryRunReport);
     if (dryRunOnly) {
         console.log(JSON.stringify({
             sourcePath,
@@ -119,12 +135,29 @@ async function cmdMigrateFromHmem(args) {
             plan: plan.filter(step => step.id === 'manifest' || step.id === 'dry-run' || step.id === 'handoff'),
             manifest,
             dryRunReport,
+            dryRunBlockers,
             nextSteps: [
                 'Run without --dry-run to snapshot the TIM database and import.',
                 'After live import, run MCP tool tim_import_audit for structure verification.',
             ],
         }, null, 2));
         return;
+    }
+    if (dryRunBlockers.length > 0) {
+        console.error(JSON.stringify({
+            sourcePath,
+            dbPath,
+            dryRun: false,
+            blocked: true,
+            manifest,
+            dryRunReport,
+            blockers: dryRunBlockers,
+            nextSteps: [
+                'Resolve the dry-run blockers or inspect the source .hmem before retrying.',
+                'Run with --dry-run to review the full manifest and dry-run report without writing.',
+            ],
+        }, null, 2));
+        process.exit(1);
     }
     const snapshot = await (0, snapshot_js_1.runSnapshot)({ dbPath, quiet: true });
     if (!snapshot.ok) {
@@ -161,7 +194,7 @@ async function cmdMigrateFromHmem(args) {
             },
             audit: {
                 tool: 'tim_import_audit',
-                args: { sourcePath, includeRepairPlan: true },
+                args: buildImportAuditArgs(sourcePath),
                 guidance: 'Run the MCP tool after import. If it reports WARNING/BLOCKER, apply the repairPlan manually or with an explicit follow-up.',
             },
             warnings,
