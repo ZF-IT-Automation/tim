@@ -2253,15 +2253,26 @@ async function createMcpServer(options = {}) {
                                 if (includeRepairPlan) {
                                     for (const loose of structure.looseDirectChildren) {
                                         repairActions.push({
-                                            tool: 'tim_dry_run_move',
-                                            args: { id: loose.id, newParentId: '<choose-section-id>' },
-                                            reason: `${label}: loose child requires human section choice`,
+                                            tool: 'tim_project_structure',
+                                            args: { label },
+                                            reason: `${label}: inspect sections before choosing a target for loose child ${loose.id}`,
+                                            note: `Loose child ${loose.id} needs a human or agent to choose a section before any move`,
                                         });
                                     }
                                 }
                             }
                             if (duplicateCount > 0) {
                                 findings.push(`${label}: ${duplicateCount} duplicate section title groups`);
+                                if (includeRepairPlan) {
+                                    for (const duplicate of structure.duplicateSections) {
+                                        repairActions.push({
+                                            tool: 'tim_project_structure',
+                                            args: { label },
+                                            reason: `${label}: inspect duplicate section group ${duplicate.title} before merge or rename`,
+                                            note: `Duplicate section title '${duplicate.title}' occurs ${duplicate.count} times; review and resolve manually`,
+                                        });
+                                    }
+                                }
                             }
                             projects.push({ ...structure, missingSections });
                         }

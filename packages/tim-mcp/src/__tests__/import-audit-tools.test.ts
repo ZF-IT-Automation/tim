@@ -159,6 +159,13 @@ describe('hmem import audit MCP tools', () => {
     expect(audit.repairPlan.applyAutomatically).toBe(false);
   });
 
+  it('tim_import_audit omits repairPlan by default', async () => {
+    parsePayload(await client.callTool('tim_import', { source: hmemPath, deduplicate: true }));
+
+    const audit = parsePayload(await client.callTool('tim_import_audit', { source: hmemPath }));
+    expect(audit.repairPlan).toBeUndefined();
+  });
+
   it('tim_repair_section creates sections and can move children safely', async () => {
     const project = parsePayload(await client.callTool('tim_create_project', { label: 'P0200', content: 'Manual Project' }));
     const loose = parsePayload(await client.callTool('tim_write', {
