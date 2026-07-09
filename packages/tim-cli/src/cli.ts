@@ -23,6 +23,7 @@ import { tim_export, tim_import, repairImportFlags, exportToMarkdown, migrateTag
 import { cmdSync } from './sync-cli.js';
 import { cmdSnapshot } from './snapshot.js';
 import { cmdRestore } from './restore.js';
+import { requiresSnapshot } from './safety.js';
 import { runStatusline } from './statusline.js';
 import { cmdRecordCommit } from './record-commit.js';
 import { cmdNewProject } from './new-project.js';
@@ -84,7 +85,9 @@ function printCommandHelp(cmd: string): void {
       console.log(`Usage: tim export <path.hmem> [--format hmem|text]`);
       return;
     case 'import':
-      console.log(`Usage: tim import <path.hmem> [--dry-run] [--deduplicate] [--repair-flags]`);
+      console.log(
+        `Usage: tim import <path.hmem> [--dry-run] [--deduplicate] [--repair-flags] [--no-snapshot-check]`,
+      );
       return;
     case 'record-commit':
       console.log(`Usage: tim record-commit --cwd <dir> --hash <sha> --message <msg> [--diff <path>]`);
@@ -455,7 +458,19 @@ async function cmdImport(args: string[]) {
   const sourcePath = positional[0];
 
   if (!sourcePath) {
-    console.error('Usage: tim import <path.hmem> [--dry-run] [--deduplicate] [--repair-flags]');
+    console.error(
+      'Usage: tim import <path.hmem> [--dry-run] [--deduplicate] [--repair-flags] [--no-snapshot-check]',
+    );
+    process.exit(1);
+  }
+
+  if (
+    requiresSnapshot(flags['repair-flags'] === 'true' ? 'repair-flags' : 'import', flags) &&
+    flags['no-snapshot-check'] !== 'true'
+  ) {
+    console.error(
+      'Refusing live import without snapshot acknowledgement. Run `tim snapshot` first or pass --no-snapshot-check.',
+    );
     process.exit(1);
   }
 

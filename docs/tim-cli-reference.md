@@ -345,12 +345,12 @@ Usage: tim export <path.hmem> [--format hmem|text]
 
 ---
 
-### 15. `tim import <path> [--dry-run] [--deduplicate] [--repair-flags]`
+### 15. `tim import <path> [--dry-run] [--deduplicate] [--repair-flags] [--no-snapshot-check]`
 
 Import from a `.hmem` file into the live database.
 
 ```
-Usage: tim import <path.hmem> [--dry-run] [--deduplicate] [--repair-flags]
+Usage: tim import <path.hmem> [--dry-run] [--deduplicate] [--repair-flags] [--no-snapshot-check]
 ```
 
 **Flags:**
@@ -360,6 +360,7 @@ Usage: tim import <path.hmem> [--dry-run] [--deduplicate] [--repair-flags]
 | `--dry-run` | Preview import without writing |
 | `--deduplicate` | Skip entries that already exist |
 | `--repair-flags` | Repair already-imported hmem rows whose flags/tags were corrupted by an earlier migration |
+| `--no-snapshot-check` | Bypass the live-import snapshot acknowledgement gate |
 
 For hmem-to-TIM migrations, agents should follow
 [`docs/hmem-to-tim-migration.md`](hmem-to-tim-migration.md) before writing to
