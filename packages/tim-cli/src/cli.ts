@@ -34,6 +34,7 @@ import {
 import { cmdConsolidate } from './consolidate.js';
 import { cmdSecret } from './secret.js';
 import { runReleaseCheck } from './release-check.js';
+import { cmdMigrateFromHmem } from './migrate-from-hmem.js';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -88,6 +89,9 @@ function printCommandHelp(cmd: string): void {
       console.log(
         `Usage: tim import <path.hmem> [--dry-run] [--deduplicate] [--repair-flags] [--no-snapshot-check]`,
       );
+      return;
+    case 'migrate-from-hmem':
+      console.log(`Usage: tim migrate-from-hmem <path.hmem> [--deduplicate] [--no-deduplicate] [--dry-run]`);
       return;
     case 'record-commit':
       console.log(`Usage: tim record-commit --cwd <dir> --hash <sha> --message <msg> [--diff <path>]`);
@@ -694,6 +698,13 @@ async function main() {
       }
       await cmdImport(rest);
       break;
+    case 'migrate-from-hmem':
+      if (hasHelpFlag(rest)) {
+        printCommandHelp(cmd);
+        break;
+      }
+      await cmdMigrateFromHmem(rest);
+      break;
     case 'migrate': {
       // Subcommand dispatch: `tim migrate <sub> [args...]`
       const sub = rest[0];
@@ -787,6 +798,7 @@ Commands:
   setup-hermes-statusline  Install Hermes TUI status bar (symlinks, config, cli patch) [--dry-run] [--skip-build]
   export [path]           Export to .hmem or markdown (--format hmem|text)
   import <path>           Import from .hmem (--dry-run, --deduplicate)
+  migrate-from-hmem <path> Guided hmem→TIM migration with dry-run, snapshot, import, audit handoff
   migrate tags-to-types   Convert legacy #rule / #human tags to metadata.type (--dry-run, --sample-limit N)
   snapshot                 Snapshot the live TIM DB to /tmp/tim-snapshots/ (SQLite backup API)
   restore                  Restore TIM DB from a snapshot (--from, --list, --dry-run, --force)

@@ -39,6 +39,7 @@ collisions are remapped to new TIM IDs and reported.
 Run these commands from any shell where `tim` is available:
 
 ```bash
+tim migrate-from-hmem /path/to/source.hmem --dry-run
 tim doctor
 tim stats
 tim import /path/to/source.hmem --dry-run --deduplicate
@@ -47,6 +48,7 @@ tim import /path/to/source.hmem --dry-run --deduplicate
 If `tim` is not on `PATH`, use the built CLI from the repo:
 
 ```bash
+node packages/tim-cli/dist/cli.js migrate-from-hmem /path/to/source.hmem --dry-run
 node packages/tim-cli/dist/cli.js import /path/to/source.hmem --dry-run --deduplicate
 ```
 
@@ -78,6 +80,21 @@ Use `--force` for restore only when the user confirms rollback.
 ## Import
 
 For the normal hmem to TIM migration, run:
+
+```bash
+tim migrate-from-hmem /path/to/source.hmem
+```
+
+That wizard performs the agent-safe sequence in one command:
+
+1. inspect the source manifest
+2. run a dry import with deduplication enabled
+3. snapshot the TIM database
+4. run the live import
+5. print the MCP `tim_import_audit` handoff
+6. run a TIM health check and print a final handoff summary
+
+Use the lower-level import command only when you need a narrower operation:
 
 ```bash
 tim import /path/to/source.hmem --deduplicate
@@ -125,6 +142,9 @@ Investigate any new warnings before declaring the migration done.
 Then run the `tim-hmem-import-audit` skill if it is available. It tells the
 agent how to verify imported project structure and repair misplaced nodes with
 TIM tools only, never direct SQL.
+
+If the import used `tim migrate-from-hmem`, read the printed `audit` block and
+run the listed MCP tool call before declaring the migration complete.
 
 If TIM MCP tools are available, prefer this structured sequence:
 

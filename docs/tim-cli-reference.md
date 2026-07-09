@@ -29,7 +29,7 @@ node packages/tim-cli/dist/cli.js statusline
 
 ---
 
-## Command Overview (26 commands)
+## Command Overview (27 commands)
 
 ### Top-Level Summary
 
@@ -50,17 +50,18 @@ node packages/tim-cli/dist/cli.js statusline
 | 13 | `tim setup-hermes-statusline` | Install Hermes TUI status bar integration |
 | 14 | `tim export` | Export TIM DB to `.hmem` or text format |
 | 15 | `tim import` | Import from `.hmem` file |
-| 16 | `tim migrate tags-to-types` | Convert legacy `#rule` / `#human` tags to `metadata.type` |
-| 17 | `tim snapshot` | Snapshot live DB to `/tmp/tim-snapshots/` (SQLite backup) |
-| 18 | `tim restore` | Restore DB from a snapshot |
-| 19 | `tim release-check` | Verify release gates, beta smoke checks, and packaging safety |
-| 20 | `tim sync connect` | Connect to o9k-sync server |
-| 21 | `tim sync push` | Push unacked staging to server |
-| 22 | `tim sync pull` | Pull remote changes |
-| 23 | `tim sync status` | Show sync configuration and health |
-| 24 | `tim sync dev` | Start local dev sync server (port 3100) |
-| 25 | `tim --help` | Show top-level help |
-| 26 | `tim hook log` | Log a single exchange to a session |
+| 16 | `tim migrate-from-hmem` | Guided hmem-to-TIM migration with dry-run, snapshot, import, audit handoff |
+| 17 | `tim migrate tags-to-types` | Convert legacy `#rule` / `#human` tags to `metadata.type` |
+| 18 | `tim snapshot` | Snapshot live DB to `/tmp/tim-snapshots/` (SQLite backup) |
+| 19 | `tim restore` | Restore DB from a snapshot |
+| 20 | `tim release-check` | Verify release gates, beta smoke checks, and packaging safety |
+| 21 | `tim sync connect` | Connect to o9k-sync server |
+| 22 | `tim sync push` | Push unacked staging to server |
+| 23 | `tim sync pull` | Pull remote changes |
+| 24 | `tim sync status` | Show sync configuration and health |
+| 25 | `tim sync dev` | Start local dev sync server (port 3100) |
+| 26 | `tim --help` | Show top-level help |
+| 27 | `tim hook log` | Log a single exchange to a session |
 
 ---
 
@@ -368,7 +369,31 @@ the live TIM database.
 
 ---
 
-### 16. `tim migrate tags-to-types [--dry-run] [--sample-limit N]`
+### 16. `tim migrate-from-hmem <path.hmem> [--deduplicate] [--no-deduplicate] [--dry-run]`
+
+Guided hmem-to-TIM migration for agents. It inspects the source, performs a dry
+run, snapshots the TIM database before writing, imports, runs a health check,
+and prints the MCP `tim_import_audit` handoff.
+
+```bash
+tim migrate-from-hmem /path/to/source.hmem --dry-run
+tim migrate-from-hmem /path/to/source.hmem
+```
+
+**Flags:**
+
+| Flag | Description |
+|------|-------------|
+| `--dry-run` | Inspect manifest and run import preview only |
+| `--deduplicate` | Merge/skip matching imported labels; default |
+| `--no-deduplicate` | Disable dedupe when the user explicitly wants collision remaps |
+
+Use this command for normal hmem user migrations. Use `tim import` directly only
+for focused repair or lower-level migration work.
+
+---
+
+### 17. `tim migrate tags-to-types [--dry-run] [--sample-limit N]`
 
 One-time migration: convert legacy `#rule` and `#human` tags into `metadata.type`
 fields. Uses heuristics to detect the correct type.
@@ -393,7 +418,7 @@ tim migrate tags-to-types --dry-run --sample-limit 3
 
 ---
 
-### 17. `tim snapshot`
+### 18. `tim snapshot`
 
 Create a safe backup of the live TIM database to `/tmp/tim-snapshots/`.
 Uses SQLite backup API (safe for live DB — no corruption risk).
@@ -413,7 +438,7 @@ snapshot: /tmp/tim-snapshots/tim-20260617-0956.db (67072000 bytes, 141ms)
 
 ---
 
-### 18. `tim restore [--from <path>] [--list] [--dry-run] [--force]`
+### 19. `tim restore [--from <path>] [--list] [--dry-run] [--force]`
 
 Restore TIM DB from a snapshot. Has a safety guard — refuses to overwrite a DB
 modified within the last 60 minutes unless `--force` is passed.
@@ -435,7 +460,7 @@ use --force to override (NOT recommended unless you know what you are doing)
 
 ---
 
-### 19. `tim release-check [--beta] [--json] [--skip-tests true]`
+### 20. `tim release-check [--beta] [--json] [--skip-tests true]`
 
 Run the release gate sequence before tagging or packaging.
 
@@ -465,7 +490,7 @@ when you already ran it.
 
 ---
 
-### 20-23. `tim sync` Subcommands
+### 21-24. `tim sync` Subcommands
 
 Distributed sync for multi-device TIM setups.
 

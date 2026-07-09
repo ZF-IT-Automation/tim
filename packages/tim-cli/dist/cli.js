@@ -52,6 +52,7 @@ const hermes_statusline_install_js_1 = require("./hermes-statusline-install.js")
 const consolidate_js_1 = require("./consolidate.js");
 const secret_js_1 = require("./secret.js");
 const release_check_js_1 = require("./release-check.js");
+const migrate_from_hmem_js_1 = require("./migrate-from-hmem.js");
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
 const os = __importStar(require("os"));
@@ -100,6 +101,9 @@ function printCommandHelp(cmd) {
             return;
         case 'import':
             console.log(`Usage: tim import <path.hmem> [--dry-run] [--deduplicate] [--repair-flags] [--no-snapshot-check]`);
+            return;
+        case 'migrate-from-hmem':
+            console.log(`Usage: tim migrate-from-hmem <path.hmem> [--deduplicate] [--no-deduplicate] [--dry-run]`);
             return;
         case 'record-commit':
             console.log(`Usage: tim record-commit --cwd <dir> --hash <sha> --message <msg> [--diff <path>]`);
@@ -649,6 +653,13 @@ async function main() {
             }
             await cmdImport(rest);
             break;
+        case 'migrate-from-hmem':
+            if (hasHelpFlag(rest)) {
+                printCommandHelp(cmd);
+                break;
+            }
+            await (0, migrate_from_hmem_js_1.cmdMigrateFromHmem)(rest);
+            break;
         case 'migrate': {
             // Subcommand dispatch: `tim migrate <sub> [args...]`
             const sub = rest[0];
@@ -743,6 +754,7 @@ Commands:
   setup-hermes-statusline  Install Hermes TUI status bar (symlinks, config, cli patch) [--dry-run] [--skip-build]
   export [path]           Export to .hmem or markdown (--format hmem|text)
   import <path>           Import from .hmem (--dry-run, --deduplicate)
+  migrate-from-hmem <path> Guided hmem→TIM migration with dry-run, snapshot, import, audit handoff
   migrate tags-to-types   Convert legacy #rule / #human tags to metadata.type (--dry-run, --sample-limit N)
   snapshot                 Snapshot the live TIM DB to /tmp/tim-snapshots/ (SQLite backup API)
   restore                  Restore TIM DB from a snapshot (--from, --list, --dry-run, --force)
