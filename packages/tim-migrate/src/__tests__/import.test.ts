@@ -115,6 +115,9 @@ describe('tim_import', () => {
     const meta = JSON.parse(root.metadata);
     expect(meta.label).toBe('P0001');
     expect(meta.hmemUid).toBe(rootUid);
+    // P-prefixed roots must be resolvable as projects (requireProject,
+    // ensureInboxProject match on kind === 'project') — see issue #1
+    expect(meta.kind).toBe('project');
 
     const child = store.getDb().prepare('SELECT * FROM entries WHERE id = ?').get(childUid) as {
       parent_id: string;
