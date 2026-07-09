@@ -1,7 +1,7 @@
 export { tim_export, exportToHmem, exportToMarkdown } from './export.js';
 export type { ExportOptions, HmemExportResult } from './export.js';
-export { tim_import, labelFromMetadata } from './import.js';
-export type { ImportOptions, ImportReport, ImportConflict } from './import.js';
+export { tim_import, labelFromMetadata, repairImportFlags } from './import.js';
+export type { ImportOptions, ImportReport, ImportConflict, RepairReport } from './import.js';
 export { detectHmemFormat, inspectHmemFile, createV2HmemDatabase } from './hmem-format.js';
 export type { HmemFormat, HmemFormatInfo } from './hmem-format.js';
 export { migrateTagsToTypes } from './tags-to-types.js';

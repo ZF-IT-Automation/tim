@@ -4,7 +4,10 @@
   "description": "TIM agent skills for weak models — tim-using, tim-remember, tim-session-start, tim-explain",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "files": ["dist"],
+  "files": [
+    "dist/**/*",
+    "!dist/**/__tests__/**"
+  ],
   "scripts": {
     "build": "tsc",
     "test": "vitest run"

@@ -4,7 +4,10 @@
   "description": "TIM o9k-sync HTTP client: encryption, push/pull cycles",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "files": ["dist"],
+  "files": [
+    "dist/**/*",
+    "!dist/**/__tests__/**"
+  ],
   "scripts": {
     "build": "tsc",
     "test": "vitest run"

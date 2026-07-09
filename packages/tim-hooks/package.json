@@ -4,7 +4,11 @@
   "description": "TIM hook scripts and checkpoint orchestration",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "files": ["dist", "scripts"],
+  "files": [
+    "dist/**/*",
+    "!dist/**/__tests__/**",
+    "scripts/**/*"
+  ],
   "scripts": {
     "build": "tsc",
     "test": "vitest run"

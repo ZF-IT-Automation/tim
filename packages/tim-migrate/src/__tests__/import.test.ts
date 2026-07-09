@@ -235,3 +235,109 @@ describe('tim_import', () => {
     expect(countAfter).toBeGreaterThan(countBefore);
   });
 });
+
+describe('tim_import — node rescue and mid-gen old format', () => {
+  it('reattaches v2 nodes under a deleted parent to the nearest live ancestor', () => {
+    const filePath = path.join(tmpDir, 'v2-deleted-parent.hmem');
+    const db = createV2HmemDatabase(filePath);
+    const rootUid = '01ROOTDEL00000000000000001';
+    db.prepare(`
+      INSERT INTO entries (uid, label, prefix, seq, level_1, created_at, updated_at,
+        access_count, obsolete, favorite, irrelevant, pinned, tags)
+      VALUES (?, 'P0010', 'P', 10, 'Root', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z',
+        0, 0, 0, 0, 0, '[]')
+    `).run(rootUid);
+    const insNode = db.prepare(`
+      INSERT INTO nodes (uid, root_uid, parent_uid, depth, seq, content, tags,
+        created_at, updated_at, irrelevant, deleted_at)
+      VALUES (?, ?, ?, ?, ?, ?, NULL, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 0, ?)
+    `);
+    insNode.run('01NODELIVE0000000000000001', rootUid, null, 2, 1, 'Live parent', null);
+    insNode.run('01NODEDEAD0000000000000001', rootUid, '01NODELIVE0000000000000001', 3, 1, 'Deleted middle', '2026-02-01T00:00:00Z');
+    insNode.run('01NODEKID00000000000000001', rootUid, '01NODEDEAD0000000000000001', 4, 1, 'Orphaned child', null);
+    db.close();
+
+    const report = tim_import(store, filePath);
+    expect(report.nodesImported).toBe(2); // live parent + rescued child, NOT the deleted one
+    expect(report.warnings).toHaveLength(0);
+
+    const kid = store.getDb().prepare('SELECT parent_id FROM entries WHERE id = ?')
+      .get('01NODEKID00000000000000001') as { parent_id: string };
+    expect(kid.parent_id).toBe('01NODELIVE0000000000000001');
+    const dead = store.getDb().prepare('SELECT id FROM entries WHERE id = ?')
+      .get('01NODEDEAD0000000000000001');
+    expect(dead).toBeUndefined();
+  });
+
+  it('imports v2 nodes whose ordering puts them before their parent', () => {
+    const filePath = path.join(tmpDir, 'v2-out-of-order.hmem');
+    const db = createV2HmemDatabase(filePath);
+    const rootUid = '01ROOTOOO00000000000000001';
+    db.prepare(`
+      INSERT INTO entries (uid, label, prefix, seq, level_1, created_at, updated_at,
+        access_count, obsolete, favorite, irrelevant, pinned, tags)
+      VALUES (?, 'P0011', 'P', 11, 'Root', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z',
+        0, 0, 0, 0, 0, '[]')
+    `).run(rootUid);
+    const insNode = db.prepare(`
+      INSERT INTO nodes (uid, root_uid, parent_uid, depth, seq, content, tags,
+        created_at, updated_at, irrelevant, deleted_at)
+      VALUES (?, ?, ?, ?, ?, ?, NULL, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 0, NULL)
+    `);
+    // Child sorts BEFORE its parent: same depth, lower seq.
+    insNode.run('01NODECHILD000000000000001', rootUid, '01NODEPARENT00000000000001', 2, 1, 'Child first');
+    insNode.run('01NODEPARENT00000000000001', rootUid, null, 2, 2, 'Parent second');
+    db.close();
+
+    const report = tim_import(store, filePath);
+    expect(report.nodesImported).toBe(2);
+    expect(report.warnings).toHaveLength(0);
+    const kid = store.getDb().prepare('SELECT parent_id FROM entries WHERE id = ?')
+      .get('01NODECHILD000000000000001') as { parent_id: string };
+    expect(kid.parent_id).toBe('01NODEPARENT00000000000001');
+  });
+
+  it('imports old-format memory_nodes and memory_tags', () => {
+    const filePath = path.join(tmpDir, 'old-midgen.hmem');
+    const db = new Database(filePath);
+    db.exec(`
+      CREATE TABLE memories (
+        id TEXT PRIMARY KEY, prefix TEXT NOT NULL, seq INTEGER NOT NULL,
+        created_at TEXT NOT NULL, level_1 TEXT NOT NULL,
+        level_2 TEXT, level_3 TEXT, level_4 TEXT, level_5 TEXT,
+        last_accessed TEXT, links TEXT, obsolete INTEGER DEFAULT 0,
+        favorite INTEGER DEFAULT 0, irrelevant INTEGER DEFAULT 0,
+        pinned INTEGER DEFAULT 0, updated_at TEXT
+      );
+      CREATE TABLE memory_nodes (
+        id TEXT PRIMARY KEY, parent_id TEXT NOT NULL, root_id TEXT NOT NULL,
+        depth INTEGER NOT NULL, seq INTEGER NOT NULL, content TEXT NOT NULL,
+        created_at TEXT NOT NULL, favorite INTEGER DEFAULT 0,
+        irrelevant INTEGER DEFAULT 0, updated_at TEXT
+      );
+      CREATE TABLE memory_tags (entry_id TEXT NOT NULL, tag TEXT NOT NULL);
+    `);
+    db.prepare(`INSERT INTO memories (id, prefix, seq, created_at, level_1)
+      VALUES ('P0052', 'P', 52, '2026-01-01T00:00:00Z', 'Company root')`).run();
+    db.prepare(`INSERT INTO memory_nodes (id, parent_id, root_id, depth, seq, content, created_at, irrelevant)
+      VALUES ('P0052.1', 'P0052', 'P0052', 2, 1, 'Overview', '2026-01-01T00:00:00Z', 0)`).run();
+    db.prepare(`INSERT INTO memory_nodes (id, parent_id, root_id, depth, seq, content, created_at, irrelevant)
+      VALUES ('P0052.1.1', 'P0052.1', 'P0052', 3, 1, 'Nested detail', '2026-01-01T00:00:00Z', 1)`).run();
+    db.prepare(`INSERT INTO memory_tags (entry_id, tag) VALUES ('P0052', '#company')`).run();
+    db.close();
+
+    const report = tim_import(store, filePath);
+    expect(report.format).toBe('old');
+    expect(report.entriesImported).toBe(1);
+    expect(report.nodesImported).toBe(2);
+
+    const root = store.getDb().prepare('SELECT id, tags FROM entries WHERE id = ?')
+      .get('P0052') as { id: string; tags: string };
+    expect(JSON.parse(root.tags)).toContain('#company');
+
+    const nested = store.getDb().prepare('SELECT parent_id, irrelevant FROM entries WHERE id = ?')
+      .get('P0052.1.1') as { parent_id: string; irrelevant: number };
+    expect(nested.parent_id).toBe('P0052.1');
+    expect(nested.irrelevant).toBe(1);
+  });
+});

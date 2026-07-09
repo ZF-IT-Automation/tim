@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 "use strict";
 // TIM MCP Server — v0.1.0-alpha
 // MCP stdio server with curation, session, and core memory tools.

@@ -4,7 +4,10 @@
   "description": "TIM SQLite store: schema, CRUD, search, edges, staging",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "files": ["dist"],
+  "files": [
+    "dist/**/*",
+    "!dist/**/__tests__/**"
+  ],
   "scripts": {
     "build": "tsc",
     "test": "vitest run"

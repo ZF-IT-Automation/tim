@@ -4,8 +4,8 @@ TIM (Theoretically Infinite Memory) — a CLI tool for managing persistent AI ag
 over SQLite. Built on an edge-and-tree knowledge model with FTS5 search, session tracking,
 and o9k-sync distributed sync.
 
-Branch: `feature/tim-update-title-fix` (commit `7b15407`)
-DB: `/home/bbbee/.tim/tim.db` (2750 entries, 10451 edges, SQLite 3.49.2)
+Workspace snapshot: 2026-07-09
+Default DB: `~/.tim/tim.db` unless `TIM_DB_PATH` is set.
 
 ---
 
@@ -78,8 +78,7 @@ Initialize TIM (create DB, create tables, register agents, write MCP config).
 TIM ready. Connect your MCP client to /home/bbbee/.tim/mcp.json
 ```
 
-**Note:** `tim init --help` does NOT work — the `--help` flag is not parsed for this command.
-It always runs init. If DB exists, it just verifies health.
+**Note:** `tim init --help` prints usage and exits before any DB work.
 
 **MCP config written to `~/.tim/mcp.json`:**
 ```json
@@ -131,7 +130,7 @@ Top tags: #exchange(1258), #session-summary(448), #batch-summary(258), #session(
 - **Broken links** — edges pointing to nonexistent entries. Should be fixed.
 - **Stale count** — entries older than 30 days. High count means old memory isn't being pruned.
 
-**Note:** `tim doctor --help` does NOT work — it always runs doctor.
+**Note:** `tim doctor --help` prints usage and exits before any DB work.
 
 ---
 
@@ -165,7 +164,7 @@ tim stats | jq '.topTags[:5]'               # top 5 tags
 tim stats | jq '.entriesByDepth'            # tree depth distribution
 ```
 
-**Note:** `tim stats --help` does NOT work — it always runs stats.
+**Note:** `tim stats --help` prints usage and exits before any DB work.
 
 ---
 
@@ -228,7 +227,7 @@ tim bind-project --label P0062 --cwd ~/projects/tim
 ### 7. `tim record-commit --cwd <dir> --hash <sha> --message <msg> [--diff <path>]`
 
 Record a git commit to a project's Commits section in the TIM tree.
-**WRITES to the DB** — use `--help` only to see the usage, don't run without intent.
+**WRITES to the DB** — `--help` prints usage and exits; run it only when you intend to record a real commit.
 
 ```
 Usage: tim record-commit --cwd <dir> --hash <sha> --message <msg> [--diff <path>]
@@ -618,17 +617,18 @@ tim resolve-session --session $SESSION_ID --format json
 
 ### Important Gotchas
 
-1. **`--help` is not supported for all commands.** Commands like `init`, `doctor`,
-   `stats`, `statusline`, `setup-hermes-statusline`, `migrate`, `snapshot`, and
-   `sync dev` execute immediately — they don't parse `--help`. Running them will
-   actually run the command. `init` can be run multiple times (idempotent).
+1. **`--help` is now intercepted for the core DB-opening commands.** `init`,
+   `doctor`, `stats`, `import`, `export`, `record-commit`, `checkpoint`,
+   `rebalance`, `snapshot`, `restore`, `root-entries`, and `statusline` print
+   usage and exit before touching the database. `sync dev` still executes
+   immediately.
 
 2. **`tim sync dev` may crash** with `EADDRINUSE` if a dev server is already running
    on port 3100.
 
-3. **`tim record-commit` writes to the DB.** Only run it when you intend to record
-   a real commit. Use `--help` to check the usage (but it will fail with "Project
-   not found" if there's no valid project binding).
+3. **`tim record-commit` writes to the DB.** It is still a mutating command, but
+   `--help` now stops before the DB opens. You still need a valid project binding
+   when you actually run it.
 
 4. **`tim restore` has a 60-minute safety window.** If the DB was modified in the
    last 60 minutes, it refuses to restore unless `--force` is passed.

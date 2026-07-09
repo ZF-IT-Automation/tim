@@ -19,12 +19,13 @@
     { "path": "packages/tim-store" },
     { "path": "packages/tim-sync-client" },
     { "path": "packages/tim-sync-server" },
-    { "path": "packages/tim-cli" },
-    { "path": "packages/tim-mcp" },
-    { "path": "packages/tim-migrate" },
     { "path": "packages/tim-hooks" },
+    { "path": "packages/tim-migrate" },
+    { "path": "packages/tim-mcp" },
     { "path": "packages/tim-summarizer" },
-    { "path": "packages/tim-skills" }
+    { "path": "packages/tim-skills" },
+    { "path": "packages/tim-cli" }
   ],
+  "exclude": ["packages/**/src/**/__tests__/**"],
   "files": []
 }

@@ -15,7 +15,14 @@ export interface McpServerEntry {
 export declare function buildTimMcpEntry(dbPath: string): McpServerEntry;
 export declare function mergeMcpConfig(existing: Record<string, unknown>, entry: McpServerEntry, format: 'standard' | 'opencode'): Record<string, unknown>;
 export declare function installMcpForHosts(dbPath: string, global?: boolean): {
-    tool: string;
-    path: string;
-}[];
+    installed: {
+        tool: string;
+        path: string;
+    }[];
+    skipped: {
+        tool: string;
+        path: string;
+        reason: string;
+    }[];
+};
 //# sourceMappingURL=install.d.ts.map

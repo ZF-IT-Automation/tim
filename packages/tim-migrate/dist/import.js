@@ -5,6 +5,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.tim_import = tim_import;
+exports.repairImportFlags = repairImportFlags;
 exports.labelFromMetadata = labelFromMetadata;
 const better_sqlite3_1 = __importDefault(require("better-sqlite3"));
 const ulid_1 = require("ulid");
@@ -47,6 +48,11 @@ function insertEntryDirect(db, params) {
     stageEntryRow(db, params.id);
 }
 function insertEdgeDirect(db, sourceId, targetId, type) {
+    // The edges table has no UNIQUE(source,target,type) constraint — the ULID
+    // primary key makes INSERT OR IGNORE useless against re-import duplicates.
+    const dup = db.prepare('SELECT id FROM edges WHERE source_id = ? AND target_id = ? AND type = ? LIMIT 1').get(sourceId, targetId, type);
+    if (dup)
+        return false;
     const id = (0, ulid_1.ulid)();
     const ts = Date.now();
     const updatedAt = new Date(ts).toISOString();
@@ -55,7 +61,7 @@ function insertEdgeDirect(db, sourceId, targetId, type) {
     VALUES (?, ?, ?, ?, 1.0, '{}', ?)
   `).run(id, sourceId, targetId, type, updatedAt);
     if (result.changes === 0)
-        return; // duplicate — nothing new to sync
+        return false; // duplicate — nothing new to sync
     const edgeRow = {
         id, source_id: sourceId, target_id: targetId,
         type, weight: 1.0, metadata: '{}', updated_at: updatedAt,
@@ -63,6 +69,7 @@ function insertEdgeDirect(db, sourceId, targetId, type) {
     db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
     lww_timestamp, lww_device, lww_confidence)
     VALUES (?, 'edge', 'upsert', ?, ?, 'local', 1.0)`).run(`${sourceId}|${targetId}|${type}`, JSON.stringify(edgeRow), ts);
+    return true;
 }
 function importV2(source, store, options) {
     const warnings = [];
@@ -81,11 +88,13 @@ function importV2(source, store, options) {
     WHERE deleted_at IS NULL
     ORDER BY seq ASC
   `).all();
+    // All nodes including deleted ones: deleted nodes are never imported, but
+    // their parent pointers are needed to reattach live descendants to the
+    // nearest live ancestor instead of silently dropping whole subtrees.
     const hmemNodes = source.prepare(`
     SELECT uid, root_uid, parent_uid, depth, seq, content, tags,
            created_at, updated_at, irrelevant, deleted_at
     FROM nodes
-    WHERE deleted_at IS NULL
     ORDER BY depth ASC, seq ASC
   `).all();
     const hmemLinks = source.prepare(`
@@ -160,7 +169,11 @@ function importV2(source, store, options) {
         }
     };
     const planNodes = () => {
-        for (const n of hmemNodes) {
+        const nodeByUid = new Map(hmemNodes.map(n => [n.uid, n]));
+        const liveNodes = hmemNodes.filter(n => n.deleted_at === null);
+        // Guard pass first so children of already-imported nodes can attach.
+        let pending = [];
+        for (const n of liveNodes) {
             // Idempotency guard: if node was already imported (same hmemUid), skip unless forced
             const alreadyImported = hmemUidExists(store, n.uid);
             if (alreadyImported && !options.force) {
@@ -169,50 +182,87 @@ function importV2(source, store, options) {
                 conflicts.push({ label: n.uid, action: 'merged', detail: alreadyImported.id });
                 continue;
             }
-            const rootTimId = idMap.get(n.root_uid);
-            if (!rootTimId) {
-                warnings.push(`Skipped node ${n.uid}: root ${n.root_uid} not mapped`);
-                continue;
+            pending.push(n);
+        }
+        // Walk the parent chain through deleted nodes to the nearest live
+        // ancestor; fall back to the root entry. 'defer' means a live ancestor
+        // exists but is not mapped yet — retry in a later pass (handles nodes
+        // whose depth/seq ordering puts them before their parent).
+        const resolveParent = (n) => {
+            let cur = n.parent_uid;
+            const seen = new Set();
+            while (cur && !seen.has(cur)) {
+                seen.add(cur);
+                const mapped = idMap.get(cur);
+                if (mapped)
+                    return mapped;
+                const p = nodeByUid.get(cur);
+                if (!p)
+                    break; // unknown uid — fall back to root
+                if (p.deleted_at !== null) {
+                    cur = p.parent_uid;
+                    continue;
+                }
+                return 'defer';
             }
-            const parentTimId = n.parent_uid ? idMap.get(n.parent_uid) : rootTimId;
-            if (!parentTimId) {
-                warnings.push(`Skipped node ${n.uid}: parent ${n.parent_uid} not mapped`);
-                continue;
-            }
-            let timId = n.uid;
-            if (entryExists(store, n.uid)) {
-                timId = (0, ulid_1.ulid)();
-                remapped++;
-                conflicts.push({
-                    label: n.uid,
-                    action: 'remapped',
-                    detail: `${n.uid} → ${timId}`,
+            return idMap.get(n.root_uid) ?? null;
+        };
+        while (pending.length > 0) {
+            const next = [];
+            let progress = false;
+            for (const n of pending) {
+                const parentTimId = resolveParent(n);
+                if (parentTimId === 'defer') {
+                    next.push(n);
+                    continue;
+                }
+                progress = true;
+                if (parentTimId === null) {
+                    warnings.push(`Skipped node ${n.uid}: root ${n.root_uid} not mapped`);
+                    continue;
+                }
+                let timId = n.uid;
+                if (entryExists(store, n.uid)) {
+                    timId = (0, ulid_1.ulid)();
+                    remapped++;
+                    conflicts.push({
+                        label: n.uid,
+                        action: 'remapped',
+                        detail: `${n.uid} → ${timId}`,
+                    });
+                }
+                else {
+                    newCount++;
+                }
+                idMap.set(n.uid, timId);
+                const tags = n.tags ? JSON.parse(n.tags) : [];
+                if (options.dryRun)
+                    continue;
+                insertEntryDirect(store.getDb(), {
+                    id: timId,
+                    parentId: parentTimId,
+                    content: n.content,
+                    depth: Math.min(Math.max(n.depth, 2), 5),
+                    confidence: 0.9,
+                    createdAt: n.created_at,
+                    accessedAt: n.updated_at,
+                    tags,
+                    irrelevant: n.irrelevant === 1,
+                    favorite: false,
+                    metadata: {
+                        hmemUid: n.uid,
+                        importedAt: new Date().toISOString(),
+                    },
                 });
+                nodesImported++;
             }
-            else {
-                newCount++;
+            if (!progress) {
+                for (const n of next) {
+                    warnings.push(`Skipped node ${n.uid}: unresolvable parent chain (${n.parent_uid})`);
+                }
+                break;
             }
-            idMap.set(n.uid, timId);
-            const tags = n.tags ? JSON.parse(n.tags) : [];
-            if (options.dryRun)
-                continue;
-            insertEntryDirect(store.getDb(), {
-                id: timId,
-                parentId: parentTimId,
-                content: n.content,
-                depth: Math.min(Math.max(n.depth, 2), 5),
-                confidence: 0.9,
-                createdAt: n.created_at,
-                accessedAt: n.updated_at,
-                tags,
-                irrelevant: n.irrelevant === 1,
-                favorite: false,
-                metadata: {
-                    hmemUid: n.uid,
-                    importedAt: new Date().toISOString(),
-                },
-            });
-            nodesImported++;
+            pending = next;
         }
     };
     const planLinks = () => {
@@ -267,6 +317,20 @@ function importOld(source, store, options) {
         .map(c => c.name);
     const hasTitle = cols.includes('title');
     const hasUpdatedAt = cols.includes('updated_at');
+    const tableNames = new Set(source.prepare("SELECT name FROM sqlite_master WHERE type='table'").all()
+        .map(t => t.name));
+    // Mid-generation old format: children live in memory_nodes (level_2..5 are
+    // empty then) and tags in memory_tags. Both were silently dropped before.
+    const tagsById = new Map();
+    if (tableNames.has('memory_tags')) {
+        const tagRows = source.prepare('SELECT entry_id, tag FROM memory_tags')
+            .all();
+        for (const row of tagRows) {
+            const arr = tagsById.get(row.entry_id) ?? [];
+            arr.push(row.tag);
+            tagsById.set(row.entry_id, arr);
+        }
+    }
     const selectSql = `
     SELECT id, prefix, seq, created_at, level_1, level_2, level_3, level_4, level_5,
            last_accessed, links, obsolete, favorite, irrelevant,
@@ -316,7 +380,10 @@ function importOld(source, store, options) {
                     confidence: hmem.obsolete ? 0.3 : hmem.favorite ? 1.0 : 0.9,
                     createdAt: hmem.created_at,
                     accessedAt,
-                    tags: hmem.favorite ? ['#favorite'] : [],
+                    tags: [...new Set([
+                            ...(hmem.favorite ? ['#favorite'] : []),
+                            ...(tagsById.get(hmem.id) ?? []),
+                        ])],
                     irrelevant: hmem.irrelevant === 1,
                     favorite: hmem.favorite === 1,
                     metadata: {
@@ -374,6 +441,87 @@ function importOld(source, store, options) {
                 catch {
                     warnings.push(`Invalid links JSON on ${hmem.id}`);
                 }
+            }
+        }
+        if (tableNames.has('memory_nodes')) {
+            const nodeCols = source.prepare('PRAGMA table_info(memory_nodes)').all()
+                .map(c => c.name);
+            const oldNodes = source.prepare(`
+        SELECT id, parent_id, root_id, depth, seq, content, created_at,
+               ${nodeCols.includes('updated_at') ? 'updated_at' : 'NULL as updated_at'},
+               ${nodeCols.includes('favorite') ? 'favorite' : '0 as favorite'},
+               ${nodeCols.includes('irrelevant') ? 'irrelevant' : '0 as irrelevant'}
+        FROM memory_nodes
+        ORDER BY depth ASC, seq ASC
+      `).all();
+            const nodeIds = new Set(oldNodes.map(n => n.id));
+            let pending = [];
+            for (const n of oldNodes) {
+                const alreadyImported = hmemUidExists(store, n.id);
+                if (alreadyImported && !options.force) {
+                    idMap.set(n.id, alreadyImported.id);
+                    skipped++;
+                    conflicts.push({ label: n.id, action: 'merged', detail: alreadyImported.id });
+                    continue;
+                }
+                pending.push(n);
+            }
+            // Multi-pass: a node whose parent is another node may appear before it
+            // despite the depth/seq ordering; retry until no progress is made.
+            while (pending.length > 0) {
+                const next = [];
+                let progress = false;
+                for (const n of pending) {
+                    let parentTimId = idMap.get(n.parent_id);
+                    if (!parentTimId) {
+                        if (nodeIds.has(n.parent_id)) {
+                            next.push(n); // parent is a node not mapped yet
+                            continue;
+                        }
+                        parentTimId = idMap.get(n.root_id);
+                    }
+                    progress = true;
+                    if (!parentTimId) {
+                        warnings.push(`Skipped node ${n.id}: root ${n.root_id} not mapped`);
+                        continue;
+                    }
+                    let timId = n.id;
+                    if (entryExists(store, n.id)) {
+                        timId = (0, ulid_1.ulid)();
+                        remapped++;
+                        conflicts.push({ label: n.id, action: 'remapped', detail: `${n.id} → ${timId}` });
+                    }
+                    else {
+                        newCount++;
+                    }
+                    idMap.set(n.id, timId);
+                    if (options.dryRun)
+                        continue;
+                    insertEntryDirect(store.getDb(), {
+                        id: timId,
+                        parentId: parentTimId,
+                        content: n.content,
+                        depth: Math.min(Math.max(n.depth, 2), 5),
+                        confidence: 0.9,
+                        createdAt: n.created_at,
+                        accessedAt: n.updated_at ?? n.created_at,
+                        tags: tagsById.get(n.id) ?? [],
+                        irrelevant: n.irrelevant === 1,
+                        favorite: n.favorite === 1,
+                        metadata: {
+                            hmemUid: n.id,
+                            importedAt: new Date().toISOString(),
+                        },
+                    });
+                    nodesImported++;
+                }
+                if (!progress) {
+                    for (const n of next) {
+                        warnings.push(`Skipped node ${n.id}: unresolvable parent chain (${n.parent_id})`);
+                    }
+                    break;
+                }
+                pending = next;
             }
         }
     };
@@ -446,6 +594,133 @@ function tim_import(store, sourcePath, options = {}) {
     finally {
         source.close();
     }
+}
+/**
+ * Repair irrelevant/favorite flags (and empty tags) on already-imported
+ * entries from the source .hmem file, matched via metadata.hmemUid.
+ *
+ * Motivation: the 2026-05-30 production migration wrote inverted flags —
+ * nearly every imported entry landed with irrelevant=1, hiding the entire
+ * hmem heritage from every TIM tool. The source file is authoritative for
+ * these mirror entries. Repaired rows are staged so the fix syncs.
+ */
+function repairImportFlags(store, sourcePath, options = {}) {
+    const warnings = [];
+    const info = (0, hmem_format_js_1.inspectHmemFile)(sourcePath);
+    if (info.error || info.format === 'unknown') {
+        return {
+            sourcePath,
+            format: 'unknown',
+            dryRun: !!options.dryRun,
+            matched: 0,
+            repaired: 0,
+            warnings: [info.error ?? 'Unknown hmem format'],
+        };
+    }
+    const flagsByUid = new Map();
+    const source = new better_sqlite3_1.default(sourcePath, { readonly: true });
+    const format = (0, hmem_format_js_1.detectHmemFormat)(source);
+    try {
+        if (format === 'v2') {
+            const entries = source.prepare('SELECT uid, irrelevant, favorite, tags FROM entries WHERE deleted_at IS NULL').all();
+            for (const e of entries) {
+                flagsByUid.set(e.uid, {
+                    irrelevant: e.irrelevant === 1,
+                    favorite: e.favorite === 1,
+                    tags: e.tags ? JSON.parse(e.tags) : [],
+                });
+            }
+            const nodes = source.prepare('SELECT uid, irrelevant, tags FROM nodes WHERE deleted_at IS NULL').all();
+            for (const n of nodes) {
+                flagsByUid.set(n.uid, {
+                    irrelevant: n.irrelevant === 1,
+                    favorite: false,
+                    tags: n.tags ? JSON.parse(n.tags) : [],
+                });
+            }
+        }
+        else {
+            const memories = source.prepare('SELECT id, irrelevant, favorite FROM memories').all();
+            for (const m of memories) {
+                flagsByUid.set(m.id, { irrelevant: m.irrelevant === 1, favorite: m.favorite === 1, tags: [] });
+            }
+            const tables = new Set(source.prepare("SELECT name FROM sqlite_master WHERE type='table'").all()
+                .map(t => t.name));
+            if (tables.has('memory_tags')) {
+                const tagRows = source.prepare('SELECT entry_id, tag FROM memory_tags')
+                    .all();
+                for (const row of tagRows) {
+                    const f = flagsByUid.get(row.entry_id);
+                    if (f)
+                        f.tags.push(row.tag);
+                }
+            }
+            if (tables.has('memory_nodes')) {
+                const nodeCols = source.prepare('PRAGMA table_info(memory_nodes)').all()
+                    .map(c => c.name);
+                const nodes = source.prepare(`
+          SELECT id,
+                 ${nodeCols.includes('irrelevant') ? 'irrelevant' : '0 as irrelevant'},
+                 ${nodeCols.includes('favorite') ? 'favorite' : '0 as favorite'}
+          FROM memory_nodes
+        `).all();
+                for (const n of nodes) {
+                    flagsByUid.set(n.id, { irrelevant: n.irrelevant === 1, favorite: n.favorite === 1, tags: [] });
+                }
+            }
+        }
+    }
+    finally {
+        source.close();
+    }
+    const db = store.getDb();
+    const rows = db.prepare(`
+    SELECT id, irrelevant, favorite, tags,
+           json_extract(metadata, '$.hmemUid') AS hmemUid
+    FROM entries
+    WHERE json_extract(metadata, '$.hmemUid') IS NOT NULL AND tombstoned_at IS NULL
+  `).all();
+    let matched = 0;
+    let repaired = 0;
+    const update = db.prepare('UPDATE entries SET irrelevant = ?, favorite = ?, tags = ?, updated_at = ? WHERE id = ?');
+    const tx = db.transaction(() => {
+        for (const row of rows) {
+            const src = flagsByUid.get(row.hmemUid);
+            if (!src)
+                continue; // deleted or unknown in source — leave TIM row untouched
+            matched++;
+            const wantIrrelevant = src.irrelevant ? 1 : 0;
+            const wantFavorite = src.favorite ? 1 : 0;
+            let curTags = [];
+            try {
+                curTags = row.tags ? JSON.parse(row.tags) : [];
+            }
+            catch {
+                warnings.push(`Invalid tags JSON on ${row.id}; treating as empty`);
+            }
+            // Tags: only fill in when TIM lost them entirely — never overwrite
+            // tags that were added in TIM after the import.
+            const wantTags = curTags.length === 0 && src.tags.length > 0 ? src.tags : curTags;
+            const tagsChanged = wantTags !== curTags;
+            if (row.irrelevant === wantIrrelevant && row.favorite === wantFavorite && !tagsChanged) {
+                continue;
+            }
+            repaired++;
+            if (options.dryRun)
+                continue;
+            update.run(wantIrrelevant, wantFavorite, JSON.stringify(wantTags), new Date().toISOString(), row.id);
+            stageEntryRow(db, row.id);
+        }
+    });
+    tx();
+    return {
+        sourcePath,
+        format,
+        dryRun: !!options.dryRun,
+        matched,
+        repaired,
+        warnings,
+    };
 }
 function labelFromMetadata(metadata) {
     const label = metadata.label;

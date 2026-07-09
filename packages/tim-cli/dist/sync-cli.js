@@ -234,9 +234,14 @@ async function cmdSyncStatus() {
     }
 }
 function cmdSyncDisconnect() {
-    const removed = (0, tim_sync_client_1.clearConfig)();
-    if (removed) {
-        console.log('✓ Disconnected — removed sync.json');
+    const removed = (0, tim_sync_client_1.clearSyncConnection)();
+    if (removed.config || removed.state) {
+        const parts = [];
+        if (removed.config)
+            parts.push('sync.json');
+        if (removed.state)
+            parts.push('sync-state.json');
+        console.log(`✓ Disconnected — removed ${parts.join(' and ')}`);
     }
     else {
         console.log('Sync: not configured');

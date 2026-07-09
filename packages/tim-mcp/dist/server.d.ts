@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import type { Express } from 'express';
 import type { Server as HttpServer } from 'node:http';

@@ -19,7 +19,7 @@
     "prepare": "rm -rf packages/*/tsconfig.tsbuildinfo && npm run build",
     "build": "tsc -b",
     "test": "vitest run",
-    "lint": "tsc --noEmit",
+    "lint": "tsc -b --noEmit",
     "clean": "rm -rf packages/*/dist"
   },
   "devDependencies": {

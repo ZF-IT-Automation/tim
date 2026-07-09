@@ -79,6 +79,51 @@ function parseArgs(args) {
     }
     return parsed;
 }
+function hasHelpFlag(args) {
+    return args.some(arg => arg === '-h' || arg === '--help');
+}
+function printCommandHelp(cmd) {
+    switch (cmd) {
+        case 'init':
+            console.log(`Usage: tim init`);
+            return;
+        case 'doctor':
+            console.log(`Usage: tim doctor`);
+            return;
+        case 'stats':
+            console.log(`Usage: tim stats`);
+            return;
+        case 'export':
+            console.log(`Usage: tim export <path.hmem> [--format hmem|text]`);
+            return;
+        case 'import':
+            console.log(`Usage: tim import <path.hmem> [--dry-run] [--deduplicate] [--repair-flags]`);
+            return;
+        case 'record-commit':
+            console.log(`Usage: tim record-commit --cwd <dir> --hash <sha> --message <msg> [--diff <path>]`);
+            return;
+        case 'checkpoint':
+            console.log(`Usage: tim checkpoint --session <id>`);
+            return;
+        case 'rebalance':
+            console.log(`Usage: tim rebalance --session <id>`);
+            return;
+        case 'statusline':
+            console.log(`Usage: tim statusline [--cwd <dir>] [--session <id>] [--format text|hermes]`);
+            return;
+        case 'snapshot':
+            console.log(`Usage: tim snapshot`);
+            return;
+        case 'restore':
+            console.log(`Usage: tim restore [--from <path>] [--list] [--dry-run] [--force]`);
+            return;
+        case 'root-entries':
+            console.log(`Usage: tim root-entries [--type <type>] [--tag <tag>] [--format json|content]`);
+            return;
+        default:
+            return;
+    }
+}
 async function cmdInit() {
     const timDir = (0, tim_core_1.getTimDir)();
     ensureDir(timDir);
@@ -90,13 +135,16 @@ async function cmdInit() {
         console.log('✓ Agent registered: "default"');
     }
     catch { }
-    const installed = (0, install_js_1.installMcpForHosts)(dbPath, true);
+    const { installed, skipped } = (0, install_js_1.installMcpForHosts)(dbPath, true);
     if (installed.length > 0) {
         for (const i of installed) {
             console.log(`✓ MCP config: ${i.tool} → ${i.path}`);
         }
     }
-    else {
+    for (const s of skipped) {
+        console.error(`⚠ Skipped ${s.tool} (${s.path}): ${s.reason}`);
+    }
+    if (installed.length === 0) {
         const mcpConfig = {
             mcpServers: {
                 tim: {
@@ -383,12 +431,19 @@ async function cmdImport(args) {
     const positional = args.filter(a => !a.startsWith('--'));
     const sourcePath = positional[0];
     if (!sourcePath) {
-        console.error('Usage: tim import <path.hmem> [--dry-run] [--deduplicate]');
+        console.error('Usage: tim import <path.hmem> [--dry-run] [--deduplicate] [--repair-flags]');
         process.exit(1);
     }
     const config = (0, tim_core_1.loadConfig)();
     const store = new tim_store_1.TimStore(getDbPath(config));
     try {
+        if (flags['repair-flags'] === 'true') {
+            const report = (0, tim_migrate_1.repairImportFlags)(store, sourcePath, {
+                dryRun: flags['dry-run'] === 'true',
+            });
+            console.log(JSON.stringify(report, null, 2));
+            return;
+        }
         const report = (0, tim_migrate_1.tim_import)(store, sourcePath, {
             dryRun: flags['dry-run'] === 'true',
             deduplicate: flags.deduplicate === 'true',
@@ -477,12 +532,24 @@ async function main() {
     const rest = process.argv.slice(3);
     switch (cmd) {
         case 'init':
+            if (hasHelpFlag(rest)) {
+                printCommandHelp(cmd);
+                break;
+            }
             await cmdInit();
             break;
         case 'doctor':
+            if (hasHelpFlag(rest)) {
+                printCommandHelp(cmd);
+                break;
+            }
             await cmdDoctor();
             break;
         case 'stats':
+            if (hasHelpFlag(rest)) {
+                printCommandHelp(cmd);
+                break;
+            }
             await cmdStats();
             break;
         case 'resolve-project':
@@ -498,15 +565,27 @@ async function main() {
             await (0, new_project_js_1.cmdNewProject)(rest);
             break;
         case 'record-commit':
+            if (hasHelpFlag(rest)) {
+                printCommandHelp(cmd);
+                break;
+            }
             await (0, record_commit_js_1.cmdRecordCommit)(rest);
             break;
         case 'hook':
             await cmdHook(rest);
             break;
         case 'checkpoint':
+            if (hasHelpFlag(rest)) {
+                printCommandHelp(cmd);
+                break;
+            }
             await cmdCheckpoint(rest);
             break;
         case 'rebalance':
+            if (hasHelpFlag(rest)) {
+                printCommandHelp(cmd);
+                break;
+            }
             await cmdRebalance(rest);
             break;
         case 'statusline': {
@@ -522,9 +601,17 @@ async function main() {
             await (0, hermes_statusline_install_js_1.cmdSetupHermesStatusline)(rest);
             break;
         case 'export':
+            if (hasHelpFlag(rest)) {
+                printCommandHelp(cmd);
+                break;
+            }
             await cmdExport(rest);
             break;
         case 'import':
+            if (hasHelpFlag(rest)) {
+                printCommandHelp(cmd);
+                break;
+            }
             await cmdImport(rest);
             break;
         case 'migrate': {
@@ -541,9 +628,17 @@ async function main() {
             break;
         }
         case 'snapshot':
+            if (hasHelpFlag(rest)) {
+                printCommandHelp(cmd);
+                break;
+            }
             await (0, snapshot_js_1.cmdSnapshot)(rest);
             break;
         case 'restore':
+            if (hasHelpFlag(rest)) {
+                printCommandHelp(cmd);
+                break;
+            }
             await (0, restore_js_1.cmdRestore)(rest);
             break;
         case 'sync': {
@@ -552,6 +647,10 @@ async function main() {
             break;
         }
         case 'root-entries':
+            if (hasHelpFlag(rest)) {
+                printCommandHelp(cmd);
+                break;
+            }
             await cmdRootEntries(rest);
             break;
         case 'consolidate':

@@ -1,15 +1,14 @@
 # TIM - Theoretically Infinite Memory
-## Architecture & Feature Plan v1.0
+## Architecture & Workspace Snapshot
 
-> **Status**: Design Phase — 2026-05-29
-> **Author**: bbbee + Brain Mesh (nemotron-3-super-120b, gpt-oss-120b, gemma-4-31b)
-> **Prior Art**: hmem v1.3.8 (its-over-9k), hmem v2 worktree
+> **Status**: Current workspace snapshot — 2026-07-09
+> **Scope**: Core TIM packages in this repo; TIM-sync is split across client/server packages here.
 
 ---
 
 ## 1. Executive Summary
 
-TIM is a **local-first, self-optimizing cognitive OS for AI agents**. It replaces static key-value storage with a **weighted hypergraph** that learns what matters, forgets what doesn't, and converges across devices via **confidence-weighted CRDT sync**. One command: `tim init`. One file: `tim.db`. Every agent speaks MCP. Memory that actually works.
+TIM is a **local-first memory system for AI agents**. The workspace centers on a SQLite-backed store, the `tim` CLI, the `tim-mcp` server, migration tools for legacy `.hmem` data, and support packages for hooks, sync, summarization, and skills.
 
 ---
 
@@ -18,48 +17,45 @@ TIM is a **local-first, self-optimizing cognitive OS for AI agents**. It replace
 ```
 ┌────────────────────────────────────────────────────────────┐
 │                        MCP SERVER                          │
-│  stdio transport — universal agent interface               │
-│  Tools: read, write, search, sync, lease, visualize, ...   │
+│  stdio transport for agent clients                          │
+│  Tools: read, write, search, update, import, export, ...   │
 └──────────────────────┬─────────────────────────────────────┘
                        │
 ┌──────────────────────▼─────────────────────────────────────┐
-│                     TIM KERNEL                             │
-│  Core orchestrator. Routes tool calls → capabilities.      │
-│  Event bus: typed events between modules.                  │
-│  Plugin registry: load/unload capabilities at runtime.     │
+│                     TIM CORE                                │
+│  Shared config, load gates, session helpers, and schema     │
+│  utilities consumed by CLI, MCP, store, hooks, and sync.    │
 └──┬──────────┬──────────┬──────────┬──────────┬─────────────┘
    │          │          │          │          │
-┌──▼───┐  ┌───▼───┐  ┌───▼───┐  ┌───▼───┐  ┌───▼──────┐
-│STORE │  │ SYNC  │  │SEARCH │  │ AGENT │  │  REM     │
-│      │  │       │  │       │  │ MESH  │  │  SLEEP   │
-│SQLite│  │CRDT   │  │FTS5 + │  │P2P    │  │compress, │
-│+Vec  │  │Merkle │  │Vector │  │leases │  │decay,    │
-│      │  │       │  │       │  │       │  │dedup     │
-└──────┘  └───────┘  └───────┘  └───────┘  └──────────┘
+┌──▼───┐  ┌───▼────┐  ┌───▼────┐  ┌───▼───┐  ┌───▼─────┐
+│STORE │  │SYNC CL │  │SYNC SR │  │ CLI   │  │  MCP    │
+│SQLite│  │client  │  │server  │  │tools  │  │server   │
+│+FTS  │  │queue   │  │API     │  │docs   │  │stdio    │
+└──────┘  └────────┘  └────────┘  └───────┘  └─────────┘
 ```
 
 ### Module Structure (npm workspaces)
 
 ```
 packages/
-  tim-core/          # Kernel: event bus, plugin registry, MemoryInterface
-  tim-store/         # SQLite driver + vector index
-  tim-sync/          # CRDT sync protocol, Merkle tree, staging ledger
-  tim-search/        # FTS5 + vector search, hybrid ranking
-  tim-agent-mesh/    # P2P agent memory sharing, leases
-  tim-rem-sleep/     # Background optimization engine
-  tim-cli/           # CLI: init, sync, migrate, doctor, visualize
-  tim-mcp/           # MCP server, tool registration
-  tim-migrate/       # hmem → TIM migration engine
-  tim-visualizer/    # 3D WebGL memory graph (Pro)
+  tim-core/          # shared config, load gates, session helpers, schema utilities
+  tim-store/         # SQLite-backed memory store and query helpers
+  tim-sync-client/   # local sync client and queueing logic
+  tim-sync-server/   # hosted sync server
+  tim-hooks/         # shell and workspace hooks
+  tim-cli/           # user CLI
+  tim-mcp/           # MCP server
+  tim-migrate/       # .hmem import/export and migration helpers
+  tim-summarizer/    # summary generation and batching
+  tim-skills/        # TIM skill distribution helpers
 ```
 
 ### Why This Architecture
 
-- **hmem's sin**: 5439-line store monolith. Every change touches everything.
-- **TIM's fix**: Each package has one job, version-locked interface. Replace `tim-store` without touching `tim-sync`.
-- **Event bus**: Modules don't import each other — they emit and listen. `tim-rem-sleep` listens for `memory:written` events, triggers compression.
-- **Plugin registry**: Third-party capabilities register at runtime. `tim-plugin-notion` syncs memory to Notion. No core changes needed.
+- **Small packages** keep the compile and test surface understandable.
+- **Shared primitives** live in `tim-core`, while user workflows sit in `tim-cli` and `tim-mcp`.
+- **Sync is separated** into client and server packages so the core local workflow does not depend on hosted infrastructure.
+- **Migration is isolated** so legacy `.hmem` handling can evolve without reshaping the store.
 
 ---
 

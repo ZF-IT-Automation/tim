@@ -19,7 +19,7 @@ import {
 } from 'tim-hooks';
 import { installMcpForHosts } from './install.js';
 import { cmdUserInit, cmdUserProfile, cmdUpdateSkills } from './user.js';
-import { tim_export, tim_import, exportToMarkdown, migrateTagsToTypes } from 'tim-migrate';
+import { tim_export, tim_import, repairImportFlags, exportToMarkdown, migrateTagsToTypes } from 'tim-migrate';
 import { cmdSync } from './sync-cli.js';
 import { cmdSnapshot } from './snapshot.js';
 import { cmdRestore } from './restore.js';
@@ -62,6 +62,53 @@ function parseArgs(args: string[]): Record<string, string> {
     }
   }
   return parsed;
+}
+
+function hasHelpFlag(args: string[]): boolean {
+  return args.some(arg => arg === '-h' || arg === '--help');
+}
+
+function printCommandHelp(cmd: string): void {
+  switch (cmd) {
+    case 'init':
+      console.log(`Usage: tim init`);
+      return;
+    case 'doctor':
+      console.log(`Usage: tim doctor`);
+      return;
+    case 'stats':
+      console.log(`Usage: tim stats`);
+      return;
+    case 'export':
+      console.log(`Usage: tim export <path.hmem> [--format hmem|text]`);
+      return;
+    case 'import':
+      console.log(`Usage: tim import <path.hmem> [--dry-run] [--deduplicate] [--repair-flags]`);
+      return;
+    case 'record-commit':
+      console.log(`Usage: tim record-commit --cwd <dir> --hash <sha> --message <msg> [--diff <path>]`);
+      return;
+    case 'checkpoint':
+      console.log(`Usage: tim checkpoint --session <id>`);
+      return;
+    case 'rebalance':
+      console.log(`Usage: tim rebalance --session <id>`);
+      return;
+    case 'statusline':
+      console.log(`Usage: tim statusline [--cwd <dir>] [--session <id>] [--format text|hermes]`);
+      return;
+    case 'snapshot':
+      console.log(`Usage: tim snapshot`);
+      return;
+    case 'restore':
+      console.log(`Usage: tim restore [--from <path>] [--list] [--dry-run] [--force]`);
+      return;
+    case 'root-entries':
+      console.log(`Usage: tim root-entries [--type <type>] [--tag <tag>] [--format json|content]`);
+      return;
+    default:
+      return;
+  }
 }
 
 async function cmdInit() {
@@ -403,7 +450,7 @@ async function cmdImport(args: string[]) {
   const sourcePath = positional[0];
 
   if (!sourcePath) {
-    console.error('Usage: tim import <path.hmem> [--dry-run] [--deduplicate]');
+    console.error('Usage: tim import <path.hmem> [--dry-run] [--deduplicate] [--repair-flags]');
     process.exit(1);
   }
 
@@ -411,6 +458,13 @@ async function cmdImport(args: string[]) {
   const store = new TimStore(getDbPath(config));
 
   try {
+    if (flags['repair-flags'] === 'true') {
+      const report = repairImportFlags(store, sourcePath, {
+        dryRun: flags['dry-run'] === 'true',
+      });
+      console.log(JSON.stringify(report, null, 2));
+      return;
+    }
     const report = tim_import(store, sourcePath, {
       dryRun: flags['dry-run'] === 'true',
       deduplicate: flags.deduplicate === 'true',
@@ -512,12 +566,24 @@ async function main() {
 
   switch (cmd) {
     case 'init':
+      if (hasHelpFlag(rest)) {
+        printCommandHelp(cmd);
+        break;
+      }
       await cmdInit();
       break;
     case 'doctor':
+      if (hasHelpFlag(rest)) {
+        printCommandHelp(cmd);
+        break;
+      }
       await cmdDoctor();
       break;
     case 'stats':
+      if (hasHelpFlag(rest)) {
+        printCommandHelp(cmd);
+        break;
+      }
       await cmdStats();
       break;
     case 'resolve-project':
@@ -533,15 +599,27 @@ async function main() {
       await cmdNewProject(rest);
       break;
     case 'record-commit':
+      if (hasHelpFlag(rest)) {
+        printCommandHelp(cmd);
+        break;
+      }
       await cmdRecordCommit(rest);
       break;
     case 'hook':
       await cmdHook(rest);
       break;
     case 'checkpoint':
+      if (hasHelpFlag(rest)) {
+        printCommandHelp(cmd);
+        break;
+      }
       await cmdCheckpoint(rest);
       break;
     case 'rebalance':
+      if (hasHelpFlag(rest)) {
+        printCommandHelp(cmd);
+        break;
+      }
       await cmdRebalance(rest);
       break;
     case 'statusline': {
@@ -557,9 +635,17 @@ async function main() {
       await cmdSetupHermesStatusline(rest);
       break;
     case 'export':
+      if (hasHelpFlag(rest)) {
+        printCommandHelp(cmd);
+        break;
+      }
       await cmdExport(rest);
       break;
     case 'import':
+      if (hasHelpFlag(rest)) {
+        printCommandHelp(cmd);
+        break;
+      }
       await cmdImport(rest);
       break;
     case 'migrate': {
@@ -577,9 +663,17 @@ async function main() {
       break;
     }
     case 'snapshot':
+      if (hasHelpFlag(rest)) {
+        printCommandHelp(cmd);
+        break;
+      }
       await cmdSnapshot(rest);
       break;
     case 'restore':
+      if (hasHelpFlag(rest)) {
+        printCommandHelp(cmd);
+        break;
+      }
       await cmdRestore(rest);
       break;
     case 'sync': {
@@ -588,6 +682,10 @@ async function main() {
       break;
     }
     case 'root-entries':
+      if (hasHelpFlag(rest)) {
+        printCommandHelp(cmd);
+        break;
+      }
       await cmdRootEntries(rest);
       break;
     case 'consolidate':
