@@ -39,6 +39,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.detectHmemFormat = detectHmemFormat;
 exports.inspectHmemFile = inspectHmemFile;
+exports.inspectHmemManifest = inspectHmemManifest;
 exports.createV2HmemDatabase = createV2HmemDatabase;
 exports.parseLabel = parseLabel;
 exports.formatLabel = formatLabel;
@@ -79,6 +80,79 @@ function inspectHmemFile(sourcePath) {
     catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         return { format: 'unknown', entryCount: 0, error: message };
+    }
+}
+function titleFromContent(content) {
+    return content.split(/\r?\n/, 1)[0]?.trim() || content.trim();
+}
+function inspectHmemManifest(sourcePath) {
+    try {
+        const db = new better_sqlite3_1.default(sourcePath, { readonly: true });
+        try {
+            const format = detectHmemFormat(db);
+            if (format === 'v2') {
+                const rows = db.prepare(`
+          SELECT e.label, e.prefix, e.seq, e.level_1,
+                 COUNT(n.uid) AS nodeCount
+          FROM entries e
+          LEFT JOIN nodes n ON n.root_uid = e.uid AND n.deleted_at IS NULL
+          WHERE e.deleted_at IS NULL
+          GROUP BY e.uid
+          ORDER BY e.prefix ASC, e.seq ASC
+        `).all();
+                return {
+                    format,
+                    entryCount: rows.length,
+                    labels: rows.map(row => ({
+                        label: row.label,
+                        prefix: row.prefix,
+                        seq: row.seq,
+                        title: titleFromContent(row.level_1),
+                        nodeCount: row.nodeCount,
+                    })),
+                };
+            }
+            if (format === 'old') {
+                const tables = new Set(db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all()
+                    .map(t => t.name));
+                const nodeCounts = new Map();
+                if (tables.has('memory_nodes')) {
+                    const rows = db.prepare(`
+            SELECT root_id, COUNT(*) AS nodeCount
+            FROM memory_nodes
+            GROUP BY root_id
+          `).all();
+                    for (const row of rows)
+                        nodeCounts.set(row.root_id, row.nodeCount);
+                }
+                const rows = db.prepare(`
+          SELECT id, prefix, seq, level_1, level_2, level_3, level_4, level_5
+          FROM memories
+          ORDER BY prefix ASC, seq ASC
+        `).all();
+                return {
+                    format,
+                    entryCount: rows.length,
+                    labels: rows.map(row => ({
+                        label: row.id,
+                        prefix: row.prefix,
+                        seq: row.seq,
+                        title: titleFromContent(row.level_1),
+                        nodeCount: nodeCounts.get(row.id) ??
+                            [row.level_2, row.level_3, row.level_4, row.level_5]
+                                .filter(v => typeof v === 'string' && v.trim().length > 0).length,
+                    })),
+                };
+            }
+            return { format, entryCount: 0, labels: [] };
+        }
+        finally {
+            db.close();
+        }
+    }
+    catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return { format: 'unknown', entryCount: 0, labels: [], error: message };
     }
 }
 const V2_SCHEMA = `

@@ -1,11 +1,12 @@
 {
   "name": "tim-skills",
   "version": "0.1.0-alpha",
-  "description": "TIM agent skills for weak models — tim-using, tim-remember, tim-session-start, tim-explain",
+  "description": "TIM agent skills for weak models — using, remember, session-start, explain, hmem import audit",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [
     "dist/**/*",
+    "skills/**/*",
     "!dist/**/__tests__/**"
   ],
   "scripts": {

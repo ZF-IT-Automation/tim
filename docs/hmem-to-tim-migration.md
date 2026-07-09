@@ -122,6 +122,21 @@ tim import /path/to/source.hmem --dry-run --deduplicate
 The final dry run should mostly show already-imported or deduplicated content.
 Investigate any new warnings before declaring the migration done.
 
+Then run the `tim-hmem-import-audit` skill if it is available. It tells the
+agent how to verify imported project structure and repair misplaced nodes with
+TIM tools only, never direct SQL.
+
+If TIM MCP tools are available, prefer this structured sequence:
+
+```text
+tim_import_manifest(source)
+tim_import(source, dryRun:true, deduplicate:true)
+tim_import(source, deduplicate:true)
+tim_import_audit(source)
+tim_project_structure(label)
+tim_repair_section(...) / tim_dry_run_move(...) / tim_move_entry(...)
+```
+
 If the MCP client will use TIM immediately, verify the TIM MCP config too:
 
 ```bash

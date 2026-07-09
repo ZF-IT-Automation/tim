@@ -257,6 +257,34 @@ const TimImportSchema = zod_1.z.object({
     dryRun: zod_1.z.boolean().optional().default(false),
     deduplicate: zod_1.z.boolean().optional().default(false),
 });
+const TimImportManifestSchema = zod_1.z.object({
+    source: zod_1.z.string().describe('Path to .hmem file'),
+});
+const TimProjectStructureSchema = zod_1.z.object({
+    label: zod_1.z.string().describe('Project label/alias/name, e.g. P0062'),
+});
+const TimImportAuditSchema = zod_1.z.object({
+    source: zod_1.z.string().optional().describe('Optional .hmem source path to compare labels'),
+    labels: zod_1.z.array(zod_1.z.string()).optional().default([])
+        .describe('Project labels to audit. Defaults to project labels from source, else imported projects.'),
+    expectedSections: zod_1.z.array(zod_1.z.string()).optional().default([
+        'Overview', 'Context', 'Decisions', 'Tasks', 'Bugs', 'Errors', 'Log', 'Next Steps', 'Ideas', 'Rules',
+    ]),
+});
+const TimDryRunMoveSchema = zod_1.z.object({
+    id: zod_1.z.string().describe('Entry ID to move'),
+    newParentId: zod_1.z.string().nullable().optional().default(null)
+        .describe('New parent ID, or null for root'),
+    order: zod_1.z.number().optional(),
+});
+const TimRepairSectionSchema = zod_1.z.object({
+    project: zod_1.z.string().describe('Project label/alias/name, e.g. P0062'),
+    title: zod_1.z.string().describe('Section title to ensure under the project'),
+    dryRun: zod_1.z.boolean().optional().default(false),
+    moveChildrenFromIds: zod_1.z.array(zod_1.z.string()).optional().default([])
+        .describe('Optional entry IDs to move under the section after ensuring it exists'),
+    metadata: zod_1.z.record(zod_1.z.unknown()).optional().default({}),
+});
 const TimDoctorSchema = zod_1.z.object({});
 const TimSessionStartSchema = zod_1.z.object({
     sessionId: zod_1.z.string(),
@@ -499,6 +527,31 @@ exports.TOOL_DEFS = [
         schema: TimImportSchema,
     },
     {
+        name: 'tim_import_manifest',
+        description: 'Read a .hmem file without importing it: format, labels, titles, and node counts.',
+        schema: TimImportManifestSchema,
+    },
+    {
+        name: 'tim_project_structure',
+        description: 'Return one project structure: root, direct sections, duplicate sections, loose direct children, and imported hmem provenance.',
+        schema: TimProjectStructureSchema,
+    },
+    {
+        name: 'tim_import_audit',
+        description: 'Post-import audit for hmem migrations: missing sections, duplicate sections, loose imported nodes, health issues, and repair suggestions.',
+        schema: TimImportAuditSchema,
+    },
+    {
+        name: 'tim_dry_run_move',
+        description: 'Preview tim_move_entry impact without writing: current parent/depth, target parent/depth, descendant count, and cycle risk.',
+        schema: TimDryRunMoveSchema,
+    },
+    {
+        name: 'tim_repair_section',
+        description: 'Ensure a canonical project section exists and optionally move specified children into it. Uses TIM writes/moves, never SQL edits.',
+        schema: TimRepairSectionSchema,
+    },
+    {
         name: 'tim_doctor',
         description: 'Run comprehensive diagnostics: config, DB, API connectivity.',
         schema: TimDoctorSchema,
@@ -660,6 +713,133 @@ function summarizeEntry(entry, includeBody) {
     }
     const { content, ...rest } = entry;
     return { ...rest, summary };
+}
+function metadataString(value) {
+    return typeof value === 'string' ? value : '';
+}
+function metadataKind(entry) {
+    return metadataString(entry.metadata.kind);
+}
+async function resolveProjectEntry(store, query) {
+    const resolved = await store.resolveProjectLabel(query);
+    if (resolved.status === 'ambiguous') {
+        throw new Error(`ambiguous project: ${resolved.labels.join(', ')}`);
+    }
+    if (resolved.status !== 'found') {
+        throw new Error(`project not found: ${query}`);
+    }
+    const entry = await store.read(resolved.label, { includeChildren: false });
+    if (!entry)
+        throw new Error(`project not found: ${resolved.label}`);
+    return { label: resolved.label, entry };
+}
+async function childCount(store, parentId) {
+    return (await store.getChildren(parentId)).length;
+}
+async function buildProjectStructure(store, label) {
+    const { label: resolvedLabel, entry: project } = await resolveProjectEntry(store, label);
+    const directChildren = await store.getChildren(project.id);
+    const sections = [];
+    const looseDirectChildren = [];
+    const titleCounts = new Map();
+    for (const child of directChildren) {
+        titleCounts.set(child.title, (titleCounts.get(child.title) ?? 0) + 1);
+    }
+    for (const child of directChildren) {
+        const item = {
+            id: child.id,
+            title: child.title,
+            kind: metadataKind(child),
+            hmemUid: metadataString(child.metadata.hmemUid),
+            childCount: await childCount(store, child.id),
+        };
+        if (metadataKind(child) === 'section') {
+            sections.push(item);
+        }
+        else {
+            looseDirectChildren.push(item);
+        }
+    }
+    const duplicateSections = [...titleCounts.entries()]
+        .filter(([, count]) => count > 1)
+        .map(([title, count]) => ({ title, count }));
+    return {
+        label: resolvedLabel,
+        project: {
+            id: project.id,
+            title: project.title,
+            kind: metadataKind(project),
+            hmemUid: metadataString(project.metadata.hmemUid),
+        },
+        sections,
+        looseDirectChildren,
+        duplicateSections,
+        directChildCount: directChildren.length,
+    };
+}
+function countDescendants(store, id) {
+    const row = store.getDb().prepare(`
+    WITH RECURSIVE descendants(id) AS (
+      SELECT id FROM entries WHERE parent_id = ? AND tombstoned_at IS NULL
+      UNION ALL
+      SELECT e.id FROM entries e JOIN descendants d ON e.parent_id = d.id
+      WHERE e.tombstoned_at IS NULL
+    )
+    SELECT COUNT(*) AS count FROM descendants
+  `).get(id);
+    return row.count;
+}
+function isDescendantOf(store, maybeDescendantId, ancestorId) {
+    const row = store.getDb().prepare(`
+    WITH RECURSIVE ancestors(id, parent_id) AS (
+      SELECT id, parent_id FROM entries WHERE id = ?
+      UNION ALL
+      SELECT e.id, e.parent_id FROM entries e JOIN ancestors a ON e.id = a.parent_id
+      WHERE e.tombstoned_at IS NULL
+    )
+    SELECT 1 AS found FROM ancestors WHERE id = ? LIMIT 1
+  `).get(maybeDescendantId, ancestorId);
+    return !!row;
+}
+async function dryRunMove(store, id, newParentId, order) {
+    const entry = await store.read(id, { includeChildren: false });
+    if (!entry)
+        throw new Error(`entry not found: ${id}`);
+    const parent = entry.parentId ? await store.read(entry.parentId, { includeChildren: false }) : null;
+    const nextParent = newParentId ? await store.read(newParentId, { includeChildren: false }) : null;
+    if (newParentId && !nextParent)
+        throw new Error(`parent not found: ${newParentId}`);
+    const cycleRisk = newParentId ? (newParentId === id || isDescendantOf(store, newParentId, id)) : false;
+    const nextDepth = nextParent ? Math.min(nextParent.depth + 1, 5) : 1;
+    return {
+        wouldMove: entry.parentId !== (newParentId ?? null) || order !== undefined,
+        cycleRisk,
+        descendantCount: countDescendants(store, id),
+        current: {
+            id: entry.id,
+            title: entry.title,
+            parentId: entry.parentId,
+            parentTitle: parent?.title ?? null,
+            depth: entry.depth,
+        },
+        next: {
+            parentId: newParentId ?? null,
+            parentTitle: nextParent?.title ?? null,
+            depth: nextDepth,
+            order: order ?? null,
+        },
+    };
+}
+function importedProjectLabels(store) {
+    const rows = store.getDb().prepare(`
+    SELECT DISTINCT json_extract(metadata, '$.label') AS label
+    FROM entries
+    WHERE tombstoned_at IS NULL
+      AND json_extract(metadata, '$.prefix') = 'P'
+      AND json_extract(metadata, '$.hmemUid') IS NOT NULL
+    ORDER BY label ASC
+  `).all();
+    return rows.map(r => r.label).filter((v) => !!v);
 }
 function parseProjectContent(entry) {
     const combined = entry.content ? `${entry.title}\n${entry.content}` : entry.title;
@@ -1123,11 +1303,13 @@ const WRITE_TOOLS = new Set([
     'tim_record_commit',
     'tim_rename_entry', 'tim_move_entry', 'tim_update_many',
     'tim_tag_add', 'tim_tag_remove', 'tim_tag_rename', 'tim_import',
+    'tim_repair_section',
     'tim_create_project', 'tim_error_log',
 ]);
 const READ_TOOLS = new Set([
     'tim_read', 'tim_search', 'tim_trace', 'tim_health', 'tim_stats', 'tim_section_children',
-    'tim_export', 'tim_doctor', 'tim_sync', 'tim_load_project', 'tim_read_project',
+    'tim_export', 'tim_import_manifest', 'tim_project_structure', 'tim_import_audit',
+    'tim_dry_run_move', 'tim_doctor', 'tim_sync', 'tim_load_project', 'tim_read_project',
     'tim_show',
     'tim_show_unsummarized', 'tim_show_all_unsummarized', 'tim_show_untagged',
     'tim_hook_prompt_submit',
@@ -2019,6 +2201,130 @@ async function createMcpServer(options = {}) {
                     }
                     const report = (0, tim_migrate_1.tim_import)(s, source, { dryRun, deduplicate });
                     return { content: [{ type: 'text', text: formatToolResponse(report) }] };
+                }
+                case 'tim_import_manifest': {
+                    const { source } = TimImportManifestSchema.parse(args);
+                    if (!fs.existsSync(source)) {
+                        return errorResult(`Source not found: ${source}`);
+                    }
+                    const manifest = (0, tim_migrate_1.inspectHmemManifest)(source);
+                    return { content: [{ type: 'text', text: formatToolResponse(manifest) }] };
+                }
+                case 'tim_project_structure': {
+                    const { label } = TimProjectStructureSchema.parse(args);
+                    const structure = await buildProjectStructure(s, label);
+                    return { content: [{ type: 'text', text: formatToolResponse(structure) }] };
+                }
+                case 'tim_import_audit': {
+                    const { source, labels, expectedSections } = TimImportAuditSchema.parse(args);
+                    const manifest = source && fs.existsSync(source) ? (0, tim_migrate_1.inspectHmemManifest)(source) : null;
+                    const auditLabels = labels.length > 0
+                        ? labels
+                        : (manifest?.labels
+                            .filter((l) => l.prefix === 'P')
+                            .map((l) => l.label) ?? importedProjectLabels(s));
+                    const health = await s.health();
+                    const projects = [];
+                    const findings = [];
+                    for (const label of auditLabels) {
+                        try {
+                            const structure = await buildProjectStructure(s, label);
+                            const sectionTitles = new Set(structure.sections.map(sec => sec.title));
+                            const missingSections = expectedSections.filter(title => !sectionTitles.has(title));
+                            const looseCount = structure.looseDirectChildren.length;
+                            const duplicateCount = structure.duplicateSections.length;
+                            if (missingSections.length > 0) {
+                                findings.push(`${label}: missing sections: ${missingSections.join(', ')}`);
+                            }
+                            if (looseCount > 0) {
+                                findings.push(`${label}: ${looseCount} loose direct children under project root`);
+                            }
+                            if (duplicateCount > 0) {
+                                findings.push(`${label}: ${duplicateCount} duplicate section title groups`);
+                            }
+                            projects.push({ ...structure, missingSections });
+                        }
+                        catch (err) {
+                            findings.push(`${label}: ${err.message}`);
+                            projects.push({ label, error: err.message, missingSections: expectedSections });
+                        }
+                    }
+                    return {
+                        content: [{
+                                type: 'text',
+                                text: formatToolResponse({
+                                    source: source ?? null,
+                                    manifest,
+                                    projects,
+                                    health: {
+                                        brokenLinks: health.brokenLinks,
+                                        orphanEntries: health.orphanEntries,
+                                        ftsIntegrity: health.ftsIntegrity,
+                                        issues: health.issues,
+                                    },
+                                    findings,
+                                    suggestedTools: [
+                                        'tim_project_structure',
+                                        'tim_repair_section',
+                                        'tim_dry_run_move',
+                                        'tim_move_entry',
+                                        'tim_read',
+                                        'tim_update',
+                                        'tim_link',
+                                    ],
+                                }),
+                            }],
+                    };
+                }
+                case 'tim_dry_run_move': {
+                    const { id, newParentId, order } = TimDryRunMoveSchema.parse(args);
+                    const plan = await dryRunMove(s, id, newParentId ?? null, order);
+                    return { content: [{ type: 'text', text: formatToolResponse(plan) }] };
+                }
+                case 'tim_repair_section': {
+                    const { project, title, dryRun, moveChildrenFromIds, metadata } = TimRepairSectionSchema.parse(args);
+                    const { label, entry: projectEntry } = await resolveProjectEntry(s, project);
+                    const children = await s.getChildren(projectEntry.id);
+                    const matches = children.filter(child => child.title === title);
+                    if (matches.length > 1) {
+                        return errorResult(`Duplicate section title '${title}' under ${label}; resolve duplicates first`);
+                    }
+                    let section = matches[0];
+                    let created = false;
+                    if (!section && !dryRun) {
+                        section = await s.write(title, {
+                            parentId: projectEntry.id,
+                            tags: ['#section', '#schema'],
+                            metadata: { ...metadata, kind: 'section' },
+                        });
+                        created = true;
+                    }
+                    const moves = [];
+                    for (const id of moveChildrenFromIds) {
+                        const plan = await dryRunMove(s, id, section?.id ?? projectEntry.id);
+                        if (!dryRun && section) {
+                            const moved = s.curate().moveEntry(id, section.id);
+                            moves.push({ id, moved: true, newParentId: section.id, title: moved.title });
+                        }
+                        else {
+                            moves.push({ id, moved: false, plan });
+                        }
+                    }
+                    return {
+                        content: [{
+                                type: 'text',
+                                text: formatToolResponse({
+                                    project: label,
+                                    title,
+                                    dryRun,
+                                    created,
+                                    section: section
+                                        ? { id: section.id, title: section.title, kind: metadataKind(section) }
+                                        : { id: null, title, kind: 'section' },
+                                    moves,
+                                }),
+                            }],
+                    };
                 }
                 case 'tim_doctor': {
                     const report = await s.health();

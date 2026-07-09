@@ -5,8 +5,19 @@ export interface HmemFormatInfo {
     entryCount: number;
     error?: string;
 }
+export interface HmemManifestLabel {
+    label: string;
+    prefix: string;
+    seq: number;
+    title: string;
+    nodeCount: number;
+}
+export interface HmemManifest extends HmemFormatInfo {
+    labels: HmemManifestLabel[];
+}
 export declare function detectHmemFormat(db: Database.Database): HmemFormat;
 export declare function inspectHmemFile(sourcePath: string): HmemFormatInfo;
+export declare function inspectHmemManifest(sourcePath: string): HmemManifest;
 export declare function createV2HmemDatabase(targetPath: string): Database.Database;
 export declare function parseLabel(label: string): {
     prefix: string;
