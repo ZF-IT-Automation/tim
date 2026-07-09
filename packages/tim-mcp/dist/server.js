@@ -525,7 +525,7 @@ exports.TOOL_DEFS = [
     },
     {
         name: 'tim_import',
-        description: 'Import entries from a .hmem SQLite file.',
+        description: 'Import entries from a .hmem SQLite file. Always call tim_import_manifest first, then tim_import with dryRun:true, then live import, then tim_import_audit. Never use raw SQL for hmem migration.',
         schema: TimImportSchema,
     },
     {
@@ -624,7 +624,7 @@ exports.TOOL_DEFS = [
     },
     {
         name: 'tim_move_entry',
-        description: 'Move an entry under a new parent and cascade depth updates to descendants.',
+        description: 'Move an entry under a new parent and cascade depth updates to descendants. Preview with tim_dry_run_move before moving imported or ambiguous nodes.',
         schema: TimMoveEntrySchema,
     },
     {
