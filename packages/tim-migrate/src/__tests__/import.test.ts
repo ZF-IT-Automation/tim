@@ -114,7 +114,13 @@ describe('tim_import', () => {
 
     const meta = JSON.parse(root.metadata);
     expect(meta.label).toBe('P0001');
+    expect(meta.kind).toBe('project');
     expect(meta.hmemUid).toBe(rootUid);
+
+    const otherRoot = store.getDb().prepare(
+      "SELECT metadata FROM entries WHERE json_extract(metadata, '$.label') = 'L0001'",
+    ).get() as { metadata: string };
+    expect(JSON.parse(otherRoot.metadata).kind).toBeUndefined();
 
     const child = store.getDb().prepare('SELECT * FROM entries WHERE id = ?').get(childUid) as {
       parent_id: string;
@@ -146,6 +152,11 @@ describe('tim_import', () => {
     ).all(root.id) as { title: string; content: string }[];
     expect(children[0].title).toBe('Old child');
     expect(children[0].content).toBe('');
+
+    const otherRoot = store.getDb().prepare(
+      "SELECT metadata FROM entries WHERE json_extract(metadata, '$.label') = 'L0001'",
+    ).get() as { metadata: string };
+    expect(JSON.parse(otherRoot.metadata).kind).toBeUndefined();
   });
 
   it('dry run reports counts without writing', async () => {
@@ -176,6 +187,82 @@ describe('tim_import', () => {
       "SELECT id FROM entries WHERE parent_id IS NULL AND json_extract(metadata, '$.label') = 'P0001'",
     ).all() as { id: string }[];
     expect(roots).toHaveLength(1);
+
+    const root = store.getDb().prepare(
+      "SELECT metadata FROM entries WHERE id = ?",
+    ).get(roots[0].id) as { metadata: string };
+    expect(JSON.parse(root.metadata).kind).toBe('project');
+  });
+
+  it('deduplicate metadata-only v2 project-kind repair counts as a change', async () => {
+    await store.write('Imported root', {
+      metadata: { label: 'P0001', prefix: 'P', seq: 1 },
+    });
+
+    const filePath = path.join(tmpDir, 'dedup-kind.hmem');
+    createV2Fixture(filePath);
+
+    const report = tim_import(store, filePath, { deduplicate: true });
+    expect(report.changedCount).toBe(1);
+    expect(report.skipped).toBe(0);
+
+    const root = store.getDb().prepare(
+      "SELECT metadata FROM entries WHERE json_extract(metadata, '$.label') = 'P0001'",
+    ).get() as { metadata: string };
+    expect(JSON.parse(root.metadata).kind).toBe('project');
+  });
+
+  it('dry-run deduplicate metadata-only v2 repair reports a prospective change', async () => {
+    await store.write('Imported root', {
+      metadata: { label: 'P0001', prefix: 'P', seq: 1 },
+    });
+
+    const filePath = path.join(tmpDir, 'dedup-kind-dry.hmem');
+    createV2Fixture(filePath);
+
+    const report = tim_import(store, filePath, { deduplicate: true, dryRun: true });
+    expect(report.changedCount).toBe(1);
+    expect(report.skipped).toBe(0);
+
+    const root = store.getDb().prepare(
+      "SELECT metadata FROM entries WHERE json_extract(metadata, '$.label') = 'P0001'",
+    ).get() as { metadata: string };
+    expect(JSON.parse(root.metadata).kind).toBeUndefined();
+  });
+
+  it('deduplicates old roots and marks only P roots as projects', async () => {
+    await store.write('Existing legacy root', {
+      metadata: { label: 'P0042', prefix: 'P', seq: 42 },
+    });
+
+    const filePath = path.join(tmpDir, 'old-dedup.hmem');
+    createOldFixture(filePath);
+
+    const report = tim_import(store, filePath, { deduplicate: true });
+    expect(report.conflicts.some(c => c.label === 'P0042' && c.action === 'merged')).toBe(true);
+
+    const root = store.getDb().prepare(
+      "SELECT metadata FROM entries WHERE json_extract(metadata, '$.label') = 'P0042'",
+    ).get() as { metadata: string };
+    expect(JSON.parse(root.metadata).kind).toBe('project');
+  });
+
+  it('deduplicate metadata-only old project-kind repair counts as a change', async () => {
+    await store.write('Old root', {
+      metadata: { label: 'P0042', prefix: 'P', seq: 42 },
+    });
+
+    const filePath = path.join(tmpDir, 'old-dedup-kind.hmem');
+    createOldFixture(filePath);
+
+    const report = tim_import(store, filePath, { deduplicate: true });
+    expect(report.changedCount).toBe(1);
+    expect(report.skipped).toBe(0);
+
+    const root = store.getDb().prepare(
+      "SELECT metadata FROM entries WHERE json_extract(metadata, '$.label') = 'P0042'",
+    ).get() as { metadata: string };
+    expect(JSON.parse(root.metadata).kind).toBe('project');
   });
 
   it('remaps IDs on collision when deduplicate is false', async () => {

@@ -105,6 +105,25 @@ interface OldHmemEntry {
   updated_at: string | null;
 }
 
+function shouldMarkAsProjectRoot(prefix: string): boolean {
+  return prefix === 'P';
+}
+
+function readEntryMetadata(store: TimStore, id: string): Record<string, unknown> {
+  const row = store.getDb().prepare(
+    'SELECT metadata FROM entries WHERE id = ?',
+  ).get(id) as { metadata: string } | undefined;
+  return row?.metadata
+    ? JSON.parse(row.metadata) as Record<string, unknown>
+    : {};
+}
+
+function writeEntryMetadata(store: TimStore, id: string, metadata: Record<string, unknown>): void {
+  store.getDb().prepare(
+    'UPDATE entries SET metadata = ?, updated_at = ? WHERE id = ?',
+  ).run(JSON.stringify(metadata), new Date().toISOString(), id);
+}
+
 function findByLabel(store: TimStore, label: string): string | null {
   const row = store.getDb().prepare(
     "SELECT id FROM entries WHERE json_extract(metadata, '$.label') = ? AND tombstoned_at IS NULL",
@@ -275,12 +294,24 @@ function importV2(
       if (existingLabel && options.deduplicate) {
         idMap.set(e.uid, existingLabel);
         const { title, body } = splitTitleBody(e.level_1);
-        if (contentChanged(store, existingLabel, body)) {
+        const shouldMarkProject = shouldMarkAsProjectRoot(e.prefix);
+        const metadata = readEntryMetadata(store, existingLabel);
+        const metadataNeedsRepair = shouldMarkProject && metadata.kind !== 'project';
+        const contentNeedsUpdate = contentChanged(store, existingLabel, body);
+
+        if (contentNeedsUpdate || metadataNeedsRepair) {
           changedCount++;
           if (!options.dryRun) {
-            store.getDb().prepare(
-              'UPDATE entries SET title = ?, content = ?, updated_at = ? WHERE id = ?',
-            ).run(title, body, new Date().toISOString(), existingLabel);
+            const nextMetadata = metadataNeedsRepair
+              ? { ...metadata, kind: 'project' }
+              : metadata;
+            if (contentNeedsUpdate) {
+              store.getDb().prepare(
+                'UPDATE entries SET title = ?, content = ?, updated_at = ?, metadata = ? WHERE id = ?',
+              ).run(title, body, new Date().toISOString(), JSON.stringify(nextMetadata), existingLabel);
+            } else {
+              writeEntryMetadata(store, existingLabel, nextMetadata);
+            }
             stageEntryRow(store.getDb(), existingLabel);
           }
         } else {
@@ -319,6 +350,7 @@ function importV2(
         irrelevant: e.irrelevant === 1,
         favorite: e.favorite === 1,
         metadata: {
+          ...(shouldMarkAsProjectRoot(e.prefix) ? { kind: 'project' } : {}),
           label: e.label,
           prefix: e.prefix,
           seq: e.seq,
@@ -541,7 +573,18 @@ function importOld(
 
       if (existingLabel && options.deduplicate) {
         idMap.set(hmem.id, existingLabel);
-        skipped++;
+        const shouldMarkProject = shouldMarkAsProjectRoot(hmem.prefix);
+        const metadata = readEntryMetadata(store, existingLabel);
+        const metadataNeedsRepair = shouldMarkProject && metadata.kind !== 'project';
+        if (metadataNeedsRepair) {
+          changedCount++;
+          if (!options.dryRun) {
+            writeEntryMetadata(store, existingLabel, { ...metadata, kind: 'project' });
+            stageEntryRow(store.getDb(), existingLabel);
+          }
+        } else {
+          skipped++;
+        }
         conflicts.push({ label, action: 'merged', detail: existingLabel });
         continue;
       }
@@ -574,6 +617,7 @@ function importOld(
           irrelevant: hmem.irrelevant === 1,
           favorite: hmem.favorite === 1,
           metadata: {
+            ...(shouldMarkAsProjectRoot(hmem.prefix) ? { kind: 'project' } : {}),
             label,
             prefix: hmem.prefix,
             seq: hmem.seq,
