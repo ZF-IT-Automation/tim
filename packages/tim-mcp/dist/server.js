@@ -2334,6 +2334,7 @@ async function createMcpServer(options = {}) {
                     const stats = await s.stats();
                     const agents = await s.getAgents();
                     const errorStats = getErrorLogger().getStats({ hours: 24, limit: 5 });
+                    const representedIssues = new Set([...report.blockers, ...report.warnings]);
                     const text = [
                         `TIM Doctor — ${DB_PATH}`,
                         `Entries: ${stats.totalEntries} | Edges: ${stats.totalEdges}`,
@@ -2345,7 +2346,7 @@ async function createMcpServer(options = {}) {
                         `Agents registered: ${agents.length}`,
                         `Errors (24h): ${errorStats.totalErrors} | Rate: ${errorStats.errorRate}/h`,
                         errorStats.alerts.length > 0 ? `⚠ Alerts: ${errorStats.alerts.join('; ')}` : null,
-                        ...report.issues.map(i => `⚠ ${i}`),
+                        ...report.issues.filter(issue => !representedIssues.has(issue)).map(i => `⚠ ${i}`),
                     ].filter(Boolean).join('\n');
                     return { content: [{ type: 'text', text }] };
                 }

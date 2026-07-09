@@ -22,4 +22,13 @@ describe('health severity', () => {
     expect(health.status).toBe('WARN');
     expect(health.warnings.join('\n')).toMatch(/orphan/i);
   });
+
+  it('returns BLOCKER when the FTS integrity check fails', async () => {
+    store = new TimStore(':memory:');
+    store.getDb().exec('DROP TABLE IF EXISTS fts_entries');
+    const health = await store.health();
+    expect(health.status).toBe('BLOCKER');
+    expect(health.blockers).toEqual(['FTS5 index integrity failure']);
+    expect(health.warnings).toEqual([]);
+  });
 });
