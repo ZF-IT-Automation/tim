@@ -1,1 +1,1 @@
-Usage: tim import <path.hmem> [--dry-run] [--deduplicate]
+Usage: tim import <path.hmem> [--dry-run] [--deduplicate] [--repair-flags]

@@ -344,12 +344,12 @@ Usage: tim export <path.hmem> [--format hmem|text]
 
 ---
 
-### 15. `tim import <path> [--dry-run] [--deduplicate]`
+### 15. `tim import <path> [--dry-run] [--deduplicate] [--repair-flags]`
 
 Import from a `.hmem` file into the live database.
 
 ```
-Usage: tim import <path.hmem> [--dry-run] [--deduplicate]
+Usage: tim import <path.hmem> [--dry-run] [--deduplicate] [--repair-flags]
 ```
 
 **Flags:**
@@ -358,6 +358,11 @@ Usage: tim import <path.hmem> [--dry-run] [--deduplicate]
 |------|-------------|
 | `--dry-run` | Preview import without writing |
 | `--deduplicate` | Skip entries that already exist |
+| `--repair-flags` | Repair already-imported hmem rows whose flags/tags were corrupted by an earlier migration |
+
+For hmem-to-TIM migrations, agents should follow
+[`docs/hmem-to-tim-migration.md`](hmem-to-tim-migration.md) before writing to
+the live TIM database.
 
 ---
 

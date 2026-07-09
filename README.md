@@ -42,6 +42,13 @@ The default database path is `~/.tim/tim.db`. Override it with `TIM_DB_PATH` if 
 
 Run `tim <command> --help` for command-specific usage. Help for `init`, `doctor`, `stats`, and `import` exits before any database work.
 
+## Migrating From hmem
+
+Agents helping hmem users switch to TIM should follow the migration runbook in
+[`docs/hmem-to-tim-migration.md`](docs/hmem-to-tim-migration.md). The safe flow
+is: `tim doctor`, `tim import <file.hmem> --dry-run --deduplicate`,
+`tim snapshot`, then `tim import <file.hmem> --deduplicate`.
+
 ## MCP Setup
 
 `tim init` writes `~/.tim/mcp.json` with a `tim-mcp` entry that points your MCP client at the local database. If you prefer to wire it manually, the server binary is `tim-mcp` and it reads `TIM_DB_PATH`.
