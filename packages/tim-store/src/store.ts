@@ -2017,6 +2017,32 @@ export class TimStore implements MemoryInterface {
               const { winner } = resolveLWW(local, record);
               if (winner !== record) continue;
             }
+            // Slot-collision guard for batch-summaries (see sync-methods.ts applyRemoteEntry)
+            let slotCollisionEntry: RowEntry | undefined;
+            if (entry.metadata) {
+              const meta = typeof entry.metadata === 'string' ? JSON.parse(entry.metadata) : entry.metadata;
+              if (meta.kind === 'batch-summary' && meta.batch_index !== undefined && entry.parent_id) {
+                slotCollisionEntry = this.db.prepare(
+                  `SELECT * FROM entries
+                   WHERE parent_id = ? AND json_extract(metadata, '$.batch_index') = ?
+                     AND json_extract(metadata, '$.kind') = 'batch-summary'
+                     AND id != ?`,
+                ).get(entry.parent_id, meta.batch_index, entry.id) as RowEntry | undefined;
+                if (slotCollisionEntry) {
+                  const localSlot = recordFromPayload(
+                    slotCollisionEntry.id, 'entry',
+                    slotCollisionEntry.tombstoned_at ? 'delete' : 'upsert',
+                    JSON.stringify(slotCollisionEntry),
+                    entryLocalLwwTimestamp(slotCollisionEntry),
+                    String(slotCollisionEntry.lww_device ?? 'local'),
+                    Number(slotCollisionEntry.confidence ?? 1),
+                  );
+                  const { winner } = resolveLWW(localSlot, record);
+                  if (winner === localSlot) continue;
+                  deleteEntry.run(slotCollisionEntry.id);
+                }
+              }
+            }
             const appliedUpdatedAt = new Date(record.lwwTimestamp).toISOString();
             upsertEntry.run(
               entry.id, entry.parent_id, entry.title ?? '', entry.content, entry.content_type,

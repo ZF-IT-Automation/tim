@@ -239,6 +239,19 @@ export const MIGRATIONS: { version: number; sql: string }[] = [
         AND tombstoned_at IS NULL;
     `,
   },
+  {
+    version: 12,
+    sql: `
+      DROP INDEX IF EXISTS idx_batch_unique;
+      CREATE UNIQUE INDEX idx_batch_unique ON entries (
+        parent_id,
+        CAST(json_extract(metadata, '$.batch_index') AS INTEGER)
+      )
+      WHERE json_extract(metadata, '$.kind') = 'batch-summary'
+        AND tombstoned_at IS NULL
+        AND irrelevant = 0;
+    `,
+  },
 ];
 
 export function getCurrentVersion(): number {
