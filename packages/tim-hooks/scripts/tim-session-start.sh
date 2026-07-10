@@ -12,7 +12,7 @@
 # Output formats (auto-detected from stdin payload shape):
 #   Claude Code  → {hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: "…"}}
 #   Cursor CLI   → {additional_context: "…"}
-#   Codex CLI    → plain text directive (stdout)
+#   Hermes/Codex → {context: "…"}  (JSON — plain text broke Hermes session binding, PITFALLS-45)
 #   Fallback     → {additional_context: "…"}  (Cursor-safe, also works as plain text)
 
 set -euo pipefail
@@ -52,21 +52,23 @@ fi
 
 # ── Session rotation: update .tim-project with current session ──
 # Prevents stale cron session IDs from persisting in the marker (PITFALLS-46).
+# cwd/session are passed via env, never interpolated into the JS source —
+# paths or session ids containing quotes/backslashes must not break rotation.
 if [[ -n "$hook_session" ]]; then
-  node -e "
-    const fs = require('fs');
-    const path = require('path');
-    const p = path.join('$cwd', '.tim-project');
+  TIM_HOOK_CWD="$cwd" TIM_HOOK_SESSION="$hook_session" node -e '
+    const fs = require("fs");
+    const path = require("path");
+    const p = path.join(process.env.TIM_HOOK_CWD, ".tim-project");
     if (fs.existsSync(p)) {
       try {
-        const m = JSON.parse(fs.readFileSync(p,'utf8'));
-        if (m.session !== '$hook_session') {
-          m.session = '$hook_session';
+        const m = JSON.parse(fs.readFileSync(p, "utf8"));
+        if (m.session !== process.env.TIM_HOOK_SESSION) {
+          m.session = process.env.TIM_HOOK_SESSION;
           fs.writeFileSync(p, JSON.stringify(m, null, 2));
         }
-      } catch(e) {}
+      } catch (e) {}
     }
-  " 2>/dev/null || true
+  ' 2>/dev/null || true
 fi
 
 # --- Detect harness and format output ---

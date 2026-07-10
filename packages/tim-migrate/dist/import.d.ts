@@ -45,5 +45,21 @@ export interface RepairReport {
 export declare function repairImportFlags(store: TimStore, sourcePath: string, options?: {
     dryRun?: boolean;
 }): RepairReport;
+export interface ProjectKindRepairReport {
+    dryRun: boolean;
+    matched: number;
+    repaired: number;
+    labels: string[];
+}
+/**
+ * Backfill metadata.kind = "project" on already-imported P-prefix root
+ * entries. Imports before fix/import-project-kind wrote P* roots without
+ * kind, so resolveProjectLabel/requireProject/ensureInboxProject could not
+ * see them and crashed on bind. Operates purely on the TIM DB — no source
+ * .hmem file needed. Repaired rows are staged so the fix syncs.
+ */
+export declare function repairProjectKind(store: TimStore, options?: {
+    dryRun?: boolean;
+}): ProjectKindRepairReport;
 export declare function labelFromMetadata(metadata: Record<string, unknown>): string | null;
 //# sourceMappingURL=import.d.ts.map

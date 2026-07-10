@@ -6,6 +6,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.tim_import = tim_import;
 exports.repairImportFlags = repairImportFlags;
+exports.repairProjectKind = repairProjectKind;
 exports.labelFromMetadata = labelFromMetadata;
 const better_sqlite3_1 = __importDefault(require("better-sqlite3"));
 const ulid_1 = require("ulid");
@@ -181,6 +182,7 @@ function importV2(source, store, options) {
                 irrelevant: e.irrelevant === 1,
                 favorite: e.favorite === 1,
                 metadata: {
+                    // resolveProjectLabel/requireProject/ensureInboxProject match on kind=project
                     ...(shouldMarkAsProjectRoot(e.prefix) ? { kind: 'project' } : {}),
                     label: e.label,
                     prefix: e.prefix,
@@ -188,8 +190,6 @@ function importV2(source, store, options) {
                     hmemUid: e.uid,
                     pinned: e.pinned === 1,
                     importedAt: new Date().toISOString(),
-                    // resolveProjectLabel/requireProject/ensureInboxProject match on kind=project
-                    ...(e.prefix === 'P' && { kind: 'project' }),
                 },
             });
             entriesImported++;
@@ -761,6 +761,39 @@ function repairImportFlags(store, sourcePath, options = {}) {
         repaired,
         warnings,
     };
+}
+/**
+ * Backfill metadata.kind = "project" on already-imported P-prefix root
+ * entries. Imports before fix/import-project-kind wrote P* roots without
+ * kind, so resolveProjectLabel/requireProject/ensureInboxProject could not
+ * see them and crashed on bind. Operates purely on the TIM DB — no source
+ * .hmem file needed. Repaired rows are staged so the fix syncs.
+ */
+function repairProjectKind(store, options = {}) {
+    const db = store.getDb();
+    const rows = db.prepare(`
+    SELECT id, metadata FROM entries
+    WHERE parent_id IS NULL
+      AND tombstoned_at IS NULL
+      AND json_extract(metadata, '$.prefix') = 'P'
+  `).all();
+    let repaired = 0;
+    const labels = [];
+    const tx = db.transaction(() => {
+        for (const row of rows) {
+            const metadata = JSON.parse(row.metadata);
+            if (metadata.kind === 'project')
+                continue;
+            repaired++;
+            labels.push(metadata.label ?? row.id);
+            if (options.dryRun)
+                continue;
+            writeEntryMetadata(store, row.id, { ...metadata, kind: 'project' });
+            stageEntryRow(db, row.id);
+        }
+    });
+    tx();
+    return { dryRun: !!options.dryRun, matched: rows.length, repaired, labels };
 }
 function labelFromMetadata(metadata) {
     const label = metadata.label;
