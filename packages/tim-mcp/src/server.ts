@@ -435,6 +435,12 @@ const TimShowSchema = z.object({
   limit: z.number().min(1).max(100).optional().default(20),
 });
 
+const TimTaskOrderSchema = z.object({
+  taskId: z.string().describe('Task entry ID to reorder'),
+  before: z.string().optional().describe('Insert before this task ID'),
+  after: z.string().optional().describe('Insert after this task ID'),
+});
+
 const TimErrorStatsSchema = z.object({
   hours: z.number().min(1).max(720).optional().default(24)
     .describe('Time window in hours (1-720)'),
@@ -721,6 +727,13 @@ export const TOOL_DEFS: Array<{
       'Use root for project scope (omit=active, "all"=cross-project). ' +
       'Use with for comma-separated AND filters (open,done,urgent,recent,<tag>,<free text>).',
     schema: TimShowSchema,
+  },
+  {
+    name: 'tim_task_order',
+    description:
+      'Reorder a task within its project queue. Uses integer order with 100-step gaps. ' +
+      'Provide before and/or after to position relative to sibling tasks.',
+    schema: TimTaskOrderSchema,
   },
   {
     name: 'tim_error_stats',
@@ -1183,6 +1196,15 @@ function resolveEntryTaskPriority(metadata: Record<string, unknown>): string | u
   return typeof pr === 'string' ? pr : undefined;
 }
 
+function resolveEntryTaskOrder(metadata: Record<string, unknown>): number {
+  const task = metadata.task;
+  if (typeof task === 'object' && task !== null && !Array.isArray(task)) {
+    const order = (task as Record<string, unknown>).order;
+    if (typeof order === 'number' && Number.isFinite(order)) return order;
+  }
+  return 999999;
+}
+
 async function applyWith(
   store: TimStore,
   entries: Entry[],
@@ -1239,6 +1261,10 @@ async function applyWith(
 
 function sortForShow(entries: Entry[]): Entry[] {
   return [...entries].sort((a, b) => {
+    const orderA = resolveEntryTaskOrder(a.metadata);
+    const orderB = resolveEntryTaskOrder(b.metadata);
+    if (orderA !== orderB) return orderA - orderB;
+
     const statusA = SHOW_STATUS_ORDER[resolveEntryTaskStatus(a.metadata) ?? ''] ?? 2;
     const statusB = SHOW_STATUS_ORDER[resolveEntryTaskStatus(b.metadata) ?? ''] ?? 2;
     if (statusA !== statusB) return statusA - statusB;
@@ -1252,10 +1278,14 @@ function sortForShow(entries: Entry[]): Entry[] {
 }
 
 function formatShowLine(entry: Entry): string {
-  const icon = taskStatusIcon(resolveEntryTaskStatus(entry.metadata) ?? null);
+  const status = resolveEntryTaskStatus(entry.metadata) ?? null;
+  const icon = taskStatusIcon(status);
+  const order = resolveEntryTaskOrder(entry.metadata);
+  const orderPrefix =
+    status !== 'done' && status !== 'cancelled' && order < 999999 ? `[${order}] ` : '';
   const title = entry.title.padEnd(44, ' ');
   const tagStr = entry.tags.join(' ');
-  return `  ${icon} ${title}${tagStr ? ' ' + tagStr : ''}`.trimEnd();
+  return `  ${icon} ${orderPrefix}${title}${tagStr ? ' ' + tagStr : ''}`.trimEnd();
 }
 
 async function formatShowOutput(store: TimStore, entries: Entry[]): Promise<string> {
@@ -2881,6 +2911,67 @@ export async function createMcpServer(
               type: 'text',
               text: formatted,
             }],
+          };
+        }
+
+        case 'tim_task_order': {
+          const { taskId, before, after } = TimTaskOrderSchema.parse(args);
+          if (!before && !after) {
+            return errorResult('At least one of before or after is required');
+          }
+          const taskEntry = await s.read(taskId);
+          if (!taskEntry) return errorResult(`Entry not found: ${taskId}`);
+
+          let projectLabel = s.getProjectLabel(taskId);
+          if (!projectLabel && before) projectLabel = s.getProjectLabel(before);
+          if (!projectLabel && after) projectLabel = s.getProjectLabel(after);
+          if (!projectLabel) return errorResult(`Cannot resolve project for task: ${taskId}`);
+
+          const allTasks = await s.getTasks();
+          const projectTasks = allTasks.filter(
+            t => t.project_label === projectLabel && t.status !== 'done',
+          );
+
+          let needsInit = false;
+          for (const t of projectTasks) {
+            const e = await s.read(t.id);
+            if (!e) continue;
+            const task = e.metadata.task;
+            if (typeof task === 'object' && task !== null && !Array.isArray(task)) {
+              if ((task as Record<string, unknown>).order === undefined) {
+                needsInit = true;
+                break;
+              }
+            } else {
+              needsInit = true;
+              break;
+            }
+          }
+
+          if (needsInit) {
+            const PRIORITY_ORDER: Record<string, number> = { high: 0, medium: 1, low: 2 };
+            const withMeta = await Promise.all(projectTasks.map(async t => {
+              const e = await s.read(t.id);
+              return {
+                id: t.id,
+                priority: t.priority,
+                createdAt: e?.createdAt ?? '',
+              };
+            }));
+            withMeta.sort((a, b) => {
+              const pa = PRIORITY_ORDER[a.priority ?? ''] ?? 3;
+              const pb = PRIORITY_ORDER[b.priority ?? ''] ?? 3;
+              if (pa !== pb) return pa - pb;
+              return a.createdAt.localeCompare(b.createdAt);
+            });
+            for (let i = 0; i < withMeta.length; i++) {
+              await s.update(withMeta[i].id, { metadata: { task: { order: (i + 1) * 100 } } });
+            }
+          }
+
+          const updated = await s.setTaskOrder(taskId, before, after);
+          return {
+            content: [{ type: 'text', text: formatToolResponse(updated) }],
           };
         }
 

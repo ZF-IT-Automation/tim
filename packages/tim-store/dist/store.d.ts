@@ -177,6 +177,13 @@ export declare class TimStore implements MemoryInterface {
         tag?: string;
     }): Entry[];
     getTasks(opts?: GetTasksOptions): Promise<TaskRecord[]>;
+    private extractTaskOrder;
+    private extractTaskStatus;
+    private getOrderedProjectTasks;
+    private renumberProjectTasks;
+    private taskOrderFromId;
+    private computeTaskOrder;
+    setTaskOrder(taskId: string, beforeId?: string, afterId?: string): Promise<Entry>;
     getBugs(opts?: GetBugsOptions): Promise<BugRecord[]>;
     getRules(): Promise<RuleRecord[]>;
     /** All project root nodes (kind='project'). Used for cross-project overview + name resolution. */

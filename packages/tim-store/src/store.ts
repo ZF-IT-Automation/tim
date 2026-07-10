@@ -840,6 +840,7 @@ export class TimStore implements MemoryInterface {
 
     sql += `
       ORDER BY
+        COALESCE(CAST(json_extract(e.metadata, '$.task.order') AS INTEGER), 999999),
         CASE COALESCE(
           json_extract(e.metadata, '$.task.status'),
           json_extract(e.metadata, '$.status')
@@ -897,6 +898,188 @@ export class TimStore implements MemoryInterface {
         due,
       };
     });
+  }
+
+  private extractTaskOrder(entry: Entry): number | undefined {
+    const task = entry.metadata.task;
+    if (typeof task === 'object' && task !== null && !Array.isArray(task)) {
+      const order = (task as Record<string, unknown>).order;
+      if (typeof order === 'number' && Number.isFinite(order)) return order;
+    }
+    return undefined;
+  }
+
+  private extractTaskStatus(meta: Record<string, unknown>): string | null {
+    const task = meta.task;
+    if (typeof task === 'object' && task !== null && !Array.isArray(task)) {
+      const st = (task as Record<string, unknown>).status;
+      if (typeof st === 'string') return st;
+    } else if (task === true) {
+      const st = meta.status;
+      if (typeof st === 'string') return st;
+    }
+    return null;
+  }
+
+  private async getOrderedProjectTasks(
+    projectLabel: string,
+    excludeId?: string,
+  ): Promise<Array<{ id: string; order: number }>> {
+    const allTasks = await this.getTasks();
+    const projectTasks = allTasks.filter(
+      t => t.project_label === projectLabel && t.status !== 'done' && t.id !== excludeId,
+    );
+    const result: Array<{ id: string; order: number }> = [];
+    for (const t of projectTasks) {
+      const e = this.readSync(t.id);
+      if (!e) continue;
+      const order = this.extractTaskOrder(e);
+      if (order !== undefined) {
+        result.push({ id: t.id, order });
+      }
+    }
+    result.sort((a, b) => a.order - b.order);
+    return result;
+  }
+
+  private async renumberProjectTasks(projectLabel: string): Promise<void> {
+    const allTasks = await this.getTasks();
+    const projectTasks = allTasks.filter(
+      t => t.project_label === projectLabel && t.status !== 'done',
+    );
+    const items: Array<{ id: string; order: number; createdAt: string }> = [];
+    for (const t of projectTasks) {
+      const e = this.readSync(t.id);
+      if (!e) continue;
+      items.push({
+        id: t.id,
+        order: this.extractTaskOrder(e) ?? 999999,
+        createdAt: e.createdAt,
+      });
+    }
+    items.sort((a, b) => a.order - b.order || a.createdAt.localeCompare(b.createdAt));
+    for (let i = 0; i < items.length; i++) {
+      await this.update(items[i].id, { metadata: { task: { order: (i + 1) * 100 } } });
+    }
+  }
+
+  private taskOrderFromId(ordered: Array<{ id: string; order: number }>, id: string): number {
+    const e = this.readSync(id);
+    if (!e) throw new Error(`Task not found: ${id}`);
+    const order = this.extractTaskOrder(e);
+    if (order !== undefined) return order;
+    const found = ordered.find(t => t.id === id);
+    if (found) return found.order;
+    throw new Error(`Task has no order: ${id}`);
+  }
+
+  private async computeTaskOrder(
+    taskId: string,
+    projectLabel: string,
+    beforeId?: string,
+    afterId?: string,
+  ): Promise<number> {
+    let ordered = await this.getOrderedProjectTasks(projectLabel, taskId);
+
+    if (!beforeId && !afterId) {
+      if (ordered.length === 0) return 100;
+      return Math.max(...ordered.map(t => t.order)) + 100;
+    }
+
+    const recomputeAfterRenumber = async (): Promise<Array<{ id: string; order: number }>> => {
+      await this.renumberProjectTasks(projectLabel);
+      return this.getOrderedProjectTasks(projectLabel, taskId);
+    };
+
+    if (beforeId && afterId) {
+      let beforeOrder = this.taskOrderFromId(ordered, beforeId);
+      let afterOrder = this.taskOrderFromId(ordered, afterId);
+      if (beforeOrder >= afterOrder) {
+        throw new Error('beforeId must come before afterId in task order');
+      }
+      let newOrder = Math.floor((afterOrder + beforeOrder) / 2);
+      if (afterOrder - beforeOrder === 1 || newOrder === beforeOrder || newOrder === afterOrder) {
+        ordered = await recomputeAfterRenumber();
+        beforeOrder = this.taskOrderFromId(ordered, beforeId);
+        afterOrder = this.taskOrderFromId(ordered, afterId);
+        newOrder = Math.floor((afterOrder + beforeOrder) / 2);
+      }
+      return newOrder;
+    }
+
+    if (beforeId) {
+      let beforeOrder = this.taskOrderFromId(ordered, beforeId);
+      let idx = ordered.findIndex(t => t.id === beforeId);
+      if (idx < 0) {
+        ordered = await recomputeAfterRenumber();
+        beforeOrder = this.taskOrderFromId(ordered, beforeId);
+        idx = ordered.findIndex(t => t.id === beforeId);
+      }
+      if (idx <= 0) {
+        let newOrder = Math.max(100, Math.floor(beforeOrder / 2));
+        if (newOrder >= beforeOrder) {
+          ordered = await recomputeAfterRenumber();
+          beforeOrder = this.taskOrderFromId(ordered, beforeId);
+          newOrder = Math.max(100, Math.floor(beforeOrder / 2));
+        }
+        return newOrder;
+      }
+      const prevOrder = ordered[idx - 1].order;
+      let newOrder = Math.floor((prevOrder + beforeOrder) / 2);
+      if (
+        beforeOrder - prevOrder === 1 ||
+        newOrder === prevOrder ||
+        newOrder === beforeOrder
+      ) {
+        ordered = await recomputeAfterRenumber();
+        beforeOrder = this.taskOrderFromId(ordered, beforeId);
+        idx = ordered.findIndex(t => t.id === beforeId);
+        if (idx <= 0) {
+          return Math.max(100, Math.floor(beforeOrder / 2));
+        }
+        newOrder = Math.floor((ordered[idx - 1].order + beforeOrder) / 2);
+      }
+      return newOrder;
+    }
+
+    // afterId only
+    let afterOrder = this.taskOrderFromId(ordered, afterId!);
+    let idx = ordered.findIndex(t => t.id === afterId);
+    if (idx < 0) {
+      ordered = await recomputeAfterRenumber();
+      afterOrder = this.taskOrderFromId(ordered, afterId!);
+      idx = ordered.findIndex(t => t.id === afterId);
+    }
+    if (idx < 0 || idx >= ordered.length - 1) {
+      return afterOrder + 100;
+    }
+    const nextOrder = ordered[idx + 1].order;
+    let newOrder = Math.floor((afterOrder + nextOrder) / 2);
+    if (
+      nextOrder - afterOrder === 1 ||
+      newOrder === afterOrder ||
+      newOrder === nextOrder
+    ) {
+      ordered = await recomputeAfterRenumber();
+      afterOrder = this.taskOrderFromId(ordered, afterId!);
+      idx = ordered.findIndex(t => t.id === afterId);
+      if (idx < 0 || idx >= ordered.length - 1) {
+        return afterOrder + 100;
+      }
+      newOrder = Math.floor((afterOrder + ordered[idx + 1].order) / 2);
+    }
+    return newOrder;
+  }
+
+  async setTaskOrder(taskId: string, beforeId?: string, afterId?: string): Promise<Entry> {
+    const entry = this.readSync(taskId);
+    if (!entry) throw new Error(`Entry not found: ${taskId}`);
+
+    const projectLabel = this.getProjectLabel(taskId);
+    if (!projectLabel) throw new Error(`Task has no project: ${taskId}`);
+
+    const newOrder = await this.computeTaskOrder(taskId, projectLabel, beforeId, afterId);
+    return this.update(taskId, { metadata: { task: { order: newOrder } } });
   }
 
   async getBugs(opts?: GetBugsOptions): Promise<BugRecord[]> {
@@ -1217,7 +1400,17 @@ export class TimStore implements MemoryInterface {
             ...(patchMeta.task as Record<string, unknown>),
           };
         }
-        return JSON.stringify({ ...existingMeta, ...patchMeta });
+        const merged = { ...existingMeta, ...patchMeta };
+        const oldStatus = this.extractTaskStatus(existingMeta);
+        const newStatus = this.extractTaskStatus(merged);
+        if (newStatus === 'done' && oldStatus !== 'done') {
+          if (typeof merged.task === 'object' && merged.task !== null && !Array.isArray(merged.task)) {
+            const taskObj = { ...(merged.task as Record<string, unknown>) };
+            delete taskObj.order;
+            merged.task = taskObj;
+          }
+        }
+        return JSON.stringify(merged);
       })(),
       accessed_at: now,
       updated_at: now,

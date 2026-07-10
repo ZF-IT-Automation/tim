@@ -732,6 +732,7 @@ class TimStore {
         }
         sql += `
       ORDER BY
+        COALESCE(CAST(json_extract(e.metadata, '$.task.order') AS INTEGER), 999999),
         CASE COALESCE(
           json_extract(e.metadata, '$.task.status'),
           json_extract(e.metadata, '$.status')
@@ -787,6 +788,170 @@ class TimStore {
                 due,
             };
         });
+    }
+    extractTaskOrder(entry) {
+        const task = entry.metadata.task;
+        if (typeof task === 'object' && task !== null && !Array.isArray(task)) {
+            const order = task.order;
+            if (typeof order === 'number' && Number.isFinite(order))
+                return order;
+        }
+        return undefined;
+    }
+    extractTaskStatus(meta) {
+        const task = meta.task;
+        if (typeof task === 'object' && task !== null && !Array.isArray(task)) {
+            const st = task.status;
+            if (typeof st === 'string')
+                return st;
+        }
+        else if (task === true) {
+            const st = meta.status;
+            if (typeof st === 'string')
+                return st;
+        }
+        return null;
+    }
+    async getOrderedProjectTasks(projectLabel, excludeId) {
+        const allTasks = await this.getTasks();
+        const projectTasks = allTasks.filter(t => t.project_label === projectLabel && t.status !== 'done' && t.id !== excludeId);
+        const result = [];
+        for (const t of projectTasks) {
+            const e = this.readSync(t.id);
+            if (!e)
+                continue;
+            const order = this.extractTaskOrder(e);
+            if (order !== undefined) {
+                result.push({ id: t.id, order });
+            }
+        }
+        result.sort((a, b) => a.order - b.order);
+        return result;
+    }
+    async renumberProjectTasks(projectLabel) {
+        const allTasks = await this.getTasks();
+        const projectTasks = allTasks.filter(t => t.project_label === projectLabel && t.status !== 'done');
+        const items = [];
+        for (const t of projectTasks) {
+            const e = this.readSync(t.id);
+            if (!e)
+                continue;
+            items.push({
+                id: t.id,
+                order: this.extractTaskOrder(e) ?? 999999,
+                createdAt: e.createdAt,
+            });
+        }
+        items.sort((a, b) => a.order - b.order || a.createdAt.localeCompare(b.createdAt));
+        for (let i = 0; i < items.length; i++) {
+            await this.update(items[i].id, { metadata: { task: { order: (i + 1) * 100 } } });
+        }
+    }
+    taskOrderFromId(ordered, id) {
+        const e = this.readSync(id);
+        if (!e)
+            throw new Error(`Task not found: ${id}`);
+        const order = this.extractTaskOrder(e);
+        if (order !== undefined)
+            return order;
+        const found = ordered.find(t => t.id === id);
+        if (found)
+            return found.order;
+        throw new Error(`Task has no order: ${id}`);
+    }
+    async computeTaskOrder(taskId, projectLabel, beforeId, afterId) {
+        let ordered = await this.getOrderedProjectTasks(projectLabel, taskId);
+        if (!beforeId && !afterId) {
+            if (ordered.length === 0)
+                return 100;
+            return Math.max(...ordered.map(t => t.order)) + 100;
+        }
+        const recomputeAfterRenumber = async () => {
+            await this.renumberProjectTasks(projectLabel);
+            return this.getOrderedProjectTasks(projectLabel, taskId);
+        };
+        if (beforeId && afterId) {
+            let beforeOrder = this.taskOrderFromId(ordered, beforeId);
+            let afterOrder = this.taskOrderFromId(ordered, afterId);
+            if (beforeOrder >= afterOrder) {
+                throw new Error('beforeId must come before afterId in task order');
+            }
+            let newOrder = Math.floor((afterOrder + beforeOrder) / 2);
+            if (afterOrder - beforeOrder === 1 || newOrder === beforeOrder || newOrder === afterOrder) {
+                ordered = await recomputeAfterRenumber();
+                beforeOrder = this.taskOrderFromId(ordered, beforeId);
+                afterOrder = this.taskOrderFromId(ordered, afterId);
+                newOrder = Math.floor((afterOrder + beforeOrder) / 2);
+            }
+            return newOrder;
+        }
+        if (beforeId) {
+            let beforeOrder = this.taskOrderFromId(ordered, beforeId);
+            let idx = ordered.findIndex(t => t.id === beforeId);
+            if (idx < 0) {
+                ordered = await recomputeAfterRenumber();
+                beforeOrder = this.taskOrderFromId(ordered, beforeId);
+                idx = ordered.findIndex(t => t.id === beforeId);
+            }
+            if (idx <= 0) {
+                let newOrder = Math.max(100, Math.floor(beforeOrder / 2));
+                if (newOrder >= beforeOrder) {
+                    ordered = await recomputeAfterRenumber();
+                    beforeOrder = this.taskOrderFromId(ordered, beforeId);
+                    newOrder = Math.max(100, Math.floor(beforeOrder / 2));
+                }
+                return newOrder;
+            }
+            const prevOrder = ordered[idx - 1].order;
+            let newOrder = Math.floor((prevOrder + beforeOrder) / 2);
+            if (beforeOrder - prevOrder === 1 ||
+                newOrder === prevOrder ||
+                newOrder === beforeOrder) {
+                ordered = await recomputeAfterRenumber();
+                beforeOrder = this.taskOrderFromId(ordered, beforeId);
+                idx = ordered.findIndex(t => t.id === beforeId);
+                if (idx <= 0) {
+                    return Math.max(100, Math.floor(beforeOrder / 2));
+                }
+                newOrder = Math.floor((ordered[idx - 1].order + beforeOrder) / 2);
+            }
+            return newOrder;
+        }
+        // afterId only
+        let afterOrder = this.taskOrderFromId(ordered, afterId);
+        let idx = ordered.findIndex(t => t.id === afterId);
+        if (idx < 0) {
+            ordered = await recomputeAfterRenumber();
+            afterOrder = this.taskOrderFromId(ordered, afterId);
+            idx = ordered.findIndex(t => t.id === afterId);
+        }
+        if (idx < 0 || idx >= ordered.length - 1) {
+            return afterOrder + 100;
+        }
+        const nextOrder = ordered[idx + 1].order;
+        let newOrder = Math.floor((afterOrder + nextOrder) / 2);
+        if (nextOrder - afterOrder === 1 ||
+            newOrder === afterOrder ||
+            newOrder === nextOrder) {
+            ordered = await recomputeAfterRenumber();
+            afterOrder = this.taskOrderFromId(ordered, afterId);
+            idx = ordered.findIndex(t => t.id === afterId);
+            if (idx < 0 || idx >= ordered.length - 1) {
+                return afterOrder + 100;
+            }
+            newOrder = Math.floor((afterOrder + ordered[idx + 1].order) / 2);
+        }
+        return newOrder;
+    }
+    async setTaskOrder(taskId, beforeId, afterId) {
+        const entry = this.readSync(taskId);
+        if (!entry)
+            throw new Error(`Entry not found: ${taskId}`);
+        const projectLabel = this.getProjectLabel(taskId);
+        if (!projectLabel)
+            throw new Error(`Task has no project: ${taskId}`);
+        const newOrder = await this.computeTaskOrder(taskId, projectLabel, beforeId, afterId);
+        return this.update(taskId, { metadata: { task: { order: newOrder } } });
     }
     async getBugs(opts) {
         let sql = `
@@ -1079,7 +1244,17 @@ class TimStore {
                         ...patchMeta.task,
                     };
                 }
-                return JSON.stringify({ ...existingMeta, ...patchMeta });
+                const merged = { ...existingMeta, ...patchMeta };
+                const oldStatus = this.extractTaskStatus(existingMeta);
+                const newStatus = this.extractTaskStatus(merged);
+                if (newStatus === 'done' && oldStatus !== 'done') {
+                    if (typeof merged.task === 'object' && merged.task !== null && !Array.isArray(merged.task)) {
+                        const taskObj = { ...merged.task };
+                        delete taskObj.order;
+                        merged.task = taskObj;
+                    }
+                }
+                return JSON.stringify(merged);
             })(),
             accessed_at: now,
             updated_at: now,
@@ -1744,6 +1919,24 @@ class TimStore {
                             const { winner } = (0, tim_core_1.resolveLWW)(local, record);
                             if (winner !== record)
                                 continue;
+                        }
+                        // Slot-collision guard for batch-summaries (see sync-methods.ts applyRemoteEntry)
+                        let slotCollisionEntry;
+                        if (entry.metadata) {
+                            const meta = typeof entry.metadata === 'string' ? JSON.parse(entry.metadata) : entry.metadata;
+                            if (meta.kind === 'batch-summary' && meta.batch_index !== undefined && entry.parent_id) {
+                                slotCollisionEntry = this.db.prepare(`SELECT * FROM entries
+                   WHERE parent_id = ? AND json_extract(metadata, '$.batch_index') = ?
+                     AND json_extract(metadata, '$.kind') = 'batch-summary'
+                     AND id != ?`).get(entry.parent_id, meta.batch_index, entry.id);
+                                if (slotCollisionEntry) {
+                                    const localSlot = (0, sync_methods_js_1.recordFromPayload)(slotCollisionEntry.id, 'entry', slotCollisionEntry.tombstoned_at ? 'delete' : 'upsert', JSON.stringify(slotCollisionEntry), (0, sync_methods_js_1.entryLocalLwwTimestamp)(slotCollisionEntry), String(slotCollisionEntry.lww_device ?? 'local'), Number(slotCollisionEntry.confidence ?? 1));
+                                    const { winner } = (0, tim_core_1.resolveLWW)(localSlot, record);
+                                    if (winner === localSlot)
+                                        continue;
+                                    deleteEntry.run(slotCollisionEntry.id);
+                                }
+                            }
                         }
                         const appliedUpdatedAt = new Date(record.lwwTimestamp).toISOString();
                         upsertEntry.run(entry.id, entry.parent_id, entry.title ?? '', entry.content, entry.content_type, entry.depth, entry.confidence, entry.created_at, entry.accessed_at, appliedUpdatedAt, entry.decay_rate, entry.visibility, entry.tags, entry.irrelevant, entry.favorite ?? 0, entry.tombstoned_at, entry.metadata, record.lwwDevice);
