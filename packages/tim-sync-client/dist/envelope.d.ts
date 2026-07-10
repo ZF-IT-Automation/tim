@@ -6,6 +6,8 @@ export interface TimEnvelope {
     lww: string;
     deleted: boolean;
     payload: string;
+    /** Origin device id — LWW tiebreaker. Older envelopes lack it; receivers fall back. */
+    device?: string;
     /** Inner secret-layer encryption applied to entry payload fields. */
     is_encrypted?: boolean;
 }
@@ -25,6 +27,6 @@ export declare function parseStagingKey(sk: string): {
     key: string;
 };
 export declare function stagingToEnvelope(row: StagingRow | StagingRecord): TimEnvelope;
-export declare function envelopeToStaging(env: TimEnvelope, deviceId: string): StagingRecord;
+export declare function envelopeToStaging(env: TimEnvelope, fallbackDeviceId: string): StagingRecord;
 export declare function edgeCompositeKey(sourceId: string, targetId: string, type: string): string;
 //# sourceMappingURL=envelope.d.ts.map

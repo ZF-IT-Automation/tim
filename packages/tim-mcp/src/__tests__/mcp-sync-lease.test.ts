@@ -1,9 +1,10 @@
 // TIM MCP — integration tests for FMCP batch fixes
 //
-// Covers three regression findings from the contrary review:
-//   F-MCP-001: tim_lease revoke must remove the leases edge (not mark irrelevant)
+// Covers regression findings from the contrary review:
 //   F-MCP-002: tim_sync action=pull must be implemented (not "not yet implemented")
 //   F-MCP-003: auto-sync cooldown must only arm after a successful runPush/runPull
+// (F-MCP-001 covered tim_lease, removed 2026-07-10 — grant was unusable via MCP
+//  and TTL decorative; fable5 review: "build it or remove it".)
 //
 // Pattern borrowed from metadata-roundtrip.test.ts — spawn stdio server + JSON-RPC.
 
@@ -123,111 +124,28 @@ function tempDbPath(): string {
   return `/tmp/tim-sync-lease-${Date.now()}-${Math.random().toString(36).slice(2)}.db`;
 }
 
-// ─── F-MCP-001: tim_lease revoke actually deletes the leases edge ───────────
+// ─── tim_lease is gone: removed tools must not silently half-work ───────────
 
-describe('F-MCP-001: tim_lease revoke deletes the leases edge', () => {
+describe('tim_lease removal: unknown tool errors cleanly', () => {
   let client: McpClient;
   let dbPath: string;
-  let store: TimStore;
 
   beforeEach(async () => {
     dbPath = tempDbPath();
     if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath);
-    // Open store FIRST to register agents, then spawn server pointing to same file DB.
-    store = new TimStore(dbPath);
-    await store.registerAgent('Claude Code', 'claude');
-    await store.registerAgent('Cursor', 'cursor');
-
     client = new McpClient(dbPath);
     await client.init();
   });
 
   afterEach(() => {
     client.kill();
-    try { store.close(); } catch { /* noop */ }
     if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath);
   });
 
-  it('grant → revoke removes the leases edge from the edges table', async () => {
-    // 1) Create an entry to lease.
-    const writeResp = await client.callTool('tim_write', {
-      content: 'Leaseable entry',
-      tags: ['#lease-test', '#fmcp001'],
-      metadata: { kind: 'note' },
-    });
-    const written = JSON.parse(writeResp.result!.content[0].text);
-    const entryId = written.id as string;
-
-    // Sanity: no edges yet.
-    expect((await store.getEdges(entryId, 'outgoing')).length).toBe(0);
-
-    // 2) Bypass the broken MCP grant path (pre-existing FK bug: registerAgent
-    //    writes to `agents` table only, so the `target_id` FK on `edges`
-    //    referencing `entries(id)` rejects the agent's id). Insert the edge
-    //    directly into the shared DB file with FK off — same DB as the MCP
-    //    server, so the revoke path sees it.
-    const agent = (await store.getAgents()).find((a) => a.label === 'claude')!;
-    const grantEdgeId = 'test-grant-edge-' + Date.now();
-    const grantDb = store.getDb();
-    grantDb.pragma('foreign_keys = OFF');
-    grantDb.prepare(
-      "INSERT INTO edges (id, source_id, target_id, type, weight, metadata) VALUES (?, ?, ?, 'leases', 1.0, ?)",
-    ).run(grantEdgeId, entryId, agent.id, JSON.stringify({ ttl: '1h' }));
-    grantDb.pragma('foreign_keys = ON');
-
-    // 3) Verify a leases edge exists.
-    const edgesAfterGrant = await store.getEdges(entryId, 'outgoing');
-    const leaseEdges = edgesAfterGrant.filter((e) => e.type === 'leases');
-    expect(leaseEdges.length).toBe(1);
-    const leaseEdgeId = leaseEdges[0]!.id;
-
-    // The edge must actually point to the agent.
-    expect(leaseEdges[0]!.targetId).toBe(agent.id);
-
-    // 4) Revoke the lease.
-    const revokeResp = await client.callTool('tim_lease', {
-      revoke: 'claude',
-      entryId,
-    });
-    expect(revokeResp.error).toBeUndefined();
-    expect(revokeResp.result!.content[0].text).toContain('Revoked lease');
-
-    // 5) The leases edge MUST be gone.
-    const edgesAfterRevoke = await store.getEdges(entryId, 'outgoing');
-    const remaining = edgesAfterRevoke.filter((e) => e.type === 'leases');
-    expect(remaining.length).toBe(0);
-
-    // 6) Direct SQL check — row fully removed (not marked irrelevant, since
-    //    edges don't even have an irrelevant column).
-    const db = store.getDb();
-    const row = db.prepare('SELECT * FROM edges WHERE id = ?').get(leaseEdgeId);
-    expect(row).toBeUndefined();
-  });
-
-  it('revoke is idempotent — second revoke reports no active lease', async () => {
-    const writeResp = await client.callTool('tim_write', {
-      content: 'Idempotent revoke',
-      tags: ['#lease-test', '#fmcp001'],
-      metadata: { kind: 'note' },
-    });
-    const entryId = JSON.parse(writeResp.result!.content[0].text).id as string;
-
-    // Bypass the broken MCP grant (FK bug — see F-MCP-001 first test).
-    const cursorAgent = (await store.getAgents()).find((a) => a.label === 'cursor')!;
-    const cursorDb = store.getDb();
-    const cursorEdgeId = 'test-cursor-edge-' + Date.now();
-    cursorDb.pragma('foreign_keys = OFF');
-    cursorDb.prepare(
-      "INSERT INTO edges (id, source_id, target_id, type, weight, metadata) VALUES (?, ?, ?, 'leases', 1.0, '{}')",
-    ).run(cursorEdgeId, entryId, cursorAgent.id);
-    cursorDb.pragma('foreign_keys = ON');
-
-    const first = await client.callTool('tim_lease', { revoke: 'cursor', entryId });
-    expect(first.result!.content[0].text).toContain('Revoked lease');
-
-    const second = await client.callTool('tim_lease', { revoke: 'cursor', entryId });
-    expect(second.error).toBeUndefined();
-    expect(second.result!.content[0].text).toContain('No active lease');
+  it('tim_lease is no longer callable', async () => {
+    const resp = await client.callTool('tim_lease', { revoke: 'claude', entryId: 'x' });
+    const text = resp.result?.content?.[0]?.text ?? resp.error?.message ?? '';
+    expect(text).toMatch(/Unknown tool|not found/i);
   });
 });
 

@@ -10,6 +10,7 @@
   ],
   "scripts": {
     "build": "tsc",
+    "pretest": "npm --prefix ../.. run build",
     "test": "vitest run"
   },
   "dependencies": {

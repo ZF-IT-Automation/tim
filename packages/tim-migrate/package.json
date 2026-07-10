@@ -1,14 +1,18 @@
 {
   "name": "tim-migrate",
   "version": "0.1.0-alpha",
-  "description": "TIM migration: hmem → TIM schema converter",
+  "description": "TIM migration: hmem \u2192 TIM schema converter",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [
     "dist/**/*",
     "!dist/**/__tests__/**"
   ],
-  "scripts": { "build": "tsc", "test": "vitest run" },
+  "scripts": {
+    "build": "tsc",
+    "pretest": "npm --prefix ../.. run build",
+    "test": "vitest run"
+  },
   "dependencies": {
     "tim-core": "*",
     "tim-store": "*",

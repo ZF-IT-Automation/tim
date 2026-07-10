@@ -52,6 +52,53 @@ describe('suppress enforcement', () => {
     expect(titles).not.toContain('Child of poison');
   });
 
+  it('hides suppressed entries from read() when enforceSuppression is set', async () => {
+    const entry = await store.write('Secret plan\nnuke the flag day');
+    await store.suppress('nuke the flag', 'security');
+
+    expect(await store.read(entry.id, { enforceSuppression: true })).toBeNull();
+    // Management paths (no flag) still see it — suppressed content stays manageable.
+    expect(await store.read(entry.id)).not.toBeNull();
+  });
+
+  it('filters suppressed children from read() with includeChildren', async () => {
+    const parent = await store.write('Parent\nclean');
+    await store.write('Bad child\npoisoned advice here', { parentId: parent.id });
+    await store.write('Good child\nfine', { parentId: parent.id });
+    await store.suppress('poisoned advice', 'wrong');
+
+    const result = await store.read(parent.id, {
+      includeChildren: true,
+      depth: 2,
+      enforceSuppression: true,
+    });
+    const titles = ((result as any).children as { title: string }[]).map(c => c.title);
+    expect(titles).toContain('Good child');
+    expect(titles).not.toContain('Bad child');
+  });
+
+  it('filters suppressed entries from getChildren() when enforceSuppression is set', async () => {
+    const parent = await store.write('Section\n');
+    await store.write('Hidden item\nlegacy hack pattern', { parentId: parent.id });
+    await store.write('Visible item\nok', { parentId: parent.id });
+    await store.suppress('legacy hack', 'deprecated');
+
+    const enforced = await store.getChildren(parent.id, { enforceSuppression: true });
+    expect(enforced.map(e => e.title)).toEqual(['Visible item']);
+    // Without the flag both remain (management view).
+    const raw = await store.getChildren(parent.id);
+    expect(raw.length).toBe(2);
+  });
+
+  it('filterSuppressed() drops matching entries from arbitrary result sets', async () => {
+    const a = await store.write('Alpha\nkeep me');
+    const b = await store.write('Beta\ndrop this secret');
+    await store.suppress('drop this secret', 'test');
+
+    const filtered = store.filterSuppressed([a, b]);
+    expect(filtered.map(e => e.id)).toEqual([a.id]);
+  });
+
   it('expired suppress patterns do not hide entries', async () => {
     await store.write('Ephemeral thing\ntemporary content');
     // 1-minute TTL, then simulate expiry by rewriting expires_at into the past

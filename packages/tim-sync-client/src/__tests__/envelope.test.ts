@@ -20,6 +20,7 @@ describe('envelope', () => {
       lww: new Date(1_700_000_000_000).toISOString(),
       deleted: false,
       payload: '{"id":"01JTEST","content":"hi"}',
+      device: 'dev-1',
     });
   });
 
@@ -50,6 +51,20 @@ describe('envelope', () => {
     });
     const record = envelopeToStaging(env, 'remote-dev');
     expect(record.entityType).toBe('edge');
+    // Origin device survives the round-trip — LWW tiebreaks on the true
+    // origin, not the receiving device.
+    expect(record.lwwDevice).toBe('local');
+  });
+
+  it('falls back to the receiver id for legacy envelopes without device', () => {
+    const record = envelopeToStaging({
+      v: 1,
+      type: 'entry',
+      key: 'k',
+      lww: new Date().toISOString(),
+      deleted: false,
+      payload: '{}',
+    }, 'remote-dev');
     expect(record.lwwDevice).toBe('remote-dev');
   });
 });

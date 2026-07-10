@@ -43,6 +43,7 @@ export interface ReadOptions {
     confidenceAbove?: number;
     visibilityMask?: number;
     showIrrelevant?: boolean;
+    enforceSuppression?: boolean;
 }
 export interface WriteOptions {
     id?: string;

@@ -7,6 +7,8 @@ export interface TimEnvelope {
   lww: string;
   deleted: boolean;
   payload: string;
+  /** Origin device id — LWW tiebreaker. Older envelopes lack it; receivers fall back. */
+  device?: string;
   /** Inner secret-layer encryption applied to entry payload fields. */
   is_encrypted?: boolean;
 }
@@ -38,17 +40,20 @@ export function stagingToEnvelope(row: StagingRow | StagingRecord): TimEnvelope 
   let operation: string;
   let key: string;
   let lwwTs: number;
+  let device: string | undefined;
 
   if ('entityType' in row) {
     entityType = row.entityType;
     operation = row.operation;
     key = row.key;
     lwwTs = row.lwwTimestamp;
+    device = row.lwwDevice;
   } else {
     entityType = row.entity_type;
     operation = row.operation;
     key = row.key;
     lwwTs = row.lww_timestamp;
+    device = row.lww_device;
   }
   const deleted = operation === 'delete';
 
@@ -59,10 +64,11 @@ export function stagingToEnvelope(row: StagingRow | StagingRecord): TimEnvelope 
     lww: new Date(lwwTs).toISOString(),
     deleted,
     payload: row.payload,
+    ...(device ? { device } : {}),
   };
 }
 
-export function envelopeToStaging(env: TimEnvelope, deviceId: string): StagingRecord {
+export function envelopeToStaging(env: TimEnvelope, fallbackDeviceId: string): StagingRecord {
   const lwwTs = Date.parse(env.lww);
   return {
     key: env.key,
@@ -70,7 +76,7 @@ export function envelopeToStaging(env: TimEnvelope, deviceId: string): StagingRe
     operation: env.deleted ? 'delete' : 'upsert',
     payload: env.payload,
     lwwTimestamp: Number.isFinite(lwwTs) ? lwwTs : Date.now(),
-    lwwDevice: deviceId,
+    lwwDevice: env.device ?? fallbackDeviceId,
     lwwConfidence: 1.0,
     acked: false,
   };

@@ -201,10 +201,15 @@ export class TimStore implements MemoryInterface {
 
     const result = rowToEntry(entry);
 
+    const suppressPatterns = options.enforceSuppression
+      ? this.loadActiveSuppressPatterns()
+      : [];
+    if (TimStore.matchesSuppressed(suppressPatterns, result)) return null;
+
     // Optionally include children (for tim_read with depth)
     if (options.includeChildren && options.depth !== 1) {
       const depth = options.depth ?? 2;
-      const children = this.loadChildrenRecursive(result.id, depth, 1);
+      const children = this.loadChildrenRecursive(result.id, depth, 1, suppressPatterns);
       (result as any).children = children;
     }
 
@@ -215,6 +220,7 @@ export class TimStore implements MemoryInterface {
     parentId: string,
     maxDepth: number,
     currentDepth: number,
+    suppressPatterns: string[] = [],
   ): Entry[] {
     if (currentDepth > maxDepth) return [];
 
@@ -226,14 +232,17 @@ export class TimStore implements MemoryInterface {
       ORDER BY COALESCE(CAST(json_extract(metadata, '$.order') AS INTEGER), 999999), created_at ASC
     `).all(parentId) as RowEntry[];
 
-    return rows.map(row => {
+    const result: Entry[] = [];
+    for (const row of rows) {
       const child = rowToEntry(row);
+      if (TimStore.matchesSuppressed(suppressPatterns, child)) continue;
       if (currentDepth < maxDepth) {
-        const grandkids = this.loadChildrenRecursive(child.id, maxDepth, currentDepth + 1);
+        const grandkids = this.loadChildrenRecursive(child.id, maxDepth, currentDepth + 1, suppressPatterns);
         if (grandkids.length > 0) (child as any).children = grandkids;
       }
-      return child;
-    });
+      result.push(child);
+    }
+    return result;
   }
 
   /** Find auto-created project bound to an exact filesystem path. */
@@ -607,7 +616,7 @@ export class TimStore implements MemoryInterface {
 
   async getChildren(
     parentId: string,
-    filter?: { metadataKind?: string },
+    filter?: { metadataKind?: string; enforceSuppression?: boolean },
   ): Promise<Entry[]> {
     let sql = `
       SELECT * FROM entries
@@ -627,7 +636,16 @@ export class TimStore implements MemoryInterface {
       : ` ORDER BY COALESCE(CAST(json_extract(metadata, '$.order') AS INTEGER), 999999), created_at ASC`;
 
     const rows = this.db.prepare(sql).all(...params) as RowEntry[];
-    return rows.map(rowToEntry);
+    const entries = rows.map(rowToEntry);
+    return filter?.enforceSuppression ? this.filterSuppressed(entries) : entries;
+  }
+
+  /** Drop entries matching active suppress patterns — for retrieval paths
+   *  that assemble result sets outside read()/search() (e.g. tim_show). */
+  filterSuppressed(entries: Entry[]): Entry[] {
+    const patterns = this.loadActiveSuppressPatterns();
+    if (patterns.length === 0) return entries;
+    return entries.filter(e => !TimStore.matchesSuppressed(patterns, e));
   }
 
   /** Get all entries with a given metadata.kind value (no parent filter). */

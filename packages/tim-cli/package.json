@@ -22,6 +22,7 @@
   },
   "scripts": {
     "build": "tsc",
+    "pretest": "npm --prefix ../.. run build",
     "test": "vitest run",
     "postinstall": "node -e \"try{require('./dist/update-skills.js').updateSkills()}catch(e){}\""
   }
