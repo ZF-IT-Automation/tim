@@ -237,12 +237,6 @@ const TimSyncSchema = zod_1.z.object({
         acked: zod_1.z.boolean().optional().default(false),
     })).optional(),
 });
-const TimLeaseSchema = zod_1.z.object({
-    grant: zod_1.z.string().optional().describe('Agent label to grant access to'),
-    revoke: zod_1.z.string().optional().describe('Agent label to revoke access from'),
-    entryId: zod_1.z.string(),
-    ttl: zod_1.z.string().optional().describe('Duration: 1h, 30m, 7d'),
-});
 const TimSuppressSchema = zod_1.z.object({
     pattern: zod_1.z.string(),
     reason: zod_1.z.string().optional().default('Manual suppression'),
@@ -494,13 +488,8 @@ exports.TOOL_DEFS = [
         schema: TimSyncSchema,
     },
     {
-        name: 'tim_lease',
-        description: 'Grant or revoke temporary agent access to a memory entry.',
-        schema: TimLeaseSchema,
-    },
-    {
         name: 'tim_suppress',
-        description: 'Suppress entries matching a pattern: hidden from tim_search, tim_read, and tim_load_project. Optional TTL (e.g. "24h", "7d").',
+        description: 'Suppress entries matching a pattern: hidden from tim_search, tim_read, tim_show, tim_section_children, tim_remember, and tim_load_project. Optional TTL (e.g. "24h", "7d").',
         schema: TimSuppressSchema,
     },
     {
@@ -1445,7 +1434,7 @@ async function createMcpServer(options = {}) {
             switch (name) {
                 case 'tim_read': {
                     const { id, project, section, depth, includeEdges, includeChildren, showIrrelevant, include_body, } = TimReadSchema.parse(args);
-                    const readOpts = { depth, includeChildren, showIrrelevant };
+                    const readOpts = { depth, includeChildren, showIrrelevant, enforceSuppression: true };
                     if (Array.isArray(id)) {
                         let projectLabel = null;
                         if (project) {
@@ -1541,7 +1530,7 @@ async function createMcpServer(options = {}) {
                             };
                         }
                         const sectionEntry = await s.read(sec.id, readOpts);
-                        const children = await s.getChildren(sec.id);
+                        const children = await s.getChildren(sec.id, { enforceSuppression: true });
                         return {
                             content: [{
                                     type: 'text',
@@ -1597,12 +1586,6 @@ async function createMcpServer(options = {}) {
                         const entry = await s.read(id, readOpts);
                         if (!entry) {
                             return errorResult(`Entry not found: ${id}`);
-                        }
-                        if (entry && await s.isSuppressed(`${entry.title}\n${entry.content}`)) {
-                            return {
-                                content: [{ type: 'text', text: `Entry suppressed: ${id}` }],
-                                isError: true,
-                            };
                         }
                         if (projectLabel && s.getProjectLabel(entry.id) !== projectLabel) {
                             return errorResult(`Entry ${id} not found in project ${projectLabel}`);
@@ -2080,27 +2063,6 @@ async function createMcpServer(options = {}) {
                             return errorResult(`Sync action '${action}' not yet implemented`);
                     }
                 }
-                case 'tim_lease': {
-                    const { grant, revoke, entryId, ttl } = TimLeaseSchema.parse(args);
-                    if (grant) {
-                        const agents = await s.getAgents();
-                        const agent = agents.find(a => a.label === grant);
-                        if (!agent)
-                            return errorResult(`Agent "${grant}" not registered`);
-                        await s.link(entryId, agent.id, 'leases', 1.0, ttl ? { ttl } : {});
-                        return { content: [{ type: 'text', text: `Leased entry ${entryId} to ${grant}` + (ttl ? ` (TTL: ${ttl})` : '') }] };
-                    }
-                    if (revoke) {
-                        const edges = await s.getEdges(entryId, 'outgoing');
-                        const leaseEdge = edges.find(e => e.type === 'leases');
-                        if (leaseEdge) {
-                            await s.unlink(leaseEdge.id);
-                            return { content: [{ type: 'text', text: `Revoked lease on ${entryId}` }] };
-                        }
-                        return { content: [{ type: 'text', text: `No active lease found for ${entryId}` }] };
-                    }
-                    return errorResult('Specify grant= or revoke=');
-                }
                 case 'tim_suppress': {
                     const { pattern, reason, ttl } = TimSuppressSchema.parse(args);
                     await s.suppress(pattern, reason, ttl);
@@ -2165,7 +2127,10 @@ async function createMcpServer(options = {}) {
                                 }],
                         };
                     }
-                    const children = await s.getChildren(resolvedParentId, kind ? { metadataKind: kind } : undefined);
+                    const children = await s.getChildren(resolvedParentId, {
+                        ...(kind ? { metadataKind: kind } : {}),
+                        enforceSuppression: true,
+                    });
                     const compact = children.map(child => ({
                         id: child.id,
                         title: child.title,
@@ -2677,6 +2642,7 @@ async function createMcpServer(options = {}) {
                         };
                     }
                     let entries = await fetchByWhat(s, what, roots.labels);
+                    entries = s.filterSuppressed(entries);
                     entries = await applyWith(s, entries, withStr);
                     entries = sortForShow(entries);
                     entries = entries.slice(0, limit);

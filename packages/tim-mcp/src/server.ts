@@ -247,13 +247,6 @@ const TimSyncSchema = z.object({
   })).optional(),
 });
 
-const TimLeaseSchema = z.object({
-  grant: z.string().optional().describe('Agent label to grant access to'),
-  revoke: z.string().optional().describe('Agent label to revoke access from'),
-  entryId: z.string(),
-  ttl: z.string().optional().describe('Duration: 1h, 30m, 7d'),
-});
-
 const TimSuppressSchema = z.object({
   pattern: z.string(),
   reason: z.string().optional().default('Manual suppression'),
@@ -549,13 +542,8 @@ export const TOOL_DEFS: Array<{
     schema: TimSyncSchema,
   },
   {
-    name: 'tim_lease',
-    description: 'Grant or revoke temporary agent access to a memory entry.',
-    schema: TimLeaseSchema,
-  },
-  {
     name: 'tim_suppress',
-    description: 'Suppress entries matching a pattern: hidden from tim_search, tim_read, and tim_load_project. Optional TTL (e.g. "24h", "7d").',
+    description: 'Suppress entries matching a pattern: hidden from tim_search, tim_read, tim_show, tim_section_children, tim_remember, and tim_load_project. Optional TTL (e.g. "24h", "7d").',
     schema: TimSuppressSchema,
   },
   {
@@ -1603,7 +1591,7 @@ export async function createMcpServer(
             showIrrelevant,
             include_body,
           } = TimReadSchema.parse(args);
-          const readOpts = { depth, includeChildren, showIrrelevant };
+          const readOpts = { depth, includeChildren, showIrrelevant, enforceSuppression: true };
 
           if (Array.isArray(id)) {
             let projectLabel: string | null = null;
@@ -1702,7 +1690,7 @@ export async function createMcpServer(
               };
             }
             const sectionEntry = await s.read(sec.id, readOpts);
-            const children = await s.getChildren(sec.id);
+            const children = await s.getChildren(sec.id, { enforceSuppression: true });
             return {
               content: [{
                 type: 'text',
@@ -1761,12 +1749,6 @@ export async function createMcpServer(
             const entry = await s.read(id, readOpts);
             if (!entry) {
               return errorResult(`Entry not found: ${id}`);
-            }
-            if (entry && await s.isSuppressed(`${entry.title}\n${entry.content}`)) {
-              return {
-                content: [{ type: 'text', text: `Entry suppressed: ${id}` }],
-                isError: true,
-              };
             }
             if (projectLabel && s.getProjectLabel(entry.id) !== projectLabel) {
               return errorResult(`Entry ${id} not found in project ${projectLabel}`);
@@ -2277,27 +2259,6 @@ export async function createMcpServer(
           }
         }
 
-        case 'tim_lease': {
-          const { grant, revoke, entryId, ttl } = TimLeaseSchema.parse(args);
-          if (grant) {
-            const agents = await s.getAgents();
-            const agent = agents.find(a => a.label === grant);
-            if (!agent) return errorResult(`Agent "${grant}" not registered`);
-            await s.link(entryId, agent.id, 'leases', 1.0, ttl ? { ttl } : {});
-            return { content: [{ type: 'text', text: `Leased entry ${entryId} to ${grant}` + (ttl ? ` (TTL: ${ttl})` : '') }] };
-          }
-          if (revoke) {
-            const edges = await s.getEdges(entryId, 'outgoing');
-            const leaseEdge = edges.find(e => e.type === 'leases');
-            if (leaseEdge) {
-              await s.unlink(leaseEdge.id);
-              return { content: [{ type: 'text', text: `Revoked lease on ${entryId}` }] };
-            }
-            return { content: [{ type: 'text', text: `No active lease found for ${entryId}` }] };
-          }
-          return errorResult('Specify grant= or revoke=');
-        }
-
         case 'tim_suppress': {
           const { pattern, reason, ttl } = TimSuppressSchema.parse(args);
           await s.suppress(pattern, reason, ttl);
@@ -2367,7 +2328,10 @@ export async function createMcpServer(
             };
           }
 
-          const children = await s.getChildren(resolvedParentId, kind ? { metadataKind: kind } : undefined);
+          const children = await s.getChildren(resolvedParentId, {
+            ...(kind ? { metadataKind: kind } : {}),
+            enforceSuppression: true,
+          });
           const compact = children.map(child => ({
             id: child.id,
             title: child.title,
@@ -2930,6 +2894,7 @@ export async function createMcpServer(
             };
           }
           let entries = await fetchByWhat(s, what, roots.labels!);
+          entries = s.filterSuppressed(entries);
           entries = await applyWith(s, entries, withStr);
           entries = sortForShow(entries);
           entries = entries.slice(0, limit);

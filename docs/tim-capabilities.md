@@ -377,7 +377,6 @@ Session-Exchanges werden harness-agnostisch geloggt (`metadata.harness`). Projek
 | TIM DB | Persistentes Wissen — provider-unabhängig |
 | Summarizer | Beliebiges CLI-Modell (Haiku, DeepSeek, …) liest Exchanges, schreibt Summaries |
 | Embedding-Provider | Lokal (ONNX) oder API — opt-in wegen Privacy |
-| Leasing (`tim_lease`) | Temporärer Agent-Zugriff auf Entry für Sub-Agents |
 
 **Wichtig:** Roh-Exchanges an Cloud-Summarizer = Datenabfluss. Für sensible Setups: lokaler Summarizer als Default.
 
@@ -487,7 +486,7 @@ Für vage Anfragen („was haben wir letzte Woche zu Sync entschieden?") dispatc
 
 **Session:** `tim_session_start`, `tim_session_log`, `tim_checkpoint`, `tim_show_unsummarized`
 
-**Admin:** `tim_create_project`, `tim_export`, `tim_import`, `tim_sync`, `tim_suppress`, `tim_lease`, `tim_doctor`
+**Admin:** `tim_create_project`, `tim_export`, `tim_import`, `tim_sync`, `tim_suppress`, `tim_doctor`
 
 **CLI:** `tim init`, `tim doctor`, `tim stats`, `tim sync push/pull/status`, `tim bind-project`, `tim resolve-project`
 

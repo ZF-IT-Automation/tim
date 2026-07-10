@@ -128,7 +128,11 @@ export declare class TimStore implements MemoryInterface {
     };
     getChildren(parentId: string, filter?: {
         metadataKind?: string;
+        enforceSuppression?: boolean;
     }): Promise<Entry[]>;
+    /** Drop entries matching active suppress patterns — for retrieval paths
+     *  that assemble result sets outside read()/search() (e.g. tim_show). */
+    filterSuppressed(entries: Entry[]): Entry[];
     /** Get all entries with a given metadata.kind value (no parent filter). */
     getByMetadataKind(kind: string, limit?: number): Promise<Entry[]>;
     /**

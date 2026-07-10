@@ -89,6 +89,7 @@ export interface ReadOptions {
   confidenceAbove?: number;      // filter: only high-confidence entries
   visibilityMask?: number;       // which agents can see this
   showIrrelevant?: boolean;
+  enforceSuppression?: boolean;  // hide entries matching active suppress patterns (retrieval paths)
 }
 
 export interface WriteOptions {

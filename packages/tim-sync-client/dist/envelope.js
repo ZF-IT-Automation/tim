@@ -20,17 +20,20 @@ function stagingToEnvelope(row) {
     let operation;
     let key;
     let lwwTs;
+    let device;
     if ('entityType' in row) {
         entityType = row.entityType;
         operation = row.operation;
         key = row.key;
         lwwTs = row.lwwTimestamp;
+        device = row.lwwDevice;
     }
     else {
         entityType = row.entity_type;
         operation = row.operation;
         key = row.key;
         lwwTs = row.lww_timestamp;
+        device = row.lww_device;
     }
     const deleted = operation === 'delete';
     return {
@@ -40,9 +43,10 @@ function stagingToEnvelope(row) {
         lww: new Date(lwwTs).toISOString(),
         deleted,
         payload: row.payload,
+        ...(device ? { device } : {}),
     };
 }
-function envelopeToStaging(env, deviceId) {
+function envelopeToStaging(env, fallbackDeviceId) {
     const lwwTs = Date.parse(env.lww);
     return {
         key: env.key,
@@ -50,7 +54,7 @@ function envelopeToStaging(env, deviceId) {
         operation: env.deleted ? 'delete' : 'upsert',
         payload: env.payload,
         lwwTimestamp: Number.isFinite(lwwTs) ? lwwTs : Date.now(),
-        lwwDevice: deviceId,
+        lwwDevice: env.device ?? fallbackDeviceId,
         lwwConfidence: 1.0,
         acked: false,
     };

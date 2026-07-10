@@ -1,7 +1,7 @@
 {
   "name": "tim-sync-server",
   "version": "0.1.0-alpha",
-  "description": "TIM hosted sync server — multi-tenant blind sync with quotas",
+  "description": "TIM hosted sync server \u2014 multi-tenant blind sync with quotas",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
@@ -13,6 +13,7 @@
   ],
   "scripts": {
     "build": "tsc",
+    "pretest": "npm --prefix ../.. run build",
     "test": "vitest run"
   },
   "dependencies": {
