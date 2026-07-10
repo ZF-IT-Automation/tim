@@ -116,6 +116,9 @@ describe('tim_import', () => {
     expect(meta.label).toBe('P0001');
     expect(meta.kind).toBe('project');
     expect(meta.hmemUid).toBe(rootUid);
+    // P-prefixed roots must be resolvable as projects (requireProject,
+    // ensureInboxProject match on kind === 'project') — see issue #1
+    expect(meta.kind).toBe('project');
 
     const otherRoot = store.getDb().prepare(
       "SELECT metadata FROM entries WHERE json_extract(metadata, '$.label') = 'L0001'",

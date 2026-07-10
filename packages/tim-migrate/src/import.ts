@@ -357,6 +357,8 @@ function importV2(
           hmemUid: e.uid,
           pinned: e.pinned === 1,
           importedAt: new Date().toISOString(),
+          // resolveProjectLabel/requireProject/ensureInboxProject match on kind=project
+          ...(e.prefix === 'P' && { kind: 'project' }),
         },
       });
       entriesImported++;
