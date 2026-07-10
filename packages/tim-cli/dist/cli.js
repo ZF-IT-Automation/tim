@@ -493,6 +493,25 @@ async function cmdMigrateTagsToTypes(args) {
         store.close();
     }
 }
+async function cmdMigrateProjectKind(args) {
+    const flags = parseArgs(args);
+    const dryRun = flags['dry-run'] === 'true';
+    const config = (0, tim_core_1.loadConfig)();
+    const store = new tim_store_1.TimStore(getDbPath(config));
+    try {
+        const report = (0, tim_migrate_1.repairProjectKind)(store, { dryRun });
+        console.log(JSON.stringify(report, null, 2));
+        if (dryRun) {
+            console.error(`\n[tim] migrate project-kind — DRY RUN. ${report.repaired} of ${report.matched} P-roots would be repaired.`);
+        }
+        else {
+            console.error(`\n[tim] migrate project-kind — ${report.repaired} of ${report.matched} P-roots repaired.`);
+        }
+    }
+    finally {
+        store.close();
+    }
+}
 async function cmdRootEntries(args) {
     const flags = parseArgs(args);
     const type = flags.type;
@@ -670,9 +689,13 @@ async function main() {
             if (sub === 'tags-to-types') {
                 await cmdMigrateTagsToTypes(rest.slice(1));
             }
+            else if (sub === 'project-kind') {
+                await cmdMigrateProjectKind(rest.slice(1));
+            }
             else {
                 console.error(`Usage: tim migrate <subcommand>\n` +
-                    `  tags-to-types   Convert legacy #rule / #human tags to metadata.type [--dry-run] [--sample-limit N]`);
+                    `  tags-to-types   Convert legacy #rule / #human tags to metadata.type [--dry-run] [--sample-limit N]\n` +
+                    `  project-kind    Backfill metadata.kind=project on imported P-prefix roots [--dry-run]`);
                 process.exit(1);
             }
             break;

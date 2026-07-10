@@ -19,7 +19,7 @@ import {
 } from 'tim-hooks';
 import { installMcpForHosts } from './install.js';
 import { cmdUserInit, cmdUserProfile, cmdUpdateSkills } from './user.js';
-import { tim_export, tim_import, repairImportFlags, exportToMarkdown, migrateTagsToTypes } from 'tim-migrate';
+import { tim_export, tim_import, repairImportFlags, repairProjectKind, exportToMarkdown, migrateTagsToTypes } from 'tim-migrate';
 import { cmdSync } from './sync-cli.js';
 import { cmdSnapshot } from './snapshot.js';
 import { cmdRestore } from './restore.js';
@@ -528,6 +528,30 @@ async function cmdMigrateTagsToTypes(args: string[]) {
   }
 }
 
+async function cmdMigrateProjectKind(args: string[]) {
+  const flags = parseArgs(args);
+  const dryRun = flags['dry-run'] === 'true';
+
+  const config = loadConfig();
+  const store = new TimStore(getDbPath(config));
+
+  try {
+    const report = repairProjectKind(store, { dryRun });
+    console.log(JSON.stringify(report, null, 2));
+    if (dryRun) {
+      console.error(
+        `\n[tim] migrate project-kind — DRY RUN. ${report.repaired} of ${report.matched} P-roots would be repaired.`,
+      );
+    } else {
+      console.error(
+        `\n[tim] migrate project-kind — ${report.repaired} of ${report.matched} P-roots repaired.`,
+      );
+    }
+  } finally {
+    store.close();
+  }
+}
+
 async function cmdRootEntries(args: string[]) {
   const flags = parseArgs(args);
   const type = flags.type;
@@ -714,10 +738,13 @@ async function main() {
       const sub = rest[0];
       if (sub === 'tags-to-types') {
         await cmdMigrateTagsToTypes(rest.slice(1));
+      } else if (sub === 'project-kind') {
+        await cmdMigrateProjectKind(rest.slice(1));
       } else {
         console.error(
           `Usage: tim migrate <subcommand>\n` +
-            `  tags-to-types   Convert legacy #rule / #human tags to metadata.type [--dry-run] [--sample-limit N]`,
+            `  tags-to-types   Convert legacy #rule / #human tags to metadata.type [--dry-run] [--sample-limit N]\n` +
+            `  project-kind    Backfill metadata.kind=project on imported P-prefix roots [--dry-run]`,
         );
         process.exit(1);
       }

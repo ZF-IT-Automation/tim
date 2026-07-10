@@ -1,5 +1,10 @@
 # TIM Contrary Review — Der Fall gegen das Projekt
 
+> ⚠️ **Historisches Dokument.** Alle Repo-Stand-Behauptungen (z.B. eingechecktes
+> `node_modules/`, fehlendes Pretest-Gate) beziehen sich auf HEAD `656c134` vom
+> 2026-07-07 und werden nicht aktualisiert. Stand 2026-07-10 ist `node_modules/`
+> nicht mehr im Git-Index. Nicht als aktuelle Findings lesen.
+>
 > Erstellt 2026-07-07 auf HEAD `656c134`. Auftrag: bewusstes Contrarian-Review — nicht
 > "was ist kaputt" (das leistet `REVIEW-fable5.md`), sondern der stärkste ehrliche Fall
 > **gegen** Prämissen, Richtung und Ressourceneinsatz des Projekts. Advocatus Diaboli,

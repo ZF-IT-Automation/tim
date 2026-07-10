@@ -350,6 +350,7 @@ function importV2(
         irrelevant: e.irrelevant === 1,
         favorite: e.favorite === 1,
         metadata: {
+          // resolveProjectLabel/requireProject/ensureInboxProject match on kind=project
           ...(shouldMarkAsProjectRoot(e.prefix) ? { kind: 'project' } : {}),
           label: e.label,
           prefix: e.prefix,
@@ -357,8 +358,6 @@ function importV2(
           hmemUid: e.uid,
           pinned: e.pinned === 1,
           importedAt: new Date().toISOString(),
-          // resolveProjectLabel/requireProject/ensureInboxProject match on kind=project
-          ...(e.prefix === 'P' && { kind: 'project' }),
         },
       });
       entriesImported++;
@@ -995,6 +994,50 @@ export function repairImportFlags(
     repaired,
     warnings,
   };
+}
+
+export interface ProjectKindRepairReport {
+  dryRun: boolean;
+  matched: number;
+  repaired: number;
+  labels: string[];
+}
+
+/**
+ * Backfill metadata.kind = "project" on already-imported P-prefix root
+ * entries. Imports before fix/import-project-kind wrote P* roots without
+ * kind, so resolveProjectLabel/requireProject/ensureInboxProject could not
+ * see them and crashed on bind. Operates purely on the TIM DB — no source
+ * .hmem file needed. Repaired rows are staged so the fix syncs.
+ */
+export function repairProjectKind(
+  store: TimStore,
+  options: { dryRun?: boolean } = {},
+): ProjectKindRepairReport {
+  const db = store.getDb();
+  const rows = db.prepare(`
+    SELECT id, metadata FROM entries
+    WHERE parent_id IS NULL
+      AND tombstoned_at IS NULL
+      AND json_extract(metadata, '$.prefix') = 'P'
+  `).all() as { id: string; metadata: string }[];
+
+  let repaired = 0;
+  const labels: string[] = [];
+  const tx = db.transaction(() => {
+    for (const row of rows) {
+      const metadata = JSON.parse(row.metadata) as Record<string, unknown>;
+      if (metadata.kind === 'project') continue;
+      repaired++;
+      labels.push((metadata.label as string) ?? row.id);
+      if (options.dryRun) continue;
+      writeEntryMetadata(store, row.id, { ...metadata, kind: 'project' });
+      stageEntryRow(db, row.id);
+    }
+  });
+  tx();
+
+  return { dryRun: !!options.dryRun, matched: rows.length, repaired, labels };
 }
 
 export function labelFromMetadata(metadata: Record<string, unknown>): string | null {

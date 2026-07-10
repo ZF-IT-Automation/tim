@@ -6,7 +6,7 @@ import * as os from 'os';
 import * as path from 'path';
 import Database from 'better-sqlite3';
 import { TimStore } from 'tim-store';
-import { tim_import } from '../import.js';
+import { tim_import, repairProjectKind } from '../import.js';
 import { createV2HmemDatabase } from '../hmem-format.js';
 
 let store: TimStore;
@@ -114,11 +114,10 @@ describe('tim_import', () => {
 
     const meta = JSON.parse(root.metadata);
     expect(meta.label).toBe('P0001');
-    expect(meta.kind).toBe('project');
-    expect(meta.hmemUid).toBe(rootUid);
     // P-prefixed roots must be resolvable as projects (requireProject,
     // ensureInboxProject match on kind === 'project') — see issue #1
     expect(meta.kind).toBe('project');
+    expect(meta.hmemUid).toBe(rootUid);
 
     const otherRoot = store.getDb().prepare(
       "SELECT metadata FROM entries WHERE json_extract(metadata, '$.label') = 'L0001'",
@@ -429,5 +428,62 @@ describe('tim_import — node rescue and mid-gen old format', () => {
       .get('P0052.1.1') as { parent_id: string; irrelevant: number };
     expect(nested.parent_id).toBe('P0052.1');
     expect(nested.irrelevant).toBe(1);
+  });
+});
+
+describe('repairProjectKind', () => {
+  function stripKind(id: string): void {
+    const db = store.getDb();
+    const row = db.prepare('SELECT metadata FROM entries WHERE id = ?').get(id) as { metadata: string };
+    const meta = JSON.parse(row.metadata) as Record<string, unknown>;
+    delete meta.kind;
+    db.prepare('UPDATE entries SET metadata = ? WHERE id = ?').run(JSON.stringify(meta), id);
+  }
+
+  it('backfills kind=project on P-roots imported before the fix', () => {
+    const filePath = path.join(tmpDir, 'v2.hmem');
+    const { rootUid } = createV2Fixture(filePath);
+    tim_import(store, filePath);
+    stripKind(rootUid); // simulate pre-fix import state
+
+    const report = repairProjectKind(store);
+    expect(report.repaired).toBe(1);
+    expect(report.labels).toEqual(['P0001']);
+
+    const row = store.getDb().prepare('SELECT metadata FROM entries WHERE id = ?').get(rootUid) as { metadata: string };
+    expect(JSON.parse(row.metadata).kind).toBe('project');
+
+    // Repair is staged so it syncs to other devices
+    const staged = store.getDb().prepare('SELECT COUNT(*) AS n FROM staging WHERE key = ?').get(rootUid) as { n: number };
+    expect(staged.n).toBeGreaterThan(0);
+  });
+
+  it('leaves non-P roots and already-repaired roots untouched', () => {
+    const filePath = path.join(tmpDir, 'v2.hmem');
+    createV2Fixture(filePath);
+    tim_import(store, filePath);
+
+    // Fresh import already has kind=project → nothing to repair
+    const report = repairProjectKind(store);
+    expect(report.repaired).toBe(0);
+
+    const other = store.getDb().prepare(
+      "SELECT metadata FROM entries WHERE json_extract(metadata, '$.label') = 'L0001'",
+    ).get() as { metadata: string };
+    expect(JSON.parse(other.metadata).kind).toBeUndefined();
+  });
+
+  it('reports without writing in dry-run mode', () => {
+    const filePath = path.join(tmpDir, 'v2.hmem');
+    const { rootUid } = createV2Fixture(filePath);
+    tim_import(store, filePath);
+    stripKind(rootUid);
+
+    const report = repairProjectKind(store, { dryRun: true });
+    expect(report.dryRun).toBe(true);
+    expect(report.repaired).toBe(1);
+
+    const row = store.getDb().prepare('SELECT metadata FROM entries WHERE id = ?').get(rootUid) as { metadata: string };
+    expect(JSON.parse(row.metadata).kind).toBeUndefined();
   });
 });
