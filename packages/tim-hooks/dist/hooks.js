@@ -104,7 +104,7 @@ async function embedUnembeddedEntries(store, opts = {}) {
     if (entries.length === 0)
         return 0;
     try {
-        const { EmbeddingModel, FlagEmbedding } = await import('fastembed');
+        const { EmbeddingModel, FlagEmbedding } = await loadFastembed();
         const modelEnum = resolveEmbeddingModelEnum(modelName, EmbeddingModel);
         const embedder = await FlagEmbedding.init({ model: modelEnum });
         const texts = entries.map(e => e.content.slice(0, 2000));
@@ -129,5 +129,8 @@ async function embedUnembeddedEntries(store, opts = {}) {
         console.debug('[tim-hooks] embedUnembeddedEntries: embedding not available:', err.message);
         return 0;
     }
+}
+async function loadFastembed() {
+    return import('fastembed');
 }
 //# sourceMappingURL=hooks.js.map

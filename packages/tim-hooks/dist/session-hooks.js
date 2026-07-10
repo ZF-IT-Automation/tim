@@ -44,12 +44,14 @@ const child_process_1 = require("child_process");
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
 const marker_js_1 = require("./marker.js");
-exports.DEFAULT_SUMMARIZER_TIMEOUT_SEC = 600;
+const constants_js_1 = require("./constants.js");
+var constants_js_2 = require("./constants.js");
+Object.defineProperty(exports, "DEFAULT_SUMMARIZER_TIMEOUT_SEC", { enumerable: true, get: function () { return constants_js_2.DEFAULT_SUMMARIZER_TIMEOUT_SEC; } });
 function summarizerLogPath(cwd) {
     return path.join(cwd, '.tim', 'summarizer.log');
 }
 /** Shell snippet: trap lock release, timeout, run tim-summarizer CLI with log append. */
-function buildSummarizerCommand(sessionId, lockPath, logPath, timeoutSec = exports.DEFAULT_SUMMARIZER_TIMEOUT_SEC) {
+function buildSummarizerCommand(sessionId, lockPath, logPath, timeoutSec = constants_js_1.DEFAULT_SUMMARIZER_TIMEOUT_SEC) {
     const q = (s) => JSON.stringify(s);
     const cmd = 'node ' + JSON.stringify(path.resolve(__dirname, '..', '..', 'tim-summarizer', 'dist', 'summarize.js'));
     return (`{ trap ${q(`rm -f ${lockPath}`)} EXIT; ` +
@@ -113,7 +115,7 @@ async function maybeSpawnSummarizer(store, cwd, opts = {}) {
         return { spawned: false, reason: 'locked', pending };
     const lockPath = path.join(cwd, marker_js_1.MARKER_LOCK);
     const logPath = summarizerLogPath(cwd);
-    const timeoutSec = opts.timeoutSec ?? exports.DEFAULT_SUMMARIZER_TIMEOUT_SEC;
+    const timeoutSec = opts.timeoutSec ?? constants_js_1.DEFAULT_SUMMARIZER_TIMEOUT_SEC;
     try {
         spawn(buildSummarizerCommand(reconciled.session, lockPath, logPath, timeoutSec), {
             sessionId: reconciled.session,
@@ -131,7 +133,7 @@ async function onSessionStop(store, cwd, opts = {}) {
 }
 exports.DEFAULT_PROJECT_SUMMARY_THRESHOLD = 5;
 /** Shell snippet: run tim-summarizer in --project-summary mode for a label. */
-function buildProjectSummaryCommand(label, logPath, timeoutSec = exports.DEFAULT_SUMMARIZER_TIMEOUT_SEC) {
+function buildProjectSummaryCommand(label, logPath, timeoutSec = constants_js_1.DEFAULT_SUMMARIZER_TIMEOUT_SEC) {
     const q = (s) => JSON.stringify(s);
     const cmd = 'node ' + JSON.stringify(path.resolve(__dirname, '..', '..', 'tim-summarizer', 'dist', 'summarize.js'));
     return `timeout ${timeoutSec} ${cmd} --project-summary ${q(label)} >>${q(logPath)} 2>&1`;
@@ -153,7 +155,7 @@ async function maybeSpawnProjectSummary(store, cwd, label, opts = {}) {
     }
     const spawn = opts.spawn ?? exports.spawnSummarizer;
     const logPath = summarizerLogPath(cwd);
-    const timeoutSec = opts.timeoutSec ?? exports.DEFAULT_SUMMARIZER_TIMEOUT_SEC;
+    const timeoutSec = opts.timeoutSec ?? constants_js_1.DEFAULT_SUMMARIZER_TIMEOUT_SEC;
     try {
         spawn(buildProjectSummaryCommand(label, logPath, timeoutSec), { sessionId: label, cwd });
         return { spawned: true, reason: 'spawned', count };

@@ -1005,4 +1005,34 @@ describe('TimStore', () => {
       expect(entries.length).toBe(0);
     });
   });
+
+  describe('write+staging atomicity', () => {
+    it('rolls back entry insert when staging fails in write()', async () => {
+      const original = (store as unknown as { insertStagingSync: (...args: unknown[]) => void })
+        .insertStagingSync.bind(store);
+      (store as unknown as { insertStagingSync: (...args: unknown[]) => void }).insertStagingSync =
+        () => { throw new Error('staging boom'); };
+
+      await expect(store.write('Orphan test')).rejects.toThrow('staging boom');
+      const count = store.getDb().prepare('SELECT COUNT(*) as n FROM entries').get() as { n: number };
+      expect(count.n).toBe(0);
+
+      (store as unknown as { insertStagingSync: (...args: unknown[]) => void }).insertStagingSync = original;
+    });
+
+    it('rolls back entry insert when staging fails in createProject()', async () => {
+      const original = (store as unknown as { insertStagingSync: (...args: unknown[]) => void })
+        .insertStagingSync.bind(store);
+      (store as unknown as { insertStagingSync: (...args: unknown[]) => void }).insertStagingSync =
+        () => { throw new Error('staging boom'); };
+
+      await expect(store.createProject('P9999', { content: 'Test' })).rejects.toThrow('staging boom');
+      const count = store.getDb().prepare(
+        `SELECT COUNT(*) as n FROM entries WHERE json_extract(metadata, '$.kind') = 'project'`,
+      ).get() as { n: number };
+      expect(count.n).toBe(0);
+
+      (store as unknown as { insertStagingSync: (...args: unknown[]) => void }).insertStagingSync = original;
+    });
+  });
 });

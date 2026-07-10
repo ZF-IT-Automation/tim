@@ -36,6 +36,8 @@ export declare function getCurrentBatch(store: TimStore, exchangesNodeId: string
 export declare function findChildByKind(store: TimStore, parentId: string, kind: string): Promise<Entry | null>;
 /** Re-derive counters from the DB tree. Authoritative — never trusts caches. */
 export declare function deriveCounters(store: TimStore, sessionId: string): Promise<DerivedCounters>;
+/** Sync variant for use inside `runExclusive` transactions. */
+export declare function deriveCountersSync(store: TimStore, sessionId: string): DerivedCounters;
 /** Auto-create P0000 Inbox catch-all project if missing. */
 export declare function ensureInboxProject(store: TimStore): Promise<Entry>;
 //# sourceMappingURL=session-tree.d.ts.map

@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { LOCK_TTL_MS } from './constants.js';
 import type { TimStore } from 'tim-store';
 import { deriveCounters } from 'tim-store';
 
@@ -235,6 +236,13 @@ export async function validateMarkerAgainstStore(
   return null;
 }
 
+/** Atomically write JSON to `filePath` (tmp + rename — no torn reads on POSIX). */
+export function writeMarkerAtomic(filePath: string, content: string): void {
+  const tmp = `${filePath}.tmp.${process.pid}`;
+  fs.writeFileSync(tmp, content);
+  fs.renameSync(tmp, filePath);
+}
+
 /** Write a project marker file. Always emits the current schema version:
  *  the on-disk file becomes v2 on first write, regardless of the caller's
  *  input. This is the auto-upgrade path for v1 files. */
@@ -248,7 +256,24 @@ export function writeMarker(cwd: string, marker: ProjectMarkerInput): void {
   }
   const p = markerPath(cwd);
   const upgraded: ProjectMarker = { ...marker, version: MARKER_VERSION };
-  fs.writeFileSync(p, JSON.stringify(upgraded, null, 2));
+  writeMarkerAtomic(p, JSON.stringify(upgraded, null, 2));
+}
+
+/**
+ * Rotate the session id in cwd's `.tim-project` when the harness supplies a new one.
+ * Used by tim-session-start.sh — must not interpolate paths into JS source.
+ */
+export function rotateMarkerSession(cwd: string, sessionId: string): void {
+  const p = markerPath(cwd);
+  if (!fs.existsSync(p)) return;
+  try {
+    const raw = JSON.parse(fs.readFileSync(p, 'utf8')) as Record<string, unknown>;
+    if (raw.session === sessionId) return;
+    raw.session = sessionId;
+    writeMarkerAtomic(p, JSON.stringify(raw, null, 2));
+  } catch {
+    /* corrupt marker — leave untouched */
+  }
 }
 
 /**
@@ -267,9 +292,8 @@ export function syncNearestProjectMarker(
     );
     return false;
   }
-  const located = findMarker(startCwd, {
-    walkUp: true,
-    allowHome: true,
+  const located = discoverMarker(startCwd, {
+    ...DEFAULT_MARKER_DISCOVERY_POLICY,
     ...options?.findOptions,
   });
   if (!located) return false;
@@ -283,9 +307,9 @@ export function syncNearestProjectMarker(
   return true;
 }
 
-/** Project detection — v1: .tim-project marker only. */
+/** Project detection — cwd-only marker (no walk-up). */
 export function detectProject(cwd: string): ProjectMarker | null {
-  return readMarker(cwd);
+  return discoverMarker(cwd, CWD_ONLY_MARKER_DISCOVERY_POLICY)?.marker ?? null;
 }
 
 /** Re-derive counters from the DB and persist them into the marker. */
@@ -303,7 +327,7 @@ export async function reconcileMarker(store: TimStore, cwd: string): Promise<Pro
   return readMarker(cwd) ?? reconciled as ProjectMarker;
 }
 
-export const LOCK_TTL_MS = 10 * 60_000;
+export { LOCK_TTL_MS } from './constants.js';
 
 export function acquireLock(cwd: string): boolean {
   const lock = path.join(cwd, MARKER_LOCK);
@@ -349,14 +373,29 @@ export interface MarkerLocation {
   dir: string;
 }
 
+/** Discovery policy for `discoverMarker` — single knob for walk-up scope. */
+export type MarkerDiscoveryPolicy = FindMarkerOptions;
+
 export interface FindMarkerOptions {
   /** Do not walk above this directory (isolates tests; ignores e.g. /tmp/.tim-project). */
   maxRoot?: string;
-  /** Walk parent directories for a marker. Default false (cwd only). */
+  /** Walk parent directories for a marker. */
   walkUp?: boolean;
   /** When walkUp is true, include ancestor markers at $HOME. Default false. */
   allowHome?: boolean;
 }
+
+/** Production default: walk-up from cwd, home ancestors allowed (statusline / sync paths). */
+export const DEFAULT_MARKER_DISCOVERY_POLICY: MarkerDiscoveryPolicy = {
+  walkUp: true,
+  allowHome: true,
+};
+
+/** Cwd-only binding (session-start hook, checkpoint auto-load). */
+export const CWD_ONLY_MARKER_DISCOVERY_POLICY: MarkerDiscoveryPolicy = {
+  walkUp: false,
+  allowHome: false,
+};
 
 function isInsideRoot(dir: string, root: string): boolean {
   const d = path.resolve(dir);
@@ -401,19 +440,17 @@ function scanDirForMarker(dir: string): ScanResult {
 }
 
 /**
- * Find a project marker from `startCwd`.
+ * Find a project marker from `startCwd` — the single discovery implementation.
  *
- * Default (walkUp false): inspect `startCwd` only — `.tim-project` then `tim.json`.
- *
- * walkUp true: walk parents (optional maxRoot cap). After collection, filter out
- * home-directory ancestors unless allowHome or the hit is startCwd itself.
- * Deepest remaining candidate wins. Corrupt nearest marker → null (no silent skip).
- *
- * Pure FS — no store — safe for hooks under a tight timeout.
+ * Policy defaults (when fields omitted): walkUp=true, allowHome=true.
+ * Pass `CWD_ONLY_MARKER_DISCOVERY_POLICY` for harness cwd binding.
  */
-export function findMarker(startCwd: string, options?: FindMarkerOptions): MarkerLocation | null {
-  const walkUp = options?.walkUp ?? false;
-  const allowHome = options?.allowHome ?? false;
+export function discoverMarker(
+  startCwd: string,
+  policy: MarkerDiscoveryPolicy = DEFAULT_MARKER_DISCOVERY_POLICY,
+): MarkerLocation | null {
+  const walkUp = policy.walkUp ?? true;
+  const allowHome = policy.allowHome ?? true;
   const startResolved = path.resolve(startCwd);
 
   if (!walkUp) {
@@ -422,7 +459,7 @@ export function findMarker(startCwd: string, options?: FindMarkerOptions): Marke
     return result;
   }
 
-  const maxRoot = options?.maxRoot ? path.resolve(options.maxRoot) : null;
+  const maxRoot = policy.maxRoot ? path.resolve(policy.maxRoot) : null;
   let dir = startResolved;
   const found: MarkerLocation[] = [];
   for (let i = 0; i < 256; i++) {
@@ -443,6 +480,21 @@ export function findMarker(startCwd: string, options?: FindMarkerOptions): Marke
   });
   if (filtered.length === 0) return null;
   return pickMarkerLocation(filtered);
+}
+
+/**
+ * Back-compat wrapper: when `options` is omitted, cwd-only (historical default).
+ * Prefer `discoverMarker` with an explicit policy for new code.
+ */
+export function findMarker(startCwd: string, options?: FindMarkerOptions): MarkerLocation | null {
+  if (!options) {
+    return discoverMarker(startCwd, CWD_ONLY_MARKER_DISCOVERY_POLICY);
+  }
+  return discoverMarker(startCwd, {
+    walkUp: options.walkUp ?? false,
+    allowHome: options.allowHome ?? false,
+    ...(options.maxRoot ? { maxRoot: options.maxRoot } : {}),
+  });
 }
 
 /**

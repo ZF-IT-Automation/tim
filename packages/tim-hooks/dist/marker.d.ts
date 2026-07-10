@@ -93,10 +93,17 @@ export declare function readMarker(cwd: string): ProjectMarker | null;
  * malformed labels — we just skip the existence confirmation.
  */
 export declare function validateMarkerAgainstStore(marker: ProjectMarker, store: Pick<TimStore, 'resolveProjectLabel'>): Promise<ProjectMarker | null>;
+/** Atomically write JSON to `filePath` (tmp + rename — no torn reads on POSIX). */
+export declare function writeMarkerAtomic(filePath: string, content: string): void;
 /** Write a project marker file. Always emits the current schema version:
  *  the on-disk file becomes v2 on first write, regardless of the caller's
  *  input. This is the auto-upgrade path for v1 files. */
 export declare function writeMarker(cwd: string, marker: ProjectMarkerInput): void;
+/**
+ * Rotate the session id in cwd's `.tim-project` when the harness supplies a new one.
+ * Used by tim-session-start.sh — must not interpolate paths into JS source.
+ */
+export declare function rotateMarkerSession(cwd: string, sessionId: string): void;
 /**
  * Update the nearest `.tim-project` (walk-up from cwd) after tim_load_project.
  * Statusline and hooks read this marker — must match the loaded project label.
@@ -105,11 +112,11 @@ export declare function syncNearestProjectMarker(startCwd: string, projectLabel:
     sessionId?: string;
     findOptions?: FindMarkerOptions;
 }): boolean;
-/** Project detection — v1: .tim-project marker only. */
+/** Project detection — cwd-only marker (no walk-up). */
 export declare function detectProject(cwd: string): ProjectMarker | null;
 /** Re-derive counters from the DB and persist them into the marker. */
 export declare function reconcileMarker(store: TimStore, cwd: string): Promise<ProjectMarker>;
-export declare const LOCK_TTL_MS: number;
+export { LOCK_TTL_MS } from './constants.js';
 export declare function acquireLock(cwd: string): boolean;
 /** True when an active (non-stale) summarizer/session lock is held. */
 export declare function isSessionLocked(cwd: string): boolean;
@@ -118,26 +125,32 @@ export interface MarkerLocation {
     marker: ProjectMarker;
     dir: string;
 }
+/** Discovery policy for `discoverMarker` — single knob for walk-up scope. */
+export type MarkerDiscoveryPolicy = FindMarkerOptions;
 export interface FindMarkerOptions {
     /** Do not walk above this directory (isolates tests; ignores e.g. /tmp/.tim-project). */
     maxRoot?: string;
-    /** Walk parent directories for a marker. Default false (cwd only). */
+    /** Walk parent directories for a marker. */
     walkUp?: boolean;
     /** When walkUp is true, include ancestor markers at $HOME. Default false. */
     allowHome?: boolean;
 }
+/** Production default: walk-up from cwd, home ancestors allowed (statusline / sync paths). */
+export declare const DEFAULT_MARKER_DISCOVERY_POLICY: MarkerDiscoveryPolicy;
+/** Cwd-only binding (session-start hook, checkpoint auto-load). */
+export declare const CWD_ONLY_MARKER_DISCOVERY_POLICY: MarkerDiscoveryPolicy;
 /** Test helper: env vars override findMarker scope for spawned CLI. */
 export declare function findMarkerOptionsFromEnv(): FindMarkerOptions | undefined;
 /**
- * Find a project marker from `startCwd`.
+ * Find a project marker from `startCwd` — the single discovery implementation.
  *
- * Default (walkUp false): inspect `startCwd` only — `.tim-project` then `tim.json`.
- *
- * walkUp true: walk parents (optional maxRoot cap). After collection, filter out
- * home-directory ancestors unless allowHome or the hit is startCwd itself.
- * Deepest remaining candidate wins. Corrupt nearest marker → null (no silent skip).
- *
- * Pure FS — no store — safe for hooks under a tight timeout.
+ * Policy defaults (when fields omitted): walkUp=true, allowHome=true.
+ * Pass `CWD_ONLY_MARKER_DISCOVERY_POLICY` for harness cwd binding.
+ */
+export declare function discoverMarker(startCwd: string, policy?: MarkerDiscoveryPolicy): MarkerLocation | null;
+/**
+ * Back-compat wrapper: when `options` is omitted, cwd-only (historical default).
+ * Prefer `discoverMarker` with an explicit policy for new code.
  */
 export declare function findMarker(startCwd: string, options?: FindMarkerOptions): MarkerLocation | null;
 /**

@@ -49,10 +49,10 @@ Definition — siehe Streichliste.
 - [x] Suppression in allen Retrieval-Pfaden enforced + getestet (2026-07-10)
 - [x] `tim_lease` entfernt (unbenutzbar via MCP; „build it or remove it") (2026-07-10)
 - [x] Envelope trägt Origin-Device für LWW (2026-07-10)
-- [ ] Write+Staging atomar (Transaktion) — fable5 P2, offen
-- [ ] Summarizer-Hot-Path-Trio (finally-Rollup, Lock-TTL > Timeout, UNIQUE Batch-Index) — fable5 P0-Empfehlung #2, offen
-- [ ] Marker-Discovery auf EINE Policy vereinheitlicht, Writes atomar (tmp+rename) — offen
-- [ ] Doc-Sync tim-capabilities.md §8 (≥10 stale Rows) — offen
+- [x] Write+Staging atomar (Transaktion) — 2026-07-10
+- [x] Summarizer-Hot-Path-Trio (finally-Rollup, Lock-TTL > Timeout, UNIQUE Batch-Index) — 2026-07-10
+- [x] Marker-Discovery auf EINE Policy vereinheitlicht, Writes atomar (tmp+rename) — 2026-07-10
+- [x] Doc-Sync tim-capabilities.md §8 — 2026-07-10
 - [ ] A/B-Experiment durchgeführt und Ergebnis committed — **braucht Benni** (Protokoll unten)
 
 ## Policies (ab sofort, Beschluss 2026-07-10)

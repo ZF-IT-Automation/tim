@@ -75,6 +75,8 @@ export declare class SessionManager {
         seqFrom: number;
         seqTo: number;
     }, tags?: string[]): Promise<Entry>;
+    private writeBatchSummarySync;
+    private syncSessionBatchesSummarized;
     /** Recompute session-level content tags from batch summaries (freq >= 2). */
     aggregateSessionTags(sessionId: string): Promise<Entry | null>;
     /** Batch summary nodes with no content tags (only structural tags). */

@@ -40,9 +40,14 @@ export {
 export {
   readMarker,
   writeMarker,
+  writeMarkerAtomic,
+  rotateMarkerSession,
   detectProject,
+  discoverMarker,
   findMarker,
   findMarkerOptionsFromEnv,
+  DEFAULT_MARKER_DISCOVERY_POLICY,
+  CWD_ONLY_MARKER_DISCOVERY_POLICY,
   buildLoadDirective,
   buildSessionDirective,
   reconcileMarker,
@@ -64,6 +69,7 @@ export {
   type ProjectMarkerInput,
   type MarkerLocation,
   type FindMarkerOptions,
+  type MarkerDiscoveryPolicy,
 } from './marker.js';
 
 export {

@@ -325,7 +325,7 @@ TIM ready. Connect your MCP client to ~/.tim/mcp.json
 | `tim_search` | Hybrid FTS5 + vector search | `tim_search(query='sync bug', top_k=10)` |
 | `tim_link` | Create/update edge between entries | `tim_link(source='D001', target='E005', type='contradicts')` |
 | `tim_trace` | Follow edge chain | `tim_trace(start='D001', type='implements', depth=5)` |
-| `tim_lease` | Grant/revoke agent memory access | `tim_lease(grant='cursor', entry='P0048', ttl='1h')` |
+| ~~`tim_lease`~~ | *(entfernt 2026-07-10 — Grant war via MCP nicht nutzbar)* | — |
 | `tim_sync` | Push/pull/status | `tim_sync(action='push')` |
 | `tim_suppress` | Add to negative memory | `tim_suppress(pattern='npm rate limit', ttl='30d')` |
 | `tim_health` | DB integrity, broken links, stats | `tim_health()` |

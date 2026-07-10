@@ -212,6 +212,9 @@ export declare class TimStore implements MemoryInterface {
     writeSync(content: string, options?: WriteOptions): Entry;
     getChildByKindSync(parentId: string, kind: string): Entry[];
     getChildrenBySeqSync(parentId: string): Entry[];
+    readSync(id: string): Entry | null;
+    /** Synchronous update for use inside `runExclusive` transactions. */
+    updateSync(id: string, patch: Partial<Entry>): Entry;
     /** Entries whose metadata JSON has non-boolean values for known boolean keys (legacy 1/0/"true"/"false"). */
     findEntriesWithNonBooleanTask(): Array<{
         id: string;
@@ -231,6 +234,8 @@ export declare class TimStore implements MemoryInterface {
     private buildEntryRow;
     private insertEntrySync;
     private insertStagingSync;
+    /** Atomically insert entry + staging row (rollback on either failure). */
+    private writeEntryWithStaging;
     write(content: string, options?: WriteOptions): Promise<Entry>;
     update(id: string, patch: Partial<Entry>): Promise<Entry>;
     delete(id: string, hard?: boolean): Promise<void>;

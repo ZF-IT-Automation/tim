@@ -105,6 +105,36 @@ export async function deriveCounters(
   return { exchangeCount, batchesSummarized };
 }
 
+/** Sync variant for use inside `runExclusive` transactions. */
+export function deriveCountersSync(
+  store: TimStore,
+  sessionId: string,
+): DerivedCounters {
+  const exchangesNode = store.getChildByKindSync(sessionId, KIND_EXCHANGES_ROOT)[0] ?? null;
+  const summaryNode = store.getChildByKindSync(sessionId, KIND_SUMMARY_ROOT)[0] ?? null;
+
+  let exchangeCount = 0;
+  if (exchangesNode) {
+    const batches = store.getChildByKindSync(exchangesNode.id, KIND_EXCHANGE_BATCH);
+    for (let i = 0; i < batches.length; i++) {
+      const batch = batches[i]!;
+      const users = store.getChildrenBySeqSync(batch.id).filter(
+        u => u.metadata.role === 'user',
+      );
+      const isLast = i === batches.length - 1;
+      if (isLast && users.length === 0) continue;
+      exchangeCount += users.length;
+    }
+  }
+
+  let batchesSummarized = 0;
+  if (summaryNode) {
+    batchesSummarized = store.getChildByKindSync(summaryNode.id, KIND_BATCH).length;
+  }
+
+  return { exchangeCount, batchesSummarized };
+}
+
 /** Auto-create P0000 Inbox catch-all project if missing. */
 export async function ensureInboxProject(store: TimStore): Promise<Entry> {
   const existing = await store.read(INBOX_PROJECT_LABEL);

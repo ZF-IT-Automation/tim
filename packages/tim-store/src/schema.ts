@@ -206,6 +206,39 @@ export const MIGRATIONS: { version: number; sql: string }[] = [
       CREATE INDEX IF NOT EXISTS idx_entry_vectors_model ON entry_vectors(model);
     `
   },
+  {
+    version: 11,
+    sql: `
+      -- Merge duplicate batch-summary nodes (highest seq_to wins) before unique index.
+      UPDATE entries SET tombstoned_at = datetime('now'), irrelevant = 1
+      WHERE id IN (
+        SELECT e.id FROM entries e
+        WHERE json_extract(e.metadata, '$.kind') = 'batch-summary'
+          AND e.tombstoned_at IS NULL
+          AND e.id NOT IN (
+            SELECT keep_id FROM (
+              SELECT id AS keep_id,
+                ROW_NUMBER() OVER (
+                  PARTITION BY parent_id,
+                    CAST(json_extract(metadata, '$.batch_index') AS INTEGER)
+                  ORDER BY CAST(json_extract(metadata, '$.seq_to') AS INTEGER) DESC,
+                    rowid DESC
+                ) AS rn
+              FROM entries
+              WHERE json_extract(metadata, '$.kind') = 'batch-summary'
+                AND tombstoned_at IS NULL
+            ) WHERE rn = 1
+          )
+      );
+
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_batch_unique ON entries (
+        parent_id,
+        CAST(json_extract(metadata, '$.batch_index') AS INTEGER)
+      )
+      WHERE json_extract(metadata, '$.kind') = 'batch-summary'
+        AND tombstoned_at IS NULL;
+    `,
+  },
 ];
 
 export function getCurrentVersion(): number {

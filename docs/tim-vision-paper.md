@@ -827,9 +827,12 @@ Patterns, Noise aus Migration. **Negative Memory** = Suppress-Liste:
 Negative Memory lebt in Store-Tabelle `suppress_patterns` — nicht in Entry-Tree.
 `tim_health` reportet stale Patterns (TTL expired, zero matches).
 
-### Agent Leasing (`tim_lease`)
+### Agent Leasing (`tim_lease`) — *entfernt 2026-07-10*
 
-Temporärer Agent-Zugriff auf Entry ohne globale Visibility-Änderung:
+> **Status:** Tool entfernt (Production-Readiness-Entscheidung). Grant war via MCP
+> nicht nutzbar; Lease-Metadaten im Schema bleiben optional für spätere Phase 0.7+.
+
+Temporärer Agent-Zugriff auf Entry ohne globale Visibility-Änderung (ursprüngliches Design):
 
 - `tim_lease(entryId, grant=<agentId>, ttl=1h, scope=read|write)` — setzt
   `metadata.lease_holder`, `lease_expiry`, `lease_scope` + Visibility-Bit Leased (4)
@@ -908,7 +911,7 @@ Agent weiß: mehr da, gezielt nachladen.
 | `tim_record_commit` | Git-Commit unter Project/Commits |
 | `tim_checkpoint` | Session-Checkpoint + integrity verify |
 | `tim_create_project` | Project registrieren für load_project |
-| `tim_lease` | Temporären Agent-Zugriff grant/revoke (§ oben) |
+| ~~`tim_lease`~~ | *(entfernt 2026-07-10)* |
 | `tim_suppress` | Pattern zu Negative Memory (§ oben) |
 | `tim_export` | DB als .tim/.md exportieren |
 | `tim_import` | .hmem importieren |
@@ -1438,7 +1441,7 @@ Per-Node-Keys: separate `key_id` in envelope, `shared_keys` Config.
 | Negative Memory docs | §13 | this paper | ✓ |
 | tag_normalization | §8/§11 | fehlt | 0.7 |
 | 5 Edge-Types only | §4 | implementiert | ✓ |
-| leases as metadata | §3/§4 | partial tim_lease | 0.7 |
+| leases as metadata | §3/§4 | tim_lease entfernt (2026-07-10) | 0.7+ wenn Bedarf |
 
 Diese Tabelle = Übergabe an implementierendes Modell. Paper = Soll, Tabelle = Gap-Analyse.
 

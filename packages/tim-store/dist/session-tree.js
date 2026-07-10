@@ -5,6 +5,7 @@ exports.foldBatchSummaries = foldBatchSummaries;
 exports.getCurrentBatch = getCurrentBatch;
 exports.findChildByKind = findChildByKind;
 exports.deriveCounters = deriveCounters;
+exports.deriveCountersSync = deriveCountersSync;
 exports.ensureInboxProject = ensureInboxProject;
 exports.SESSIONS_SECTION_TITLE = 'Sessions';
 exports.SUMMARY_NODE_TITLE = 'Summary';
@@ -69,6 +70,28 @@ async function deriveCounters(store, sessionId) {
     if (summaryNode) {
         const batches = await store.getChildByKind(summaryNode.id, exports.KIND_BATCH);
         batchesSummarized = batches.length;
+    }
+    return { exchangeCount, batchesSummarized };
+}
+/** Sync variant for use inside `runExclusive` transactions. */
+function deriveCountersSync(store, sessionId) {
+    const exchangesNode = store.getChildByKindSync(sessionId, exports.KIND_EXCHANGES_ROOT)[0] ?? null;
+    const summaryNode = store.getChildByKindSync(sessionId, exports.KIND_SUMMARY_ROOT)[0] ?? null;
+    let exchangeCount = 0;
+    if (exchangesNode) {
+        const batches = store.getChildByKindSync(exchangesNode.id, exports.KIND_EXCHANGE_BATCH);
+        for (let i = 0; i < batches.length; i++) {
+            const batch = batches[i];
+            const users = store.getChildrenBySeqSync(batch.id).filter(u => u.metadata.role === 'user');
+            const isLast = i === batches.length - 1;
+            if (isLast && users.length === 0)
+                continue;
+            exchangeCount += users.length;
+        }
+    }
+    let batchesSummarized = 0;
+    if (summaryNode) {
+        batchesSummarized = store.getChildByKindSync(summaryNode.id, exports.KIND_BATCH).length;
     }
     return { exchangeCount, batchesSummarized };
 }

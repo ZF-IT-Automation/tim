@@ -264,11 +264,14 @@ class SessionManager {
                     result.push(a);
                 }
             }
+            const { exchangeCount } = (0, session_tree_js_1.deriveCountersSync)(this.store, sessionId);
+            const freshSession = this.store.readSync(sessionId);
+            if (freshSession) {
+                this.store.updateSync(sessionId, {
+                    metadata: { ...freshSession.metadata, exchange_count: exchangeCount },
+                });
+            }
             return result;
-        });
-        const { exchangeCount } = await (0, session_tree_js_1.deriveCounters)(this.store, sessionId);
-        await this.store.update(sessionId, {
-            metadata: { ...session.metadata, exchange_count: exchangeCount },
         });
         return written;
     }
@@ -383,9 +386,14 @@ class SessionManager {
         const summaryNode = await (0, session_tree_js_1.findChildByKind)(this.store, sessionId, session_tree_js_1.KIND_SUMMARY_ROOT);
         if (!summaryNode)
             throw new Error(`Summary node missing for session: ${sessionId}`);
-        const existing = (await this.store.getChildByKind(summaryNode.id, session_tree_js_1.KIND_BATCH))
+        const entry = this.store.runExclusive(() => this.writeBatchSummarySync(sessionId, summaryNode, batchIndex, summaryText, range, tags));
+        await this.aggregateSessionTags(sessionId);
+        return entry;
+    }
+    writeBatchSummarySync(sessionId, summaryNode, batchIndex, summaryText, range, tags) {
+        const findExisting = () => this.store.getChildByKindSync(summaryNode.id, session_tree_js_1.KIND_BATCH)
             .find(b => b.metadata.batch_index === batchIndex);
-        if (existing) {
+        const upsertExisting = (existing) => {
             const existingSeqFrom = Number(existing.metadata.seq_from);
             const existingSeqTo = Number(existing.metadata.seq_to);
             const rangeCovered = range.seqFrom >= existingSeqFrom && range.seqTo <= existingSeqTo;
@@ -403,7 +411,7 @@ class SessionManager {
                     ...contentTags,
                 ]),
             ];
-            await this.store.update(existing.id, {
+            this.store.updateSync(existing.id, {
                 content: summaryText,
                 metadata: {
                     ...existing.metadata,
@@ -416,34 +424,54 @@ class SessionManager {
                 },
                 tags: mergedTags,
             });
-            const updated = (await this.store.read(existing.id));
-            await this.aggregateSessionTags(sessionId);
+            return this.store.readSync(existing.id);
+        };
+        const existing = findExisting();
+        if (existing) {
+            const updated = upsertExisting(existing);
+            this.syncSessionBatchesSummarized(sessionId, summaryNode.id);
             return updated;
         }
         const summarizedAt = new Date().toISOString();
         const contentTags = tags ?? [];
-        const node = await this.store.write(summaryText, {
-            parentId: summaryNode.id,
-            title: `Batch ${batchIndex}`,
-            metadata: {
-                kind: session_tree_js_1.KIND_BATCH,
-                batch_index: batchIndex,
-                seq_from: range.seqFrom,
-                seq_to: range.seqTo,
-                sessionId,
-                summarized_at: summarizedAt,
-            },
-            tags: [session_tree_js_1.SESSION_SUMMARY_TAG, session_tree_js_1.BATCH_SUMMARY_TAG, ...contentTags],
-        });
-        const session = await this.store.read(sessionId);
-        const { batchesSummarized } = await (0, session_tree_js_1.deriveCounters)(this.store, sessionId);
-        if (session) {
-            await this.store.update(sessionId, {
-                metadata: { ...session.metadata, batches_summarized: batchesSummarized },
+        try {
+            const node = this.store.writeSync(summaryText, {
+                parentId: summaryNode.id,
+                title: `Batch ${batchIndex}`,
+                metadata: {
+                    kind: session_tree_js_1.KIND_BATCH,
+                    batch_index: batchIndex,
+                    seq_from: range.seqFrom,
+                    seq_to: range.seqTo,
+                    sessionId,
+                    summarized_at: summarizedAt,
+                },
+                tags: [session_tree_js_1.SESSION_SUMMARY_TAG, session_tree_js_1.BATCH_SUMMARY_TAG, ...contentTags],
             });
+            this.syncSessionBatchesSummarized(sessionId, summaryNode.id);
+            return node;
         }
-        await this.aggregateSessionTags(sessionId);
-        return node;
+        catch (err) {
+            const code = err.code;
+            if (code === 'SQLITE_CONSTRAINT_UNIQUE' || code === 'SQLITE_CONSTRAINT') {
+                const raced = findExisting();
+                if (!raced)
+                    throw err;
+                const updated = upsertExisting(raced);
+                this.syncSessionBatchesSummarized(sessionId, summaryNode.id);
+                return updated;
+            }
+            throw err;
+        }
+    }
+    syncSessionBatchesSummarized(sessionId, summaryNodeId) {
+        const session = this.store.readSync(sessionId);
+        if (!session)
+            return;
+        const batchesSummarized = this.store.getChildByKindSync(summaryNodeId, session_tree_js_1.KIND_BATCH).length;
+        this.store.updateSync(sessionId, {
+            metadata: { ...session.metadata, batches_summarized: batchesSummarized },
+        });
     }
     /** Recompute session-level content tags from batch summaries (freq >= 2). */
     async aggregateSessionTags(sessionId) {

@@ -18,6 +18,8 @@
 set -euo pipefail
 
 TIM_CLI="${TIM_CLI:-/home/bbbee/projects/tim/packages/tim-cli/dist/cli.js}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TIM_HOOKS_MARKER="${TIM_MARKER_MODULE:-${SCRIPT_DIR}/../dist/marker.js}"
 
 # Read stdin once (some harnesses pass payload, some pass nothing)
 payload="$(cat -)"
@@ -54,21 +56,13 @@ fi
 # Prevents stale cron session IDs from persisting in the marker (PITFALLS-46).
 # cwd/session are passed via env, never interpolated into the JS source —
 # paths or session ids containing quotes/backslashes must not break rotation.
-if [[ -n "$hook_session" ]]; then
-  TIM_HOOK_CWD="$cwd" TIM_HOOK_SESSION="$hook_session" node -e '
-    const fs = require("fs");
-    const path = require("path");
-    const p = path.join(process.env.TIM_HOOK_CWD, ".tim-project");
-    if (fs.existsSync(p)) {
-      try {
-        const m = JSON.parse(fs.readFileSync(p, "utf8"));
-        if (m.session !== process.env.TIM_HOOK_SESSION) {
-          m.session = process.env.TIM_HOOK_SESSION;
-          fs.writeFileSync(p, JSON.stringify(m, null, 2));
-        }
-      } catch (e) {}
-    }
-  ' 2>/dev/null || true
+if [[ -n "$hook_session" && -f "$TIM_HOOKS_MARKER" ]]; then
+  TIM_HOOK_CWD="$cwd" TIM_HOOK_SESSION="$hook_session" TIM_MARKER_MODULE="$TIM_HOOKS_MARKER" \
+    node --input-type=module -e "
+    const { pathToFileURL } = await import('node:url');
+    const m = await import(pathToFileURL(process.env.TIM_MARKER_MODULE).href);
+    m.rotateMarkerSession(process.env.TIM_HOOK_CWD, process.env.TIM_HOOK_SESSION);
+  " 2>/dev/null || true
 fi
 
 # --- Detect harness and format output ---

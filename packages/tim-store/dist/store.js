@@ -268,6 +268,7 @@ class TimStore {
             label,
             ...(aliases.length > 0 ? { aliases } : {}),
         };
+        const timestamp = Date.now();
         const tx = this.db.transaction((labelArg) => {
             const dup = this.db.prepare(`
         SELECT id FROM entries
@@ -280,11 +281,10 @@ class TimStore {
             }
             const { entry } = this.buildEntryRow(options.content ?? label, { metadata });
             this.insertEntrySync(entry);
+            this.insertStagingSync(entry, timestamp, 1.0);
             return entry;
         });
         const entry = tx.immediate(label);
-        const timestamp = Date.now();
-        this.insertStagingSync(entry, timestamp, 1.0);
         const result = rowToEntry(entry);
         this.emit('memory:written', { entry: result, agentId: this.agentId, timestamp: entry.created_at });
         return result;
@@ -1014,6 +1014,85 @@ class TimStore {
     `).all(parentId);
         return rows.map(rowToEntry);
     }
+    readSync(id) {
+        const row = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(id);
+        return row && !row.tombstoned_at ? rowToEntry(row) : null;
+    }
+    /** Synchronous update for use inside `runExclusive` transactions. */
+    updateSync(id, patch) {
+        const existing = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(id);
+        if (!existing)
+            throw new Error(`Entry not found: ${id}`);
+        if (patch.tags !== undefined) {
+            const { clean: cleanTags, removed: removedTags } = (0, tim_core_1.stripDeprecatedTags)(patch.tags);
+            if (removedTags.length > 0) {
+                console.warn(`[tim-store] Deprecated status/priority tags stripped: ${removedTags.join(', ')}`);
+            }
+            patch = { ...patch, tags: cleanTags };
+        }
+        const now = new Date().toISOString();
+        const timestamp = Date.now();
+        let title = existing.title;
+        let body = existing.content;
+        if (patch.title !== undefined) {
+            title = patch.title.trim();
+        }
+        if (patch.content !== undefined) {
+            if (patch.title !== undefined) {
+                body = patch.content;
+            }
+            else if (!existing.title.trim()) {
+                const split = splitTitleBody(patch.content);
+                title = split.title;
+                body = split.body;
+            }
+            else {
+                body = patch.content;
+            }
+        }
+        const updated = {
+            ...existing,
+            title,
+            content: body,
+            content_type: patch.contentType ?? existing.content_type,
+            confidence: patch.confidence ?? existing.confidence,
+            decay_rate: patch.decayRate ?? existing.decay_rate,
+            visibility: patch.visibility ?? existing.visibility,
+            tags: patch.tags ? JSON.stringify(patch.tags) : existing.tags,
+            irrelevant: patch.irrelevant === undefined ? existing.irrelevant : (patch.irrelevant ? 1 : 0),
+            tombstoned_at: patch.tombstonedAt === undefined ? existing.tombstoned_at : patch.tombstonedAt,
+            metadata: (() => {
+                if (!patch.metadata)
+                    return existing.metadata;
+                const existingMeta = JSON.parse(existing.metadata || '{}');
+                const patchMeta = JSON.parse(JSON.stringify(patch.metadata));
+                const SYSTEM_FIELDS = ['verified_at', 'provenance'];
+                for (const f of SYSTEM_FIELDS) {
+                    if (existingMeta[f] !== undefined && patchMeta[f] === undefined) {
+                        patchMeta[f] = existingMeta[f];
+                    }
+                }
+                if (typeof existingMeta.task === 'object' && existingMeta.task !== null &&
+                    typeof patchMeta.task === 'object' && patchMeta.task !== null) {
+                    patchMeta.task = {
+                        ...existingMeta.task,
+                        ...patchMeta.task,
+                    };
+                }
+                return JSON.stringify({ ...existingMeta, ...patchMeta });
+            })(),
+            accessed_at: now,
+            updated_at: now,
+            lww_device: this.deviceId,
+        };
+        this.db.transaction(() => {
+            this.db.prepare(`UPDATE entries SET title=?, content=?, content_type=?, confidence=?,
+        decay_rate=?, visibility=?, tags=?, irrelevant=?, tombstoned_at=?, metadata=?,
+        accessed_at=?, updated_at=?, lww_device=? WHERE id=?`).run(updated.title, updated.content, updated.content_type, updated.confidence, updated.decay_rate, updated.visibility, updated.tags, updated.irrelevant, updated.tombstoned_at, updated.metadata, updated.accessed_at, updated.updated_at, updated.lww_device, id);
+            this.insertStagingSync(updated, timestamp, updated.confidence);
+        })();
+        return rowToEntry(updated);
+    }
     /** Entries whose metadata JSON has non-boolean values for known boolean keys (legacy 1/0/"true"/"false"). */
     findEntriesWithNonBooleanTask() {
         const rows = this.db
@@ -1108,6 +1187,13 @@ class TimStore {
       lww_timestamp, lww_device, lww_confidence)
       VALUES (?, 'entry', 'upsert', ?, ?, ?, ?)`).run(entry.id, JSON.stringify(entry), timestamp, this.deviceId, confidence);
     }
+    /** Atomically insert entry + staging row (rollback on either failure). */
+    writeEntryWithStaging(entry, timestamp, confidence) {
+        this.db.transaction(() => {
+            this.insertEntrySync(entry);
+            this.insertStagingSync(entry, timestamp, confidence);
+        })();
+    }
     async write(content, options = {}) {
         const { clean: cleanTags, removed: removedTags } = (0, tim_core_1.stripDeprecatedTags)(options.tags ?? []);
         if (removedTags.length > 0) {
@@ -1121,8 +1207,7 @@ class TimStore {
             };
         }
         const { entry, now, timestamp } = this.buildEntryRow(content, options);
-        this.insertEntrySync(entry);
-        this.insertStagingSync(entry, timestamp, options.confidence ?? 1.0);
+        this.writeEntryWithStaging(entry, timestamp, options.confidence ?? 1.0);
         if (options.edges) {
             for (const edge of options.edges) {
                 await this.link(entry.id, edge.targetId, edge.type, edge.weight, edge.metadata);
@@ -1133,80 +1218,8 @@ class TimStore {
         return result;
     }
     async update(id, patch) {
-        const existing = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(id);
-        if (!existing)
-            throw new Error(`Entry not found: ${id}`);
-        if (patch.tags !== undefined) {
-            const { clean: cleanTags, removed: removedTags } = (0, tim_core_1.stripDeprecatedTags)(patch.tags);
-            if (removedTags.length > 0) {
-                console.warn(`[tim-store] Deprecated status/priority tags stripped: ${removedTags.join(', ')}`);
-            }
-            patch = { ...patch, tags: cleanTags };
-        }
-        const now = new Date().toISOString();
-        const timestamp = Date.now();
-        let title = existing.title;
-        let body = existing.content;
-        if (patch.title !== undefined) {
-            title = patch.title.trim();
-        }
-        if (patch.content !== undefined) {
-            if (patch.title !== undefined) {
-                body = patch.content;
-            }
-            else if (!existing.title.trim()) {
-                const split = splitTitleBody(patch.content);
-                title = split.title;
-                body = split.body;
-            }
-            else {
-                body = patch.content;
-            }
-        }
-        const updated = {
-            ...existing,
-            title,
-            content: body,
-            content_type: patch.contentType ?? existing.content_type,
-            confidence: patch.confidence ?? existing.confidence,
-            decay_rate: patch.decayRate ?? existing.decay_rate,
-            visibility: patch.visibility ?? existing.visibility,
-            tags: patch.tags ? JSON.stringify(patch.tags) : existing.tags,
-            irrelevant: patch.irrelevant === undefined ? existing.irrelevant : (patch.irrelevant ? 1 : 0),
-            tombstoned_at: patch.tombstonedAt === undefined ? existing.tombstoned_at : patch.tombstonedAt,
-            metadata: (() => {
-                if (!patch.metadata)
-                    return existing.metadata;
-                const existingMeta = JSON.parse(existing.metadata || '{}');
-                const patchMeta = JSON.parse(JSON.stringify(patch.metadata));
-                const SYSTEM_FIELDS = ['verified_at', 'provenance'];
-                for (const f of SYSTEM_FIELDS) {
-                    if (existingMeta[f] !== undefined && patchMeta[f] === undefined) {
-                        patchMeta[f] = existingMeta[f];
-                    }
-                }
-                if (typeof existingMeta.task === 'object' && existingMeta.task !== null &&
-                    typeof patchMeta.task === 'object' && patchMeta.task !== null) {
-                    patchMeta.task = {
-                        ...existingMeta.task,
-                        ...patchMeta.task,
-                    };
-                }
-                return JSON.stringify({ ...existingMeta, ...patchMeta });
-            })(),
-            accessed_at: now,
-            updated_at: now,
-            lww_device: this.deviceId,
-        };
-        this.db.prepare(`UPDATE entries SET title=?, content=?, content_type=?, confidence=?,
-      decay_rate=?, visibility=?, tags=?, irrelevant=?, tombstoned_at=?, metadata=?,
-      accessed_at=?, updated_at=?, lww_device=? WHERE id=?`).run(updated.title, updated.content, updated.content_type, updated.confidence, updated.decay_rate, updated.visibility, updated.tags, updated.irrelevant, updated.tombstoned_at, updated.metadata, updated.accessed_at, updated.updated_at, updated.lww_device, id);
-        // Write to staging
-        this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
-      lww_timestamp, lww_device, lww_confidence)
-      VALUES (?, 'entry', 'upsert', ?, ?, ?, ?)`).run(id, JSON.stringify(updated), timestamp, this.deviceId, updated.confidence);
-        const result = rowToEntry(updated);
-        this.emit('memory:updated', { entry: result, agentId: this.agentId, timestamp: now });
+        const result = this.updateSync(id, patch);
+        this.emit('memory:updated', { entry: result, agentId: this.agentId, timestamp: result.accessedAt });
         return result;
     }
     async delete(id, hard = false) {
@@ -1214,26 +1227,26 @@ class TimStore {
         if (!existing)
             return;
         const now = new Date().toISOString();
-        if (hard) {
-            this.db.prepare('UPDATE entries SET tombstoned_at = ? WHERE id = ?').run(now, id);
-            this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
-        lww_timestamp, lww_device, lww_confidence)
-        VALUES (?, 'entry', 'delete', ?, ?, ?, ?)`).run(id, JSON.stringify({ id, tombstoned_at: now, lww_device: this.deviceId }), Date.now(), this.deviceId, 1.0);
-        }
-        else {
-            const timestamp = Date.now();
-            const updated = {
-                ...existing,
-                irrelevant: 1,
-                accessed_at: now,
-                updated_at: now,
-                lww_device: this.deviceId,
-            };
-            this.db.prepare('UPDATE entries SET irrelevant = 1, accessed_at = ?, updated_at = ?, lww_device = ? WHERE id = ?').run(now, now, this.deviceId, id);
-            this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
-        lww_timestamp, lww_device, lww_confidence)
-        VALUES (?, 'entry', 'upsert', ?, ?, ?, ?)`).run(id, JSON.stringify(updated), timestamp, this.deviceId, updated.confidence);
-        }
+        this.db.transaction(() => {
+            if (hard) {
+                this.db.prepare('UPDATE entries SET tombstoned_at = ? WHERE id = ?').run(now, id);
+                this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
+          lww_timestamp, lww_device, lww_confidence)
+          VALUES (?, 'entry', 'delete', ?, ?, ?, ?)`).run(id, JSON.stringify({ id, tombstoned_at: now, lww_device: this.deviceId }), Date.now(), this.deviceId, 1.0);
+            }
+            else {
+                const timestamp = Date.now();
+                const updated = {
+                    ...existing,
+                    irrelevant: 1,
+                    accessed_at: now,
+                    updated_at: now,
+                    lww_device: this.deviceId,
+                };
+                this.db.prepare('UPDATE entries SET irrelevant = 1, accessed_at = ?, updated_at = ?, lww_device = ? WHERE id = ?').run(now, now, this.deviceId, id);
+                this.insertStagingSync(updated, timestamp, updated.confidence);
+            }
+        })();
         this.emit('memory:deleted', {
             entry: rowToEntry(existing),
             agentId: this.agentId,
@@ -1576,12 +1589,14 @@ class TimStore {
             metadata: JSON.stringify(metadata),
             updated_at: new Date(ts).toISOString(),
         };
-        this.db.prepare(`INSERT INTO edges (id, source_id, target_id, type, weight, metadata, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)`).run(edgeRow.id, edgeRow.source_id, edgeRow.target_id, edgeRow.type, edgeRow.weight, edgeRow.metadata, edgeRow.updated_at);
         const edgeKey = `${sourceId}|${targetId}|${type}`;
-        this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
-      lww_timestamp, lww_device, lww_confidence)
-      VALUES (?, 'edge', 'upsert', ?, ?, ?, ?)`).run(edgeKey, JSON.stringify(edgeRow), ts, this.agentId, 1.0);
+        this.db.transaction(() => {
+            this.db.prepare(`INSERT INTO edges (id, source_id, target_id, type, weight, metadata, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)`).run(edgeRow.id, edgeRow.source_id, edgeRow.target_id, edgeRow.type, edgeRow.weight, edgeRow.metadata, edgeRow.updated_at);
+            this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
+        lww_timestamp, lww_device, lww_confidence)
+        VALUES (?, 'edge', 'upsert', ?, ?, ?, ?)`).run(edgeKey, JSON.stringify(edgeRow), ts, this.agentId, 1.0);
+        })();
         const edge = { id, sourceId, targetId, type, weight, metadata };
         this.emit('edge:created', {
             edge,
@@ -1594,7 +1609,6 @@ class TimStore {
         const row = this.db.prepare('SELECT * FROM edges WHERE id = ?').get(edgeId);
         if (!row)
             return;
-        this.db.prepare('DELETE FROM edges WHERE id = ?').run(edgeId);
         const edgeKey = `${row.source_id}|${row.target_id}|${row.type}`;
         const ts = Date.now();
         const edgeRow = {
@@ -1605,9 +1619,12 @@ class TimStore {
             weight: row.weight,
             metadata: row.metadata,
         };
-        this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
-      lww_timestamp, lww_device, lww_confidence)
-      VALUES (?, 'edge', 'delete', ?, ?, ?, ?)`).run(edgeKey, JSON.stringify(edgeRow), ts, this.agentId, 1.0);
+        this.db.transaction(() => {
+            this.db.prepare('DELETE FROM edges WHERE id = ?').run(edgeId);
+            this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
+        lww_timestamp, lww_device, lww_confidence)
+        VALUES (?, 'edge', 'delete', ?, ?, ?, ?)`).run(edgeKey, JSON.stringify(edgeRow), ts, this.agentId, 1.0);
+        })();
         const edge = {
             id: row.id,
             sourceId: row.source_id,

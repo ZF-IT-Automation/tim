@@ -19,7 +19,7 @@ import {
 import { runConfiguredHooks, type HookEnv } from './hooks.js';
 import { getDeltaBriefing } from './delta.js';
 import { getUpdateCheckLineBriefing } from './update-check.js';
-import { readMarker, writeMarker, validateMarkerAgainstStore } from './marker.js';
+import { discoverMarker, CWD_ONLY_MARKER_DISCOVERY_POLICY, readMarker, writeMarker, validateMarkerAgainstStore } from './marker.js';
 import {
   onSessionStop,
   maybeSpawnProjectSummary,
@@ -72,9 +72,9 @@ export async function resolveActiveProjectFromCwd(
   cwd: string,
   store: TimStore,
 ): Promise<string | null> {
-  const marker = readMarker(cwd);
-  if (!marker) return null;
-  const validated = await validateMarkerAgainstStore(marker, store);
+  const located = discoverMarker(cwd, CWD_ONLY_MARKER_DISCOVERY_POLICY);
+  if (!located) return null;
+  const validated = await validateMarkerAgainstStore(located.marker, store);
   return validated?.project ?? null;
 }
 

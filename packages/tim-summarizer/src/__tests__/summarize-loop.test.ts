@@ -57,4 +57,30 @@ describe('runSummarizerLoop', () => {
     );
     expect(close).toHaveBeenCalled();
   });
+
+  it('closes MCP client even when rollup fails after loop error', async () => {
+    const batch = {
+      sessionId: 'loop',
+      summaryNodeId: 's',
+      exchangesNodeId: 'e',
+      batchIndex: 1,
+      batchSize: 2,
+      exchanges: [
+        { seq: 1, userId: 'u', userContent: 'Q', agentId: 'a', agentContent: 'A' },
+      ],
+      hasMore: false,
+      previousSummaries: [],
+      sessionMeta: {},
+    };
+
+    const close = vi.fn();
+    vi.spyOn(mcpClient, 'connectTimMcp').mockResolvedValue({ close } as never);
+    vi.spyOn(mcpClient, 'callTimTool')
+      .mockResolvedValueOnce(batch)
+      .mockRejectedValueOnce(new Error('write failed'))
+      .mockRejectedValueOnce(new Error('rollup failed'));
+
+    await expect(runSummarizerLoop('loop')).rejects.toThrow('write failed');
+    expect(close).toHaveBeenCalled();
+  });
 });

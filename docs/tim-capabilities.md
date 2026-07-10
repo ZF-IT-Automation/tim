@@ -478,7 +478,7 @@ Für vage Anfragen („was haben wir letzte Woche zu Sync entschieden?") dispatc
 
 ## 6. MCP-Tools — Überblick
 
-39 Tools in `tim-mcp`. Wichtigste Gruppen:
+47 Tools in `tim-mcp` (nach Entfernung von `tim_lease`, 2026-07-10). Wichtigste Gruppen:
 
 **Lesen:** `tim_read`, `tim_search`, `tim_guard`, `tim_delta`, `tim_load_project`, `tim_read_project`, `tim_show`, `tim_trace`, `tim_health`, `tim_stats`
 
@@ -495,7 +495,7 @@ Für vage Anfragen („was haben wir letzte Woche zu Sync entschieden?") dispatc
 ## 7. Architektur (10 Packages)
 
 ```
-tim-mcp          → 39 MCP Tools
+tim-mcp          → 47 MCP Tools
 tim-cli          → User-facing Commands
 tim-core         → Typen, Config, Interfaces, LWW
 tim-store        → SQLite (einziger DB-Touchpoint), FTS5
@@ -512,38 +512,59 @@ tim-skills       → (geplant) Skill-Integration
 
 ## 8. Bekannte Probleme & Lücken (Ist vs Soll)
 
+> **Lebende Checkliste:** [`docs/production-readiness.md`](production-readiness.md) —
+> Abnahmekriterien und offene Production-Readiness-Punkte. Dieses §8 ist die
+> lesbare Karte; bei Widerspruch gilt die Checkliste.
+
+### Behoben (mit Referenz)
+
+| Problem | Fix |
+|---------|-----|
+| Session-Summary-Rollup / partial-batch race | `9db846e` — Rollup bei jedem Summarizer-Exit |
+| Doctor Orphan-Metrik (Leaves ≠ Orphans) | Plan 2 — dangling `parent_id` statt edge-lose Leaves |
+| `tim_load_project` sections-filter | Plan 1, Task 4 |
+| `tim-migrate` Rewrite + Sync-Staging | Plan 3 |
+| Suppression in allen Retrieval-Pfaden | 2026-07-10 |
+| `tim_lease` entfernt (MCP-Tool-Freeze) | 2026-07-10 — `tim_lease` existiert nicht mehr |
+| LWW Origin-Device im Sync-Envelope | 2026-07-10 |
+| Pretest-Build-Gate (dist vor Test) | 2026-07-10 |
+| `createProject` Label-Duplikat | Dup-Check in Transaktion (`store.ts`) |
+| `tim_update` Title-Rename | `patch.title` unterstützt |
+| `recordCommit` Alias-Validierung | `resolveProjectLabel` via `requireProject` |
+| Write+Staging atomar | 2026-07-10 — Entity+Staging in einer Tx |
+| Summarizer finally-Rollup / Lock-TTL / Batch-UNIQUE | 2026-07-10 — Migration v11 + Hot-Path-Fixes |
+| Marker-Discovery vereinheitlicht + atomare Writes | 2026-07-10 — `discoverMarker` + `writeMarkerAtomic` |
+| irrelevant-Restore via `tim_update` | `irrelevant: false` in update-Sync-Pfad |
+
 ### Kritisch / aktiv
 
 | Problem | Impact | Status |
 |---------|--------|--------|
-| **Session-Summary-Rollup** ✅ | Rollup jetzt konvergent — feuert unbedingt bei jedem Summarizer-Exit (auch wenn Run nach write crasht); partial-batch race fixed (späte Exchanges in bereits summarisierten Batches werden neu zusammengeführt) | Gefixt — `9db846e` |
-| **Summarizer All-Fail (Heuristic Fallback)** | Wenn alle CLI-Tools der Chain scheitern, schreibt die Heuristic-Fallback einen Q/A-Dump und MARKIERT den Batch als summarisiert — Retry ist damit UNMÖGLICH, schlimmer als ursprünglich dokumentiert. Workaround: Batch-Node manuell löschen oder `update(irrelevant:false)` auf dem parent-Batch | Offen |
-| **Doctor Orphan-Metrik** ✅ | Alte Metrik zählte jedes edge-lose Leaf als "orphan" — Live-DB zeigte 7390 "Orphans" bei ~2934 Einträgen (mehr Orphans als Entries = Metrik-Bug). Neu: live Entries deren `parent_id` auf fehlenden oder tombstoned Parent zeigt. Echte Dangling-Parent-Links, keine normalen Tree-Leaves. | Gefixt — Plan 2, Task 2 |
-| **Doppelte P0063-Einträge** | `createProject` prüft keine Label-Uniqueness → `read("P0063")` kann falschen Baum laden | Offen |
-| **FTS findet Labels nicht** | `tim_search("P0063")` leer — `metadata.label` nicht im FTS-Corpus | Offen |
-| **Alias-Validierung** | `recordCommit("o9k")` wirft obwohl Alias existiert — Validation nutzt nicht `resolveProjectLabel` | Offen |
-| **P0063 als irrelevant geflaggt** | Migration hat Projekt-Eintrag selbst markiert → Briefing kann leer/kaputt sein | Offen |
+| **Summarizer All-Fail (Heuristic Fallback)** | Chain leer → Q/A-Dump wird als Summary geschrieben und Batch als erledigt markiert — Retry unmöglich ohne manuelles Eingreifen | Offen |
+| **HTTP-MCP Multi-Client Ambient-State** | Mehrere parallele HTTP-Clients teilen Prozess-State — Session/Projekt-Binding kann kollidieren | Offen (fable5) |
+| **SSE-Connection-Leak** | Langlebige MCP-HTTP-Verbindungen geben Ressourcen nicht zuverlässig frei | Offen (fable5) |
+| **`tim` bare-default-init** | `tim` ohne Subcommand initialisiert still — überraschendes Side-Effect-Verhalten | Offen (fable5) |
+| **Fehler-Schluck-Cluster** | Mehrere Hooks/CLI-Pfade loggen Fehler nur nach stderr ohne sichtbaren Fail | Offen (fable5) |
+| **FTS findet Projekt-Labels nicht** | `tim_search("P0063")` oft leer — `metadata.label`/Aliases nicht im FTS-Corpus | Offen |
+| **P0063 als irrelevant geflaggt** | Migrations-Artefakt auf Bestands-DB — Briefing kann leer sein | Daten-Artefakt, manuell curieren |
 
 ### Rendering / API
 
 | Problem | Impact | Status |
 |---------|--------|--------|
-| `tim_load_project` sections-filter matcht falschen Node | Section-Filter unzuverlässig | Gefixt — Plan 1, Task 4 |
-| `tim_read` respektiert `renderDepthLoad`/`renderDepthRead` | Falsche Tiefe — Codebase-Kinder unsichtbar | |
-| `tim_update` unterstützt kein Title-Change | Umbenennen nur via neuer Entry + Migration | |
-| Walk-up vs CWD-only | Code macht Walk-up, Vision sagt CWD-only — Tests + falsche Projekt-Erkennung | |
+| `tim_read` respektiert `renderDepthLoad`/`renderDepthRead` nicht überall | Falsche Tiefe in Einzelfällen | Offen |
+| Walk-up vs CWD-only (Vision Phase 0.7) | `discoverMarker` vereinheitlicht Policy — Produktion noch Walk-up-Default; Breaking CWD-only bleibt 0.7 | Teilweise (Vorstufe 2026-07-10) |
 
 ### Vision noch nicht implementiert (Phase 0.7+)
 
 | Feature | Phase |
 |---------|-------|
-| `summary`-Feld + `updated_at` in entries | 0.7 |
+| `summary`-Feld + konsistentes `updated_at`-Semantik | 0.7 |
 | Session als Root-Nodes (nicht unter Project) | 0.7 |
-| `.tim-project` CWD-only + `TIM_PROJECT` env | 0.7 |
+| `.tim-project` CWD-only als Breaking Default | 0.7 |
 | Tag-Frequency-Tabelle (IDF on-read) | 0.7 |
 | Related-on-Read (automatische Erinnerungen bei `tim_read`) | 0.7 |
-| Embedding-Provider lokal + Hybrid-Search | 0.7 |
-| `tim-migrate` Rewrite | ✅ Plan-3 done (Sync-Staging + dedup-merge) |
+| Embedding-Provider lokal + Hybrid-Search vollständig | 0.7 |
 | Summarizer Tag-Normalization | 0.7 |
 | load_project Budget/Truncation vollständig | 0.7 |
 | E2E-Sync + `encrypted_passphrase` + Keychain | 0.8 |
@@ -559,17 +580,18 @@ tim-skills       → (geplant) Skill-Integration
 | **hmem + TIM parallel** | Hermes injiziert o9k-startup UND tim-session-start — zwei Stores, TIM-Directive soll authoritative sein |
 | **Skills noch o9k-branded** | `o9k-session-start`, `o9k-handoff` — TIM-Skills teilweise noch nicht published |
 | **hmem-sync vs TIM-Sync** | Aktuell noch hmem-sync Server (:3100), TIM-Sync-Produkt in Entwicklung |
-| **Letzter Sync 24d+** | Sync auf Strato stale — Writes propagieren erst beim nächsten Push |
+| **Letzter Sync stale** | Sync auf einzelnen Geräten veraltet — Writes propagieren erst beim nächsten Push |
 
 ### Qualität / Ops
 
 | Problem | Beschreibung |
 |---------|--------------|
-| PID-Lockfile Lebenszyklus | `f7fa8e1` (2026-06-19) hinzugefügt, `84dc7a0` (2026-07-02) entfernt — WAL + `busy_timeout` + systemd-singleton ist die korrekte Koordination für single-host. Lockfile hat legitime stdio-Use-Cases (Summarizer, Tests) gekillt. Dokumentiert, kein offener Work |
+| PID-Lockfile Lebenszyklus | Dokumentiert — WAL + `busy_timeout` für DB; Lockfile nur noch Summarizer-Marker-Lock |
 | Kein DB-Backup-Primitive | `INVENTORY-FIX-05` — kritisch vor größeren Migrationen |
 | Kein `tim_write_many` | Bulk-Entry-Creation nur einzeln |
 | Summarizer-Qualität | Tags inkonsistent zwischen Modellen, `tim_show_untagged` für Cleanup |
-| Schema-Drift Tags vs Metadata | `#todo`/`#done` deprecated — `metadata.task.status` soll Source of Truth sein, nicht überall migriert |
+| Schema-Drift Tags vs Metadata | `#todo`/`#done` deprecated — `metadata.task.status` soll Source of Truth sein |
+| **A/B-Experiment** | Kernthese ungemessen — blockiert auf Aufgabenauswahl durch Benni ([Protokoll](production-readiness.md)) |
 
 ---
 

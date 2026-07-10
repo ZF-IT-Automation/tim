@@ -78,10 +78,10 @@ function getActiveProjectLabel() {
  * is corrupt, or the project does not exist in the DB.
  */
 async function resolveActiveProjectFromCwd(cwd, store) {
-    const marker = (0, marker_js_1.readMarker)(cwd);
-    if (!marker)
+    const located = (0, marker_js_1.discoverMarker)(cwd, marker_js_1.CWD_ONLY_MARKER_DISCOVERY_POLICY);
+    if (!located)
         return null;
-    const validated = await (0, marker_js_1.validateMarkerAgainstStore)(marker, store);
+    const validated = await (0, marker_js_1.validateMarkerAgainstStore)(located.marker, store);
     return validated?.project ?? null;
 }
 /** Load project entry by hmem-style label (e.g. P0062) when configured. */

@@ -1,4 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { InProcessEventBus } from 'tim-core';
 import { TimStore, SessionManager, deriveCounters, ensureInboxProject } from '../index.js';
 
@@ -759,6 +762,44 @@ describe('SessionManager', () => {
       const summaryNode = (await store.getChildByKind('sb', 'session-summary-root'))[0];
       const batches = await store.getChildByKind(summaryNode.id, 'batch-summary');
       expect(batches).toHaveLength(1);
+    });
+
+    it('parallel writes for same batch_index yield exactly one node', async () => {
+      const summaryNode = (await store.getChildByKind('sb', 'session-summary-root'))[0]!;
+      const dbPath = path.join(os.tmpdir(), `tim-batch-race-${Date.now()}.db`);
+      const fileStore = new TimStore(dbPath);
+      try {
+        const fileSessions = new SessionManager(fileStore);
+        await fileStore.createProject('P0095');
+        await fileSessions.startProjectSession({
+          sessionId: 'sb-file',
+          projectId: 'P0095',
+          agentName: 'a',
+          cwd: '/',
+          harness: 't',
+          batchSize: 2,
+        });
+        await fileSessions.logExchange('sb-file', [
+          { role: 'user', content: 'Q1' },
+          { role: 'agent', content: 'A1' },
+        ]);
+        const sn = (await fileStore.getChildByKind('sb-file', 'session-summary-root'))[0]!;
+
+        const storeB = new TimStore(dbPath);
+        const sessionsB = new SessionManager(storeB);
+        await Promise.all([
+          fileSessions.writeBatchSummary('sb-file', 5, 'from A', { seqFrom: 1, seqTo: 1 }),
+          sessionsB.writeBatchSummary('sb-file', 5, 'from B', { seqFrom: 1, seqTo: 1 }),
+        ]);
+
+        const batches = await fileStore.getChildByKind(sn.id, 'batch-summary');
+        const batch5 = batches.filter(b => b.metadata.batch_index === 5);
+        expect(batch5).toHaveLength(1);
+        storeB.close();
+      } finally {
+        fileStore.close();
+        try { fs.unlinkSync(dbPath); } catch { /* ignore */ }
+      }
     });
 
     it('rollUpSession folds all batches into the Summary node body + metadata (multi-line safe)', async () => {

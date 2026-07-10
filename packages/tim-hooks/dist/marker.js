@@ -33,13 +33,15 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.LOCK_TTL_MS = exports.INBOX_LABEL = exports.MARKER_VERSION = exports.CANONICAL_PROJECT_FILENAME = exports.MARKER_LOCK = exports.MARKER_FILENAME = void 0;
+exports.CWD_ONLY_MARKER_DISCOVERY_POLICY = exports.DEFAULT_MARKER_DISCOVERY_POLICY = exports.LOCK_TTL_MS = exports.INBOX_LABEL = exports.MARKER_VERSION = exports.CANONICAL_PROJECT_FILENAME = exports.MARKER_LOCK = exports.MARKER_FILENAME = void 0;
 exports.markerPath = markerPath;
 exports.canonicalProjectPath = canonicalProjectPath;
 exports.validateProjectLabel = validateProjectLabel;
 exports.readMarker = readMarker;
 exports.validateMarkerAgainstStore = validateMarkerAgainstStore;
+exports.writeMarkerAtomic = writeMarkerAtomic;
 exports.writeMarker = writeMarker;
+exports.rotateMarkerSession = rotateMarkerSession;
 exports.syncNearestProjectMarker = syncNearestProjectMarker;
 exports.detectProject = detectProject;
 exports.reconcileMarker = reconcileMarker;
@@ -47,12 +49,14 @@ exports.acquireLock = acquireLock;
 exports.isSessionLocked = isSessionLocked;
 exports.releaseLock = releaseLock;
 exports.findMarkerOptionsFromEnv = findMarkerOptionsFromEnv;
+exports.discoverMarker = discoverMarker;
 exports.findMarker = findMarker;
 exports.buildLoadDirective = buildLoadDirective;
 exports.buildSessionDirective = buildSessionDirective;
 const fs = __importStar(require("fs"));
 const os = __importStar(require("os"));
 const path = __importStar(require("path"));
+const constants_js_1 = require("./constants.js");
 const tim_store_1 = require("tim-store");
 exports.MARKER_FILENAME = '.tim-project';
 exports.MARKER_LOCK = '.tim-project.lock';
@@ -239,6 +243,12 @@ async function validateMarkerAgainstStore(marker, store) {
         `but no matching entry exists in the DB. Treating as corrupt.`);
     return null;
 }
+/** Atomically write JSON to `filePath` (tmp + rename — no torn reads on POSIX). */
+function writeMarkerAtomic(filePath, content) {
+    const tmp = `${filePath}.tmp.${process.pid}`;
+    fs.writeFileSync(tmp, content);
+    fs.renameSync(tmp, filePath);
+}
 /** Write a project marker file. Always emits the current schema version:
  *  the on-disk file becomes v2 on first write, regardless of the caller's
  *  input. This is the auto-upgrade path for v1 files. */
@@ -250,7 +260,26 @@ function writeMarker(cwd, marker) {
     }
     const p = markerPath(cwd);
     const upgraded = { ...marker, version: exports.MARKER_VERSION };
-    fs.writeFileSync(p, JSON.stringify(upgraded, null, 2));
+    writeMarkerAtomic(p, JSON.stringify(upgraded, null, 2));
+}
+/**
+ * Rotate the session id in cwd's `.tim-project` when the harness supplies a new one.
+ * Used by tim-session-start.sh — must not interpolate paths into JS source.
+ */
+function rotateMarkerSession(cwd, sessionId) {
+    const p = markerPath(cwd);
+    if (!fs.existsSync(p))
+        return;
+    try {
+        const raw = JSON.parse(fs.readFileSync(p, 'utf8'));
+        if (raw.session === sessionId)
+            return;
+        raw.session = sessionId;
+        writeMarkerAtomic(p, JSON.stringify(raw, null, 2));
+    }
+    catch {
+        /* corrupt marker — leave untouched */
+    }
 }
 /**
  * Update the nearest `.tim-project` (walk-up from cwd) after tim_load_project.
@@ -262,9 +291,8 @@ function syncNearestProjectMarker(startCwd, projectLabel, options) {
             `"${projectLabel}" — expected ^[PLEN]\\d{4}$. Returning false.`);
         return false;
     }
-    const located = findMarker(startCwd, {
-        walkUp: true,
-        allowHome: true,
+    const located = discoverMarker(startCwd, {
+        ...exports.DEFAULT_MARKER_DISCOVERY_POLICY,
         ...options?.findOptions,
     });
     if (!located)
@@ -278,9 +306,9 @@ function syncNearestProjectMarker(startCwd, projectLabel, options) {
     });
     return true;
 }
-/** Project detection — v1: .tim-project marker only. */
+/** Project detection — cwd-only marker (no walk-up). */
 function detectProject(cwd) {
-    return readMarker(cwd);
+    return discoverMarker(cwd, exports.CWD_ONLY_MARKER_DISCOVERY_POLICY)?.marker ?? null;
 }
 /** Re-derive counters from the DB and persist them into the marker. */
 async function reconcileMarker(store, cwd) {
@@ -297,7 +325,8 @@ async function reconcileMarker(store, cwd) {
     // Read back to return the canonical v2 shape (writeMarker upgraded the file).
     return readMarker(cwd) ?? reconciled;
 }
-exports.LOCK_TTL_MS = 10 * 60_000;
+var constants_js_2 = require("./constants.js");
+Object.defineProperty(exports, "LOCK_TTL_MS", { enumerable: true, get: function () { return constants_js_2.LOCK_TTL_MS; } });
 function acquireLock(cwd) {
     const lock = path.join(cwd, exports.MARKER_LOCK);
     try {
@@ -307,7 +336,7 @@ function acquireLock(cwd) {
     catch {
         try {
             const raw = JSON.parse(fs.readFileSync(lock, 'utf8'));
-            if (Date.now() - raw.ts > exports.LOCK_TTL_MS) {
+            if (Date.now() - raw.ts > constants_js_1.LOCK_TTL_MS) {
                 fs.writeFileSync(lock, JSON.stringify({ pid: process.pid, ts: Date.now() }));
                 return true;
             }
@@ -325,7 +354,7 @@ function isSessionLocked(cwd) {
         return false;
     try {
         const raw = JSON.parse(fs.readFileSync(lock, 'utf8'));
-        return Date.now() - raw.ts <= exports.LOCK_TTL_MS;
+        return Date.now() - raw.ts <= constants_js_1.LOCK_TTL_MS;
     }
     catch {
         return true;
@@ -339,6 +368,16 @@ function releaseLock(cwd) {
         /* ignore */
     }
 }
+/** Production default: walk-up from cwd, home ancestors allowed (statusline / sync paths). */
+exports.DEFAULT_MARKER_DISCOVERY_POLICY = {
+    walkUp: true,
+    allowHome: true,
+};
+/** Cwd-only binding (session-start hook, checkpoint auto-load). */
+exports.CWD_ONLY_MARKER_DISCOVERY_POLICY = {
+    walkUp: false,
+    allowHome: false,
+};
 function isInsideRoot(dir, root) {
     const d = path.resolve(dir);
     const r = path.resolve(root);
@@ -376,19 +415,14 @@ function scanDirForMarker(dir) {
     return null;
 }
 /**
- * Find a project marker from `startCwd`.
+ * Find a project marker from `startCwd` — the single discovery implementation.
  *
- * Default (walkUp false): inspect `startCwd` only — `.tim-project` then `tim.json`.
- *
- * walkUp true: walk parents (optional maxRoot cap). After collection, filter out
- * home-directory ancestors unless allowHome or the hit is startCwd itself.
- * Deepest remaining candidate wins. Corrupt nearest marker → null (no silent skip).
- *
- * Pure FS — no store — safe for hooks under a tight timeout.
+ * Policy defaults (when fields omitted): walkUp=true, allowHome=true.
+ * Pass `CWD_ONLY_MARKER_DISCOVERY_POLICY` for harness cwd binding.
  */
-function findMarker(startCwd, options) {
-    const walkUp = options?.walkUp ?? false;
-    const allowHome = options?.allowHome ?? false;
+function discoverMarker(startCwd, policy = exports.DEFAULT_MARKER_DISCOVERY_POLICY) {
+    const walkUp = policy.walkUp ?? true;
+    const allowHome = policy.allowHome ?? true;
     const startResolved = path.resolve(startCwd);
     if (!walkUp) {
         const result = scanDirForMarker(startResolved);
@@ -396,7 +430,7 @@ function findMarker(startCwd, options) {
             return null;
         return result;
     }
-    const maxRoot = options?.maxRoot ? path.resolve(options.maxRoot) : null;
+    const maxRoot = policy.maxRoot ? path.resolve(policy.maxRoot) : null;
     let dir = startResolved;
     const found = [];
     for (let i = 0; i < 256; i++) {
@@ -424,6 +458,20 @@ function findMarker(startCwd, options) {
     if (filtered.length === 0)
         return null;
     return pickMarkerLocation(filtered);
+}
+/**
+ * Back-compat wrapper: when `options` is omitted, cwd-only (historical default).
+ * Prefer `discoverMarker` with an explicit policy for new code.
+ */
+function findMarker(startCwd, options) {
+    if (!options) {
+        return discoverMarker(startCwd, exports.CWD_ONLY_MARKER_DISCOVERY_POLICY);
+    }
+    return discoverMarker(startCwd, {
+        walkUp: options.walkUp ?? false,
+        allowHome: options.allowHome ?? false,
+        ...(options.maxRoot ? { maxRoot: options.maxRoot } : {}),
+    });
 }
 /**
  * Shared, harness-agnostic directive text. Every start hook (Hermes,

@@ -280,9 +280,23 @@ export async function runSummarizerLoop(sessionId: string): Promise<number> {
       batch = await callTimTool<UnsummarizedBatch>(client, 'tim_show_unsummarized', { sessionId });
     }
   } finally {
-    await callTimTool(client, 'tim_rollup_session_summary', { sessionId });
-    await client.close();
-    await postSummarizerHandoff(sessionId);
+    try {
+      await callTimTool(client, 'tim_rollup_session_summary', { sessionId });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const stack = err instanceof Error ? err.stack : undefined;
+      await onMCPError('tim_rollup_session_summary', msg, stack);
+    }
+    try {
+      await client.close();
+    } catch {
+      /* best-effort cleanup */
+    }
+    try {
+      await postSummarizerHandoff(sessionId);
+    } catch {
+      /* best-effort handoff */
+    }
   }
   return written;
 }

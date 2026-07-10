@@ -9,6 +9,7 @@ import {
   releaseLock,
   MARKER_LOCK,
 } from './marker.js';
+import { DEFAULT_SUMMARIZER_TIMEOUT_SEC } from './constants.js';
 
 export interface SpawnContext {
   sessionId: string;
@@ -30,7 +31,7 @@ export interface SessionStopResult {
   pending?: number;
 }
 
-export const DEFAULT_SUMMARIZER_TIMEOUT_SEC = 600;
+export { DEFAULT_SUMMARIZER_TIMEOUT_SEC } from './constants.js';
 
 export function summarizerLogPath(cwd: string): string {
   return path.join(cwd, '.tim', 'summarizer.log');

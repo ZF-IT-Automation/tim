@@ -4,8 +4,13 @@ import * as path from 'path';
 import {
   readMarker,
   writeMarker,
+  writeMarkerAtomic,
+  rotateMarkerSession,
   detectProject,
+  discoverMarker,
   findMarker,
+  CWD_ONLY_MARKER_DISCOVERY_POLICY,
+  DEFAULT_MARKER_DISCOVERY_POLICY,
   syncNearestProjectMarker,
   buildLoadDirective,
   reconcileMarker,
@@ -663,5 +668,71 @@ describe('validateMarkerAgainstStore', () => {
     // unavailable. The pattern check is the strict gate; the DB
     // existence check is the soft gate.
     expect(await validateMarkerAgainstStore(ok, broken)).toEqual(ok);
+  });
+});
+
+describe('discoverMarker policy', () => {
+  let dir: string;
+
+  beforeEach(() => {
+    fs.mkdirSync(TEST_ROOT, { recursive: true });
+    dir = fs.mkdtempSync(path.join(TEST_ROOT, 'discover-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('cwd-only policy does not walk to parent', () => {
+    writeMarker(dir, { project: 'P0002', session: 's', exchanges: 0, batch_size: 5, batches_summarized: 0 });
+    const sub = path.join(dir, 'sub');
+    fs.mkdirSync(sub, { recursive: true });
+    expect(discoverMarker(sub, CWD_ONLY_MARKER_DISCOVERY_POLICY)).toBeNull();
+    expect(discoverMarker(sub, { ...CWD_ONLY_MARKER_DISCOVERY_POLICY, walkUp: true, maxRoot: dir })?.marker.project)
+      .toBe('P0002');
+  });
+
+  it('default policy walks up like syncNearestProjectMarker', () => {
+    writeMarker(dir, { project: 'P0002', session: 's', exchanges: 0, batch_size: 5, batches_summarized: 0 });
+    const sub = path.join(dir, 'sub');
+    fs.mkdirSync(sub, { recursive: true });
+    expect(discoverMarker(sub, { ...DEFAULT_MARKER_DISCOVERY_POLICY, maxRoot: dir })?.marker.project)
+      .toBe('P0002');
+  });
+});
+
+describe('marker atomic writes', () => {
+  let dir: string;
+
+  beforeEach(() => {
+    fs.mkdirSync(TEST_ROOT, { recursive: true });
+    dir = fs.mkdtempSync(path.join(TEST_ROOT, 'atomic-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('writeMarkerAtomic never leaves torn JSON on rapid rewrites', () => {
+    const p = path.join(dir, '.tim-project');
+    writeMarker(dir, { project: 'P0001', session: 's0', exchanges: 0, batch_size: 5, batches_summarized: 0 });
+    for (let i = 0; i < 200; i++) {
+      writeMarkerAtomic(p, JSON.stringify({
+        version: 2,
+        project: 'P0001',
+        session: `s${i}`,
+        exchanges: i,
+        batch_size: 5,
+        batches_summarized: 0,
+      }, null, 2));
+      const raw = fs.readFileSync(p, 'utf8');
+      expect(() => JSON.parse(raw)).not.toThrow();
+    }
+  });
+
+  it('rotateMarkerSession updates session id atomically', () => {
+    writeMarker(dir, { project: 'P0001', session: 'old', exchanges: 0, batch_size: 5, batches_summarized: 0 });
+    rotateMarkerSession(dir, 'new-session');
+    expect(readMarker(dir)?.session).toBe('new-session');
   });
 });

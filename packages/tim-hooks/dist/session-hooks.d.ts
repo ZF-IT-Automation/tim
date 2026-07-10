@@ -10,7 +10,7 @@ export interface SessionStopResult {
     reason: SessionStopReason;
     pending?: number;
 }
-export declare const DEFAULT_SUMMARIZER_TIMEOUT_SEC = 600;
+export { DEFAULT_SUMMARIZER_TIMEOUT_SEC } from './constants.js';
 export declare function summarizerLogPath(cwd: string): string;
 /** Shell snippet: trap lock release, timeout, run tim-summarizer CLI with log append. */
 export declare function buildSummarizerCommand(sessionId: string, lockPath: string, logPath: string, timeoutSec?: number): string;
