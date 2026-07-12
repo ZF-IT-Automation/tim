@@ -8,6 +8,7 @@ export const SESSIONS_SECTION_ORDER = 1000;
 
 export const KIND_SESSIONS_ROOT = 'sessions-root';
 export const KIND_SESSION = 'session';
+export const KIND_SESSION_ALIAS = 'session-alias';
 export const KIND_SUMMARY_ROOT = 'session-summary-root';
 export const KIND_BATCH = 'batch-summary';
 export const KIND_EXCHANGES_ROOT = 'exchanges-root';

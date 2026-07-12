@@ -191,6 +191,37 @@ describe('session resume', () => {
   });
 
   describe('alias-transparent session APIs', () => {
+    it('end-to-end: empty harness session node alias routes logExchange to canonical', async () => {
+      await startSession('sess-Z');
+      await sessions.logExchange('sess-Z', [
+        { role: 'user', content: 'u1' }, { role: 'agent', content: 'a1' },
+      ]);
+      await startSession('H2'); // real flow: session_start created empty node before resume
+
+      await sessions.resumeSession('sess-Z', { newHarnessId: 'H2' });
+      expect(store.resolveSessionAlias('H2')).toBe('sess-Z');
+
+      const beforeCanonical = (await store.read('sess-Z'))!;
+      const countBefore =
+        typeof beforeCanonical.metadata.exchange_count === 'number'
+          ? beforeCanonical.metadata.exchange_count
+          : 1;
+
+      await sessions.logExchange('H2', [
+        { role: 'user', content: 'u2 from harness' },
+        { role: 'agent', content: 'a2' },
+      ]);
+
+      const afterCanonical = (await store.read('sess-Z'))!;
+      const h2Session = (await store.read('H2'))!;
+      expect(afterCanonical.metadata.exchange_count).toBe(countBefore + 1);
+      expect(h2Session!.metadata.exchange_count ?? 0).toBe(0);
+
+      const batch = await sessions.showUnsummarized('H2');
+      expect(batch.sessionId).toBe('sess-Z');
+      expect(batch.exchanges).toHaveLength(2);
+    });
+
     it('logExchange via alias appends to the canonical session with continuous seq', async () => {
       await startSession('sess-cont');
       await sessions.logExchange('sess-cont', [
@@ -233,6 +264,45 @@ describe('session resume', () => {
 
       const p = await sessions.resumeSession('sess-par', {});
       expect(p.recentExchanges.map(e => e.seq)).toEqual([1, 2, 3]);
+    });
+
+    it('getPreviousSession excludes canonical when passed alias id', async () => {
+      const project = await store.requireProject('P0099');
+      await startSession('sess-prev');
+      await startSession('sess-current');
+      await sessions.logExchange('sess-prev', [
+        { role: 'user', content: 'old' }, { role: 'agent', content: 'ok' },
+      ]);
+      await sessions.resumeSession('sess-current', { newHarnessId: 'alias-current' });
+
+      const prev = await store.getPreviousSession(project.id, 'alias-current');
+      expect(prev?.id).toBe('sess-prev');
+    });
+
+    it('resolves pure harness alias via O(1) session-alias mapping', async () => {
+      await startSession('sess-map');
+      await sessions.resumeSession('sess-map', { newHarnessId: 'pure-harness' });
+      expect(store.resolveSessionAlias('pure-harness')).toBe('sess-map');
+      const mapping = await store.read('pure-harness');
+      expect(mapping?.metadata.kind).toBe('session-alias');
+      expect(mapping?.metadata.canonical).toBe('sess-map');
+    });
+  });
+
+  describe('cross-project resume guard', () => {
+    it('rejects resume when boundProjectId differs from session project', async () => {
+      await store.createProject('P0098', { content: 'Other project' });
+      await startSession('sess-home');
+      await sessions.logExchange('sess-home', [
+        { role: 'user', content: 'u1' }, { role: 'agent', content: 'a1' },
+      ]);
+
+      await expect(
+        sessions.resumeSession('sess-home', {
+          newHarnessId: 'h-other',
+          boundProjectId: 'P0098',
+        }),
+      ).rejects.toThrow(/belongs to project P0099/);
     });
   });
 });

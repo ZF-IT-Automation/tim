@@ -594,8 +594,67 @@ export class TimStore implements MemoryInterface {
   }
 
   /** Resolve a harness session id to its canonical session node id.
+   *  All session-id consumers should route through this (or readSession). */
+  resolveSessionId(harnessId: string): string {
+    return this.resolveSessionAlias(harnessId);
+  }
+
+  /** Read a session entry after alias resolution. */
+  async readSession(sessionId: string, options: ReadOptions = {}): Promise<Entry | null> {
+    const canonical = this.resolveSessionAlias(sessionId);
+    const entry = await this.read(canonical, options);
+    if (!entry || entry.metadata.kind !== 'session') return null;
+    return entry;
+  }
+
+  /** Record an O(1) alias mapping when the alias id is not already a session node. */
+  upsertSessionAlias(aliasId: string, canonicalId: string): void {
+    if (aliasId === canonicalId) return;
+
+    const existing = this.readSync(aliasId);
+    if (existing?.metadata.kind === 'session') {
+      // Empty harness session node — alias lives in resumed_by on the canonical session.
+      return;
+    }
+
+    const metadata = { kind: 'session-alias', canonical: canonicalId };
+    if (existing?.metadata.kind === 'session-alias') {
+      this.updateSync(aliasId, { metadata });
+      return;
+    }
+    if (existing) return;
+
+    this.writeSync(aliasId, {
+      id: aliasId,
+      title: aliasId,
+      metadata,
+    });
+  }
+
+  /** Resolve a harness session id to its canonical session node id.
    *  Identity for non-aliased ids (including canonical session ids). */
   resolveSessionAlias(harnessId: string): string {
+    const aliasRow = this.db.prepare(`
+      SELECT json_extract(metadata, '$.canonical') AS canonical FROM entries
+      WHERE id = ?
+        AND json_extract(metadata, '$.kind') = 'session-alias'
+        AND tombstoned_at IS NULL
+    `).get(harnessId) as { canonical: string } | undefined;
+    if (aliasRow?.canonical) return aliasRow.canonical;
+
+    const aliasOwner = this.db.prepare(`
+      SELECT id FROM entries
+      WHERE json_extract(metadata, '$.kind') = 'session'
+        AND tombstoned_at IS NULL
+        AND id != ?
+        AND EXISTS (
+          SELECT 1 FROM json_each(json_extract(metadata, '$.resumed_by'))
+          WHERE json_each.value = ?
+        )
+      LIMIT 1
+    `).get(harnessId, harnessId) as { id: string } | undefined;
+    if (aliasOwner) return aliasOwner.id;
+
     const direct = this.db.prepare(`
       SELECT id FROM entries
       WHERE id = ?
@@ -604,17 +663,7 @@ export class TimStore implements MemoryInterface {
     `).get(harnessId) as { id: string } | undefined;
     if (direct) return harnessId;
 
-    const row = this.db.prepare(`
-      SELECT id FROM entries
-      WHERE json_extract(metadata, '$.kind') = 'session'
-        AND tombstoned_at IS NULL
-        AND EXISTS (
-          SELECT 1 FROM json_each(json_extract(metadata, '$.resumed_by'))
-          WHERE json_each.value = ?
-        )
-      LIMIT 1
-    `).get(harnessId) as { id: string } | undefined;
-    return row?.id ?? harnessId;
+    return harnessId;
   }
 
   /** Sessions under a project's sessions-root, newest activity first.
@@ -2036,6 +2085,9 @@ export class TimStore implements MemoryInterface {
     projectId: string,
     excludeSessionId?: string | null,
   ): Promise<Entry | null> {
+    const excluded = excludeSessionId
+      ? this.resolveSessionAlias(excludeSessionId)
+      : excludeSessionId;
     const row = this.db.prepare(`
       WITH RECURSIVE sub(id) AS (
         SELECT id FROM entries WHERE id = ?
@@ -2049,7 +2101,7 @@ export class TimStore implements MemoryInterface {
         AND e.id != COALESCE(?, '')
       ORDER BY e.created_at DESC, e.rowid DESC
       LIMIT 1
-    `).get(projectId, excludeSessionId ?? null) as RowEntry | undefined;
+    `).get(projectId, excluded ?? null) as RowEntry | undefined;
     return row ? rowToEntry(row) : null;
   }
 

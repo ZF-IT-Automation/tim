@@ -113,6 +113,8 @@ export interface ResumeSessionOpts {
   tool?: string;
   model?: string;
   rawCount?: number;
+  /** When set, reject resume if the session belongs to a different project. */
+  boundProjectId?: string;
 }
 
 export interface ResumableSession {
@@ -871,6 +873,16 @@ export class SessionManager {
     if (!exNode) {
       throw new Error(`Session uses legacy format and cannot be resumed: ${oldSessionId}`);
     }
+
+    const projectRef = typeof session.metadata.project_ref === 'string'
+      ? session.metadata.project_ref
+      : undefined;
+    if (opts.boundProjectId && projectRef && projectRef !== opts.boundProjectId) {
+      throw new Error(
+        `Session ${canonical} belongs to project ${projectRef}, not ${opts.boundProjectId}`,
+      );
+    }
+
     const summaryNode = await findChildByKind(this.store, canonical, KIND_SUMMARY_ROOT);
 
     const warnings: string[] = [];
@@ -908,6 +920,7 @@ export class SessionManager {
           ...(opts.model && { model: opts.model }),
         },
       });
+      this.store.upsertSessionAlias(newHarnessId, canonical);
     } else if (!newHarnessId) {
       warnings.push(
         'No harness session id available — alias not recorded; ' +
