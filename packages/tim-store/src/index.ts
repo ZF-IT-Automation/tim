@@ -42,6 +42,7 @@ export {
   type ResumeExchange,
   type ResumePayload,
   type ResumeSessionOpts,
+  type ResumableSession,
 } from './session.js';
 export {
   deriveCounters,

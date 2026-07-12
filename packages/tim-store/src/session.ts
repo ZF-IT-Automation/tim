@@ -115,6 +115,17 @@ export interface ResumeSessionOpts {
   rawCount?: number;
 }
 
+export interface ResumableSession {
+  sessionId: string;
+  title: string;
+  date?: string;
+  lastActivity: string;
+  tool?: string;
+  taskSummary?: string;
+  exchangeCount: number;
+  summaryFirstLine: string;
+}
+
 export interface UntaggedBatch {
   sessionId: string;
   batchNodeId: string;
@@ -953,6 +964,32 @@ export class SessionManager {
       recentExchanges,
       warnings,
     };
+  }
+
+  async listResumableSessions(projectRef: string, limit = 10): Promise<ResumableSession[]> {
+    const project = await this.store.requireProject(projectRef);
+    const rows = this.store.listProjectSessionsByActivity(project.id, limit);
+    const out: ResumableSession[] = [];
+    for (const { id, lastActivity } of rows) {
+      const session = await this.store.read(id);
+      if (!session) continue;
+      const summaryNode = await findChildByKind(this.store, id, KIND_SUMMARY_ROOT);
+      const summaryFirstLine =
+        (summaryNode?.content ?? '').split('\n').find(l => l.trim())?.trim() ?? '';
+      out.push({
+        sessionId: id,
+        title: session.title,
+        date: typeof session.metadata.date === 'string' ? session.metadata.date : undefined,
+        lastActivity,
+        tool: typeof session.metadata.tool === 'string' ? session.metadata.tool : undefined,
+        taskSummary: typeof session.metadata.task_summary === 'string'
+          ? session.metadata.task_summary : undefined,
+        exchangeCount: typeof session.metadata.exchange_count === 'number'
+          ? session.metadata.exchange_count : 0,
+        summaryFirstLine,
+      });
+    }
+    return out;
   }
 
   private static readonly PROJECT_STATS_MARKER = '## Project Stats';

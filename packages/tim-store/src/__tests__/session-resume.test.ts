@@ -151,4 +151,42 @@ describe('session resume', () => {
       await expect(sessions.resumeSession('nope', {})).rejects.toThrow(/not found/i);
     });
   });
+
+  describe('listResumableSessions', () => {
+    it('lists sessions of the project sorted by last activity, newest first', async () => {
+      const a = await startSession('sess-old');
+      await sessions.logExchange('sess-old', [
+        { role: 'user', content: 'old work' },
+        { role: 'agent', content: 'ok' },
+      ]);
+      await startSession('sess-new');
+      await sessions.logExchange('sess-new', [
+        { role: 'user', content: 'new work' },
+        { role: 'agent', content: 'ok' },
+      ]);
+      // touch the OLD session again — it becomes most recently active
+      await sessions.logExchange('sess-old', [
+        { role: 'user', content: 'back to old' },
+        { role: 'agent', content: 'ok' },
+      ]);
+      await sessions.updateSessionSummary('sess-old', 'first line of old summary\nmore text');
+
+      const list = await sessions.listResumableSessions('P0099');
+      expect(list.map(s => s.sessionId)).toEqual(['sess-old', 'sess-new']);
+      expect(list[0]!.exchangeCount).toBe(2);
+      expect(list[0]!.summaryFirstLine).toBe('first line of old summary');
+      expect(a.id).toBe('sess-old');
+    });
+
+    it('respects the limit', async () => {
+      for (let i = 0; i < 4; i++) await startSession(`sess-l${i}`);
+      const list = await sessions.listResumableSessions('P0099', 2);
+      expect(list).toHaveLength(2);
+    });
+
+    it('returns empty array for a project without sessions', async () => {
+      await store.createProject('P0098', { content: 'empty' });
+      expect(await sessions.listResumableSessions('P0098')).toEqual([]);
+    });
+  });
 });

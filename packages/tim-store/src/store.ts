@@ -617,6 +617,41 @@ export class TimStore implements MemoryInterface {
     return row?.id ?? harnessId;
   }
 
+  /** Sessions under a project's sessions-root, newest activity first.
+   *  Activity = latest insert (rowid) anywhere in the session subtree. */
+  listProjectSessionsByActivity(
+    projectId: string,
+    limit = 10,
+  ): Array<{ id: string; lastActivity: string }> {
+    const sessionsRoot = this.db.prepare(`
+      SELECT id FROM entries
+      WHERE parent_id = ?
+        AND json_extract(metadata, '$.kind') = 'sessions-root'
+        AND tombstoned_at IS NULL
+    `).get(projectId) as { id: string } | undefined;
+    if (!sessionsRoot) return [];
+
+    const rows = this.db.prepare(`
+      WITH RECURSIVE sub AS (
+        SELECT id, id AS root, created_at, rowid AS rid FROM entries
+        WHERE parent_id = ?
+          AND json_extract(metadata, '$.kind') = 'session'
+          AND tombstoned_at IS NULL
+          AND irrelevant = 0
+        UNION ALL
+        SELECT e.id, sub.root, e.created_at, e.rowid FROM entries e
+        INNER JOIN sub ON e.parent_id = sub.id
+        WHERE e.tombstoned_at IS NULL
+      )
+      SELECT root, MAX(created_at) AS last, MAX(rid) AS lastRid FROM sub
+      GROUP BY root
+      ORDER BY lastRid DESC
+      LIMIT ?
+    `).all(sessionsRoot.id, limit) as Array<{ root: string; last: string; lastRid: number }>;
+
+    return rows.map(r => ({ id: r.root, lastActivity: r.last }));
+  }
+
   /** Count live descendants of a project node + latest created_at. */
   getProjectEntryStats(projectId: string): { count: number; lastActivity: string } {
     const row = this.db.prepare(`
