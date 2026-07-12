@@ -593,6 +593,30 @@ export class TimStore implements MemoryInterface {
     return row.n;
   }
 
+  /** Resolve a harness session id to its canonical session node id.
+   *  Identity for non-aliased ids (including canonical session ids). */
+  resolveSessionAlias(harnessId: string): string {
+    const direct = this.db.prepare(`
+      SELECT id FROM entries
+      WHERE id = ?
+        AND json_extract(metadata, '$.kind') = 'session'
+        AND tombstoned_at IS NULL
+    `).get(harnessId) as { id: string } | undefined;
+    if (direct) return harnessId;
+
+    const row = this.db.prepare(`
+      SELECT id FROM entries
+      WHERE json_extract(metadata, '$.kind') = 'session'
+        AND tombstoned_at IS NULL
+        AND EXISTS (
+          SELECT 1 FROM json_each(json_extract(metadata, '$.resumed_by'))
+          WHERE json_each.value = ?
+        )
+      LIMIT 1
+    `).get(harnessId) as { id: string } | undefined;
+    return row?.id ?? harnessId;
+  }
+
   /** Count live descendants of a project node + latest created_at. */
   getProjectEntryStats(projectId: string): { count: number; lastActivity: string } {
     const row = this.db.prepare(`
