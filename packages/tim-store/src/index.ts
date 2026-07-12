@@ -38,6 +38,11 @@ export {
   type BatchFullInfo,
   type OnBatchFullHandler,
   type EnsureProjectForPathResult,
+  type ResumeBatchSummary,
+  type ResumeExchange,
+  type ResumePayload,
+  type ResumeSessionOpts,
+  type ResumableSession,
 } from './session.js';
 export {
   deriveCounters,
@@ -52,6 +57,7 @@ export {
   EXCHANGES_NODE_TITLE,
   KIND_SESSIONS_ROOT,
   KIND_SESSION,
+  KIND_SESSION_ALIAS,
   KIND_SUMMARY_ROOT,
   KIND_BATCH,
   KIND_EXCHANGES_ROOT,

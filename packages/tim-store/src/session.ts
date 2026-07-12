@@ -82,6 +82,52 @@ export interface UnsummarizedBatch {
   };
 }
 
+export interface ResumeBatchSummary {
+  batchIndex: number;
+  seqFrom: number;
+  seqTo: number;
+  text: string;
+}
+export interface ResumeExchange {
+  seq: number;
+  userContent: string;
+  agentContent: string | null;
+}
+export interface ResumePayload {
+  sessionId: string;
+  sessionMeta: {
+    project?: string;
+    date?: string;
+    tool?: string;
+    toolHistory: string[];
+    exchangeCount: number;
+    taskSummary?: string;
+  };
+  sessionSummary: string;
+  batchSummaries: ResumeBatchSummary[];
+  recentExchanges: ResumeExchange[];
+  warnings: string[];
+}
+export interface ResumeSessionOpts {
+  newHarnessId?: string;
+  tool?: string;
+  model?: string;
+  rawCount?: number;
+  /** When set, reject resume if the session belongs to a different project. */
+  boundProjectId?: string;
+}
+
+export interface ResumableSession {
+  sessionId: string;
+  title: string;
+  date?: string;
+  lastActivity: string;
+  tool?: string;
+  taskSummary?: string;
+  exchangeCount: number;
+  summaryFirstLine: string;
+}
+
 export interface UntaggedBatch {
   sessionId: string;
   batchNodeId: string;
@@ -240,6 +286,7 @@ export class SessionManager {
   }
 
   async sessionLog(sessionId: string, entries: Exchange[]): Promise<Entry[]> {
+    sessionId = this.store.resolveSessionAlias(sessionId);
     const session = await this.store.read(sessionId);
     if (!session || session.metadata.kind !== 'session') {
       throw new Error(`Session not found: ${sessionId}`);
@@ -270,6 +317,7 @@ export class SessionManager {
   }
 
   async logExchange(sessionId: string, entries: Exchange[]): Promise<Entry[]> {
+    sessionId = this.store.resolveSessionAlias(sessionId);
     const session = await this.store.read(sessionId);
     if (!session || session.metadata.kind !== KIND_SESSION) {
       throw new Error(`Project session not found: ${sessionId}`);
@@ -368,6 +416,7 @@ export class SessionManager {
   }
 
   async showUnsummarized(sessionId: string): Promise<UnsummarizedBatch> {
+    sessionId = this.store.resolveSessionAlias(sessionId);
     const session = await this.store.read(sessionId);
     if (!session || session.metadata.kind !== KIND_SESSION) {
       throw new Error(`Project session not found: ${sessionId}`);
@@ -495,6 +544,7 @@ export class SessionManager {
     range: { seqFrom: number; seqTo: number },
     tags?: string[],
   ): Promise<Entry> {
+    sessionId = this.store.resolveSessionAlias(sessionId);
     const summaryNode = await findChildByKind(this.store, sessionId, KIND_SUMMARY_ROOT);
     if (!summaryNode) throw new Error(`Summary node missing for session: ${sessionId}`);
 
@@ -601,6 +651,7 @@ export class SessionManager {
 
   /** Recompute session-level content tags from batch summaries (freq >= 2). */
   async aggregateSessionTags(sessionId: string): Promise<Entry | null> {
+    sessionId = this.store.resolveSessionAlias(sessionId);
     const summaryNode = await findChildByKind(this.store, sessionId, KIND_SUMMARY_ROOT);
     if (!summaryNode) return null;
 
@@ -657,6 +708,7 @@ export class SessionManager {
     sessionId: string,
     fold: (batches: Entry[]) => Promise<string>,
   ): Promise<Entry> {
+    sessionId = this.store.resolveSessionAlias(sessionId);
     const summaryNode = await findChildByKind(this.store, sessionId, KIND_SUMMARY_ROOT);
     if (!summaryNode) throw new Error(`Summary node missing for session: ${sessionId}`);
 
@@ -675,6 +727,7 @@ export class SessionManager {
   }
 
   async getSessionExchanges(sessionId: string): Promise<Entry[]> {
+    sessionId = this.store.resolveSessionAlias(sessionId);
     const exNode = await findChildByKind(this.store, sessionId, KIND_EXCHANGES_ROOT);
     if (exNode) {
       const batches = await this.store.getChildByKind(exNode.id, KIND_EXCHANGE_BATCH);
@@ -713,6 +766,7 @@ export class SessionManager {
     sessionId: string,
     opts: { summarize?: Summarizer; runDecay?: boolean; handoffNote?: string } = {},
   ): Promise<Entry> {
+    sessionId = this.store.resolveSessionAlias(sessionId);
     const session = await this.store.read(sessionId);
     if (!session || session.metadata.kind !== 'session') {
       throw new Error(`Session not found: ${sessionId}`);
@@ -768,6 +822,7 @@ export class SessionManager {
 
   /** Upsert session-summary-root content after checkpoint / rollup. */
   async updateSessionSummary(sessionId: string, summaryText: string): Promise<Entry> {
+    sessionId = this.store.resolveSessionAlias(sessionId);
     const session = await this.store.read(sessionId);
     if (!session || session.metadata.kind !== KIND_SESSION) {
       throw new Error(`Project session not found: ${sessionId}`);
@@ -803,6 +858,160 @@ export class SessionManager {
       tags: [SESSION_SUMMARY_TAG],
     });
     return summaryNode;
+  }
+
+  async resumeSession(
+    oldSessionId: string,
+    opts: ResumeSessionOpts = {},
+  ): Promise<ResumePayload> {
+    const canonical = this.store.resolveSessionAlias(oldSessionId);
+    const session = await this.store.read(canonical);
+    if (!session || session.metadata.kind !== KIND_SESSION) {
+      throw new Error(`Session not found: ${oldSessionId}`);
+    }
+    const exNode = await findChildByKind(this.store, canonical, KIND_EXCHANGES_ROOT);
+    if (!exNode) {
+      throw new Error(`Session uses legacy format and cannot be resumed: ${oldSessionId}`);
+    }
+
+    const projectRef = typeof session.metadata.project_ref === 'string'
+      ? session.metadata.project_ref
+      : undefined;
+    if (opts.boundProjectId && projectRef && projectRef !== opts.boundProjectId) {
+      throw new Error(
+        `Session ${canonical} belongs to project ${projectRef}, not ${opts.boundProjectId}`,
+      );
+    }
+
+    const summaryNode = await findChildByKind(this.store, canonical, KIND_SUMMARY_ROOT);
+
+    const warnings: string[] = [];
+    const newHarnessId = opts.newHarnessId?.trim() || undefined;
+
+    if (newHarnessId && newHarnessId !== canonical) {
+      const existing = await this.store.read(newHarnessId);
+      if (existing?.metadata.kind === KIND_SESSION) {
+        const { exchangeCount } = await deriveCounters(this.store, newHarnessId);
+        if (exchangeCount > 0) {
+          throw new Error(
+            `Harness session ${newHarnessId} already has ${exchangeCount} exchanges — ` +
+            `start fresh or resume from that session instead`,
+          );
+        }
+      }
+      const fresh = (await this.store.read(canonical))!;
+      const resumedBy = Array.isArray(fresh.metadata.resumed_by)
+        ? [...(fresh.metadata.resumed_by as string[])]
+        : [];
+      if (!resumedBy.includes(newHarnessId)) resumedBy.push(newHarnessId);
+      const toolHistory = Array.isArray(fresh.metadata.tool_history)
+        ? [...(fresh.metadata.tool_history as string[])]
+        : typeof fresh.metadata.tool === 'string' ? [fresh.metadata.tool] : [];
+      if (opts.tool && toolHistory[toolHistory.length - 1] !== opts.tool) {
+        toolHistory.push(opts.tool);
+      }
+      await this.store.update(canonical, {
+        metadata: {
+          ...fresh.metadata,
+          resumed_by: resumedBy,
+          resumed_at: new Date().toISOString(),
+          tool_history: toolHistory,
+          ...(opts.tool && { tool: opts.tool }),
+          ...(opts.model && { model: opts.model }),
+        },
+      });
+      this.store.upsertSessionAlias(newHarnessId, canonical);
+    } else if (!newHarnessId) {
+      warnings.push(
+        'No harness session id available — alias not recorded; ' +
+        'new exchanges may open a new session.',
+      );
+    }
+
+    const batchSummaries: ResumeBatchSummary[] = summaryNode
+      ? (await this.store.getChildByKind(summaryNode.id, KIND_BATCH))
+          .sort((a, b) => Number(a.metadata.batch_index) - Number(b.metadata.batch_index))
+          .map(b => ({
+            batchIndex: Number(b.metadata.batch_index),
+            seqFrom: Number(b.metadata.seq_from),
+            seqTo: Number(b.metadata.seq_to),
+            text: b.content ?? '',
+          }))
+      : [];
+    if (batchSummaries.length === 0) {
+      warnings.push('No batch summaries yet — summarizer may be behind.');
+    }
+
+    const rawCount = opts.rawCount ?? 10;
+    const exBatches = (await this.store.getChildByKind(exNode.id, KIND_EXCHANGE_BATCH))
+      .sort((a, b) => Number(a.metadata.batch_index) - Number(b.metadata.batch_index));
+    const users: Entry[] = [];
+    for (const b of exBatches) {
+      users.push(
+        ...(await this.store.getChildrenBySeq(b.id)).filter(u => u.metadata.role === 'user'),
+      );
+    }
+    users.sort((a, b) => Number(a.metadata.seq) - Number(b.metadata.seq));
+    const recentUsers = users.slice(-rawCount);
+    const recentExchanges: ResumeExchange[] = [];
+    for (const u of recentUsers) {
+      const replies = await this.store.getChildren(u.id);
+      const agent = replies.find(r => r.metadata.role === 'agent') ?? null;
+      recentExchanges.push({
+        seq: Number(u.metadata.seq),
+        userContent: u.content || u.title,
+        agentContent: agent ? (agent.content || agent.title) : null,
+      });
+    }
+
+    const freshSession = (await this.store.read(canonical))!;
+    return {
+      sessionId: canonical,
+      sessionMeta: {
+        project: typeof freshSession.metadata.project_ref === 'string'
+          ? freshSession.metadata.project_ref : undefined,
+        date: typeof freshSession.metadata.date === 'string'
+          ? freshSession.metadata.date : undefined,
+        tool: typeof freshSession.metadata.tool === 'string'
+          ? freshSession.metadata.tool : undefined,
+        toolHistory: Array.isArray(freshSession.metadata.tool_history)
+          ? (freshSession.metadata.tool_history as string[]) : [],
+        exchangeCount: typeof freshSession.metadata.exchange_count === 'number'
+          ? freshSession.metadata.exchange_count : 0,
+        taskSummary: typeof freshSession.metadata.task_summary === 'string'
+          ? freshSession.metadata.task_summary : undefined,
+      },
+      sessionSummary: summaryNode?.content ?? '',
+      batchSummaries,
+      recentExchanges,
+      warnings,
+    };
+  }
+
+  async listResumableSessions(projectRef: string, limit = 10): Promise<ResumableSession[]> {
+    const project = await this.store.requireProject(projectRef);
+    const rows = this.store.listProjectSessionsByActivity(project.id, limit);
+    const out: ResumableSession[] = [];
+    for (const { id, lastActivity } of rows) {
+      const session = await this.store.read(id);
+      if (!session) continue;
+      const summaryNode = await findChildByKind(this.store, id, KIND_SUMMARY_ROOT);
+      const summaryFirstLine =
+        (summaryNode?.content ?? '').split('\n').find(l => l.trim())?.trim() ?? '';
+      out.push({
+        sessionId: id,
+        title: session.title,
+        date: typeof session.metadata.date === 'string' ? session.metadata.date : undefined,
+        lastActivity,
+        tool: typeof session.metadata.tool === 'string' ? session.metadata.tool : undefined,
+        taskSummary: typeof session.metadata.task_summary === 'string'
+          ? session.metadata.task_summary : undefined,
+        exchangeCount: typeof session.metadata.exchange_count === 'number'
+          ? session.metadata.exchange_count : 0,
+        summaryFirstLine,
+      });
+    }
+    return out;
   }
 
   private static readonly PROJECT_STATS_MARKER = '## Project Stats';

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { TimStore, CommitManager } from '../index.js';
+import { TimStore, CommitManager, SessionManager } from '../index.js';
 import { KIND_COMMIT, KIND_COMMITS_ROOT } from '../commit-tree.js';
 import { KIND_SESSION } from '../session-tree.js';
 
@@ -107,6 +107,35 @@ describe('CommitManager', () => {
     const out = await store.getEdges(commit.id, 'outgoing');
     const inc = await store.getEdges(session.id, 'outgoing');
     expect(out.some(e => e.targetId === session.id && e.type === 'relates')).toBe(true);
+    expect(inc.some(e => e.targetId === commit.id && e.type === 'implements')).toBe(true);
+  });
+
+  it('links commit to canonical session when sessionId is a resume alias', async () => {
+    await store.createProject('P0002', { content: 'Test project' });
+    const sessions = new SessionManager(store);
+    await sessions.startProjectSession({
+      sessionId: 'sess-canonical',
+      projectId: 'P0002',
+      agentName: 'test',
+      cwd: '/tmp',
+      harness: 'test',
+    });
+    await sessions.logExchange('sess-canonical', [
+      { role: 'user', content: 'u1' },
+      { role: 'agent', content: 'a1' },
+    ]);
+    await sessions.resumeSession('sess-canonical', { newHarnessId: 'harness-alias' });
+
+    const commit = await commits.recordCommit({
+      projectId: 'P0002',
+      hash: 'aliassess',
+      message: 'feat: via alias',
+      sessionId: 'harness-alias',
+    });
+
+    const out = await store.getEdges(commit.id, 'outgoing');
+    const inc = await store.getEdges('sess-canonical', 'outgoing');
+    expect(out.some(e => e.targetId === 'sess-canonical' && e.type === 'relates')).toBe(true);
     expect(inc.some(e => e.targetId === commit.id && e.type === 'implements')).toBe(true);
   });
 });
