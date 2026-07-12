@@ -2682,12 +2682,16 @@ export async function createMcpServer(
         case 'tim_session_resume': {
           const { sessionId, rawCount } = TimSessionResumeSchema.parse(args);
           const cwd = isHttp ? undefined : process.cwd();
-          const newHarnessId =
-            process.env.TIM_SESSION_ID
-            ?? (cwd ? findMarker(cwd, { walkUp: true })?.marker.session : undefined);
+          const newHarnessId = resolveActiveSessionId({
+            markerSession: cwd ? findMarker(cwd, { walkUp: true })?.marker.session : undefined,
+            useSessionCache: !isHttp,
+            useEnv: !isHttp,
+          });
+          const boundProjectId = getActiveProjectLabel() ?? undefined;
           const payload = await getSessions().resumeSession(sessionId, {
             newHarnessId,
             rawCount,
+            boundProjectId,
           });
           if (cwd) {
             try {
@@ -2705,9 +2709,10 @@ export async function createMcpServer(
 
         case 'tim_session_log': {
           const { sessionId, entries } = TimSessionLogSchema.parse(args);
-          const sessionEntry = await s.read(sessionId);
+          const resolvedId = s.resolveSessionId(sessionId);
+          const sessionEntry = await s.read(resolvedId);
           const isProjectBound =
-            !!(sessionEntry && (await s.getChildByKind(sessionId, 'exchanges-root')).length > 0);
+            !!(sessionEntry && (await s.getChildByKind(resolvedId, 'exchanges-root')).length > 0);
           const written = isProjectBound
             ? await getSessions().logExchange(sessionId, entries)
             : await getSessions().sessionLog(sessionId, entries);
