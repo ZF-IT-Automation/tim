@@ -65,10 +65,10 @@ export class CommitManager {
     });
 
     if (params.sessionId) {
-      const session = await this.store.read(params.sessionId);
-      if (session?.metadata.kind === 'session') {
-        await this.store.link(commit.id, params.sessionId, 'relates');
-        await this.store.link(params.sessionId, commit.id, 'implements');
+      const session = await this.store.readSession(params.sessionId);
+      if (session) {
+        await this.store.link(commit.id, session.id, 'relates');
+        await this.store.link(session.id, commit.id, 'implements');
       }
     }
 
