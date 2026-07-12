@@ -6,6 +6,7 @@ export declare const EXCHANGES_NODE_TITLE = "Exchanges";
 export declare const SESSIONS_SECTION_ORDER = 1000;
 export declare const KIND_SESSIONS_ROOT = "sessions-root";
 export declare const KIND_SESSION = "session";
+export declare const KIND_SESSION_ALIAS = "session-alias";
 export declare const KIND_SUMMARY_ROOT = "session-summary-root";
 export declare const KIND_BATCH = "batch-summary";
 export declare const KIND_EXCHANGES_ROOT = "exchanges-root";

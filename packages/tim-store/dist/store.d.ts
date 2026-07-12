@@ -121,6 +121,22 @@ export declare class TimStore implements MemoryInterface {
     requireProject(projectId: string): Promise<Entry>;
     loadProject(label: string, options?: LoadProjectOptions): Promise<LoadProjectResult | null>;
     countSessionSummaries(projectLabel: string): Promise<number>;
+    /** Resolve a harness session id to its canonical session node id.
+     *  All session-id consumers should route through this (or readSession). */
+    resolveSessionId(harnessId: string): string;
+    /** Read a session entry after alias resolution. */
+    readSession(sessionId: string, options?: ReadOptions): Promise<Entry | null>;
+    /** Record an O(1) alias mapping when the alias id is not already a session node. */
+    upsertSessionAlias(aliasId: string, canonicalId: string): void;
+    /** Resolve a harness session id to its canonical session node id.
+     *  Identity for non-aliased ids (including canonical session ids). */
+    resolveSessionAlias(harnessId: string): string;
+    /** Sessions under a project's sessions-root, newest activity first.
+     *  Activity = latest insert (rowid) anywhere in the session subtree. */
+    listProjectSessionsByActivity(projectId: string, limit?: number): Array<{
+        id: string;
+        lastActivity: string;
+    }>;
     /** Count live descendants of a project node + latest created_at. */
     getProjectEntryStats(projectId: string): {
         count: number;

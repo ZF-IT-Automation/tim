@@ -52,6 +52,50 @@ export interface UnsummarizedBatch {
         task_summary?: string;
     };
 }
+export interface ResumeBatchSummary {
+    batchIndex: number;
+    seqFrom: number;
+    seqTo: number;
+    text: string;
+}
+export interface ResumeExchange {
+    seq: number;
+    userContent: string;
+    agentContent: string | null;
+}
+export interface ResumePayload {
+    sessionId: string;
+    sessionMeta: {
+        project?: string;
+        date?: string;
+        tool?: string;
+        toolHistory: string[];
+        exchangeCount: number;
+        taskSummary?: string;
+    };
+    sessionSummary: string;
+    batchSummaries: ResumeBatchSummary[];
+    recentExchanges: ResumeExchange[];
+    warnings: string[];
+}
+export interface ResumeSessionOpts {
+    newHarnessId?: string;
+    tool?: string;
+    model?: string;
+    rawCount?: number;
+    /** When set, reject resume if the session belongs to a different project. */
+    boundProjectId?: string;
+}
+export interface ResumableSession {
+    sessionId: string;
+    title: string;
+    date?: string;
+    lastActivity: string;
+    tool?: string;
+    taskSummary?: string;
+    exchangeCount: number;
+    summaryFirstLine: string;
+}
 export interface UntaggedBatch {
     sessionId: string;
     batchNodeId: string;
@@ -92,6 +136,8 @@ export declare class SessionManager {
     }): Promise<Entry>;
     /** Upsert session-summary-root content after checkpoint / rollup. */
     updateSessionSummary(sessionId: string, summaryText: string): Promise<Entry>;
+    resumeSession(oldSessionId: string, opts?: ResumeSessionOpts): Promise<ResumePayload>;
+    listResumableSessions(projectRef: string, limit?: number): Promise<ResumableSession[]>;
     private static readonly PROJECT_STATS_MARKER;
     /** Refresh project-root stats line (entry count + last activity). */
     updateProjectSummary(projectId: string): Promise<Entry>;

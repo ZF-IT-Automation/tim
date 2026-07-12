@@ -75,6 +75,13 @@ class CurateManager {
             if (collision)
                 throw new Error(`Entry already exists: ${newId}`);
             const affectedEntryIds = new Set();
+            // Batch-summary slot collision: if old entry occupies a UNIQUE slot on
+            // (parent_id, batch_index), tombstone it before inserting copy to vacate slot.
+            const oldMeta = JSON.parse(existing.metadata || '{}');
+            const isBatchSummary = oldMeta.kind === 'batch-summary' && oldMeta.batch_index !== undefined;
+            if (isBatchSummary) {
+                this.db.prepare('UPDATE entries SET tombstoned_at = ? WHERE id = ?').run(new Date().toISOString(), oldId);
+            }
             // Insert copy under newId so FK targets exist before repointing references
             this.db.prepare(`
         INSERT INTO entries (id, parent_id, title, content, content_type, depth, confidence,
@@ -85,6 +92,9 @@ class CurateManager {
           tombstoned_at, metadata
         FROM entries WHERE id = ?
       `).run(newId, oldId);
+            if (isBatchSummary) {
+                this.db.prepare('UPDATE entries SET tombstoned_at = NULL WHERE id = ?').run(newId);
+            }
             // Edges referencing this ID
             this.db.prepare('UPDATE edges SET source_id = ? WHERE source_id = ?').run(newId, oldId);
             this.db.prepare('UPDATE edges SET target_id = ? WHERE target_id = ?').run(newId, oldId);

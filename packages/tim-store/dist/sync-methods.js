@@ -63,6 +63,26 @@ function applyRemoteEntry(db, payloadJson, lwwTimestamp, lwwDevice, deleted) {
     }
     const entry = JSON.parse(payloadJson);
     const coercedMetadata = JSON.stringify((0, metadata_coerce_js_1.parseAndCoerceMetadata)(entry.metadata));
+    // Slot-collision guard: batch-summaries share a UNIQUE slot on (parent_id, batch_index).
+    // A remote entry with a different id but same slot must LWW-resolve against the local occupant.
+    if (entry.metadata) {
+        const meta = typeof entry.metadata === 'string' ? JSON.parse(entry.metadata) : entry.metadata;
+        if (meta.kind === 'batch-summary' && meta.batch_index !== undefined && entry.parent_id) {
+            const slotOccupant = db.prepare(`SELECT id, updated_at, created_at, tombstoned_at, confidence, lww_device
+         FROM entries
+         WHERE parent_id = ? AND json_extract(metadata, '$.batch_index') = ?
+           AND json_extract(metadata, '$.kind') = 'batch-summary'
+           AND id != ?`).get(entry.parent_id, meta.batch_index, entry.id);
+            if (slotOccupant) {
+                const localSlot = recordFromPayload(String(slotOccupant.id), 'entry', slotOccupant.tombstoned_at ? 'delete' : 'upsert', JSON.stringify(slotOccupant), entryLocalLwwTimestamp(slotOccupant), String(slotOccupant.lww_device ?? 'local'), Number(slotOccupant.confidence ?? 1));
+                const slotRemote = recordFromPayload(entry.id, 'entry', 'upsert', payloadJson, lwwTimestamp, lwwDevice);
+                const { winner } = (0, tim_core_1.resolveLWW)(localSlot, slotRemote);
+                if (winner === localSlot)
+                    return false;
+                db.prepare('DELETE FROM entries WHERE id = ?').run(slotOccupant.id);
+            }
+        }
+    }
     const updatedAt = new Date(lwwTimestamp).toISOString();
     db.prepare(`INSERT OR REPLACE INTO entries
     (id, parent_id, title, content, content_type, depth, confidence, created_at,
