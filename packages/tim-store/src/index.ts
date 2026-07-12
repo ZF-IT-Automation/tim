@@ -38,6 +38,10 @@ export {
   type BatchFullInfo,
   type OnBatchFullHandler,
   type EnsureProjectForPathResult,
+  type ResumeBatchSummary,
+  type ResumeExchange,
+  type ResumePayload,
+  type ResumeSessionOpts,
 } from './session.js';
 export {
   deriveCounters,
