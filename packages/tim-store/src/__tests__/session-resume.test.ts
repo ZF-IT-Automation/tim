@@ -189,4 +189,50 @@ describe('session resume', () => {
       expect(await sessions.listResumableSessions('P0098')).toEqual([]);
     });
   });
+
+  describe('alias-transparent session APIs', () => {
+    it('logExchange via alias appends to the canonical session with continuous seq', async () => {
+      await startSession('sess-cont');
+      await sessions.logExchange('sess-cont', [
+        { role: 'user', content: 'u1' }, { role: 'agent', content: 'a1' },
+        { role: 'user', content: 'u2' }, { role: 'agent', content: 'a2' },
+      ]);
+      await sessions.resumeSession('sess-cont', { newHarnessId: 'cursor-77', tool: 'cursor' });
+
+      // Cursor's hooks log with THEIR harness id:
+      await sessions.logExchange('cursor-77', [
+        { role: 'user', content: 'u3 from cursor' }, { role: 'agent', content: 'a3' },
+      ]);
+
+      const p = await sessions.resumeSession('sess-cont', { newHarnessId: 'cursor-77' });
+      expect(p.recentExchanges.map(e => e.seq)).toEqual([1, 2, 3]);
+      expect(p.recentExchanges[2]!.userContent).toBe('u3 from cursor');
+      expect(p.sessionMeta.exchangeCount).toBe(3);
+    });
+
+    it('showUnsummarized works via alias', async () => {
+      await startSession('sess-su');
+      await sessions.logExchange('sess-su', [
+        { role: 'user', content: 'u1' }, { role: 'agent', content: 'a1' },
+      ]);
+      await sessions.resumeSession('sess-su', { newHarnessId: 'alias-su' });
+      const batch = await sessions.showUnsummarized('alias-su');
+      expect(batch.sessionId).toBe('sess-su');
+      expect(batch.exchanges).toHaveLength(1);
+    });
+
+    it('parallel resume from two tools stays seq-consistent', async () => {
+      await startSession('sess-par');
+      await sessions.logExchange('sess-par', [
+        { role: 'user', content: 'u1' }, { role: 'agent', content: 'a1' },
+      ]);
+      await sessions.resumeSession('sess-par', { newHarnessId: 'tool-A' });
+      await sessions.resumeSession('sess-par', { newHarnessId: 'tool-B' });
+      await sessions.logExchange('tool-A', [{ role: 'user', content: 'uA' }]);
+      await sessions.logExchange('tool-B', [{ role: 'user', content: 'uB' }]);
+
+      const p = await sessions.resumeSession('sess-par', {});
+      expect(p.recentExchanges.map(e => e.seq)).toEqual([1, 2, 3]);
+    });
+  });
 });

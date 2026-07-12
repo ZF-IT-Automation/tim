@@ -284,6 +284,7 @@ export class SessionManager {
   }
 
   async sessionLog(sessionId: string, entries: Exchange[]): Promise<Entry[]> {
+    sessionId = this.store.resolveSessionAlias(sessionId);
     const session = await this.store.read(sessionId);
     if (!session || session.metadata.kind !== 'session') {
       throw new Error(`Session not found: ${sessionId}`);
@@ -314,6 +315,7 @@ export class SessionManager {
   }
 
   async logExchange(sessionId: string, entries: Exchange[]): Promise<Entry[]> {
+    sessionId = this.store.resolveSessionAlias(sessionId);
     const session = await this.store.read(sessionId);
     if (!session || session.metadata.kind !== KIND_SESSION) {
       throw new Error(`Project session not found: ${sessionId}`);
@@ -412,6 +414,7 @@ export class SessionManager {
   }
 
   async showUnsummarized(sessionId: string): Promise<UnsummarizedBatch> {
+    sessionId = this.store.resolveSessionAlias(sessionId);
     const session = await this.store.read(sessionId);
     if (!session || session.metadata.kind !== KIND_SESSION) {
       throw new Error(`Project session not found: ${sessionId}`);
@@ -539,6 +542,7 @@ export class SessionManager {
     range: { seqFrom: number; seqTo: number },
     tags?: string[],
   ): Promise<Entry> {
+    sessionId = this.store.resolveSessionAlias(sessionId);
     const summaryNode = await findChildByKind(this.store, sessionId, KIND_SUMMARY_ROOT);
     if (!summaryNode) throw new Error(`Summary node missing for session: ${sessionId}`);
 
@@ -645,6 +649,7 @@ export class SessionManager {
 
   /** Recompute session-level content tags from batch summaries (freq >= 2). */
   async aggregateSessionTags(sessionId: string): Promise<Entry | null> {
+    sessionId = this.store.resolveSessionAlias(sessionId);
     const summaryNode = await findChildByKind(this.store, sessionId, KIND_SUMMARY_ROOT);
     if (!summaryNode) return null;
 
@@ -701,6 +706,7 @@ export class SessionManager {
     sessionId: string,
     fold: (batches: Entry[]) => Promise<string>,
   ): Promise<Entry> {
+    sessionId = this.store.resolveSessionAlias(sessionId);
     const summaryNode = await findChildByKind(this.store, sessionId, KIND_SUMMARY_ROOT);
     if (!summaryNode) throw new Error(`Summary node missing for session: ${sessionId}`);
 
@@ -719,6 +725,7 @@ export class SessionManager {
   }
 
   async getSessionExchanges(sessionId: string): Promise<Entry[]> {
+    sessionId = this.store.resolveSessionAlias(sessionId);
     const exNode = await findChildByKind(this.store, sessionId, KIND_EXCHANGES_ROOT);
     if (exNode) {
       const batches = await this.store.getChildByKind(exNode.id, KIND_EXCHANGE_BATCH);
@@ -757,6 +764,7 @@ export class SessionManager {
     sessionId: string,
     opts: { summarize?: Summarizer; runDecay?: boolean; handoffNote?: string } = {},
   ): Promise<Entry> {
+    sessionId = this.store.resolveSessionAlias(sessionId);
     const session = await this.store.read(sessionId);
     if (!session || session.metadata.kind !== 'session') {
       throw new Error(`Session not found: ${sessionId}`);
@@ -812,6 +820,7 @@ export class SessionManager {
 
   /** Upsert session-summary-root content after checkpoint / rollup. */
   async updateSessionSummary(sessionId: string, summaryText: string): Promise<Entry> {
+    sessionId = this.store.resolveSessionAlias(sessionId);
     const session = await this.store.read(sessionId);
     if (!session || session.metadata.kind !== KIND_SESSION) {
       throw new Error(`Project session not found: ${sessionId}`);
