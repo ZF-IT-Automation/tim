@@ -17,7 +17,7 @@ import { runMigrations, createTriggers, getCurrentVersion } from './schema.js';
 import { CurateManager } from './curate.js';
 import { ConsolidationManager } from './consolidate.js';
 import { metadataNeedsCoercion, parseAndCoerceMetadata } from './metadata-coerce.js';
-import { applyIdeaPromote } from './idea-promote.js';
+import { applyIdeaPromote, isCodingNeedsReview } from './idea-promote.js';
 import { recordFromPayload, entryLocalLwwTimestamp, edgeLocalLwwTimestamp } from './sync-methods.js';
 import { parentIsSecret } from './secret.js';
 
@@ -155,6 +155,8 @@ export interface GetBugsOptions {
 
 export interface GetTasksOptions {
   status?: string;
+  subtype?: string;
+  needs_review?: boolean;
 }
 
 export class TimStore implements MemoryInterface {
@@ -953,6 +955,11 @@ export class TimStore implements MemoryInterface {
       params.push(opts.status);
     }
 
+    if (opts?.subtype) {
+      sql += ` AND json_extract(e.metadata, '$.task.subtype') = ?`;
+      params.push(opts.subtype);
+    }
+
     sql += `
       ORDER BY
         COALESCE(CAST(json_extract(e.metadata, '$.task.order') AS INTEGER), 999999),
@@ -961,6 +968,7 @@ export class TimStore implements MemoryInterface {
           json_extract(e.metadata, '$.status')
         )
           WHEN 'in_progress' THEN 0
+          WHEN 'changes_pending' THEN 0
           WHEN 'todo' THEN 1
           ELSE 2
         END,
@@ -984,7 +992,7 @@ export class TimStore implements MemoryInterface {
     `;
 
     const rows = this.db.prepare(sql).all(...params) as RowEntry[];
-    return rows.map(row => {
+    const mapped = rows.map(row => {
       const meta = JSON.parse(row.metadata) as Record<string, unknown>;
       let status: string | null = null;
       let priority: string | null = null;
@@ -1003,16 +1011,25 @@ export class TimStore implements MemoryInterface {
       }
 
       return {
-        id: row.id,
-        title: row.title,
-        content: row.content,
-        parent_id: row.parent_id,
-        project_label: this.findProjectLabelForParent(row.parent_id),
-        status,
-        priority,
-        due,
+        record: {
+          id: row.id,
+          title: row.title,
+          content: row.content,
+          parent_id: row.parent_id,
+          project_label: this.findProjectLabelForParent(row.parent_id),
+          status,
+          priority,
+          due,
+        },
+        meta,
       };
     });
+
+    if (opts?.needs_review) {
+      return mapped.filter(({ meta }) => isCodingNeedsReview(meta)).map(({ record }) => record);
+    }
+
+    return mapped.map(({ record }) => record);
   }
 
   private extractTaskOrder(entry: Entry): number | undefined {
