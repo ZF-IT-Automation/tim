@@ -108,11 +108,13 @@ export {
 export {
   coerceMetadataBooleans,
   isTaskMarker,
+  isIdeaMarker,
   normalizeTaskValue,
   metadataNeedsCoercion,
   parseAndCoerceMetadata,
   BOOLEAN_METADATA_KEYS,
 } from './metadata-coerce.js';
+export { isCodingNeedsReview } from './idea-promote.js';
 export {
   isSecret,
   parentIsSecret,
