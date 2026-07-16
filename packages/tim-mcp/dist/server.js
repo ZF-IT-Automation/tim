@@ -59,6 +59,7 @@ const tim_sync_client_1 = require("tim-sync-client");
 const write_validate_js_1 = require("./write-validate.js");
 const remember_handler_js_1 = require("./remember-handler.js");
 const session_guidance_js_1 = require("./session-guidance.js");
+const resume_output_js_1 = require("./resume-output.js");
 const auto_init_js_1 = require("./auto-init.js");
 const fs = __importStar(require("fs"));
 const os = __importStar(require("os"));
@@ -292,6 +293,14 @@ const TimSessionStartSchema = zod_1.z.object({
     tool: zod_1.z.string().optional().describe('CLI tool used, e.g. claude, cursor, codex'),
     model: zod_1.z.string().optional().describe('Model name, e.g. opus, composer-2.5'),
     taskSummary: zod_1.z.string().optional().describe('One-line description of what was delegated'),
+});
+const TimResumeListSchema = zod_1.z.object({
+    projectId: zod_1.z.string().optional().describe('Project label, e.g. P0063; defaults to the bound project'),
+    limit: zod_1.z.number().int().min(1).max(25).optional().default(10),
+});
+const TimSessionResumeSchema = zod_1.z.object({
+    sessionId: zod_1.z.string().describe('Canonical session id to resume (pick from tim_resume_list)'),
+    rawCount: zod_1.z.number().int().min(1).max(50).optional().default(10),
 });
 const TimShowUnsummarizedSchema = zod_1.z.object({
     sessionId: zod_1.z.string(),
@@ -556,6 +565,18 @@ exports.TOOL_DEFS = [
         name: 'tim_session_start',
         description: 'Start a TIM session (idempotent). With projectId (or default P0000 Inbox), creates nested Sessions/Summary/Exchanges tree. Without a resolvable project the response lists recently active projects — follow its ACTION line to bind one.',
         schema: TimSessionStartSchema,
+    },
+    {
+        name: 'tim_resume_list',
+        description: 'List resumable sessions of the bound project (most recent activity first) with date, tool, ' +
+            'task summary, and exchange count. Follow the ACTION line: present to the user, then call tim_session_resume.',
+        schema: TimResumeListSchema,
+    },
+    {
+        name: 'tim_session_resume',
+        description: 'Resume a previous session from any tool: injects session summary + all batch summaries + last N raw ' +
+            'exchanges, and aliases the current harness session to the old session node so exchanges keep appending there.',
+        schema: TimSessionResumeSchema,
     },
     {
         name: 'tim_session_log',
@@ -1316,7 +1337,7 @@ function getSessions() {
 }
 const WRITE_TOOLS = new Set([
     'tim_write', 'tim_update', 'tim_verify', 'tim_delete', 'tim_delete_batch', 'tim_link',
-    'tim_session_start', 'tim_session_log', 'tim_checkpoint', 'tim_write_batch_summary',
+    'tim_session_start', 'tim_session_resume', 'tim_session_log', 'tim_checkpoint', 'tim_write_batch_summary',
     'tim_rollup_session_summary',
     'tim_record_commit',
     'tim_rename_entry', 'tim_move_entry', 'tim_update_many',
@@ -1330,6 +1351,7 @@ const READ_TOOLS = new Set([
     'tim_dry_run_move', 'tim_doctor', 'tim_sync', 'tim_load_project', 'tim_read_project',
     'tim_show',
     'tim_show_unsummarized', 'tim_show_all_unsummarized', 'tim_show_untagged',
+    'tim_resume_list',
     'tim_hook_prompt_submit',
 ]);
 const REMEMBER_TOOLS = new Set(['tim_remember']);
@@ -2412,10 +2434,54 @@ async function createMcpServer(options = {}) {
                         content: [{ type: 'text', text }],
                     };
                 }
+                case 'tim_resume_list': {
+                    const { projectId, limit } = TimResumeListSchema.parse(args);
+                    const label = projectId ?? (0, tim_hooks_1.getActiveProjectLabel)();
+                    if (!label) {
+                        const guidance = await (0, session_guidance_js_1.buildInboxFallbackGuidance)(s);
+                        return {
+                            content: [{
+                                    type: 'text',
+                                    text: guidance ?? 'No bound project — pass projectId (e.g. P0063).',
+                                }],
+                        };
+                    }
+                    const list = await getSessions().listResumableSessions(label, limit);
+                    return { content: [{ type: 'text', text: (0, resume_output_js_1.formatResumeList)(label, list) }] };
+                }
+                case 'tim_session_resume': {
+                    const { sessionId, rawCount } = TimSessionResumeSchema.parse(args);
+                    const cwd = isHttp ? undefined : process.cwd();
+                    const newHarnessId = (0, tim_core_1.resolveActiveSessionId)({
+                        markerSession: cwd ? (0, tim_hooks_1.findMarker)(cwd, { walkUp: true })?.marker.session : undefined,
+                        useSessionCache: !isHttp,
+                        useEnv: !isHttp,
+                    });
+                    const boundProjectId = (0, tim_hooks_1.getActiveProjectLabel)() ?? undefined;
+                    const payload = await getSessions().resumeSession(sessionId, {
+                        newHarnessId,
+                        rawCount,
+                        boundProjectId,
+                    });
+                    if (cwd) {
+                        try {
+                            (0, tim_hooks_1.rotateMarkerSession)(cwd, payload.sessionId);
+                        }
+                        catch {
+                            // marker rotation is best-effort; resume payload is already durable
+                        }
+                    }
+                    // Best-effort summarizer sweep when the session has no batch summaries yet.
+                    if (payload.batchSummaries.length === 0 && cwd) {
+                        void (0, tim_hooks_1.maybeSpawnSummarizer)(getStore(), cwd, { batchFull: true }).catch(() => { });
+                    }
+                    return { content: [{ type: 'text', text: (0, resume_output_js_1.formatResumePayload)(payload) }] };
+                }
                 case 'tim_session_log': {
                     const { sessionId, entries } = TimSessionLogSchema.parse(args);
-                    const sessionEntry = await s.read(sessionId);
-                    const isProjectBound = !!(sessionEntry && (await s.getChildByKind(sessionId, 'exchanges-root')).length > 0);
+                    const resolvedId = s.resolveSessionId(sessionId);
+                    const sessionEntry = await s.read(resolvedId);
+                    const isProjectBound = !!(sessionEntry && (await s.getChildByKind(resolvedId, 'exchanges-root')).length > 0);
                     const written = isProjectBound
                         ? await getSessions().logExchange(sessionId, entries)
                         : await getSessions().sessionLog(sessionId, entries);

@@ -19,6 +19,7 @@ exports.SCHEMA_KINDS = new Set([
     // Sessions sub-tree
     'sessions-root',
     'session',
+    'session-alias',
     'session-summary-root',
     'exchanges-root',
     'exchange-batch',

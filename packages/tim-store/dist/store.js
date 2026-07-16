@@ -534,7 +534,11 @@ class TimStore {
             return;
         const existing = this.readSync(aliasId);
         if (existing?.metadata.kind === 'session') {
-            // Empty harness session node — alias lives in resumed_by on the canonical session.
+            // Convert empty harness session node to session-alias for O(1) lookup.
+            // Direct metadata replacement (not merge via updateSync) to drop stale session fields.
+            const cleanMeta = JSON.stringify({ kind: 'session-alias', canonical: canonicalId });
+            const now = new Date().toISOString();
+            this.db.prepare('UPDATE entries SET metadata = ?, updated_at = ?, accessed_at = ?, lww_device = ? WHERE id = ?').run(cleanMeta, now, now, this.deviceId, aliasId);
             return;
         }
         const metadata = { kind: 'session-alias', canonical: canonicalId };
