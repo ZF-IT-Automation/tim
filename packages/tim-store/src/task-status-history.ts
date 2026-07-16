@@ -65,7 +65,7 @@ function latestIndexOf(history: TaskStatusEvent[], status: TaskStatusValue): num
 }
 
 /** history contains `reviewed`, with no `changes_pending` appended after the latest `reviewed`. */
-function hasFreshReview(history: TaskStatusEvent[]): boolean {
+export function hasFreshReview(history: TaskStatusEvent[]): boolean {
   const reviewedIdx = latestIndexOf(history, 'reviewed');
   if (reviewedIdx === -1) return false;
   const changesPendingIdx = latestIndexOf(history, 'changes_pending');

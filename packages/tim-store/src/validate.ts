@@ -4,6 +4,7 @@
  */
 
 import { isDeprecatedTag } from 'tim-core';
+import { getTaskHistory, hasFreshReview } from './task-status-history.js';
 
 export function validateTaskMetadata(metadata: Record<string, unknown>): string[] {
   const warnings: string[] = [];
@@ -16,12 +17,19 @@ export function validateTaskMetadata(metadata: Record<string, unknown>): string[
       );
     } else {
       const taskObj = task as Record<string, unknown>;
+      if (typeof taskObj.reviewed === 'boolean') {
+        warnings.push(
+          'reviewed boolean is deprecated — append a "reviewed" event to metadata.task.history instead',
+        );
+      }
       if (taskObj.status === 'done' && !taskObj.completion_evidence) {
         warnings.push('completion_evidence recommended for done tasks');
       }
       if (taskObj.subtype === 'coding') {
-        if (taskObj.status === 'done' && taskObj.reviewed !== true) {
-          warnings.push('reviewed=true recommended before marking coding tasks done');
+        if (taskObj.status === 'done' && !hasFreshReview(getTaskHistory(taskObj))) {
+          warnings.push(
+            'coding task marked done without a fresh "reviewed" event in history (no changes_pending after it)',
+          );
         }
         if (
           taskObj.status === 'done' &&

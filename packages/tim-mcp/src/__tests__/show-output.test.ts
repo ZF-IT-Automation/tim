@@ -421,9 +421,9 @@ describe('tim_show', () => {
     const sec = JSON.parse(section.result!.content[0].text);
 
     for (const [content, taskMeta] of [
-      ['Needs review task', { subtype: 'coding', commits: ['abc123'], reviewed: false }],
-      ['Already reviewed', { subtype: 'coding', commits: ['def456'], reviewed: true }],
-      ['No commits yet', { subtype: 'coding', commits: [], reviewed: false }],
+      ['Needs review task', { subtype: 'coding', commits: ['abc123'], status: 'in_progress' }],
+      ['Already reviewed', { subtype: 'coding', commits: ['def456'], status: 'reviewed' }],
+      ['No commits yet', { subtype: 'coding', commits: [], status: 'in_progress' }],
       ['Plain task', { status: 'todo' }],
     ] as const) {
       await client.callTool('tim_write', {

@@ -57,17 +57,42 @@ describe('validateTaskMetadata', () => {
   });
 
   describe('coding subtype', () => {
-    it('warns when coding task done without reviewed=true', () => {
+    it('warns when coding task done without a fresh reviewed event in history', () => {
       const warnings = validateTaskMetadata({
         type: 'task',
         task: {
           subtype: 'coding',
           status: 'done',
           completion_evidence: 'shipped',
+          history: [
+            { status: 'todo', at: '2026-07-16T10:00:00.000Z' },
+            { status: 'done', at: '2026-07-16T11:00:00.000Z' },
+          ],
         },
       });
       expect(warnings).toContainEqual(
-        'reviewed=true recommended before marking coding tasks done',
+        expect.stringContaining('coding task marked done without a fresh "reviewed" event'),
+      );
+    });
+
+    it('warns when done coding task has changes_pending after the latest reviewed', () => {
+      const warnings = validateTaskMetadata({
+        type: 'task',
+        task: {
+          subtype: 'coding',
+          status: 'done',
+          completion_evidence: 'shipped',
+          commits: ['abc123'],
+          history: [
+            { status: 'todo', at: '2026-07-16T10:00:00.000Z' },
+            { status: 'reviewed', at: '2026-07-16T11:00:00.000Z' },
+            { status: 'changes_pending', at: '2026-07-16T12:00:00.000Z' },
+            { status: 'done', at: '2026-07-16T13:00:00.000Z' },
+          ],
+        },
+      });
+      expect(warnings).toContainEqual(
+        expect.stringContaining('coding task marked done without a fresh "reviewed" event'),
       );
     });
 
@@ -77,8 +102,12 @@ describe('validateTaskMetadata', () => {
         task: {
           subtype: 'coding',
           status: 'done',
-          reviewed: true,
           completion_evidence: 'shipped',
+          history: [
+            { status: 'todo', at: '2026-07-16T10:00:00.000Z' },
+            { status: 'reviewed', at: '2026-07-16T11:00:00.000Z' },
+            { status: 'done', at: '2026-07-16T12:00:00.000Z' },
+          ],
         },
       });
       expect(warnings).toContainEqual('commits recommended for done coding tasks');
@@ -90,9 +119,13 @@ describe('validateTaskMetadata', () => {
         task: {
           subtype: 'coding',
           status: 'done',
-          reviewed: true,
           commits: ['abc123'],
           completion_evidence: 'shipped',
+          history: [
+            { status: 'todo', at: '2026-07-16T10:00:00.000Z' },
+            { status: 'reviewed', at: '2026-07-16T11:00:00.000Z' },
+            { status: 'done', at: '2026-07-16T12:00:00.000Z' },
+          ],
         },
       });
       expect(warnings).toEqual([]);
@@ -113,6 +146,42 @@ describe('validateTaskMetadata', () => {
       });
       expect(warnings).toContainEqual(
         'changes_pending is intended for subtype=coding',
+      );
+    });
+  });
+
+  describe('deprecated boolean reviewed', () => {
+    it('warns when boolean reviewed is present on a coding task', () => {
+      const warnings = validateTaskMetadata({
+        type: 'task',
+        task: {
+          subtype: 'coding',
+          status: 'in_progress',
+          reviewed: true,
+        },
+      });
+      expect(warnings).toContainEqual(
+        expect.stringContaining('reviewed boolean is deprecated'),
+      );
+    });
+
+    it('warns when boolean reviewed:false is present', () => {
+      const warnings = validateTaskMetadata({
+        type: 'task',
+        task: { subtype: 'coding', status: 'todo', reviewed: false },
+      });
+      expect(warnings).toContainEqual(
+        expect.stringContaining('reviewed boolean is deprecated'),
+      );
+    });
+
+    it('does not warn about deprecated boolean when reviewed is absent', () => {
+      const warnings = validateTaskMetadata({
+        type: 'task',
+        task: { subtype: 'coding', status: 'todo' },
+      });
+      expect(warnings).not.toContainEqual(
+        expect.stringContaining('reviewed boolean is deprecated'),
       );
     });
   });

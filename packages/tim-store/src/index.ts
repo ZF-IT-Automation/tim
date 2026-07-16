@@ -123,6 +123,7 @@ export {
   deriveStartedAt,
   deriveFinishedAt,
   isCodingNeedsReview,
+  hasFreshReview,
 } from './task-status-history.js';
 export {
   isSecret,

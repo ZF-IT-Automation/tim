@@ -638,7 +638,6 @@ describe('TimStore', () => {
             status: 'in_progress',
             subtype: 'coding',
             commits: ['abc123'],
-            reviewed: false,
           },
         },
       });
@@ -646,7 +645,7 @@ describe('TimStore', () => {
         parentId: section.id,
         metadata: { task: true, status: 'todo' },
       });
-      await store.write('Already reviewed', {
+      const alreadyReviewed = await store.write('Already reviewed', {
         parentId: section.id,
         metadata: {
           type: 'task',
@@ -654,15 +653,18 @@ describe('TimStore', () => {
             status: 'in_progress',
             subtype: 'coding',
             commits: ['def456'],
-            reviewed: true,
           },
         },
+      });
+      await store.update(alreadyReviewed.id, {
+        metadata: { task: { status: 'reviewed' } },
       });
 
       const list = await store.getTasks({ needs_review: true });
       const ids = list.map(t => t.id);
       expect(ids).toContain(needsReview.id);
       expect(ids).not.toContain(plain.id);
+      expect(ids).not.toContain(alreadyReviewed.id);
       expect(list).toHaveLength(1);
     });
 
@@ -684,7 +686,6 @@ describe('TimStore', () => {
             status: 'changes_pending',
             subtype: 'coding',
             commits: ['ghi789'],
-            reviewed: false,
           },
         },
       });
