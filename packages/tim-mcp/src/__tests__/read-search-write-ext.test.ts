@@ -268,7 +268,7 @@ describe('tim_search extended', () => {
     expect(missResponse.results).toHaveLength(0);
   });
 
-  it('caps requested excerpts at 500 Unicode code points', async () => {
+  it('rejects requested excerpts above 500 Unicode code points', async () => {
     client.kill();
     const store = new TimStore(dbPath);
     try {
@@ -281,12 +281,11 @@ describe('tim_search extended', () => {
 
     const result = await client.callTool('tim_search', {
       query: 'ExcerptCapNeedle',
-      excerptChars: 2_000,
+      excerptChars: 501,
     });
-    const response = JSON.parse(result.result!.content[0].text);
 
-    expect(response.results).toHaveLength(1);
-    expect(Array.from(response.results[0].excerpt)).toHaveLength(500);
+    expect(result.result?.isError).toBe(true);
+    expect(result.result?.content[0].text).toContain('500');
   });
 
   it('marks a shortened excerpt truncated when no results are omitted', async () => {

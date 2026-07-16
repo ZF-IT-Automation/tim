@@ -148,7 +148,7 @@ const TimWriteSchema = z.object({
 const TimSearchSchema = z.object({
   query: z.string().describe('FTS5 search query'),
   topK: z.number().min(1).max(100).optional().default(10),
-  excerptChars: z.number().int().min(0).max(2000).optional().default(500)
+  excerptChars: z.number().int().min(0).max(500).optional().default(500)
     .describe('Maximum Unicode code points per result excerpt'),
   searchType: z.enum(['fts', 'vector', 'hybrid']).optional().default('fts'),
   root: z.string().optional().describe('Scope to project (label/alias/name)'),

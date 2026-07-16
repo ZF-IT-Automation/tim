@@ -430,6 +430,7 @@ def walk_entries(
 def discover_projects(client: McpClient, logger: logging.Logger) -> list[str]:
     """Find project labels via FTS search for kind=project roots."""
     labels: set[str] = set()
+    incomplete_queries: list[str] = []
     for query in ("P0", "P00", "project"):
         try:
             response = client.call_tool(
@@ -440,6 +441,19 @@ def discover_projects(client: McpClient, logger: logging.Logger) -> list[str]:
             logger.debug("search %r failed: %s", query, exc)
             continue
         if isinstance(response, dict):
+            omitted = response.get("omitted", 0)
+            if response.get("truncated") is True or (
+                isinstance(omitted, (int, float)) and omitted > 0
+            ):
+                incomplete_queries.append(query)
+                logger.warning(
+                    "Ignoring incomplete tim_search project discovery for %r "
+                    "(omitted=%r, truncated=%r)",
+                    query,
+                    omitted,
+                    response.get("truncated"),
+                )
+                continue
             results = response.get("results")
         else:
             results = response
@@ -456,6 +470,12 @@ def discover_projects(client: McpClient, logger: logging.Logger) -> list[str]:
 
     if labels:
         return sorted(labels)
+
+    if incomplete_queries:
+        raise McpError(
+            "Project discovery incomplete: tim_search returned truncated results for "
+            + ", ".join(repr(query) for query in incomplete_queries)
+        )
 
     # Fallback: probe P0000–P0099
     logger.info("FTS discovery empty — probing P0000–P0099")
