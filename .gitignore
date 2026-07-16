@@ -13,6 +13,7 @@ node_modules/
 AGENTS.md
 CLAUDE.md
 tmp/
+.worktrees/
 
 # Vitest cache (runtime, not source)
 **/node_modules/.vite/
@@ -22,4 +23,3 @@ local_cache/
 
 # macOS AppleDouble metadata files (rsync artifact)
 ._*
-
