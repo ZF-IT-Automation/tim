@@ -1291,6 +1291,96 @@ class TimStore {
         const row = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(id);
         return row ? rowToEntry(row) : null;
     }
+    /** Find every physical row carrying a logical metadata label, including suppressed rows. */
+    findByMetadataLabelIncludingTombstoneSync(label) {
+        const rows = this.db.prepare(`SELECT * FROM entries
+       WHERE json_extract(metadata, '$.label') = ?
+       ORDER BY created_at ASC, rowid ASC`).all(label);
+        return rows.map(rowToEntry);
+    }
+    /**
+     * Canonicalize a physical entry id without changing its payload. Must be called
+     * inside runExclusive; rewrites all local references before removing oldId.
+     */
+    canonicalizeEntryIdSync(oldId, newId) {
+        if (oldId === newId) {
+            const existing = this.readIncludingTombstoneSync(oldId);
+            if (!existing)
+                throw new Error(`Entry not found: ${oldId}`);
+            return existing;
+        }
+        const existing = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(oldId);
+        if (!existing)
+            throw new Error(`Entry not found: ${oldId}`);
+        if (this.db.prepare('SELECT 1 FROM entries WHERE id = ?').get(newId)) {
+            throw new Error(`Entry already exists: ${newId}`);
+        }
+        this.db.prepare(`
+      INSERT INTO entries (id, parent_id, title, content, content_type, depth, confidence,
+        created_at, accessed_at, updated_at, decay_rate, visibility, tags, irrelevant, favorite,
+        tombstoned_at, metadata, lww_device)
+      SELECT ?, parent_id, title, content, content_type, depth, confidence,
+        created_at, accessed_at, updated_at, decay_rate, visibility, tags, irrelevant, favorite,
+        tombstoned_at, metadata, lww_device
+      FROM entries WHERE id = ?
+    `).run(newId, oldId);
+        this.db.prepare('UPDATE edges SET source_id = ? WHERE source_id = ?').run(newId, oldId);
+        this.db.prepare('UPDATE edges SET target_id = ? WHERE target_id = ?').run(newId, oldId);
+        this.db.prepare('UPDATE entries SET parent_id = ? WHERE parent_id = ?').run(newId, oldId);
+        this.db.prepare('UPDATE entry_usage SET entry_id = ? WHERE entry_id = ?').run(newId, oldId);
+        this.db.prepare('UPDATE entry_vectors SET entry_id = ? WHERE entry_id = ?').run(newId, oldId);
+        const replaceReferences = (table, column) => {
+            const idColumn = table === 'staging' ? 'rowid' : 'id';
+            const rows = this.db.prepare(`SELECT ${idColumn} AS row_id, ${column} AS value FROM ${table}
+         WHERE ${column} LIKE '%' || ? || '%'`).all(oldId);
+            const update = this.db.prepare(`UPDATE ${table} SET ${column} = ? WHERE ${idColumn} = ?`);
+            for (const row of rows) {
+                update.run(row.value.split(oldId).join(newId), row.row_id);
+            }
+        };
+        this.db.prepare('UPDATE staging SET key = ? WHERE key = ?').run(newId, oldId);
+        replaceReferences('staging', 'payload');
+        replaceReferences('entries', 'metadata');
+        replaceReferences('edges', 'metadata');
+        this.db.prepare(`UPDATE suppressed SET pattern = replace(pattern, ?, ?) WHERE pattern LIKE '%' || ? || '%'`).run(oldId, newId, oldId);
+        this.db.prepare(`UPDATE suppressed SET suppressed_by = replace(suppressed_by, ?, ?)
+       WHERE suppressed_by LIKE '%' || ? || '%'`).run(oldId, newId, oldId);
+        this.db.prepare('DELETE FROM entries WHERE id = ?').run(oldId);
+        return this.readIncludingTombstoneSync(newId);
+    }
+    /** Repoint every structural reference to targetId, then remove sourceId without staging. */
+    mergeEntryReferencesAndDeleteSync(sourceId, targetId) {
+        if (sourceId === targetId)
+            return;
+        if (!this.db.prepare('SELECT 1 FROM entries WHERE id = ?').get(sourceId)) {
+            throw new Error(`Entry not found: ${sourceId}`);
+        }
+        if (!this.db.prepare('SELECT 1 FROM entries WHERE id = ?').get(targetId)) {
+            throw new Error(`Entry not found: ${targetId}`);
+        }
+        this.db.prepare('UPDATE edges SET source_id = ? WHERE source_id = ?').run(targetId, sourceId);
+        this.db.prepare('UPDATE edges SET target_id = ? WHERE target_id = ?').run(targetId, sourceId);
+        this.db.prepare('UPDATE entries SET parent_id = ? WHERE parent_id = ?').run(targetId, sourceId);
+        this.db.prepare('UPDATE entry_usage SET entry_id = ? WHERE entry_id = ?').run(targetId, sourceId);
+        this.db.prepare('DELETE FROM entry_vectors WHERE entry_id = ?').run(sourceId);
+        this.db.prepare('DELETE FROM staging WHERE key = ?').run(sourceId);
+        const replaceReferences = (table, column) => {
+            const idColumn = table === 'staging' ? 'rowid' : 'id';
+            const rows = this.db.prepare(`SELECT ${idColumn} AS row_id, ${column} AS value FROM ${table}
+         WHERE ${column} LIKE '%' || ? || '%'`).all(sourceId);
+            const update = this.db.prepare(`UPDATE ${table} SET ${column} = ? WHERE ${idColumn} = ?`);
+            for (const row of rows) {
+                update.run(row.value.split(sourceId).join(targetId), row.row_id);
+            }
+        };
+        replaceReferences('staging', 'payload');
+        replaceReferences('entries', 'metadata');
+        replaceReferences('edges', 'metadata');
+        this.db.prepare(`UPDATE suppressed SET pattern = replace(pattern, ?, ?) WHERE pattern LIKE '%' || ? || '%'`).run(sourceId, targetId, sourceId);
+        this.db.prepare(`UPDATE suppressed SET suppressed_by = replace(suppressed_by, ?, ?)
+       WHERE suppressed_by LIKE '%' || ? || '%'`).run(sourceId, targetId, sourceId);
+        this.db.prepare('DELETE FROM entries WHERE id = ?').run(sourceId);
+    }
     /** Synchronous update for use inside `runExclusive` transactions. */
     updateSync(id, patch) {
         const existing = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(id);

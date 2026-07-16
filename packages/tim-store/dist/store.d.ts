@@ -238,6 +238,15 @@ export declare class TimStore implements MemoryInterface {
     readSync(id: string): Entry | null;
     /** Synchronous raw-id read for repair paths; includes irrelevant and tombstoned rows. */
     readIncludingTombstoneSync(id: string): Entry | null;
+    /** Find every physical row carrying a logical metadata label, including suppressed rows. */
+    findByMetadataLabelIncludingTombstoneSync(label: string): Entry[];
+    /**
+     * Canonicalize a physical entry id without changing its payload. Must be called
+     * inside runExclusive; rewrites all local references before removing oldId.
+     */
+    canonicalizeEntryIdSync(oldId: string, newId: string): Entry;
+    /** Repoint every structural reference to targetId, then remove sourceId without staging. */
+    mergeEntryReferencesAndDeleteSync(sourceId: string, targetId: string): void;
     /** Synchronous update for use inside `runExclusive` transactions. */
     updateSync(id: string, patch: Partial<Entry>): Entry;
     /** Entries whose metadata JSON has non-boolean values for known boolean keys (legacy 1/0/"true"/"false"). */

@@ -100,7 +100,14 @@ const INBOX_PROJECT_TAGS = ['#project', '#inbox', '#system'];
 /** Create or repair the reserved P0000 Inbox project atomically. */
 async function ensureInboxProject(store) {
     return store.runExclusive(() => {
-        const existing = store.readIncludingTombstoneSync(exports.INBOX_PROJECT_LABEL);
+        let existing = store.readIncludingTombstoneSync(exports.INBOX_PROJECT_LABEL);
+        if (!existing) {
+            const logical = store.findByMetadataLabelIncludingTombstoneSync(exports.INBOX_PROJECT_LABEL)
+                .find(entry => entry.id !== exports.INBOX_PROJECT_LABEL);
+            if (logical) {
+                existing = store.canonicalizeEntryIdSync(logical.id, exports.INBOX_PROJECT_LABEL);
+            }
+        }
         if (!existing) {
             return store.writeSync('Inbox', {
                 id: exports.INBOX_PROJECT_LABEL,
@@ -113,8 +120,48 @@ async function ensureInboxProject(store) {
                 tags: [...INBOX_PROJECT_TAGS],
             });
         }
-        const tags = [...new Set([...existing.tags, ...INBOX_PROJECT_TAGS])];
-        const valid = existing.metadata.kind === 'project' &&
+        let title = existing.title;
+        let content = existing.content;
+        let metadata = { ...existing.metadata };
+        const tags = new Set([...existing.tags, ...INBOX_PROJECT_TAGS]);
+        let mergedDuplicate = false;
+        const duplicates = store.findByMetadataLabelIncludingTombstoneSync(exports.INBOX_PROJECT_LABEL)
+            .filter(entry => entry.id !== exports.INBOX_PROJECT_LABEL);
+        for (const duplicate of duplicates) {
+            const snapshots = Array.isArray(metadata.merged_inbox_entries)
+                ? [...metadata.merged_inbox_entries]
+                : [];
+            snapshots.push({
+                id: duplicate.id,
+                title: duplicate.title,
+                content: duplicate.content,
+                metadata: duplicate.metadata,
+                tags: duplicate.tags,
+            });
+            metadata = {
+                ...duplicate.metadata,
+                ...metadata,
+                merged_inbox_entries: snapshots,
+            };
+            for (const tag of duplicate.tags)
+                tags.add(tag);
+            if (title === 'Inbox' && !content) {
+                title = duplicate.title;
+                content = duplicate.content;
+            }
+            else {
+                const recovered = [duplicate.title, duplicate.content].filter(Boolean).join('\n');
+                if (recovered) {
+                    content = [content, `[Recovered Inbox ${duplicate.id}]\n${recovered}`]
+                        .filter(Boolean)
+                        .join('\n\n');
+                }
+            }
+            store.mergeEntryReferencesAndDeleteSync(duplicate.id, exports.INBOX_PROJECT_LABEL);
+            mergedDuplicate = true;
+        }
+        const valid = !mergedDuplicate &&
+            existing.metadata.kind === 'project' &&
             existing.metadata.label === exports.INBOX_PROJECT_LABEL &&
             existing.metadata.is_system === true &&
             existing.metadata.render_depth === 1 &&
@@ -124,11 +171,13 @@ async function ensureInboxProject(store) {
         if (valid)
             return existing;
         return store.updateSync(existing.id, {
+            title,
+            content,
             irrelevant: false,
             tombstonedAt: null,
-            tags,
+            tags: [...tags],
             metadata: {
-                ...existing.metadata,
+                ...metadata,
                 kind: 'project',
                 label: exports.INBOX_PROJECT_LABEL,
                 is_system: true,

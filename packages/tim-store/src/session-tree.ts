@@ -141,7 +141,14 @@ const INBOX_PROJECT_TAGS = ['#project', '#inbox', '#system'] as const;
 /** Create or repair the reserved P0000 Inbox project atomically. */
 export async function ensureInboxProject(store: TimStore): Promise<Entry> {
   return store.runExclusive(() => {
-    const existing = store.readIncludingTombstoneSync(INBOX_PROJECT_LABEL);
+    let existing = store.readIncludingTombstoneSync(INBOX_PROJECT_LABEL);
+    if (!existing) {
+      const logical = store.findByMetadataLabelIncludingTombstoneSync(INBOX_PROJECT_LABEL)
+        .find(entry => entry.id !== INBOX_PROJECT_LABEL);
+      if (logical) {
+        existing = store.canonicalizeEntryIdSync(logical.id, INBOX_PROJECT_LABEL);
+      }
+    }
     if (!existing) {
       return store.writeSync('Inbox', {
         id: INBOX_PROJECT_LABEL,
@@ -155,8 +162,49 @@ export async function ensureInboxProject(store: TimStore): Promise<Entry> {
       });
     }
 
-    const tags = [...new Set([...existing.tags, ...INBOX_PROJECT_TAGS])];
+    let title = existing.title;
+    let content = existing.content;
+    let metadata = { ...existing.metadata };
+    const tags = new Set([...existing.tags, ...INBOX_PROJECT_TAGS]);
+    let mergedDuplicate = false;
+
+    const duplicates = store.findByMetadataLabelIncludingTombstoneSync(INBOX_PROJECT_LABEL)
+      .filter(entry => entry.id !== INBOX_PROJECT_LABEL);
+    for (const duplicate of duplicates) {
+      const snapshots = Array.isArray(metadata.merged_inbox_entries)
+        ? [...metadata.merged_inbox_entries]
+        : [];
+      snapshots.push({
+        id: duplicate.id,
+        title: duplicate.title,
+        content: duplicate.content,
+        metadata: duplicate.metadata,
+        tags: duplicate.tags,
+      });
+      metadata = {
+        ...duplicate.metadata,
+        ...metadata,
+        merged_inbox_entries: snapshots,
+      };
+      for (const tag of duplicate.tags) tags.add(tag);
+
+      if (title === 'Inbox' && !content) {
+        title = duplicate.title;
+        content = duplicate.content;
+      } else {
+        const recovered = [duplicate.title, duplicate.content].filter(Boolean).join('\n');
+        if (recovered) {
+          content = [content, `[Recovered Inbox ${duplicate.id}]\n${recovered}`]
+            .filter(Boolean)
+            .join('\n\n');
+        }
+      }
+      store.mergeEntryReferencesAndDeleteSync(duplicate.id, INBOX_PROJECT_LABEL);
+      mergedDuplicate = true;
+    }
+
     const valid =
+      !mergedDuplicate &&
       existing.metadata.kind === 'project' &&
       existing.metadata.label === INBOX_PROJECT_LABEL &&
       existing.metadata.is_system === true &&
@@ -168,11 +216,13 @@ export async function ensureInboxProject(store: TimStore): Promise<Entry> {
     if (valid) return existing;
 
     return store.updateSync(existing.id, {
+      title,
+      content,
       irrelevant: false,
       tombstonedAt: null,
-      tags,
+      tags: [...tags],
       metadata: {
-        ...existing.metadata,
+        ...metadata,
         kind: 'project',
         label: INBOX_PROJECT_LABEL,
         is_system: true,

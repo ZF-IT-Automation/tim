@@ -369,6 +369,96 @@ describe('SessionManager', () => {
       expect(rowCount.count).toBe(1);
     });
 
+    it('canonicalizes a logical P0000 stored under a different id without losing data or edges', async () => {
+      const legacy = await store.write('Legacy Inbox\nPreserve this body', {
+        id: 'LEGACY-INBOX-ID',
+        tags: ['#custom'],
+        metadata: {
+          kind: 'project',
+          label: 'P0000',
+          custom: { owner: 'user' },
+        },
+      });
+      const child = await store.write('Legacy child', { parentId: legacy.id });
+      const target = await store.write('Edge target');
+      await store.link(legacy.id, target.id, 'relates', 0.75, { custom: 'edge' });
+      store.getDb().prepare('DELETE FROM staging').run();
+
+      const repaired = await ensureInboxProject(store);
+
+      expect(repaired).toMatchObject({
+        id: 'P0000',
+        title: 'Legacy Inbox',
+        content: 'Preserve this body',
+      });
+      expect(repaired.metadata).toMatchObject({
+        kind: 'project',
+        label: 'P0000',
+        is_system: true,
+        render_depth: 1,
+        custom: { owner: 'user' },
+      });
+      expect(repaired.tags).toEqual(expect.arrayContaining([
+        '#custom', '#project', '#inbox', '#system',
+      ]));
+      expect(await store.read('LEGACY-INBOX-ID')).toBeNull();
+      expect((await store.read(child.id))?.parentId).toBe('P0000');
+      expect(await store.getEdges('P0000', 'outgoing')).toEqual([
+        expect.objectContaining({ targetId: target.id, weight: 0.75, metadata: { custom: 'edge' } }),
+      ]);
+      const logicalRows = store.getDb().prepare(
+        `SELECT id FROM entries WHERE json_extract(metadata, '$.label') = 'P0000'`,
+      ).all() as Array<{ id: string }>;
+      expect(logicalRows).toEqual([{ id: 'P0000' }]);
+      expect(await store.getStaging()).toHaveLength(1);
+    });
+
+    it('merges a duplicate logical Inbox into an existing physical P0000', async () => {
+      await store.write('Canonical Inbox\nCanonical body', {
+        id: 'P0000',
+        tags: ['#canonical'],
+        metadata: { kind: 'note', label: 'WRONG', canonical_custom: true },
+      });
+      const duplicate = await store.write('Duplicate Inbox\nDuplicate body', {
+        id: 'LEGACY-INBOX-DUPLICATE',
+        tags: ['#legacy'],
+        metadata: { kind: 'project', label: 'P0000', legacy_custom: { keep: true } },
+      });
+      const target = await store.write('Edge target');
+      await store.link(duplicate.id, target.id, 'relates');
+      store.getDb().prepare('DELETE FROM staging').run();
+
+      const repaired = await ensureInboxProject(store);
+
+      expect(repaired.id).toBe('P0000');
+      expect(repaired.content).toContain('Canonical body');
+      expect(repaired.content).toContain('Duplicate body');
+      expect(repaired.metadata).toMatchObject({
+        kind: 'project',
+        label: 'P0000',
+        canonical_custom: true,
+        legacy_custom: { keep: true },
+      });
+      expect(repaired.metadata.merged_inbox_entries).toEqual([
+        expect.objectContaining({
+          id: 'LEGACY-INBOX-DUPLICATE',
+          title: 'Duplicate Inbox',
+          content: 'Duplicate body',
+          metadata: expect.objectContaining({ legacy_custom: { keep: true } }),
+        }),
+      ]);
+      expect(repaired.tags).toEqual(expect.arrayContaining(['#canonical', '#legacy']));
+      expect(await store.read('LEGACY-INBOX-DUPLICATE')).toBeNull();
+      expect(await store.getEdges('P0000', 'outgoing')).toEqual([
+        expect.objectContaining({ targetId: target.id }),
+      ]);
+      const logicalRows = store.getDb().prepare(
+        `SELECT id FROM entries WHERE json_extract(metadata, '$.label') = 'P0000'`,
+      ).all() as Array<{ id: string }>;
+      expect(logicalRows).toEqual([{ id: 'P0000' }]);
+      expect(await store.getStaging()).toHaveLength(1);
+    });
+
     it('rolls back a repair when sync staging fails', async () => {
       await store.write('User Inbox\nDo not lose', {
         id: 'P0000',
