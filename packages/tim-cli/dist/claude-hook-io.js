@@ -6,14 +6,20 @@ const DEFAULT_MAX_STDIN_BYTES = 1024 * 1024;
 async function readJsonStdin(maxBytes = DEFAULT_MAX_STDIN_BYTES) {
     const chunks = [];
     let bytes = 0;
+    let oversized = false;
     for await (const chunk of process.stdin) {
+        if (oversized)
+            continue;
         const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk), 'utf8');
         bytes += buffer.byteLength;
-        if (bytes > maxBytes)
-            return null;
+        if (bytes > maxBytes) {
+            oversized = true;
+            chunks.length = 0;
+            continue;
+        }
         chunks.push(buffer);
     }
-    if (bytes === 0)
+    if (oversized || bytes === 0)
         return null;
     try {
         const value = JSON.parse(Buffer.concat(chunks).toString('utf8'));

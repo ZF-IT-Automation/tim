@@ -5,15 +5,22 @@ export async function readJsonStdin(
 ): Promise<Record<string, unknown> | null> {
   const chunks: Buffer[] = [];
   let bytes = 0;
+  let oversized = false;
 
   for await (const chunk of process.stdin) {
+    if (oversized) continue;
+
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk), 'utf8');
     bytes += buffer.byteLength;
-    if (bytes > maxBytes) return null;
+    if (bytes > maxBytes) {
+      oversized = true;
+      chunks.length = 0;
+      continue;
+    }
     chunks.push(buffer);
   }
 
-  if (bytes === 0) return null;
+  if (oversized || bytes === 0) return null;
 
   try {
     const value = JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown;

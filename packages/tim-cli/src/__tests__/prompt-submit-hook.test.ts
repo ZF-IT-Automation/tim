@@ -147,17 +147,18 @@ describe('tim hook prompt-submit', () => {
     expect(result.stderr).toBe('');
   });
 
-  it('rejects JSON stdin larger than 1 MiB without opening the store', () => {
+  it('drains and rejects substantially oversized JSON without breaking the producer pipe', () => {
     const blockedParent = path.join(root, 'not-a-directory');
     fs.writeFileSync(blockedParent, 'store must not be opened');
     const oversized = JSON.stringify({
-      prompt: 'x'.repeat(MAX_STDIN_BYTES),
+      prompt: 'x'.repeat(Math.ceil(MAX_STDIN_BYTES * 1.2)),
       cwd,
     });
     expect(Buffer.byteLength(oversized)).toBeGreaterThan(MAX_STDIN_BYTES);
 
     const result = run(oversized, { TIM_DB_PATH: path.join(blockedParent, 'tim.db') });
 
+    expect(result.error).toBeUndefined();
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toBe('');
     expect(result.stderr).toBe('');
