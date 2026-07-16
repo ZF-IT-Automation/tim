@@ -268,6 +268,48 @@ describe('tim_search extended', () => {
     expect(missResponse.results).toHaveLength(0);
   });
 
+  it('caps requested excerpts at 500 Unicode code points', async () => {
+    client.kill();
+    const store = new TimStore(dbPath);
+    try {
+      await store.write(`ExcerptCapNeedle\n${'😀'.repeat(1_000)}`);
+    } finally {
+      store.close();
+    }
+    client = new McpClient(dbPath);
+    await client.init();
+
+    const result = await client.callTool('tim_search', {
+      query: 'ExcerptCapNeedle',
+      excerptChars: 2_000,
+    });
+    const response = JSON.parse(result.result!.content[0].text);
+
+    expect(response.results).toHaveLength(1);
+    expect(Array.from(response.results[0].excerpt)).toHaveLength(500);
+  });
+
+  it('marks a shortened excerpt truncated when no results are omitted', async () => {
+    client.kill();
+    const store = new TimStore(dbPath);
+    try {
+      await store.write(`ExcerptFlagNeedle\n${'😀'.repeat(1_000)}`);
+    } finally {
+      store.close();
+    }
+    client = new McpClient(dbPath);
+    await client.init();
+
+    const result = await client.callTool('tim_search', {
+      query: 'ExcerptFlagNeedle',
+    });
+    const response = JSON.parse(result.result!.content[0].text);
+
+    expect(response.returned).toBe(1);
+    expect(response.omitted).toBe(0);
+    expect(response.truncated).toBe(true);
+  });
+
   it('bounds 100 huge Unicode results to 24 KiB with stable order and counters', async () => {
     client.kill();
     const store = new TimStore(dbPath);

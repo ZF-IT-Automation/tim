@@ -14,13 +14,16 @@ const SEARCH_METADATA_KEYS = [
 ];
 function unicodeExcerpt(text, maxCodePoints) {
     if (maxCodePoints <= 0)
-        return '';
+        return { excerpt: '', truncated: text.length > 0 };
     const points = Array.from(text);
     if (points.length <= maxCodePoints)
-        return text;
+        return { excerpt: text, truncated: false };
     if (maxCodePoints === 1)
-        return '…';
-    return `${points.slice(0, maxCodePoints - 1).join('')}…`;
+        return { excerpt: '…', truncated: true };
+    return {
+        excerpt: `${points.slice(0, maxCodePoints - 1).join('')}…`,
+        truncated: true,
+    };
 }
 function selectMetadata(metadata) {
     const selected = {};
@@ -30,30 +33,34 @@ function selectMetadata(metadata) {
     }
     return selected;
 }
-function responseFor(results, total) {
+function responseFor(results, total, excerptTruncated) {
     const omitted = total - results.length;
     return {
         results,
         returned: results.length,
         omitted,
-        truncated: omitted > 0,
+        truncated: omitted > 0 || excerptTruncated,
     };
 }
 function buildBoundedSearchResponse(entries, excerptCodePoints = exports.DEFAULT_SEARCH_EXCERPT_CODE_POINTS, maxBytes = exports.SEARCH_RESPONSE_MAX_BYTES) {
     const accepted = [];
+    const boundedExcerptCodePoints = Math.min(Math.max(0, excerptCodePoints), exports.DEFAULT_SEARCH_EXCERPT_CODE_POINTS);
+    let excerptTruncated = false;
     for (const entry of entries) {
+        const excerpt = unicodeExcerpt(entry.content, boundedExcerptCodePoints);
         const candidate = {
             id: entry.id,
             title: entry.title,
-            excerpt: unicodeExcerpt(entry.content, excerptCodePoints),
+            excerpt: excerpt.excerpt,
             tags: entry.tags,
             metadata: selectMetadata(entry.metadata),
         };
-        const proposed = responseFor([...accepted, candidate], entries.length);
+        const proposed = responseFor([...accepted, candidate], entries.length, excerptTruncated || excerpt.truncated);
         if (Buffer.byteLength(JSON.stringify(proposed), 'utf8') <= maxBytes) {
             accepted.push(candidate);
+            excerptTruncated ||= excerpt.truncated;
         }
     }
-    return responseFor(accepted, entries.length);
+    return responseFor(accepted, entries.length, excerptTruncated);
 }
 //# sourceMappingURL=search-response.js.map

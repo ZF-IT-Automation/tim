@@ -27,12 +27,18 @@ export interface BoundedSearchResponse {
   truncated: boolean;
 }
 
-function unicodeExcerpt(text: string, maxCodePoints: number): string {
-  if (maxCodePoints <= 0) return '';
+function unicodeExcerpt(
+  text: string,
+  maxCodePoints: number,
+): { excerpt: string; truncated: boolean } {
+  if (maxCodePoints <= 0) return { excerpt: '', truncated: text.length > 0 };
   const points = Array.from(text);
-  if (points.length <= maxCodePoints) return text;
-  if (maxCodePoints === 1) return '…';
-  return `${points.slice(0, maxCodePoints - 1).join('')}…`;
+  if (points.length <= maxCodePoints) return { excerpt: text, truncated: false };
+  if (maxCodePoints === 1) return { excerpt: '…', truncated: true };
+  return {
+    excerpt: `${points.slice(0, maxCodePoints - 1).join('')}…`,
+    truncated: true,
+  };
 }
 
 function selectMetadata(metadata: Record<string, unknown>): Record<string, unknown> {
@@ -46,13 +52,14 @@ function selectMetadata(metadata: Record<string, unknown>): Record<string, unkno
 function responseFor(
   results: BoundedSearchResult[],
   total: number,
+  excerptTruncated: boolean,
 ): BoundedSearchResponse {
   const omitted = total - results.length;
   return {
     results,
     returned: results.length,
     omitted,
-    truncated: omitted > 0,
+    truncated: omitted > 0 || excerptTruncated,
   };
 }
 
@@ -62,20 +69,31 @@ export function buildBoundedSearchResponse(
   maxBytes = SEARCH_RESPONSE_MAX_BYTES,
 ): BoundedSearchResponse {
   const accepted: BoundedSearchResult[] = [];
+  const boundedExcerptCodePoints = Math.min(
+    Math.max(0, excerptCodePoints),
+    DEFAULT_SEARCH_EXCERPT_CODE_POINTS,
+  );
+  let excerptTruncated = false;
 
   for (const entry of entries) {
+    const excerpt = unicodeExcerpt(entry.content, boundedExcerptCodePoints);
     const candidate: BoundedSearchResult = {
       id: entry.id,
       title: entry.title,
-      excerpt: unicodeExcerpt(entry.content, excerptCodePoints),
+      excerpt: excerpt.excerpt,
       tags: entry.tags,
       metadata: selectMetadata(entry.metadata),
     };
-    const proposed = responseFor([...accepted, candidate], entries.length);
+    const proposed = responseFor(
+      [...accepted, candidate],
+      entries.length,
+      excerptTruncated || excerpt.truncated,
+    );
     if (Buffer.byteLength(JSON.stringify(proposed), 'utf8') <= maxBytes) {
       accepted.push(candidate);
+      excerptTruncated ||= excerpt.truncated;
     }
   }
 
-  return responseFor(accepted, entries.length);
+  return responseFor(accepted, entries.length, excerptTruncated);
 }
