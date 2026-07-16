@@ -384,6 +384,14 @@ export interface BenchmarkResult {
     missing: string[];
 }
 export declare function runBenchmark(store: TimStore, queries: GoldenQuery[]): Promise<BenchmarkResult[]>;
+/** True if `err` reports a project-label collision from createProject/allocateNextProjectLabel callers. */
+export declare function isProjectLabelConflictError(err: unknown): boolean;
+/** Increment a P-label numerically, e.g. P0104 -> P0105. */
+export declare function incrementProjectLabel(label: string): string;
+/** Advance past a failed label — allocateNextProjectLabel alone can stick if the collision never persisted. */
+export declare function nextLabelAfterProjectLabelConflict(store: {
+    allocateNextProjectLabel(): string;
+}, failedLabel: string): string;
 export declare function splitTitleBody(content: string, explicitTitle?: string): {
     title: string;
     body: string;

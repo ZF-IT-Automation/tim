@@ -23,7 +23,6 @@ export interface HermesStatusJson {
     counter: string;
 }
 export declare function formatHermesStatus(marker: ProjectMarkerInput | null, projectName?: string): HermesStatusJson;
-export declare function formatUnboundProjectLabel(label: string): string;
 export declare function statuslineFromCwd(cwd: string, options?: FindMarkerOptions, sessionIdArg?: string): Promise<string>;
 export declare function hermesStatusFromCwd(cwd: string, options?: FindMarkerOptions, sessionIdArg?: string): Promise<HermesStatusJson>;
 /** Sync stdin read — reliable when Claude pipes JSON (async iterator can miss short pipes). */

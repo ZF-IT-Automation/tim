@@ -3,7 +3,11 @@ import * as path from 'path';
 import * as os from 'os';
 import * as readline from 'readline';
 import { execSync } from 'child_process';
-import { TimStore } from 'tim-store';
+import {
+  TimStore,
+  isProjectLabelConflictError,
+  nextLabelAfterProjectLabelConflict,
+} from 'tim-store';
 import { loadConfig } from 'tim-core';
 import {
   createProjectCoordinated,
@@ -107,26 +111,6 @@ function precheckNewProjectPath(requestedPath: string): string {
   );
 }
 
-function isDupProjectError(err: unknown): boolean {
-  if (!(err instanceof Error)) return false;
-  return /^Project label already exists: P\d{4}(?: \([^)]+\))?$/i.test(err.message) ||
-    /^Project label P\d{4} (?:already exists|already resolves to project \S+|has an ambiguous project-label conflict)$/i.test(err.message);
-}
-
-/** Advance past a failed label. allocateNext alone can stick if the collision never persisted. */
-function incrementLabel(label: string): string {
-  const num = parseInt(label.slice(1), 10);
-  return `P${String(num + 1).padStart(4, '0')}`;
-}
-
-function nextLabelAfterCollision(store: TimStore, failedLabel: string): string {
-  const incremented = incrementLabel(failedLabel);
-  const allocated = store.allocateNextProjectLabel();
-  const incNum = parseInt(incremented.slice(1), 10);
-  const allocNum = parseInt(allocated.slice(1), 10);
-  return Number.isFinite(allocNum) && allocNum > incNum ? allocated : incremented;
-}
-
 function countDirEntries(dir: string): number {
   try {
     return fs.readdirSync(dir).filter(name => name !== '.git').length;
@@ -173,8 +157,8 @@ async function createProjectWithRetry(
       }
       return result;
     } catch (err) {
-      if (isDupProjectError(err)) {
-        label = nextLabelAfterCollision(store, label);
+      if (isProjectLabelConflictError(err)) {
+        label = nextLabelAfterProjectLabelConflict(store, label);
         continue;
       }
       throw err;

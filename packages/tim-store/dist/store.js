@@ -42,6 +42,9 @@ exports.TimStore = void 0;
 exports.sanitizeFtsQuery = sanitizeFtsQuery;
 exports.titleSimilarity = titleSimilarity;
 exports.runBenchmark = runBenchmark;
+exports.isProjectLabelConflictError = isProjectLabelConflictError;
+exports.incrementProjectLabel = incrementProjectLabel;
+exports.nextLabelAfterProjectLabelConflict = nextLabelAfterProjectLabelConflict;
 exports.splitTitleBody = splitTitleBody;
 exports.cosineSimilarity = cosineSimilarity;
 const better_sqlite3_1 = __importDefault(require("better-sqlite3"));
@@ -2494,6 +2497,27 @@ async function runBenchmark(store, queries) {
         results.push({ query: q.query, precisionAt3, recallAt5, mrr, found, missing });
     }
     return results;
+}
+// ─── Project Label Collision Helpers ────────────────────
+/** True if `err` reports a project-label collision from createProject/allocateNextProjectLabel callers. */
+function isProjectLabelConflictError(err) {
+    if (!(err instanceof Error))
+        return false;
+    return /^Project label already exists: P\d{4}(?: \([^)]+\))?$/i.test(err.message) ||
+        /^Project label P\d{4} (?:already exists|already resolves to project \S+|has an ambiguous project-label conflict)$/i.test(err.message);
+}
+/** Increment a P-label numerically, e.g. P0104 -> P0105. */
+function incrementProjectLabel(label) {
+    const num = parseInt(label.slice(1), 10);
+    return `P${String(num + 1).padStart(4, '0')}`;
+}
+/** Advance past a failed label — allocateNextProjectLabel alone can stick if the collision never persisted. */
+function nextLabelAfterProjectLabelConflict(store, failedLabel) {
+    const incremented = incrementProjectLabel(failedLabel);
+    const allocated = store.allocateNextProjectLabel();
+    const incNum = parseInt(incremented.slice(1), 10);
+    const allocNum = parseInt(allocated.slice(1), 10);
+    return Number.isFinite(allocNum) && allocNum > incNum ? allocated : incremented;
 }
 // ─── Row → Domain Mappers ───────────────────────────────
 function normalizeProjectAliases(aliases) {

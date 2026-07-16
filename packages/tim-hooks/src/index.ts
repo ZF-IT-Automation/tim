@@ -113,7 +113,7 @@ export {
 
 export {
   repairPhantomProjectBinding,
-  formatUnboundProjectLabel as formatUnboundProjectLabelFromRecovery,
+  formatUnboundProjectLabel,
   stripUnboundProjectSuffix,
   isUnboundProjectLabel,
   markerWithRepairedProject,

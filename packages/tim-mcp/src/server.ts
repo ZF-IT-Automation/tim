@@ -25,6 +25,8 @@ import {
   validateTagsDeprecated,
   estimateProjectTokens,
   listProjectTokenEstimates,
+  isProjectLabelConflictError,
+  nextLabelAfterProjectLabelConflict,
   type TaskRecord,
 } from 'tim-store';
 import { formatProjectOutput, type ProjectSchema } from './project-output.js';
@@ -67,29 +69,6 @@ function formatToolResponse(payload: unknown): string {
       return JSON.stringify(payload, null, 2);
   }
   return compact;
-}
-
-function isCreateProjectLabelConflict(err: unknown): boolean {
-  if (!(err instanceof Error)) return false;
-  return /^Project label already exists: P\d{4}(?: \([^)]+\))?$/i.test(err.message) ||
-    /^Project label P\d{4} (?:already exists|already resolves to project \S+|has an ambiguous project-label conflict)$/i.test(err.message);
-}
-
-function incrementProjectLabel(label: string): string {
-  const num = parseInt(label.slice(1), 10);
-  return `P${String(num + 1).padStart(4, '0')}`;
-}
-
-/** Advance past a failed label — allocateNext alone can stick if the collision never persisted. */
-function nextLabelAfterCreateConflict(
-  store: { allocateNextProjectLabel(): string },
-  failedLabel: string,
-): string {
-  const incremented = incrementProjectLabel(failedLabel);
-  const allocated = store.allocateNextProjectLabel();
-  const incNum = parseInt(incremented.slice(1), 10);
-  const allocNum = parseInt(allocated.slice(1), 10);
-  return Number.isFinite(allocNum) && allocNum > incNum ? allocated : incremented;
 }
 
 // ─── CLI ────────────────────────────────────────────────
@@ -2915,8 +2894,8 @@ export async function createMcpServer(
                 content: [{ type: 'text', text: formatToolResponse(entry) }],
               };
             } catch (err) {
-              if (isCreateProjectLabelConflict(err) && attempt < 9) {
-                label = nextLabelAfterCreateConflict(s, label);
+              if (isProjectLabelConflictError(err) && attempt < 9) {
+                label = nextLabelAfterProjectLabelConflict(s, label);
                 continue;
               }
               throw err;

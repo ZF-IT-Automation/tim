@@ -2974,6 +2974,33 @@ interface RowStaging {
   acked: number;
 }
 
+// ─── Project Label Collision Helpers ────────────────────
+
+/** True if `err` reports a project-label collision from createProject/allocateNextProjectLabel callers. */
+export function isProjectLabelConflictError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  return /^Project label already exists: P\d{4}(?: \([^)]+\))?$/i.test(err.message) ||
+    /^Project label P\d{4} (?:already exists|already resolves to project \S+|has an ambiguous project-label conflict)$/i.test(err.message);
+}
+
+/** Increment a P-label numerically, e.g. P0104 -> P0105. */
+export function incrementProjectLabel(label: string): string {
+  const num = parseInt(label.slice(1), 10);
+  return `P${String(num + 1).padStart(4, '0')}`;
+}
+
+/** Advance past a failed label — allocateNextProjectLabel alone can stick if the collision never persisted. */
+export function nextLabelAfterProjectLabelConflict(
+  store: { allocateNextProjectLabel(): string },
+  failedLabel: string,
+): string {
+  const incremented = incrementProjectLabel(failedLabel);
+  const allocated = store.allocateNextProjectLabel();
+  const incNum = parseInt(incremented.slice(1), 10);
+  const allocNum = parseInt(allocated.slice(1), 10);
+  return Number.isFinite(allocNum) && allocNum > incNum ? allocated : incremented;
+}
+
 // ─── Row → Domain Mappers ───────────────────────────────
 
 function normalizeProjectAliases(aliases?: string[]): string[] {

@@ -8,5 +8,5 @@ export { readMarker, writeMarker, writeMarkerAtomic, writeMarkerExclusive, Exclu
 export { rebalanceBatch, type RebalanceResult, type RebalanceSkip, } from './rebalance.js';
 export { onSessionStop, maybeSpawnSummarizer, buildSummarizerCommand, spawnSummarizer, detachedSpawner, summarizerLogPath, DEFAULT_SUMMARIZER_TIMEOUT_SEC, type SpawnContext, type Spawner, type SessionStopResult, type SessionStopReason, type MaybeSpawnSummarizerOptions, } from './session-hooks.js';
 export { MODE_ERROR, validateMode, canonicalDirectory, createProjectCoordinated, recoverProjectBinding, ProjectCreationPartialFailureError, type ProjectCreationArgs, type MemoryOnlyProjectCreationResult, type BoundProjectCreationResult, type ProjectCreationResult, type ProjectCreationDeps, type RecoverProjectBindingArgs, type RecoverProjectBindingResult, } from './project-creation.js';
-export { repairPhantomProjectBinding, formatUnboundProjectLabel as formatUnboundProjectLabelFromRecovery, stripUnboundProjectSuffix, isUnboundProjectLabel, markerWithRepairedProject, } from './phantom-recovery.js';
+export { repairPhantomProjectBinding, formatUnboundProjectLabel, stripUnboundProjectSuffix, isUnboundProjectLabel, markerWithRepairedProject, } from './phantom-recovery.js';
 //# sourceMappingURL=index.d.ts.map

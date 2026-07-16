@@ -8,6 +8,9 @@ import {
   findMarker,
   findMarkerOptionsFromEnv,
   validateMarkerAgainstStore,
+  formatUnboundProjectLabel,
+  stripUnboundProjectSuffix,
+  isUnboundProjectLabel,
 } from 'tim-hooks';
 
 const RECONCILE_TTL_MS = 5_000;
@@ -122,18 +125,6 @@ export function formatHermesStatus(
     o_node: '',
     counter: `${inBatch}/${batchSize} · Σ${k}`,
   };
-}
-
-export function formatUnboundProjectLabel(label: string): string {
-  return label.endsWith('?') ? label : `${label}?`;
-}
-
-function stripUnboundProjectSuffix(label: string): string {
-  return label.endsWith('?') ? label.slice(0, -1) : label;
-}
-
-function isUnboundProjectLabel(label: string): boolean {
-  return label.endsWith('?');
 }
 
 async function projectNameForStatusline(
