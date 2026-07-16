@@ -155,4 +155,22 @@ describe('tim CLI help safety', () => {
     expect(result.stdout).toContain('Created project P0001 "--help"');
     expect(fs.existsSync(path.join(target, '.tim-project'))).toBe(true);
   });
+
+  it('prints useful root usage for help on an unknown command', () => {
+    const result = spawnSync('node', [CLI, 'not-a-command', '--help'], {
+      cwd,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        HOME: homeDir,
+        TIM_DB_PATH: dbPath,
+      },
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain('Unknown command: not-a-command');
+    expect(result.stdout).toContain('Usage: tim <command>');
+    expect(result.stdout).not.toContain('undefined');
+    expect(result.stderr).toBe('');
+  });
 });

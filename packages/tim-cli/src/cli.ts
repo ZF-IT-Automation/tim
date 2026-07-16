@@ -145,7 +145,14 @@ function printCommandHelp(cmd: string, subcommand?: string): void {
     subcommand && subcommand !== '-h' && subcommand !== '--help'
       ? `${normalizedCommand} ${subcommand}`
       : normalizedCommand;
-  console.log(COMMAND_HELP[subcommandKey] ?? COMMAND_HELP[normalizedCommand]);
+  const help = COMMAND_HELP[subcommandKey] ?? COMMAND_HELP[normalizedCommand];
+  if (help) {
+    console.log(help);
+    return;
+  }
+
+  console.log(`Unknown command: ${normalizedCommand}\n`);
+  printRootHelp();
 }
 
 function printRootHelp(): void {

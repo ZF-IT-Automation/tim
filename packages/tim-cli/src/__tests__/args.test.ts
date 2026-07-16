@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseArgs } from '../args.js';
+import { parseArgs, valueOptionsFor } from '../args.js';
 
 describe('parseArgs', () => {
   it('supports equals syntax and boolean flags', () => {
@@ -23,9 +23,23 @@ describe('parseArgs', () => {
     });
   });
 
+  it('reports a declared value option that has no following token', () => {
+    expect(() => parseArgs(['--name'], { valueOptions: new Set(['name']) }))
+      .toThrow('Missing value for --name');
+  });
+
   it('does not let boolean flags consume the following positional argument', () => {
     expect(parseArgs(['--dry-run', 'archive.hmem'])).toEqual({
       flags: { 'dry-run': 'true' },
+      positional: ['archive.hmem'],
+    });
+  });
+
+  it('keeps the migrate-from-hmem source positional after bare --deduplicate', () => {
+    expect(parseArgs(['--deduplicate', 'archive.hmem'], {
+      valueOptions: valueOptionsFor('migrate-from-hmem'),
+    })).toEqual({
+      flags: { deduplicate: 'true' },
       positional: ['archive.hmem'],
     });
   });
@@ -39,4 +53,33 @@ describe('parseArgs', () => {
       positional: [],
     });
   });
+
+  it.each([
+    ['resolve-project', undefined, 'walk-up'],
+    ['new-project', undefined, 'no-git'],
+    ['new-project', undefined, 'confirm'],
+    ['setup-hermes-statusline', undefined, 'dry-run'],
+    ['setup-hermes-statusline', undefined, 'skip-build'],
+    ['import', undefined, 'dry-run'],
+    ['import', undefined, 'deduplicate'],
+    ['import', undefined, 'repair-flags'],
+    ['import', undefined, 'no-snapshot-check'],
+    ['migrate-from-hmem', undefined, 'deduplicate'],
+    ['migrate-from-hmem', undefined, 'no-deduplicate'],
+    ['migrate-from-hmem', undefined, 'dry-run'],
+    ['migrate', 'tags-to-types', 'dry-run'],
+    ['migrate', 'project-kind', 'dry-run'],
+    ['snapshot', undefined, 'no-symlink'],
+    ['snapshot', undefined, 'quiet'],
+    ['restore', undefined, 'list'],
+    ['restore', undefined, 'dry-run'],
+    ['restore', undefined, 'force'],
+    ['release-check', undefined, 'beta'],
+    ['release-check', undefined, 'json'],
+    ['setup-agent', undefined, 'dry-run'],
+    ['sync', 'connect', 'register'],
+  ])('does not classify documented boolean %s %s --%s as value-taking',
+    (command, subcommand, flag) => {
+      expect(valueOptionsFor(command!, subcommand).has(flag!)).toBe(false);
+    });
 });

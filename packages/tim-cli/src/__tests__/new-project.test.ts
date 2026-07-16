@@ -95,6 +95,16 @@ describe('tim new-project', () => {
     expect(fs.existsSync(path.join(target, '.tim-project'))).toBe(true);
   });
 
+  it('rejects a missing option value before creating files or database state', () => {
+    const target = path.join(workDir, 'missing-name-value');
+    const result = run(['new-project', '--path', target, '--name'], env);
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('Missing value for --name');
+    expect(fs.existsSync(target)).toBe(false);
+    expect(fs.existsSync(dbPath)).toBe(false);
+  });
+
   it('prompts on non-empty directory with TTY', async () => {
     const target = path.join(workDir, 'nonempty-tty');
     fs.mkdirSync(target);

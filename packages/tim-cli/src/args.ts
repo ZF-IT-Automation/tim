@@ -8,6 +8,16 @@ export interface ParsedArgs {
   positional: string[];
 }
 
+export class MissingOptionValueError extends Error {
+  readonly option: string;
+
+  constructor(option: string) {
+    super(`Missing value for --${option}`);
+    this.name = 'MissingOptionValueError';
+    this.option = option;
+  }
+}
+
 const EMPTY_VALUE_OPTIONS = new Set<string>();
 const COMMAND_VALUE_OPTIONS: Record<string, ReadonlySet<string>> = {
   'resolve-project': new Set(['cwd', 'format']),
@@ -24,7 +34,6 @@ const COMMAND_VALUE_OPTIONS: Record<string, ReadonlySet<string>> = {
   rebalance: new Set(['session', 'cwd']),
   statusline: new Set(['cwd', 'session', 'format']),
   export: new Set(['format']),
-  'migrate-from-hmem': new Set(['deduplicate']),
   'migrate tags-to-types': new Set(['sample-limit']),
   snapshot: new Set(['db', 'out', 'prune-hours']),
   restore: new Set(['from', 'db']),
@@ -79,11 +88,12 @@ export function parseArgs(args: string[], options: ParseOptions = {}): ParsedArg
         continue;
       }
 
+      const expectsValue = options.valueOptions?.has(key) === true;
       const next = args[i + 1];
-      const takesValue =
-        next !== undefined &&
-        options.valueOptions?.has(key) === true;
-      if (takesValue) {
+      if (expectsValue && next === undefined) {
+        throw new MissingOptionValueError(key);
+      }
+      if (expectsValue) {
         flags[key] = next;
         i++;
       } else {

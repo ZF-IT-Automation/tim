@@ -1,8 +1,17 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.NEW_PROJECT_ALIASES = void 0;
+exports.NEW_PROJECT_ALIASES = exports.MissingOptionValueError = void 0;
 exports.valueOptionsFor = valueOptionsFor;
 exports.parseArgs = parseArgs;
+class MissingOptionValueError extends Error {
+    option;
+    constructor(option) {
+        super(`Missing value for --${option}`);
+        this.name = 'MissingOptionValueError';
+        this.option = option;
+    }
+}
+exports.MissingOptionValueError = MissingOptionValueError;
 const EMPTY_VALUE_OPTIONS = new Set();
 const COMMAND_VALUE_OPTIONS = {
     'resolve-project': new Set(['cwd', 'format']),
@@ -19,7 +28,6 @@ const COMMAND_VALUE_OPTIONS = {
     rebalance: new Set(['session', 'cwd']),
     statusline: new Set(['cwd', 'session', 'format']),
     export: new Set(['format']),
-    'migrate-from-hmem': new Set(['deduplicate']),
     'migrate tags-to-types': new Set(['sample-limit']),
     snapshot: new Set(['db', 'out', 'prune-hours']),
     restore: new Set(['from', 'db']),
@@ -69,10 +77,12 @@ function parseArgs(args, options = {}) {
                 flags[key] = arg.slice(equalsIndex + 1);
                 continue;
             }
+            const expectsValue = options.valueOptions?.has(key) === true;
             const next = args[i + 1];
-            const takesValue = next !== undefined &&
-                options.valueOptions?.has(key) === true;
-            if (takesValue) {
+            if (expectsValue && next === undefined) {
+                throw new MissingOptionValueError(key);
+            }
+            if (expectsValue) {
                 flags[key] = next;
                 i++;
             }
