@@ -127,6 +127,8 @@ describe('error contract', () => {
   });
 
   it('load-gate rejection returns isError when binding a second project', async () => {
+    const sessionId = `error-contract-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
     // Create two projects.
     const a = await client.callTool('tim_create_project', { label: 'P8001', content: 'A' });
     expect(a.error).toBeUndefined();
@@ -134,12 +136,12 @@ describe('error contract', () => {
     expect(b.error).toBeUndefined();
 
     // First load binds the session.
-    const first = await client.callTool('tim_load_project', { label: 'P8001' });
+    const first = await client.callTool('tim_load_project', { label: 'P8001', sessionId });
     expect(first.error).toBeUndefined();
     expect(first.result!.isError).toBeFalsy();
 
     // Second load to a different project is rejected with isError.
-    const second = await client.callTool('tim_load_project', { label: 'P8002' });
+    const second = await client.callTool('tim_load_project', { label: 'P8002', sessionId });
     expect(second.error).toBeUndefined();
     expect(second.result!.isError).toBe(true);
     expect(getText(second)).toContain('P8001');
