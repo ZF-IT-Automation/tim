@@ -126,28 +126,11 @@ async function ensureInboxProject(store) {
         }
         let title = existing.title;
         let content = existing.content;
-        let metadata = { ...existing.metadata };
         const tags = new Set([...existing.tags, ...INBOX_PROJECT_TAGS]);
         let mergedDuplicate = false;
         const duplicates = store.findSystemRepairEntriesByLabelSync(exports.INBOX_PROJECT_LABEL)
             .filter(entry => entry.id !== exports.INBOX_PROJECT_LABEL);
         for (const duplicate of duplicates) {
-            const snapshots = Array.isArray(metadata.merged_inbox_entries)
-                ? [...metadata.merged_inbox_entries]
-                : [];
-            snapshots.push({
-                id: duplicate.id,
-                title: duplicate.title,
-                content: duplicate.content,
-                metadata: duplicate.metadata,
-                tags: duplicate.tags,
-            });
-            const rewrittenDuplicateMetadata = store.rewriteSystemRepairMetadataReferences(duplicate.metadata, duplicate.id, exports.INBOX_PROJECT_LABEL);
-            metadata = {
-                ...rewrittenDuplicateMetadata,
-                ...metadata,
-                merged_inbox_entries: snapshots,
-            };
             for (const tag of duplicate.tags)
                 tags.add(tag);
             if (title === 'Inbox' && !content) {
@@ -162,17 +145,9 @@ async function ensureInboxProject(store) {
                         .join('\n\n');
                 }
             }
-            const rewrite = store.mergeEntryReferencesAndDeleteSync(duplicate.id, exports.INBOX_PROJECT_LABEL);
+            const rewrite = store.mergeSystemRepairEntrySync(duplicate.id, exports.INBOX_PROJECT_LABEL);
             if (rewrite)
                 rewrites.push(rewrite);
-            const postRewriteCanonical = store.readSystemRepairEntrySync(exports.INBOX_PROJECT_LABEL);
-            if (!postRewriteCanonical)
-                throw new Error('Inbox canonical row disappeared during repair');
-            metadata = {
-                ...metadata,
-                ...postRewriteCanonical.metadata,
-                merged_inbox_entries: snapshots,
-            };
             mergedDuplicate = true;
         }
         const valid = !mergedDuplicate &&
@@ -193,7 +168,6 @@ async function ensureInboxProject(store) {
             tombstonedAt: null,
             tags: [...tags],
             metadata: {
-                ...metadata,
                 kind: 'project',
                 label: exports.INBOX_PROJECT_LABEL,
                 is_system: true,

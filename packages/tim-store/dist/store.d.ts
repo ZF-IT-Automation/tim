@@ -250,8 +250,6 @@ export declare class TimStore implements MemoryInterface {
     findByMetadataLabelIncludingTombstoneSync(label: string): Entry[];
     /** Raw metadata label scan reserved for system repair. */
     findSystemRepairEntriesByLabelSync(label: string): Entry[];
-    /** Structurally rewrite exact ID-valued metadata strings for system repair. */
-    rewriteSystemRepairMetadataReferences(metadata: Record<string, unknown>, sourceId: string, targetId: string): Record<string, unknown>;
     /**
      * Canonicalize a physical entry id without changing its payload. Must be called
      * inside runExclusive; rewrites all local references before removing oldId.
@@ -260,8 +258,11 @@ export declare class TimStore implements MemoryInterface {
         entry: Entry;
         rewrite: EntryIdRewrite | null;
     };
-    /** Repoint every structural reference to targetId, then remove sourceId without staging. */
-    mergeEntryReferencesAndDeleteSync(sourceId: string, targetId: string): EntryIdRewrite | null;
+    /**
+     * Merge a duplicate system entry's metadata into the canonical row, repoint
+     * structural references, preserve a recovery snapshot, then remove the duplicate.
+     */
+    mergeSystemRepairEntrySync(sourceId: string, targetId: string): EntryIdRewrite | null;
     /** Emit the syncable state transition for physical-id rewrites after the target is final. */
     stageEntryIdRewritesSync(targetId: string, rewrites: EntryIdRewrite[]): void;
     private repointEntryReferencesSync;

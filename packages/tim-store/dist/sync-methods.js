@@ -84,10 +84,28 @@ function applyRemoteEntry(db, payloadJson, lwwTimestamp, lwwDevice, deleted) {
         }
     }
     const updatedAt = new Date(lwwTimestamp).toISOString();
-    db.prepare(`INSERT OR REPLACE INTO entries
+    db.prepare(`INSERT INTO entries
     (id, parent_id, title, content, content_type, depth, confidence, created_at,
      accessed_at, updated_at, decay_rate, visibility, tags, irrelevant, favorite, tombstoned_at, metadata, lww_device)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(entry.id, entry.parent_id ?? null, entry.title ?? '', entry.content, entry.content_type, entry.depth, entry.confidence, entry.created_at, entry.accessed_at, updatedAt, entry.decay_rate, entry.visibility, entry.tags, entry.irrelevant, entry.favorite ?? 0, entry.tombstoned_at, coercedMetadata, lwwDevice);
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      parent_id = excluded.parent_id,
+      title = excluded.title,
+      content = excluded.content,
+      content_type = excluded.content_type,
+      depth = excluded.depth,
+      confidence = excluded.confidence,
+      created_at = excluded.created_at,
+      accessed_at = excluded.accessed_at,
+      updated_at = excluded.updated_at,
+      decay_rate = excluded.decay_rate,
+      visibility = excluded.visibility,
+      tags = excluded.tags,
+      irrelevant = excluded.irrelevant,
+      favorite = excluded.favorite,
+      tombstoned_at = excluded.tombstoned_at,
+      metadata = excluded.metadata,
+      lww_device = excluded.lww_device`).run(entry.id, entry.parent_id ?? null, entry.title ?? '', entry.content, entry.content_type, entry.depth, entry.confidence, entry.created_at, entry.accessed_at, updatedAt, entry.decay_rate, entry.visibility, entry.tags, entry.irrelevant, entry.favorite ?? 0, entry.tombstoned_at, coercedMetadata, lwwDevice);
     return true;
 }
 function applyRemoteEdge(db, payloadJson, lwwTimestamp, lwwDevice, deleted) {

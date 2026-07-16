@@ -128,29 +128,35 @@ function titleSimilarity(a, b) {
             intersection++;
     return intersection / (ta.size + tb.size - intersection);
 }
-function rewriteExactJsonReferences(raw, sourceId, targetId) {
-    let parsed;
+function rewriteExactJsonReferences(db, raw, sourceId, targetId) {
     try {
-        parsed = JSON.parse(raw);
+        const paths = db.prepare(`SELECT fullkey
+       FROM json_tree(?)
+       WHERE type = 'text' AND atom = ?`).all(raw, sourceId);
+        if (paths.length === 0)
+            return raw;
+        const replaceAtPath = db.prepare('SELECT json_set(?, ?, ?) AS value');
+        let rewritten = raw;
+        for (const { fullkey } of paths) {
+            rewritten = replaceAtPath.get(rewritten, fullkey, targetId).value;
+        }
+        return rewritten;
     }
     catch {
         return raw;
     }
-    let changed = false;
-    const visit = (value) => {
-        if (value === sourceId) {
-            changed = true;
-            return targetId;
-        }
-        if (Array.isArray(value))
-            return value.map(visit);
-        if (value && typeof value === 'object') {
-            return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, visit(child)]));
-        }
-        return value;
-    };
-    const rewritten = visit(parsed);
-    return changed ? JSON.stringify(rewritten) : raw;
+}
+function mergeMissingTopLevelJson(db, source, target) {
+    const missingPaths = db.prepare(`SELECT source.fullkey
+     FROM json_tree(?) AS source
+     WHERE source.parent = 0
+       AND json_type(?, source.fullkey) IS NULL`).all(source, target);
+    const copyAtPath = db.prepare('SELECT json_set(?, ?, json(? -> ?)) AS value');
+    let merged = target;
+    for (const { fullkey } of missingPaths) {
+        merged = copyAtPath.get(merged, fullkey, source, fullkey).value;
+    }
+    return merged;
 }
 class TimStore {
     db;
@@ -1334,10 +1340,6 @@ class TimStore {
        ORDER BY created_at ASC, rowid ASC`).all(label);
         return rows.map(rowToSystemRepairEntry);
     }
-    /** Structurally rewrite exact ID-valued metadata strings for system repair. */
-    rewriteSystemRepairMetadataReferences(metadata, sourceId, targetId) {
-        return JSON.parse(rewriteExactJsonReferences(JSON.stringify(metadata), sourceId, targetId));
-    }
     /**
      * Canonicalize a physical entry id without changing its payload. Must be called
      * inside runExclusive; rewrites all local references before removing oldId.
@@ -1370,17 +1372,45 @@ class TimStore {
         this.db.prepare('DELETE FROM entries WHERE id = ?').run(oldId);
         return { entry: this.readSystemRepairEntrySync(newId), rewrite };
     }
-    /** Repoint every structural reference to targetId, then remove sourceId without staging. */
-    mergeEntryReferencesAndDeleteSync(sourceId, targetId) {
+    /**
+     * Merge a duplicate system entry's metadata into the canonical row, repoint
+     * structural references, preserve a recovery snapshot, then remove the duplicate.
+     */
+    mergeSystemRepairEntrySync(sourceId, targetId) {
         if (sourceId === targetId)
             return null;
-        if (!this.db.prepare('SELECT 1 FROM entries WHERE id = ?').get(sourceId)) {
+        const source = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(sourceId);
+        if (!source) {
             throw new Error(`Entry not found: ${sourceId}`);
         }
-        if (!this.db.prepare('SELECT 1 FROM entries WHERE id = ?').get(targetId)) {
+        const target = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(targetId);
+        if (!target) {
             throw new Error(`Entry not found: ${targetId}`);
         }
+        const mergedMetadata = mergeMissingTopLevelJson(this.db, source.metadata, target.metadata);
+        const snapshot = this.db.prepare(`SELECT json_object(
+         'id', ?,
+         'title', ?,
+         'content', ?,
+         'metadata', json(?),
+         'tags', json(?)
+       ) AS value`).get(source.id, source.title, source.content, source.metadata, source.tags);
+        this.db.prepare('UPDATE entries SET metadata = ? WHERE id = ?')
+            .run(mergedMetadata, targetId);
         const rewrite = this.repointEntryReferencesSync(sourceId, targetId);
+        const rewrittenTarget = this.db.prepare('SELECT metadata FROM entries WHERE id = ?')
+            .get(targetId);
+        const withSnapshot = this.db.prepare(`SELECT json_set(
+         ?, '$.merged_inbox_entries',
+         json_insert(
+           CASE WHEN json_type(?, '$.merged_inbox_entries') = 'array'
+             THEN json_extract(?, '$.merged_inbox_entries')
+             ELSE json('[]') END,
+           '$[#]', json(?)
+         )
+       ) AS value`).get(rewrittenTarget.metadata, rewrittenTarget.metadata, rewrittenTarget.metadata, snapshot.value);
+        this.db.prepare('UPDATE entries SET metadata = ? WHERE id = ?')
+            .run(withSnapshot.value, targetId);
         this.db.prepare('UPDATE entry_usage SET entry_id = ? WHERE entry_id = ?').run(targetId, sourceId);
         this.db.prepare('DELETE FROM entry_vectors WHERE entry_id = ?').run(sourceId);
         this.db.prepare('DELETE FROM entries WHERE id = ?').run(sourceId);
@@ -1438,7 +1468,7 @@ class TimStore {
             const rows = this.db.prepare(`SELECT id, ${column} AS value FROM ${table} WHERE ${column} LIKE '%' || ? || '%'`).all(sourceId);
             const update = this.db.prepare(`UPDATE ${table} SET ${column} = ? WHERE id = ?`);
             for (const row of rows) {
-                const rewritten = rewriteExactJsonReferences(row.value, sourceId, targetId);
+                const rewritten = rewriteExactJsonReferences(this.db, row.value, sourceId, targetId);
                 if (rewritten === row.value)
                     continue;
                 update.run(rewritten, row.id);
@@ -1476,7 +1506,7 @@ class TimStore {
             tags: JSON.stringify(patch.tags),
             irrelevant: patch.irrelevant ? 1 : 0,
             tombstoned_at: patch.tombstonedAt,
-            metadata: JSON.stringify(patch.metadata),
+            metadata: this.db.prepare('SELECT json_patch(json(?), json(?)) AS value').get(existing.metadata, JSON.stringify(patch.metadata)).value,
             accessed_at: now,
             updated_at: now,
             lww_device: this.deviceId,
@@ -2198,10 +2228,28 @@ class TimStore {
         return rows.map(rowToStaging);
     }
     async applyStaging(records) {
-        const upsertEntry = this.db.prepare(`INSERT OR REPLACE INTO entries
+        const upsertEntry = this.db.prepare(`INSERT INTO entries
       (id, parent_id, title, content, content_type, depth, confidence, created_at,
        accessed_at, updated_at, decay_rate, visibility, tags, irrelevant, favorite, tombstoned_at, metadata, lww_device)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        parent_id = excluded.parent_id,
+        title = excluded.title,
+        content = excluded.content,
+        content_type = excluded.content_type,
+        depth = excluded.depth,
+        confidence = excluded.confidence,
+        created_at = excluded.created_at,
+        accessed_at = excluded.accessed_at,
+        updated_at = excluded.updated_at,
+        decay_rate = excluded.decay_rate,
+        visibility = excluded.visibility,
+        tags = excluded.tags,
+        irrelevant = excluded.irrelevant,
+        favorite = excluded.favorite,
+        tombstoned_at = excluded.tombstoned_at,
+        metadata = excluded.metadata,
+        lww_device = excluded.lww_device`);
         const upsertEdge = this.db.prepare(`INSERT OR REPLACE INTO edges
       (id, source_id, target_id, type, weight, metadata, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?)`);

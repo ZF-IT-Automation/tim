@@ -412,18 +412,16 @@ describe('SessionManager', () => {
       expect(payload.lww_device).not.toBe('legacy-device');
     });
 
-    it('preserves raw custom numeric metadata during Inbox repair', async () => {
+    it('preserves raw custom numeric tokens during Inbox repair', async () => {
       await store.write('Raw metadata Inbox', {
         id: 'P0000',
         metadata: { kind: 'note', label: 'N0000' },
       });
+      const rawMetadata =
+        '{"kind":"note","label":"N0000","custom":{"pinned":1,"big":9007199254740993,"negative_zero":-0}}';
       store.getDb().prepare(
         `UPDATE entries SET metadata = ? WHERE id = 'P0000'`,
-      ).run(JSON.stringify({
-        kind: 'note',
-        label: 'N0000',
-        custom: { pinned: 1 },
-      }));
+      ).run(rawMetadata);
       store.getDb().prepare('DELETE FROM staging').run();
 
       await ensureInboxProject(store);
@@ -431,14 +429,12 @@ describe('SessionManager', () => {
       const row = store.getDb().prepare(
         `SELECT metadata FROM entries WHERE id = 'P0000'`,
       ).get() as { metadata: string };
-      expect(JSON.parse(row.metadata)).toMatchObject({
-        kind: 'project',
-        label: 'P0000',
-        custom: { pinned: 1 },
-      });
+      expect(row.metadata).toBe(
+        '{"kind":"project","label":"P0000","custom":{"pinned":1,"big":9007199254740993,"negative_zero":-0},"is_system":true,"render_depth":1}',
+      );
       const staging = await store.getStaging();
       const payload = JSON.parse(staging[0]!.payload) as { metadata: string };
-      expect(JSON.parse(payload.metadata).custom.pinned).toBe(1);
+      expect(payload.metadata).toBe(row.metadata);
     });
 
     it('canonicalizes a logical P0000 stored under a different id without losing data or edges', async () => {
@@ -506,6 +502,10 @@ describe('SessionManager', () => {
           custom_text: embeddedText,
         },
       });
+      store.getDb().prepare('UPDATE entries SET metadata = ? WHERE id = ?').run(
+        `{"kind":"project","label":"P0000","exact_ref":"${legacyId}","custom_text":"${embeddedText}","custom":{"big":9007199254740993,"negative_zero":-0}}`,
+        legacy.id,
+      );
       const child = await store.write('Legacy child', {
         parentId: legacy.id,
         metadata: { exact_ref: legacyId, custom_text: embeddedText },
@@ -531,6 +531,12 @@ describe('SessionManager', () => {
         exact_ref: 'P0000',
         custom_text: embeddedText,
       });
+      const canonicalRaw = store.getDb().prepare(
+        `SELECT metadata FROM entries WHERE id = 'P0000'`,
+      ).get() as { metadata: string };
+      expect(canonicalRaw.metadata).toBe(
+        `{"kind":"project","label":"P0000","exact_ref":"P0000","custom_text":"${embeddedText}","custom":{"big":9007199254740993,"negative_zero":-0},"is_system":true,"render_depth":1}`,
+      );
     });
 
     it('stages a canonical Inbox rewrite so a previously synced replica converges', async () => {
@@ -551,6 +557,25 @@ describe('SessionManager', () => {
         });
         const beforeRepair = await store.getStaging();
         await replica.applyStaging(beforeRepair);
+
+        const replicaOnlyTarget = await replica.write('Replica-only edge target');
+        await replica.write('Existing canonical Inbox', {
+          id: 'P0000',
+          metadata: { kind: 'project', label: 'P0000' },
+        });
+        const replicaOnlyEdge = await replica.link(
+          'P0000',
+          replicaOnlyTarget.id,
+          'blocks',
+          0.5,
+          { custom: 'replica-only' },
+        );
+        replica.getDb().prepare(
+          `UPDATE entries
+           SET created_at = '2000-01-01T00:00:00.000Z',
+               updated_at = '2000-01-01T00:00:00.000Z'
+           WHERE id = 'P0000'`,
+        ).run();
 
         await ensureInboxProject(store);
         const records = await store.getStaging();
@@ -594,6 +619,11 @@ describe('SessionManager', () => {
         expect((await replica.read(child.id))?.parentId).toBe('P0000');
         expect((await replica.read(child.id))?.metadata.project_ref).toBe('P0000');
         expect(await replica.getEdges('P0000', 'outgoing')).toEqual([
+          expect.objectContaining({
+            id: replicaOnlyEdge.id,
+            targetId: replicaOnlyTarget.id,
+            metadata: { custom: 'replica-only' },
+          }),
           expect.objectContaining({
             id: edge.id,
             targetId: target.id,
