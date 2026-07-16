@@ -17,7 +17,10 @@ describe('applyIdeaPromote', () => {
     expect(result.error).toBeUndefined();
     expect(result.metadata.idea).toBeUndefined();
     expect(result.metadata.type).toBe('task');
-    expect(result.metadata.task).toEqual({ status: 'todo' });
+    const task = result.metadata.task as { status: string; history: Array<{ status: string; at: string }> };
+    expect(task.status).toBe('todo');
+    expect(task.history[0].status).toBe('todo');
+    expect(task.history[0].at).toBe(nowIso);
     expect(result.metadata.provenance).toEqual({
       promoted_from_idea_at: nowIso,
     });
@@ -59,6 +62,9 @@ describe('applyIdeaPromote', () => {
     );
 
     expect(result.didPromote).toBe(true);
-    expect(result.metadata.task).toEqual({ status: 'todo', priority: 'high' });
+    const task = result.metadata.task as { status: string; priority: string; history: Array<{ status: string }> };
+    expect(task.status).toBe('todo');
+    expect(task.priority).toBe('high');
+    expect(task.history[0].status).toBe('todo');
   });
 });

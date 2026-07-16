@@ -40,7 +40,10 @@ export function applyIdeaPromote(
   const priorityFromMeta =
     typeof metadata.priority === 'string' ? metadata.priority : undefined;
 
-  const task: Record<string, unknown> = { status: 'todo' };
+  const task: Record<string, unknown> = {
+    status: 'todo',
+    history: [{ status: 'todo', at: nowIso }],
+  };
   if (priorityFromIdea) task.priority = priorityFromIdea;
   else if (priorityFromMeta) task.priority = priorityFromMeta;
 

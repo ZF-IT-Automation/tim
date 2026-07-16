@@ -29,7 +29,9 @@ describe('idea promote wired into updateSync', () => {
     });
     expect(updated.id).toBe(idea.id);
     expect(updated.metadata.idea).toBeUndefined();
-    expect(updated.metadata.task).toMatchObject({ status: 'todo' });
+    const task = updated.metadata.task as { status: string; history: Array<{ status: string }> };
+    expect(task.status).toBe('todo');
+    expect(task.history[0].status).toBe('todo');
     expect(updated.metadata.type).toBe('task');
     expect(updated.parentId).toBe(tasksSectionId);
   });
