@@ -12,7 +12,18 @@ import {
   type ProjectCreationArgs,
 } from '../project-creation.js';
 
-const preflightIo = vi.hoisted(() => ({ removeProbeAfterWrite: false }));
+const preflightIo = vi.hoisted(() => ({
+  removeProbeAfterWrite: false,
+  uuid: null as string | null,
+}));
+
+vi.mock('node:crypto', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:crypto')>();
+  return {
+    ...actual,
+    randomUUID: () => preflightIo.uuid ?? actual.randomUUID(),
+  };
+});
 
 vi.mock('node:fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs')>();
@@ -34,6 +45,7 @@ describe('project creation', () => {
 
   beforeEach(() => {
     preflightIo.removeProbeAfterWrite = false;
+    preflightIo.uuid = null;
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tim-project-creation-'));
     store = new TimStore(path.join(dir, 'tim.db'));
   });
@@ -109,11 +121,13 @@ describe('project creation', () => {
   });
 
   it('rejects caller-owned metadata.path in memory-only mode', async () => {
-    await expect(createProjectCoordinated(store, {
+    const args = {
       label: 'P1005',
       memoryOnly: true,
       metadata: { path: '/caller/value' },
-    })).rejects.toThrow(/metadata\.path/);
+    } as const;
+    expect(() => validateMode(args)).toThrow(/metadata\.path/);
+    await expect(createProjectCoordinated(store, args)).rejects.toThrow(/metadata\.path/);
     expect(await store.loadProject('P1005')).toBeNull();
   });
 
@@ -174,6 +188,15 @@ describe('project creation', () => {
     expect(() => preflightProjectDirectory(dir)).not.toThrow();
   });
 
+  it('preserves a colliding probe that it did not create', () => {
+    preflightIo.uuid = 'fixed-probe';
+    const probe = path.join(dir, `.tim-write-probe.${process.pid}.fixed-probe`);
+    fs.writeFileSync(probe, 'winner');
+
+    expect(() => preflightProjectDirectory(dir)).toThrow(/EEXIST/);
+    expect(fs.readFileSync(probe, 'utf8')).toBe('winner');
+  });
+
   it('rejects a target-local marker before preflight', async () => {
     fs.writeFileSync(path.join(dir, '.tim-project'), '{}');
     const preflight = vi.fn();
@@ -199,5 +222,17 @@ describe('project creation', () => {
     expect(preflight).toHaveBeenCalledOnce();
     expect(preflight).toHaveBeenCalledWith(canonical);
     expect(await store.loadProject('P1008')).toBeNull();
+  });
+
+  it('retains the default preflight when an override is explicitly undefined', async () => {
+    const canonical = fs.realpathSync(dir);
+
+    await expect(createProjectCoordinated(store, {
+      label: 'P1009',
+      path: dir,
+    }, { preflight: undefined })).rejects.toThrow(
+      `Bound project creation requires verified marker publication at ${canonical}`,
+    );
+    expect(fs.readdirSync(dir).filter(name => name.startsWith('.tim-write-probe.'))).toEqual([]);
   });
 });

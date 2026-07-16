@@ -53,6 +53,9 @@ export function validateMode(args: ProjectCreationArgs): 'bound' | 'memory-only'
   if (hasPath === isMemoryOnly) {
     throw new Error(MODE_ERROR);
   }
+  if (isMemoryOnly && args.metadata && Object.prototype.hasOwnProperty.call(args.metadata, 'path')) {
+    throw new Error('metadata.path is service-owned and cannot be supplied in memory-only mode');
+  }
 
   return isMemoryOnly ? 'memory-only' : 'bound';
 }
@@ -79,10 +82,12 @@ export function canonicalDirectory(directory: string): string {
 
 export function preflightProjectDirectory(directory: string): void {
   const probe = path.join(directory, `.tim-write-probe.${process.pid}.${crypto.randomUUID()}`);
+  let ownsProbe = false;
   try {
     fs.writeFileSync(probe, '', { flag: 'wx' });
+    ownsProbe = true;
   } finally {
-    fs.rmSync(probe, { force: true });
+    if (ownsProbe) fs.rmSync(probe, { force: true });
   }
 }
 
@@ -91,13 +96,14 @@ export async function createProjectCoordinated(
   args: ProjectCreationArgs,
   deps: Partial<ProjectCreationDeps> = {},
 ): Promise<ProjectCreationResult> {
-  const runtime = { ...DEFAULT_DEPS, ...deps };
+  const runtime: ProjectCreationDeps = {
+    sessionId: deps.sessionId ?? DEFAULT_DEPS.sessionId,
+    writeExclusive: deps.writeExclusive ?? DEFAULT_DEPS.writeExclusive,
+    preflight: deps.preflight ?? DEFAULT_DEPS.preflight,
+  };
   const mode = validateMode(args);
 
   if (mode === 'memory-only') {
-    if (args.metadata && Object.prototype.hasOwnProperty.call(args.metadata, 'path')) {
-      throw new Error('metadata.path is service-owned and cannot be supplied in memory-only mode');
-    }
     const entry = await store.createProject(args.label, {
       content: args.content,
       metadata: args.metadata,
