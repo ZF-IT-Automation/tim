@@ -22,7 +22,19 @@ describe('setup-agent planner', () => {
     expect(() => buildSetupAgentPlan({ host: 'cursor' })).not.toThrow();
     expect(() => buildSetupAgentPlan({ host: 'hermes' })).not.toThrow();
   });
+});
 
+describe('claude hooks install wiring', () => {
+  it('exports merge helpers used by setup-agent host install', async () => {
+    const { mergeClaudeHooks } = await import('../claude-hooks-install.js');
+    const next = mergeClaudeHooks({});
+    expect(next.hooks?.UserPromptSubmit?.[0]?.hooks[0]?.command).toContain('hook prompt-submit');
+    expect(next.hooks?.Stop?.[0]?.hooks[0]?.command).toContain('hook claude-stop');
+    expect(mergeClaudeHooks(next)).toEqual(next);
+  });
+});
+
+describe('codex MCP config', () => {
   it('builds codex MCP TOML for TIM', () => {
     const config = buildCodexMcpConfig('/tmp/tim.db', { override: SERVER_PATH });
     expect(config).toContain('[mcp_servers.tim]');

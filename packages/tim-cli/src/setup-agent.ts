@@ -7,6 +7,7 @@ import { HOST_TOOLS, buildTimMcpEntry, installMcpForHostTool, type HostTool } fr
 import type { TimMcpServerOptions } from './mcp-command.js';
 import { updateSkillsForHost } from './update-skills.js';
 import { installHermesStatusline } from './hermes-statusline-install.js';
+import { installClaudeHooks } from './claude-hooks-install.js';
 import { parseArgs, valueOptionsFor } from './args.js';
 
 export type AgentHost = 'claude' | 'codex' | 'cursor' | 'hermes';
@@ -313,7 +314,13 @@ export async function cmdSetupAgent(args: string[]): Promise<void> {
           ? { action: 'would-install-toml', path: path.join(os.homedir(), '.codex', 'config.toml'), snippet: buildCodexMcpConfig(dbPath) }
           : { action: 'manual', reason: 'No JSON MCP installer exists for this host yet' },
       skills: { action: host === 'cursor' ? 'manual' : 'would-copy' },
-      hooks: { action: host === 'hermes' ? 'would-install-hermes-statusline' : 'not-required' },
+      hooks: {
+        action: host === 'hermes'
+          ? 'would-install-hermes-statusline'
+          : host === 'claude'
+            ? 'would-install-claude-hooks'
+            : 'not-required',
+      },
       smoke: { action: 'would-run-health-check', command: 'tim doctor' },
     }, null, 2));
     return;
@@ -335,7 +342,9 @@ export async function cmdSetupAgent(args: string[]): Promise<void> {
   const skills = updateSkillsForHost(host);
   const hooks = host === 'hermes'
     ? await installHermesStatusline({ skipBuild: true })
-    : { ok: true, steps: [{ step: 'hooks', status: 'skip' as const, detail: 'No host hook install needed' }] };
+    : host === 'claude'
+      ? installClaudeHooks()
+      : { ok: true, steps: [{ step: 'hooks', status: 'skip' as const, detail: 'No host hook install needed' }] };
 
   const store = new TimStore(dbPath);
   try {
