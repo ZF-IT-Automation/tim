@@ -40,7 +40,7 @@ node packages/tim-cli/dist/cli.js statusline
 | 3 | `tim stats` | Show memory statistics — counts, depth distribution, top tags |
 | 4 | `tim resolve-project` | Print bound project from nearest `.tim-project` marker |
 | 5 | `tim resolve-session` | Print project_ref for a TIM session |
-| 6 | `tim bind-project` | Write/refresh `.tim-project` for a directory |
+| 6 | `tim bind-project` | Safely recover a missing `.tim-project` for an existing project |
 | 7 | `tim record-commit` | Record a git commit to the project's Commits section |
 | 8 | `tim hook session-start` | Start a new session |
 | 9 | `tim hook session-end` | End a session and run checkpoint |
@@ -213,8 +213,10 @@ Usage: tim resolve-session --session <id> [--cwd <dir>] [--format label|directiv
 
 ### 6. `tim bind-project --label <P00XX> [--cwd <dir>] [--session <id>]`
 
-Write or refresh a `.tim-project` marker file in a directory.
-This is how you **switch projects** — change which project TIM considers active.
+Safely recover a missing `.tim-project` marker for an existing project. The command
+resolves the exact `P` label in the selected database before it writes anything. It
+writes only when no target-local marker exists, is idempotent for the same label, and
+never overwrites a marker owned by a different project.
 
 ```
 Usage: tim bind-project --label <P00XX> [--cwd <dir>] [--session <id>]
@@ -224,6 +226,12 @@ Usage: tim bind-project --label <P00XX> [--cwd <dir>] [--session <id>]
 ```bash
 tim bind-project --label P0062 --cwd ~/projects/tim
 ```
+
+Project creation coordinates a database write with local marker publication, but it is
+not cross-database/filesystem atomic. If creation reports a partial marker-publication
+failure, use only its returned shell-quoted `tim bind-project` command with the same
+configured database. A different existing local marker requires explicit reconciliation;
+do not overwrite it.
 
 ---
 
@@ -613,18 +621,19 @@ tim resolve-project --walk-up
 The project marker file `.tim-project` contains a single line like `P9999`.
 TIM walks up from your current directory looking for this file.
 
-### How to switch projects
+### How to recover a missing project marker
 
 ```bash
-# Bind current directory to a different project
+# Recover the marker for an exact live project label
 tim bind-project --label P0062 --cwd ~/projects/tim
 
 # Or with a session
 tim bind-project --label P0062 --session <session-id>
 ```
 
-This writes/refreshes the `.tim-project` file in the specified directory.
-After binding, all TIM commands run from that directory will target the new project.
+This resolves the exact label in the selected database and writes `.tim-project` only
+when the directory has no marker. Repeating it for the same label is idempotent. It
+never replaces a different local marker; reconcile that conflict explicitly instead.
 
 ### How to read a specific entry
 

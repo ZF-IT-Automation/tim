@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
 import {
   TIM_USING_SKILL,
   TIM_REMEMBER_SKILL,
@@ -10,6 +11,7 @@ import {
   TIM_SYNC_TRIAGE_SKILL,
   TIM_SECRET_AUDIT_SKILL,
   TIM_MCP_SMOKE_SKILL,
+  TIM_NEW_PROJECT_SKILL,
   getSkill,
   listSkills,
 } from '../index.js';
@@ -61,6 +63,33 @@ describe('weak-model skills', () => {
     expect(getSkill('tim-hmem-import-audit')?.name).toBe('tim-hmem-import-audit');
   });
 
+  it('tim-new-project requires an explicit bound path or intentional memory-only mode', () => {
+    const packaged = readFileSync(
+      new URL('../../skills/tim-new-project/SKILL.md', import.meta.url),
+      'utf8',
+    );
+    const packagedParts = packaged.match(
+      /^---\nname: (.+)\ndescription: (.+)\n---\n\n([\s\S]*)$/,
+    );
+    const requiredGuidance = [
+      'path="/absolute/path/to/repository"',
+      'memoryOnly=true',
+      'unknown cwd',
+      'markerPath',
+    ];
+
+    for (const guidance of requiredGuidance) {
+      expect(packaged).toContain(guidance);
+      expect(TIM_NEW_PROJECT_SKILL.content).toContain(guidance);
+    }
+    expect(packaged).toContain('Never use `memoryOnly=true` for an unknown cwd');
+    expect(TIM_NEW_PROJECT_SKILL.content).toContain('Never use `memoryOnly=true` for an unknown cwd');
+    expect(packagedParts?.[1]).toBe(TIM_NEW_PROJECT_SKILL.name);
+    expect(packagedParts?.[2]).toBe(TIM_NEW_PROJECT_SKILL.description);
+    expect(packagedParts?.[3]).toBe(TIM_NEW_PROJECT_SKILL.content);
+    expect(getSkill('tim-new-project')).toBe(TIM_NEW_PROJECT_SKILL);
+  });
+
   it('migration and beta ops skills are concise and tool-oriented', () => {
     const expectations = [
       [TIM_RELEASE_BETA_SKILL, ['npm pack --dry-run', 'git tag', 'tim snapshot']],
@@ -77,7 +106,7 @@ describe('weak-model skills', () => {
     }
   });
 
-  it('listSkills returns all eleven skills', () => {
+  it('listSkills returns all twelve skills', () => {
     expect(listSkills().map(s => s.name)).toEqual([
       'tim-handoff',
       'tim-explain',
@@ -90,6 +119,7 @@ describe('weak-model skills', () => {
       'tim-sync-triage',
       'tim-secret-audit',
       'tim-mcp-smoke',
+      'tim-new-project',
     ]);
   });
 });

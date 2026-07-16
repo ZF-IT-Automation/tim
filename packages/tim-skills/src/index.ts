@@ -9,6 +9,7 @@ import { TIM_PROJECT_CURATE_SKILL } from './tim-project-curate.js';
 import { TIM_SYNC_TRIAGE_SKILL } from './tim-sync-triage.js';
 import { TIM_SECRET_AUDIT_SKILL } from './tim-secret-audit.js';
 import { TIM_MCP_SMOKE_SKILL } from './tim-mcp-smoke.js';
+import { TIM_NEW_PROJECT_SKILL } from './tim-new-project.js';
 
 export { TIM_HANDOFF_SKILL } from './tim-handoff.js';
 export { TIM_EXPLAIN_SKILL } from './tim-explain.js';
@@ -21,6 +22,7 @@ export { TIM_PROJECT_CURATE_SKILL } from './tim-project-curate.js';
 export { TIM_SYNC_TRIAGE_SKILL } from './tim-sync-triage.js';
 export { TIM_SECRET_AUDIT_SKILL } from './tim-secret-audit.js';
 export { TIM_MCP_SMOKE_SKILL } from './tim-mcp-smoke.js';
+export { TIM_NEW_PROJECT_SKILL } from './tim-new-project.js';
 
 export interface TimSkill {
   name: string;
@@ -40,6 +42,7 @@ export const ALL_TIM_SKILLS: TimSkill[] = [
   TIM_SYNC_TRIAGE_SKILL,
   TIM_SECRET_AUDIT_SKILL,
   TIM_MCP_SMOKE_SKILL,
+  TIM_NEW_PROJECT_SKILL,
 ];
 
 export function getSkill(name: string): TimSkill | undefined {
