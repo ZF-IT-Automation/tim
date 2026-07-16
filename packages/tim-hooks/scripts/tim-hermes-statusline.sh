@@ -4,13 +4,15 @@
 # Install: symlink to ~/.hermes/agent-hooks/ + apply hermes-cli-tim-statusline.patch
 set -euo pipefail
 
-TIM_CLI="${TIM_CLI:-/home/bbbee/projects/tim/packages/tim-cli/dist/cli.js}"
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+# shellcheck source=lib/resolve-tim-cli.sh
+source "$SCRIPT_DIR/lib/resolve-tim-cli.sh"
 
 # CWD: explicit env, else PWD (Hermes hook cwd is not piped here)
 CWD="${TIM_STATUSLINE_CWD:-${PWD:-$HOME}}"
 [[ -z "$CWD" ]] && CWD="${HOME}"
 
-out=$(node "$TIM_CLI" statusline --format hermes --cwd "$CWD" 2>/dev/null || true)
+out=$(run_tim_cli statusline --format hermes --cwd "$CWD" 2>/dev/null || true)
 if [[ -z "$out" ]]; then
   echo '{}'
 else

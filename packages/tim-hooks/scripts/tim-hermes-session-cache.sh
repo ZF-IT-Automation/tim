@@ -3,6 +3,10 @@
 # Output: {} (no prompt injection). Register before tim-hermes-statusline refresh.
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+# shellcheck source=lib/resolve-tim-cli.sh
+source "$SCRIPT_DIR/lib/resolve-tim-cli.sh"
+
 payload="$(cat)"
 session_id=$(printf '%s' "$payload" | jq -r '.session_id // empty')
 cwd=$(printf '%s' "$payload" | jq -r '.cwd // empty')

@@ -17,8 +17,9 @@
 
 set -euo pipefail
 
-TIM_CLI="${TIM_CLI:-/home/bbbee/projects/tim/packages/tim-cli/dist/cli.js}"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+# shellcheck source=lib/resolve-tim-cli.sh
+source "$SCRIPT_DIR/lib/resolve-tim-cli.sh"
 TIM_HOOKS_MARKER="${TIM_MARKER_MODULE:-${SCRIPT_DIR}/../dist/marker.js}"
 
 # Read stdin once (some harnesses pass payload, some pass nothing)
@@ -46,7 +47,7 @@ fi
 hook_session=$(printf '%s' "$payload" | jq -r '.session_id // empty' 2>/dev/null || true)
 
 # --- Resolve project marker ---
-directive=$(node "$TIM_CLI" resolve-project --walk-up --cwd "$cwd" --format directive 2>/dev/null || true)
+directive=$(run_tim_cli resolve-project --walk-up --cwd "$cwd" --format directive 2>/dev/null || true)
 if [[ -z "$directive" ]]; then
   # No .tim-project marker found — silent skip (exit 0)
   exit 0

@@ -12,39 +12,12 @@
 # Requires: git, node. Override CLI with TIM_CLI.
 set -euo pipefail
 
-resolve_tim_cli() {
-  if [[ -n "${TIM_CLI:-}" ]]; then
-    printf '%s\n' "$TIM_CLI"
-    return 0
-  fi
-  if command -v tim >/dev/null 2>&1; then
-    command -v tim
-    return 0
-  fi
-  local hook_dir dev_cli
-  local real_script
-  real_script="$(readlink -f "${BASH_SOURCE[0]}")"
-  hook_dir="$(dirname "$real_script")"
-  dev_cli="$hook_dir/../../tim-cli/dist/cli.js"
-  if [[ -f "$dev_cli" ]]; then
-    printf '%s\n' "$dev_cli"
-    return 0
-  fi
-  return 1
-}
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+# shellcheck source=lib/resolve-tim-cli.sh
+source "$SCRIPT_DIR/lib/resolve-tim-cli.sh"
 
 repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 [[ -z "$repo_root" ]] && exit 0
 
-tim_cli="$(resolve_tim_cli)" || exit 0
-
-run_record() {
-  if [[ "$tim_cli" == *.js ]]; then
-    node "$tim_cli" record-commit --cwd "$repo_root"
-  else
-    "$tim_cli" record-commit --cwd "$repo_root"
-  fi
-}
-
-run_record >/dev/null 2>&1 || true
+run_tim_cli record-commit --cwd "$repo_root" >/dev/null 2>&1 || true
 exit 0

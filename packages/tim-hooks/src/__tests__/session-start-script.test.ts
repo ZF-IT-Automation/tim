@@ -12,6 +12,17 @@ const SCRIPT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   '../../scripts/tim-session-start.sh',
 );
+const SCRIPTS_DIR = path.dirname(SCRIPT);
+const RELOCATED_ENTRYPOINTS = [
+  'tim-claude-session-start.sh',
+  'post-commit.sh',
+  'tim-session-start.sh',
+  'tim-post-commit.sh',
+  'tim-hermes-session-cache.sh',
+  'tim-hermes-statusline.sh',
+  'tim-cursor-inject.sh',
+  'tim-statusline.sh',
+];
 
 let tmpDir: string;
 let stubCli: string;
@@ -90,5 +101,101 @@ describe('tim-session-start.sh marker rotation', () => {
     runScript(JSON.stringify({ session_id: hostile, cwd: tmpDir }));
     const marker = JSON.parse(fs.readFileSync(path.join(tmpDir, '.tim-project'), 'utf8'));
     expect(marker.session).toBe(hostile);
+  });
+});
+
+describe('relocatable hook installation', () => {
+  it('runs every entrypoint from a spaced prefix and different HOME via PATH tim', () => {
+    const installRoot = path.join(tmpDir, 'Different Home', 'TIM Install With Spaces');
+    const relocatedScripts = path.join(installRoot, 'node_modules', 'tim-hooks', 'scripts');
+    const relocatedHome = path.join(tmpDir, 'Relocated User Home');
+    const fakeBin = path.join(tmpDir, 'fake bin');
+    const fakeLog = path.join(tmpDir, 'tim-invocations.log');
+    const repo = path.join(tmpDir, 'git repo');
+    fs.cpSync(SCRIPTS_DIR, relocatedScripts, { recursive: true });
+    fs.mkdirSync(relocatedHome, { recursive: true });
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.mkdirSync(repo, { recursive: true });
+    execFileSync('git', ['init', '-q'], { cwd: repo });
+
+    const fakeTim = path.join(fakeBin, 'tim');
+    fs.writeFileSync(fakeTim, `#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "$TIM_FAKE_LOG"
+case " $* " in
+  *" resolve-project "*) printf '%s\\n' 'TIM DIRECTIVE' ;;
+  *" statusline "*) printf '%s\\n' '{"project":"P0063"}' ;;
+esac
+`);
+    fs.chmodSync(fakeTim, 0o755);
+
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      HOME: relocatedHome,
+      PATH: `${fakeBin}${path.delimiter}${process.env.PATH ?? ''}`,
+      TIM_FAKE_LOG: fakeLog,
+    };
+    delete env.TIM_CLI;
+
+    const payloads: Record<string, { args?: string[]; input?: string }> = {
+      'tim-claude-session-start.sh': { input: JSON.stringify({ cwd: repo }) },
+      'post-commit.sh': {},
+      'tim-session-start.sh': {
+        input: JSON.stringify({ cwd: repo, conversation_id: 'relocated-session' }),
+      },
+      'tim-post-commit.sh': {},
+      'tim-hermes-session-cache.sh': {
+        input: JSON.stringify({ cwd: repo, session_id: 'relocated-session' }),
+      },
+      'tim-hermes-statusline.sh': {},
+      'tim-cursor-inject.sh': { args: [repo] },
+      'tim-statusline.sh': {},
+    };
+
+    for (const entrypoint of RELOCATED_ENTRYPOINTS) {
+      const invocation = payloads[entrypoint];
+      expect(() => execFileSync('bash', [path.join(relocatedScripts, entrypoint), ...(invocation.args ?? [])], {
+        cwd: repo,
+        env,
+        input: invocation.input ?? '',
+        encoding: 'utf8',
+      }), entrypoint).not.toThrow();
+    }
+
+    const invocations = fs.readFileSync(fakeLog, 'utf8');
+    expect(invocations).toContain('resolve-project');
+    expect(invocations).toContain('statusline');
+    expect(invocations).toContain('record-commit');
+  });
+
+  it('falls back to the relocated sibling tim-cli package when tim is absent from PATH', () => {
+    const installRoot = path.join(tmpDir, 'Fallback Install With Spaces', 'node_modules');
+    const relocatedScripts = path.join(installRoot, 'tim-hooks', 'scripts');
+    const cliDist = path.join(installRoot, 'tim-cli', 'dist');
+    const toolBin = path.join(tmpDir, 'minimal tools');
+    fs.cpSync(SCRIPTS_DIR, relocatedScripts, { recursive: true });
+    fs.mkdirSync(cliDist, { recursive: true });
+    fs.mkdirSync(toolBin, { recursive: true });
+    fs.writeFileSync(path.join(cliDist, 'cli.js'), 'console.log("FALLBACK DIRECTIVE");\n');
+
+    for (const command of ['cat', 'dirname', 'jq', 'node', 'readlink']) {
+      const resolved = execFileSync('which', [command], { encoding: 'utf8' }).trim();
+      fs.symlinkSync(resolved, path.join(toolBin, command));
+    }
+
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      HOME: path.join(tmpDir, 'Fallback Home'),
+      PATH: toolBin,
+    };
+    delete env.TIM_CLI;
+
+    const out = execFileSync('/bin/bash', [path.join(relocatedScripts, 'tim-session-start.sh')], {
+      cwd: tmpDir,
+      env,
+      input: JSON.stringify({ cwd: tmpDir, conversation_id: 'fallback-session' }),
+      encoding: 'utf8',
+    });
+
+    expect(JSON.parse(out)).toEqual({ additional_context: 'FALLBACK DIRECTIVE' });
   });
 });
