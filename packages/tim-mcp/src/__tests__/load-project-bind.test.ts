@@ -173,24 +173,36 @@ describe('tim_load_project bind:false', () => {
   });
 
   it('bind:false then bind:true works — read does not consume the gate', async () => {
-    const read = await client.callTool('tim_load_project', { label: 'P8101', bind: false });
+    const sessionId = 'bind-after-read-session';
+    const read = await client.callTool('tim_load_project', {
+      label: 'P8101', bind: false, sessionId,
+    });
     expect(read.error).toBeUndefined();
     expect(read.result!.isError).toBeFalsy();
 
     // Now bind for real — should succeed because the read did NOT bind.
-    const bind = await client.callTool('tim_load_project', { label: 'P8102' });
+    const bind = await client.callTool('tim_load_project', { label: 'P8102', sessionId });
     expect(bind.error).toBeUndefined();
     expect(bind.result!.isError).toBeFalsy();
+
+    const rejected = await client.callTool('tim_load_project', { label: 'P8101', sessionId });
+    expect(rejected.result!.isError).toBe(true);
+    expect(rejected.result!.content[0].text).toContain('P8102');
   });
 
   it('tim_read_project still works as a deprecated alias for bind:false', async () => {
+    const sessionId = 'bind-after-deprecated-read-session';
     const resp = await client.callTool('tim_read_project', { label: 'P8101' });
     expect(resp.error).toBeUndefined();
     expect(resp.result!.isError).toBeFalsy();
 
     // And the gate is still free — we can bind afterward to a different project.
-    const bind = await client.callTool('tim_load_project', { label: 'P8102' });
+    const bind = await client.callTool('tim_load_project', { label: 'P8102', sessionId });
     expect(bind.error).toBeUndefined();
     expect(bind.result!.isError).toBeFalsy();
+
+    const rejected = await client.callTool('tim_load_project', { label: 'P8101', sessionId });
+    expect(rejected.result!.isError).toBe(true);
+    expect(rejected.result!.content[0].text).toContain('P8102');
   });
 });

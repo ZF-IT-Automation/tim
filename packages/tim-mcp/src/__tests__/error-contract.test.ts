@@ -4,7 +4,12 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { spawn, type ChildProcess } from 'node:child_process';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
-import { childServerCwd, childServerDbPath, isolateChildServerCwd } from './helpers/child-server-workspace.js';
+import {
+  childServerCwd,
+  childServerDbPath,
+  childServerOutsideMarkerPath,
+  isolateChildServerCwd,
+} from './helpers/child-server-workspace.js';
 
 const SERVER_PATH = path.resolve(__dirname, '..', '..', 'dist', 'server.js');
 isolateChildServerCwd();
@@ -137,8 +142,16 @@ describe('error contract', () => {
     expect(b.error).toBeUndefined();
 
     // First load binds the session.
-    const externalMarker = path.join(process.cwd(), '.tim-project');
-    const before = fs.existsSync(externalMarker) ? fs.readFileSync(externalMarker) : null;
+    const externalMarker = childServerOutsideMarkerPath();
+    fs.writeFileSync(externalMarker, JSON.stringify({
+      version: 2,
+      project: 'P0700',
+      session: 'external-session',
+      exchanges: 11,
+      batch_size: 5,
+      batches_summarized: 2,
+    }, null, 2));
+    const before = fs.readFileSync(externalMarker);
     const sessionId = 'error-contract-load-gate';
     const first = await client.callTool('tim_load_project', { label: 'P8001', sessionId });
     expect(first.error).toBeUndefined();
@@ -149,7 +162,26 @@ describe('error contract', () => {
     expect(second.error).toBeUndefined();
     expect(second.result!.isError).toBe(true);
     expect(getText(second)).toContain('P8001');
-    expect(fs.existsSync(externalMarker) ? fs.readFileSync(externalMarker) : null).toEqual(before);
+    expect(fs.readFileSync(externalMarker)).toEqual(before);
+  });
+
+  it('ignores session identity from a marker outside TIM_MARKER_MAX_ROOT', async () => {
+    const externalMarker = childServerOutsideMarkerPath();
+    fs.writeFileSync(externalMarker, JSON.stringify({
+      version: 2,
+      project: 'P0700',
+      session: 'outside-boundary-session',
+      exchanges: 0,
+      batch_size: 5,
+      batches_summarized: 0,
+    }));
+    await client.callTool('tim_create_project', { label: 'P8001', content: 'A' });
+
+    const loaded = await client.callTool('tim_load_project', { label: 'P8001' });
+    expect(loaded.result!.isError).toBeFalsy();
+
+    const leakedSession = await client.callTool('tim_read', { id: 'outside-boundary-session' });
+    expect(leakedSession.result!.isError).toBe(true);
   });
 
   it('tim_write without content returns isError (zod parse error)', async () => {

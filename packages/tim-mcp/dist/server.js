@@ -78,6 +78,12 @@ function formatToolResponse(payload) {
     }
     return compact;
 }
+function findConfiguredMarker(cwd) {
+    return (0, tim_hooks_1.findMarker)(cwd, {
+        walkUp: true,
+        ...((0, tim_hooks_1.findMarkerOptionsFromEnv)() ?? {}),
+    });
+}
 // ─── CLI ────────────────────────────────────────────────
 function parseCliArgs() {
     const argv = process.argv.slice(2);
@@ -976,7 +982,7 @@ async function formatTasksOutput(store, tasks) {
 async function resolveRoots(store, root) {
     if (root === undefined) {
         if (!transportIsHttp) {
-            const marker = (0, tim_hooks_1.findMarker)(process.cwd(), { walkUp: true });
+            const marker = findConfiguredMarker(process.cwd());
             if (marker)
                 return { labels: [marker.marker.project] };
         }
@@ -1412,7 +1418,7 @@ function usageSessionId() {
         return (0, tim_core_1.resolveActiveSessionId)({
             markerSession: transportIsHttp
                 ? undefined
-                : (0, tim_hooks_1.findMarker)(process.cwd(), { walkUp: true })?.marker.session,
+                : findConfiguredMarker(process.cwd())?.marker.session,
             useSessionCache: !transportIsHttp,
             useEnv: !transportIsHttp,
         }) ?? null;
@@ -1929,7 +1935,7 @@ async function createMcpServer(options = {}) {
                     let baseline = 'explicit since argument';
                     if (!cutoff) {
                         const currentSession = (0, tim_core_1.resolveActiveSessionId)({
-                            markerSession: isHttp ? undefined : (0, tim_hooks_1.findMarker)(process.cwd(), { walkUp: true })?.marker.session,
+                            markerSession: isHttp ? undefined : findConfiguredMarker(process.cwd())?.marker.session,
                             useSessionCache: !isHttp,
                             useEnv: !isHttp,
                         });
@@ -2453,7 +2459,7 @@ async function createMcpServer(options = {}) {
                     const { sessionId, rawCount } = TimSessionResumeSchema.parse(args);
                     const cwd = isHttp ? undefined : process.cwd();
                     const newHarnessId = (0, tim_core_1.resolveActiveSessionId)({
-                        markerSession: cwd ? (0, tim_hooks_1.findMarker)(cwd, { walkUp: true })?.marker.session : undefined,
+                        markerSession: cwd ? findConfiguredMarker(cwd)?.marker.session : undefined,
                         useSessionCache: !isHttp,
                         useEnv: !isHttp,
                     });
@@ -2646,7 +2652,7 @@ async function createMcpServer(options = {}) {
                     const sessionId = (0, tim_core_1.resolveActiveSessionId)({
                         sessionIdArg: sessionIdArg,
                         markerSession: cwd
-                            ? (0, tim_hooks_1.findMarker)(cwd, { walkUp: true })?.marker.session
+                            ? findConfiguredMarker(cwd)?.marker.session
                             : undefined,
                         useSessionCache: !isHttp,
                         useEnv: !isHttp,
@@ -2683,7 +2689,10 @@ async function createMcpServer(options = {}) {
                     }
                     if (bind && cwd) {
                         try {
-                            (0, tim_hooks_1.syncNearestProjectMarker)(cwd, projectLabel, { sessionId });
+                            (0, tim_hooks_1.syncNearestProjectMarker)(cwd, projectLabel, {
+                                sessionId,
+                                findOptions: (0, tim_hooks_1.findMarkerOptionsFromEnv)(),
+                            });
                         }
                         catch {
                             // Non-critical — brief still returned

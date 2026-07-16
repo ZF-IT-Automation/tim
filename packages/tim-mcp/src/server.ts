@@ -34,6 +34,7 @@ import { captureProvenance } from './provenance.js';
 import { resolveEntryTaskStatus } from './task-status.js';
 import {
   findMarker,
+  findMarkerOptionsFromEnv,
   getActiveProjectLabel,
   getBriefingMaxTokens,
   maybeSpawnSummarizer,
@@ -66,6 +67,13 @@ function formatToolResponse(payload: unknown): string {
       return JSON.stringify(payload, null, 2);
   }
   return compact;
+}
+
+function findConfiguredMarker(cwd: string) {
+  return findMarker(cwd, {
+    walkUp: true,
+    ...(findMarkerOptionsFromEnv() ?? {}),
+  });
 }
 
 // ─── CLI ────────────────────────────────────────────────
@@ -1075,7 +1083,7 @@ type ResolveRootsResult =
 async function resolveRoots(store: TimStore, root?: string): Promise<ResolveRootsResult> {
   if (root === undefined) {
     if (!transportIsHttp) {
-      const marker = findMarker(process.cwd(), { walkUp: true });
+      const marker = findConfiguredMarker(process.cwd());
       if (marker) return { labels: [marker.marker.project] };
     }
     const active = getActiveProjectLabel();
@@ -1552,7 +1560,7 @@ function usageSessionId(): string | null {
     return resolveActiveSessionId({
       markerSession: transportIsHttp
         ? undefined
-        : findMarker(process.cwd(), { walkUp: true })?.marker.session,
+        : findConfiguredMarker(process.cwd())?.marker.session,
       useSessionCache: !transportIsHttp,
       useEnv: !transportIsHttp,
     }) ?? null;
@@ -2123,7 +2131,7 @@ export async function createMcpServer(
           let baseline = 'explicit since argument';
           if (!cutoff) {
             const currentSession = resolveActiveSessionId({
-              markerSession: isHttp ? undefined : findMarker(process.cwd(), { walkUp: true })?.marker.session,
+              markerSession: isHttp ? undefined : findConfiguredMarker(process.cwd())?.marker.session,
               useSessionCache: !isHttp,
               useEnv: !isHttp,
             });
@@ -2683,7 +2691,7 @@ export async function createMcpServer(
           const { sessionId, rawCount } = TimSessionResumeSchema.parse(args);
           const cwd = isHttp ? undefined : process.cwd();
           const newHarnessId = resolveActiveSessionId({
-            markerSession: cwd ? findMarker(cwd, { walkUp: true })?.marker.session : undefined,
+            markerSession: cwd ? findConfiguredMarker(cwd)?.marker.session : undefined,
             useSessionCache: !isHttp,
             useEnv: !isHttp,
           });
@@ -2895,7 +2903,7 @@ export async function createMcpServer(
           const sessionId = resolveActiveSessionId({
             sessionIdArg: sessionIdArg,
             markerSession: cwd
-              ? findMarker(cwd, { walkUp: true })?.marker.session
+              ? findConfiguredMarker(cwd)?.marker.session
               : undefined,
             useSessionCache: !isHttp,
             useEnv: !isHttp,
@@ -2938,7 +2946,10 @@ export async function createMcpServer(
 
           if (bind && cwd) {
             try {
-              syncNearestProjectMarker(cwd, projectLabel, { sessionId });
+              syncNearestProjectMarker(cwd, projectLabel, {
+                sessionId,
+                findOptions: findMarkerOptionsFromEnv(),
+              });
             } catch {
               // Non-critical — brief still returned
             }
