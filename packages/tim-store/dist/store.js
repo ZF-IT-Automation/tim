@@ -45,6 +45,7 @@ exports.runBenchmark = runBenchmark;
 exports.splitTitleBody = splitTitleBody;
 exports.cosineSimilarity = cosineSimilarity;
 const better_sqlite3_1 = __importDefault(require("better-sqlite3"));
+const fs = __importStar(require("node:fs"));
 const path = __importStar(require("node:path"));
 const ulid_1 = require("ulid");
 const entry_id_js_1 = require("./entry-id.js");
@@ -130,11 +131,13 @@ function titleSimilarity(a, b) {
 }
 class TimStore {
     db;
+    databasePath;
     emitter;
     agentId;
     deviceId;
     constructor(dbPath, options = {}) {
         this.db = new better_sqlite3_1.default(dbPath);
+        this.databasePath = this.db.memory ? ':memory:' : fs.realpathSync(this.db.name);
         this.emitter = options.emitter;
         this.agentId = options.agentId ?? 'system';
         this.deviceId = options.deviceId ?? 'local';
@@ -1238,6 +1241,10 @@ class TimStore {
     /** @internal Exposed for tests */
     getDb() {
         return this.db;
+    }
+    /** Canonical identity of the SQLite database opened by this store. */
+    getDatabasePath() {
+        return this.databasePath;
     }
     /** Run `fn` inside a single exclusive DB transaction (serializes concurrent callers). */
     runExclusive(fn) {

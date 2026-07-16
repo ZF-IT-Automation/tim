@@ -29,7 +29,7 @@ node packages/tim-cli/dist/cli.js statusline
 
 ---
 
-## Command Overview (29 commands)
+## Command Overview (33 commands)
 
 ### Top-Level Summary
 
@@ -45,25 +45,29 @@ node packages/tim-cli/dist/cli.js statusline
 | 8 | `tim record-commit` | Record a git commit to the project's Commits section |
 | 9 | `tim hook session-start` | Start a new session |
 | 10 | `tim hook session-end` | End a session and run checkpoint |
-| 11 | `tim checkpoint` | Manual checkpoint for a session |
-| 12 | `tim rebalance` | Rebalance exchange batches at boundaries |
-| 13 | `tim statusline` | Status text or Hermes JSON for UI display |
-| 14 | `tim setup-hermes-statusline` | Install Hermes TUI status bar integration |
-| 15 | `tim export` | Export TIM DB to `.hmem` or text format |
-| 16 | `tim import` | Import from `.hmem` file |
-| 17 | `tim migrate-from-hmem` | Guided hmem-to-TIM migration with dry-run, snapshot, import, audit handoff |
-| 18 | `tim migrate tags-to-types` | Convert legacy `#rule` / `#human` tags to `metadata.type` |
-| 19 | `tim snapshot` | Snapshot live DB to `/tmp/tim-snapshots/` (SQLite backup) |
-| 20 | `tim restore` | Restore DB from a snapshot |
-| 21 | `tim release-check` | Verify release gates, beta smoke checks, and packaging safety |
-| 22 | `tim setup-agent` | Install TIM MCP, skills, hooks, and smoke guidance for one agent host |
-| 23 | `tim sync connect` | Connect to o9k-sync server |
-| 24 | `tim sync push` | Push unacked staging to server |
-| 25 | `tim sync pull` | Pull remote changes |
-| 26 | `tim sync status` | Show sync configuration and health |
-| 27 | `tim sync dev` | Start local dev sync server (port 3100) |
-| 28 | `tim --help` | Show top-level help |
-| 29 | `tim hook log` | Log a single exchange to a session |
+| 11 | `tim hook log` | Log a single exchange to a session |
+| 12 | `tim checkpoint` | Manual checkpoint for a session |
+| 13 | `tim rebalance` | Rebalance exchange batches at boundaries |
+| 14 | `tim statusline` | Status text or Hermes JSON for UI display |
+| 15 | `tim setup-hermes-statusline` | Install Hermes TUI status bar integration |
+| 16 | `tim export` | Export TIM DB to `.hmem` or text format |
+| 17 | `tim import` | Import from `.hmem` file |
+| 18 | `tim migrate-from-hmem` | Guided hmem-to-TIM migration with dry-run, snapshot, import, audit handoff |
+| 19 | `tim migrate tags-to-types` | Convert legacy `#rule` / `#human` tags to `metadata.type` |
+| 20 | `tim snapshot` | Snapshot live DB to `/tmp/tim-snapshots/` (SQLite backup) |
+| 21 | `tim restore` | Restore DB from a snapshot |
+| 22 | `tim release-check` | Verify release gates, beta smoke checks, and packaging safety |
+| 23 | `tim setup-agent` | Install TIM MCP, skills, hooks, and smoke guidance for one agent host |
+| 24 | `tim sync connect` | Connect to o9k-sync server |
+| 25 | `tim sync disconnect` | Remove local sync configuration |
+| 26 | `tim sync push` | Push unacked staging to server |
+| 27 | `tim sync pull` | Pull remote changes |
+| 28 | `tim sync status` | Show sync configuration and health |
+| 29 | `tim sync dev` | Start local dev sync server (port 3100) |
+| 30 | `tim user init` | Create the human profile scaffold |
+| 31 | `tim user profile` | Show the human profile tree summary |
+| 32 | `tim update-skills` | Copy bundled TIM skills to detected agent hosts |
+| 33 | `tim --help` | Show top-level help |
 
 ---
 
@@ -289,7 +293,7 @@ when run from a directory whose .tim-project points to a missing/unknown project
 
 ---
 
-### 9-10. `tim hook session-start` / `tim hook session-end`
+### 9-11. `tim hook session-start` / `tim hook session-end` / `tim hook log`
 
 Session lifecycle hooks for tracking agent work sessions in TIM.
 
@@ -319,7 +323,7 @@ tim hook session-end --session $SESSION_ID
 
 ---
 
-### 11. `tim checkpoint --session <id>`
+### 12. `tim checkpoint --session <id>`
 
 Manually trigger a checkpoint for a session — summarizes exchange batches.
 
@@ -329,7 +333,7 @@ Usage: tim checkpoint --session <id>
 
 ---
 
-### 12. `tim rebalance --session <id>`
+### 13. `tim rebalance --session <id>`
 
 Rebalance exchange batches at boundary points — re-groups exchanges into
 optimized batch sizes.
@@ -340,7 +344,7 @@ Usage: tim rebalance --session <id>
 
 ---
 
-### 13. `tim statusline [--cwd <dir>] [--session <id>] [--format text|hermes]`
+### 14. `tim statusline [--cwd <dir>] [--session <id>] [--format text|hermes]`
 
 Short status string for shell prompts or Hermes TUI status bar.
 
@@ -356,7 +360,7 @@ P9999 · 0/5 exchanges · summary in 5
 
 ---
 
-### 14. `tim setup-hermes-statusline [--dry-run] [--skip-build]`
+### 15. `tim setup-hermes-statusline [--dry-run] [--skip-build]`
 
 Install the Hermes TUI status bar integration. Symlinks hooks, patches `cli.py`,
 builds TypeScript, and verifies the integration.
@@ -376,7 +380,7 @@ Test: bash ~/.hermes/agent-hooks/tim-hermes-statusline.sh | jq .
 
 ---
 
-### 15. `tim export <path> [--format hmem|text]`
+### 16. `tim export <path> [--format hmem|text]`
 
 Export database to `.hmem` or plain text format.
 
@@ -386,7 +390,7 @@ Usage: tim export <path.hmem> [--format hmem|text]
 
 ---
 
-### 16. `tim import <path> [--dry-run] [--deduplicate] [--repair-flags] [--no-snapshot-check]`
+### 17. `tim import <path> [--dry-run] [--deduplicate] [--repair-flags] [--no-snapshot-check]`
 
 Import from a `.hmem` file into the live database.
 
@@ -409,7 +413,7 @@ the live TIM database.
 
 ---
 
-### 17. `tim migrate-from-hmem <path.hmem> [--deduplicate] [--no-deduplicate] [--dry-run]`
+### 18. `tim migrate-from-hmem <path.hmem> [--deduplicate] [--no-deduplicate] [--dry-run]`
 
 Guided hmem-to-TIM migration for agents. It inspects the source, performs a dry
 run, snapshots the TIM database before writing, imports, runs a health check,
@@ -433,7 +437,7 @@ for focused repair or lower-level migration work.
 
 ---
 
-### 18. `tim migrate tags-to-types [--dry-run] [--sample-limit N]`
+### 19. `tim migrate tags-to-types [--dry-run] [--sample-limit N]`
 
 One-time migration: convert legacy `#rule` and `#human` tags into `metadata.type`
 fields. Uses heuristics to detect the correct type.
@@ -458,7 +462,7 @@ tim migrate tags-to-types --dry-run --sample-limit 3
 
 ---
 
-### 19. `tim snapshot`
+### 20. `tim snapshot`
 
 Create a safe backup of the live TIM database to `/tmp/tim-snapshots/`.
 Uses SQLite backup API (safe for live DB — no corruption risk).
@@ -478,7 +482,7 @@ snapshot: /tmp/tim-snapshots/tim-20260617-0956.db (67072000 bytes, 141ms)
 
 ---
 
-### 20. `tim restore [--from <path>] [--list] [--dry-run] [--force]`
+### 21. `tim restore [--from <path>] [--list] [--dry-run] [--force]`
 
 Restore TIM DB from a snapshot. Has a safety guard — refuses to overwrite a DB
 modified within the last 60 minutes unless `--force` is passed.
@@ -500,7 +504,7 @@ use --force to override (NOT recommended unless you know what you are doing)
 
 ---
 
-### 21. `tim release-check [--beta] [--json] [--skip-tests true]`
+### 22. `tim release-check [--beta] [--json] [--skip-tests true]`
 
 Run the release gate sequence before tagging or packaging.
 
@@ -530,7 +534,7 @@ when you already ran it.
 
 ---
 
-### 22. `tim setup-agent --host claude|codex|cursor|hermes [--dry-run]`
+### 23. `tim setup-agent --host claude|codex|cursor|hermes [--dry-run]`
 
 Install TIM for one agent host. The command prints a JSON report covering MCP
 config, copied skills, host hooks, and a doctor-style smoke status.
@@ -554,7 +558,7 @@ open or create the TIM DB.
 
 ---
 
-### 23-26. `tim sync` Subcommands
+### 24-29. `tim sync` Subcommands
 
 Distributed sync for multi-device TIM setups.
 
@@ -563,6 +567,10 @@ Connects to an o9k-sync server (prompts for URL).
 ```
 Sync server URL [http://localhost:3100]:
 ```
+
+**`tim sync disconnect`**
+Remove the local `sync.json` and sync-state configuration. This disconnects the
+device locally; it does not delete remote data.
 
 **`tim sync push`**
 Push unacknowledged staging changes to the server.
@@ -590,6 +598,27 @@ Config: /home/bbbee/.tim/sync.json
 **`tim sync dev`**
 Start a local dev sync server on port 3100.
 Fails with `EADDRINUSE` if one is already running.
+
+---
+
+### 30. `tim user init`
+
+Create or repair the `H0000` human-profile scaffold in the selected TIM database.
+This writes to the database and then prints the canonical profile sections.
+
+### 31. `tim user profile`
+
+Read and print the human-profile tree summary from the selected TIM database.
+
+### 32. `tim update-skills`
+
+Copy bundled TIM skills to detected agent-host skill directories. This mutates host
+configuration directories; use `tim setup-agent --host <host> --dry-run` when you need
+a non-mutating installation preview.
+
+### 33. `tim --help`
+
+Print the top-level command inventory without opening the TIM database.
 
 ---
 

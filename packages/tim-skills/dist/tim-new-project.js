@@ -1,7 +1,10 @@
-export const TIM_NEW_PROJECT_SKILL = {
-  name: 'tim-new-project',
-  description: 'Create a TIM project with an explicit repository path or intentional memory-only mode.',
-  content: `# tim-new-project
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.TIM_NEW_PROJECT_SKILL = void 0;
+exports.TIM_NEW_PROJECT_SKILL = {
+    name: 'tim-new-project',
+    description: 'Create a TIM project with an explicit repository path or intentional memory-only mode.',
+    content: `# tim-new-project
 
 Use when an agent must create a project in the configured live TIM database.
 
@@ -31,3 +34,4 @@ shell-quoted \`tim bind-project\` command it returns, against the same configure
 If a different local marker exists, require explicit reconciliation and never overwrite it.
 `,
 };
+//# sourceMappingURL=tim-new-project.js.map

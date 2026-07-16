@@ -166,7 +166,7 @@ export class TimStore implements MemoryInterface {
 
   constructor(dbPath: string, options: TimStoreOptions = {}) {
     this.db = new Database(dbPath);
-    this.databasePath = this.db.name === ':memory:' ? ':memory:' : fs.realpathSync(this.db.name);
+    this.databasePath = this.db.memory ? ':memory:' : fs.realpathSync(this.db.name);
     this.emitter = options.emitter;
     this.agentId = options.agentId ?? 'system';
     this.deviceId = options.deviceId ?? 'local';

@@ -76,6 +76,36 @@ describe('project creation', () => {
     expect(await store.loadProject('P1001')).toBeNull();
   });
 
+  it.each([':memory:', ''])('rejects a bound project on transient database %j before mutation', async (database) => {
+    const transientStore = new TimStore(database);
+    const preflight = vi.fn();
+    const writeExclusive = vi.fn();
+    try {
+      expect(transientStore.getDatabasePath()).toBe(':memory:');
+
+      await expect(createProjectCoordinated(transientStore, {
+        label: 'P1099',
+        path: dir,
+      }, { preflight, writeExclusive })).rejects.toThrow(
+        /bound projects require a persistent database/i,
+      );
+
+      expect(preflight).not.toHaveBeenCalled();
+      expect(writeExclusive).not.toHaveBeenCalled();
+      expect(await transientStore.loadProject('P1099')).toBeNull();
+      expect(fs.existsSync(path.join(dir, '.tim-project'))).toBe(false);
+
+      const virtual = await createProjectCoordinated(transientStore, {
+        label: 'P1099',
+        content: 'Intentional virtual project',
+        memoryOnly: true,
+      });
+      expect(virtual.mode).toBe('memory-only');
+    } finally {
+      transientStore.close();
+    }
+  });
+
   it('rejects an empty path as a missing creation mode', async () => {
     const args = { label: 'P1001', path: '' };
     expect(() => validateMode(args)).toThrow(MODE_ERROR);

@@ -9,9 +9,14 @@ Use when an agent must create a project in the configured live TIM database.
 
 For a disk-backed repository or workspace:
 1. Resolve one canonical absolute path for the repository/workspace.
-2. Prefer `tim new-project --path <absolute-path> --name <name>`. The CLI owns
-   label allocation/retry, database creation, marker publication, and section setup.
-3. Call `tim_load_project`, then fill the appropriate seeded sections with TIM tools.
+2. Call MCP `tim_doctor`; obtain and verify its exact active database path is persistent.
+3. Prefer the shell-safe `TIM_DB_PATH='<doctor-db-path>' tim new-project --path <absolute-path> --name <name>`.
+   Replace placeholders and single-quote/escape shell
+   values. The CLI owns label allocation/retry, creation, marker publication, and sections.
+4. Call `tim_load_project`, then fill the appropriate seeded sections with TIM tools.
+
+If `tim_doctor` cannot provide a persistent database path, do not guess. Use direct MCP
+only with an already-known non-conflicting label as below, or ask the user.
 
 If directly using MCP, start only with an already-known non-conflicting `P` label and
 call `tim_create_project` with `label`, `content`, `aliases`, and

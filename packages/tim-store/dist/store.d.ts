@@ -81,6 +81,7 @@ export interface GetTasksOptions {
 }
 export declare class TimStore implements MemoryInterface {
     private db;
+    private readonly databasePath;
     private emitter?;
     private agentId;
     private deviceId;
@@ -229,6 +230,8 @@ export declare class TimStore implements MemoryInterface {
     consolidate(): ConsolidationManager;
     /** @internal Exposed for tests */
     getDb(): Database.Database;
+    /** Canonical identity of the SQLite database opened by this store. */
+    getDatabasePath(): string;
     /** Run `fn` inside a single exclusive DB transaction (serializes concurrent callers). */
     runExclusive<T>(fn: () => T): T;
     /** Synchronous write for use inside `runExclusive` transactions. */

@@ -137,8 +137,8 @@ function markerInput(label, session) {
         batches_summarized: 0,
     };
 }
-function recoveryCommand(label, projectPath) {
-    return `tim bind-project --label ${shellSingleQuote(label)} --cwd ${shellSingleQuote(projectPath)}`;
+function recoveryCommand(databasePath, label, projectPath) {
+    return `TIM_DB_PATH=${shellSingleQuote(databasePath)} tim bind-project --label ${shellSingleQuote(label)} --cwd ${shellSingleQuote(projectPath)}`;
 }
 function errorText(error) {
     return error instanceof Error ? error.message : String(error);
@@ -148,9 +148,9 @@ function targetMarkerConflict(markerPath, label) {
     return new Error(`A target-local project marker already exists at ${markerPath} and belongs to ${owner}. ` +
         'Remove it only if it is stale, or explicitly reconcile/rebind this directory before creating a project.');
 }
-function publicationFailure(label, projectPath, reason) {
+function publicationFailure(databasePath, label, projectPath, reason) {
     return new ProjectCreationPartialFailureError(`Project ${label} was created in the database, but its local marker was not published or verified at ${projectPath}: ${reason}. ` +
-        `Recover the binding with: ${recoveryCommand(label, projectPath)}`, label, projectPath);
+        `Recover the binding with: ${recoveryCommand(databasePath, label, projectPath)}`, label, projectPath);
 }
 function publicationRace(requested, winner, projectPath) {
     const winnerText = winner === UNKNOWN_LOCAL_MARKER ? 'an unknown or corrupt marker' : `project ${winner}`;
@@ -171,6 +171,10 @@ async function createProjectCoordinated(store, args, deps = {}) {
             aliases: args.aliases,
         });
         return { ...entry, mode };
+    }
+    if (store.getDatabasePath() === ':memory:') {
+        throw new Error('Bound projects require a persistent database. Configure TIM_DB_PATH to a filesystem database, ' +
+            'then retry; use memoryOnly:true only for an intentionally virtual project.');
     }
     const projectPath = canonicalDirectory(args.path);
     if (!(0, marker_js_1.validateProjectLabel)(args.label)) {
@@ -205,14 +209,14 @@ async function createProjectCoordinated(store, args, deps = {}) {
             throw publicationRace(args.label, winner, projectPath);
         }
         if (winner !== args.label) {
-            throw publicationFailure(args.label, projectPath, errorText(error));
+            throw publicationFailure(store.getDatabasePath(), args.label, projectPath, errorText(error));
         }
     }
     const verified = localMarkerLabel(projectPath);
     if (verified !== args.label) {
         if (verified !== null)
             throw publicationRace(args.label, verified, projectPath);
-        throw publicationFailure(args.label, projectPath, 'the marker is absent after publication');
+        throw publicationFailure(store.getDatabasePath(), args.label, projectPath, 'the marker is absent after publication');
     }
     return { ...entry, mode, projectPath, markerPath };
 }

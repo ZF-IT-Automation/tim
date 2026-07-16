@@ -302,14 +302,24 @@ describe('tim new-project', () => {
     exitSpy.mockRestore();
   });
 
-  it('documents new-project as the preferred absolute-path creation command', () => {
+  it('keeps the documented command inventory aligned with actual CLI help', () => {
     const reference = fs.readFileSync(
       path.resolve(__dirname, '../../../../docs/tim-cli-reference.md'),
       'utf8',
     );
+    const help = run(['--help'], env);
+    const helpCommands = help.stdout
+      .split('Commands:\n')[1]
+      .split('\n')
+      .filter(line => /^  \S/.test(line))
+      .map(line => line.trim().split(/\s{2,}/)[0].replace(/\s+(?:\[|<).*/, ''));
+    const documentedCommands = [...reference.matchAll(/^\| \d+ \| `tim ([^`]+)` \|/gm)]
+      .map(match => match[1]);
 
-    expect(reference).toContain('## Command Overview (29 commands)');
-    expect(reference).toMatch(/\| 7 \| `tim new-project` \|/);
+    expect(help.status).toBe(0);
+    expect(helpCommands).toHaveLength(33);
+    expect(documentedCommands).toEqual(helpCommands);
+    expect(reference).toContain('## Command Overview (33 commands)');
     expect(reference).toContain('### 7. `tim new-project --path <absolute-dir> --name <name>');
     expect(reference).toContain('`--path` must be absolute');
     expect(reference).toContain("TIM_DB_PATH='/exact/path/to/tim.db' tim bind-project");

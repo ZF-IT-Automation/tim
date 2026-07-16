@@ -831,6 +831,7 @@ Commands:
   record-commit         Record git commit to project Commits section (--cwd, --hash, --message, --diff)
   hook session-start    Start a session (--session, --agent, --cwd, --harness)
   hook session-end      End a session and run checkpoint (--session)
+  hook log              Log one user/agent exchange (--session, --user, --agent)
   checkpoint            Manual checkpoint for a session (--session)
   rebalance             Rebalance exchange batches at boundaries (--session, --cwd)
   statusline            Status text or Hermes JSON (--cwd, --session, --format text|hermes)

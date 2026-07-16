@@ -219,6 +219,13 @@ export async function createProjectCoordinated(
     return { ...entry, mode };
   }
 
+  if (store.getDatabasePath() === ':memory:') {
+    throw new Error(
+      'Bound projects require a persistent database. Configure TIM_DB_PATH to a filesystem database, ' +
+        'then retry; use memoryOnly:true only for an intentionally virtual project.',
+    );
+  }
+
   const projectPath = canonicalDirectory(args.path!);
   if (!validateProjectLabel(args.label)) {
     throw new Error(`Invalid project label for a bound project: ${args.label}`);

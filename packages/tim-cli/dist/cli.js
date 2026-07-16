@@ -292,17 +292,21 @@ async function cmdBindProject(args) {
         console.error('Usage: tim bind-project --label <P00XX> [--cwd <dir>] [--session <id>]');
         process.exit(1);
     }
-    const existing = (0, tim_hooks_1.readMarker)(cwd);
-    const marker = {
-        project: label,
-        session: flags.session ?? existing?.session ?? '',
-        exchanges: existing?.exchanges ?? 0,
-        batch_size: existing?.batch_size ?? 5,
-        batches_summarized: existing?.batches_summarized ?? 0,
-        version: 2,
-    };
-    (0, tim_hooks_1.writeMarker)(cwd, marker);
-    console.log(`Wrote .tim-project → ${label} at ${cwd}`);
+    const config = (0, tim_core_1.loadConfig)();
+    const store = new tim_store_1.TimStore(getDbPath(config));
+    try {
+        const result = await (0, tim_hooks_1.recoverProjectBinding)(store, {
+            label,
+            path: cwd,
+            sessionId: flags.session,
+        });
+        console.log(result.alreadyBound
+            ? `Already bound .tim-project → ${result.label} at ${result.projectPath}`
+            : `Wrote .tim-project → ${result.label} at ${result.projectPath}`);
+    }
+    finally {
+        store.close();
+    }
 }
 async function cmdHook(args) {
     const sub = args[0];
@@ -777,11 +781,12 @@ Commands:
   stats                 Show memory statistics
   resolve-project       Print bound project from nearest .tim-project (--cwd, --walk-up, --format label|json|directive)
   resolve-session       Print project_ref for a TIM session (--session, --format label|directive|json)
-  bind-project          Write/refresh .tim-project for a project (--label, --cwd, --session)
+  bind-project          Safely bind .tim-project to an existing project (--label, --cwd, --session)
   new-project           Create a new TIM project + bind to dir (-p <path> -n <name> [--no-git] [--confirm])
   record-commit         Record git commit to project Commits section (--cwd, --hash, --message, --diff)
   hook session-start    Start a session (--session, --agent, --cwd, --harness)
   hook session-end      End a session and run checkpoint (--session)
+  hook log              Log one user/agent exchange (--session, --user, --agent)
   checkpoint            Manual checkpoint for a session (--session)
   rebalance             Rebalance exchange batches at boundaries (--session, --cwd)
   statusline            Status text or Hermes JSON (--cwd, --session, --format text|hermes)
