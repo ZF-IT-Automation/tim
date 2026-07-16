@@ -7,7 +7,9 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { spawn, type ChildProcess } from 'node:child_process';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
+import { childServerCwd, childServerDbPath, isolateChildServerCwd } from './helpers/child-server-workspace.js';
 import * as http from 'node:http';
+isolateChildServerCwd();
 
 const SERVER_PATH = path.resolve(__dirname, '..', '..', 'dist', 'server.js');
 const PORT_BASE = 19000;
@@ -17,11 +19,12 @@ let server: ChildProcess;
 
 function startServer(port: number): Promise<void> {
   return new Promise((resolve, reject) => {
-    dbPath = `/tmp/tim-http-test-${Date.now()}-${Math.random().toString(36).slice(2)}.db`;
+    dbPath = childServerDbPath();
     server = spawn(
       process.execPath,
       [SERVER_PATH, '--http', '--port', String(port)],
       {
+        cwd: childServerCwd(),
         env: { ...process.env, TIM_DB_PATH: dbPath, HERMES_SKIP_DB_GUARD: '1' },
         stdio: ['pipe', 'pipe', 'pipe'],
         timeout: 10_000,

@@ -44,6 +44,7 @@ const tim_core_1 = require("tim-core");
 const tim_store_1 = require("tim-store");
 const tim_migrate_1 = require("tim-migrate");
 const snapshot_js_1 = require("./snapshot.js");
+const args_js_1 = require("./args.js");
 function buildMigrateFromHmemPlan(source, opts = {}) {
     const deduplicate = opts.deduplicate !== false;
     return [
@@ -72,27 +73,6 @@ function buildImportAuditArgs(source) {
 function getDbPath(config) {
     return process.env.TIM_DB_PATH || config.dbPath || path.join(os.homedir(), '.tim', 'tim.db');
 }
-function parseArgs(args) {
-    const flags = {};
-    const positional = [];
-    for (let i = 0; i < args.length; i++) {
-        const arg = args[i];
-        if (!arg.startsWith('--')) {
-            positional.push(arg);
-            continue;
-        }
-        const key = arg.slice(2);
-        const next = args[i + 1];
-        if (next && !next.startsWith('--')) {
-            flags[key] = next;
-            i++;
-        }
-        else {
-            flags[key] = 'true';
-        }
-    }
-    return { flags, positional };
-}
 function resolveDeduplicate(flags) {
     if (flags['no-deduplicate'] === 'true')
         return false;
@@ -101,7 +81,9 @@ function resolveDeduplicate(flags) {
     return true;
 }
 async function cmdMigrateFromHmem(args) {
-    const { flags, positional } = parseArgs(args);
+    const { flags, positional } = (0, args_js_1.parseArgs)(args, {
+        valueOptions: (0, args_js_1.valueOptionsFor)('migrate-from-hmem'),
+    });
     const sourcePath = positional[0];
     if (!sourcePath) {
         console.error('Usage: tim migrate-from-hmem <path.hmem> [--deduplicate] [--no-deduplicate] [--dry-run]');

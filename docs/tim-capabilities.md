@@ -390,7 +390,7 @@ Session-Exchanges werden harness-agnostisch geloggt (`metadata.harness`). Projek
 |-------------------|-----|
 | Framework: Skills, Cron, Orchestrierung | Memory: DB, Sync, Search |
 | hmem MCP Tools | tim MCP Tools |
-| `o9k-session-start` | `tim_load_project` + Hooks |
+| Session-start orchestration | `tim-session-start` + `tim_load_project` |
 
 Beide parallel nutzbar; Übergang über `memory_interface: "tim"` in Config (geplant).
 
@@ -578,7 +578,6 @@ tim-skills       → (geplant) Skill-Integration
 | Problem | Beschreibung |
 |---------|--------------|
 | **hmem + TIM parallel** | Hermes injiziert o9k-startup UND tim-session-start — zwei Stores, TIM-Directive soll authoritative sein |
-| **Skills noch o9k-branded** | `o9k-session-start`, `o9k-handoff` — TIM-Skills teilweise noch nicht published |
 | **hmem-sync vs TIM-Sync** | Aktuell noch hmem-sync Server (:3100), TIM-Sync-Produkt in Entwicklung |
 | **Letzter Sync stale** | Sync auf einzelnen Geräten veraltet — Writes propagieren erst beim nächsten Push |
 

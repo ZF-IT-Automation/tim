@@ -90,6 +90,24 @@ describe('tim new-project', () => {
     expect(result.stdout).toContain('✓ Created project P0001');
   });
 
+  it('supports equals syntax through the shared parser', () => {
+    const target = path.join(workDir, 'equals-syntax');
+    const result = run(['new-project', `--path=${target}`, '--name=Equals Syntax'], env);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('✓ Created project P0001 "Equals Syntax"');
+    expect(fs.existsSync(path.join(target, '.tim-project'))).toBe(true);
+  });
+
+  it('rejects a missing option value before creating files or database state', () => {
+    const target = path.join(workDir, 'missing-name-value');
+    const result = run(['new-project', '--path', target, '--name'], env);
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('Missing value for --name');
+    expect(fs.existsSync(target)).toBe(false);
+    expect(fs.existsSync(dbPath)).toBe(false);
+  });
+
   it('prompts on non-empty directory with TTY', async () => {
     const target = path.join(workDir, 'nonempty-tty');
     fs.mkdirSync(target);
@@ -317,9 +335,9 @@ describe('tim new-project', () => {
       .map(match => match[1]);
 
     expect(help.status).toBe(0);
-    expect(helpCommands).toHaveLength(33);
+    expect(helpCommands).toHaveLength(36);
     expect(documentedCommands).toEqual(helpCommands);
-    expect(reference).toContain('## Command Overview (33 commands)');
+    expect(reference).toContain('## Command Overview (36 commands)');
     expect(reference).toContain('### 7. `tim new-project --path <absolute-dir> --name <name>');
     expect(reference).toContain('`--path` must be absolute');
     expect(reference).toContain("TIM_DB_PATH='/exact/path/to/tim.db' tim bind-project");

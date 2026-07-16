@@ -5,6 +5,7 @@ import { loadConfig, type TimConfigFile } from 'tim-core';
 import { TimStore } from 'tim-store';
 import { inspectHmemManifest, tim_import } from 'tim-migrate';
 import { runSnapshot } from './snapshot.js';
+import { parseArgs, valueOptionsFor } from './args.js';
 
 export interface HmemWizardStep {
   id: string;
@@ -50,30 +51,6 @@ function getDbPath(config: TimConfigFile): string {
   return process.env.TIM_DB_PATH || config.dbPath || path.join(os.homedir(), '.tim', 'tim.db');
 }
 
-function parseArgs(args: string[]): { flags: Record<string, string>; positional: string[] } {
-  const flags: Record<string, string> = {};
-  const positional: string[] = [];
-
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
-    if (!arg.startsWith('--')) {
-      positional.push(arg);
-      continue;
-    }
-
-    const key = arg.slice(2);
-    const next = args[i + 1];
-    if (next && !next.startsWith('--')) {
-      flags[key] = next;
-      i++;
-    } else {
-      flags[key] = 'true';
-    }
-  }
-
-  return { flags, positional };
-}
-
 function resolveDeduplicate(flags: Record<string, string>): boolean {
   if (flags['no-deduplicate'] === 'true') return false;
   if (flags.deduplicate === 'false') return false;
@@ -81,7 +58,9 @@ function resolveDeduplicate(flags: Record<string, string>): boolean {
 }
 
 export async function cmdMigrateFromHmem(args: string[]): Promise<void> {
-  const { flags, positional } = parseArgs(args);
+  const { flags, positional } = parseArgs(args, {
+    valueOptions: valueOptionsFor('migrate-from-hmem'),
+  });
   const sourcePath = positional[0];
 
   if (!sourcePath) {

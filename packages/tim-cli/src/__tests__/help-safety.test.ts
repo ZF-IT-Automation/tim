@@ -1,102 +1,196 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { spawnSync } from 'child_process';
-import * as fs from 'fs';
-import * as os from 'os';
-import * as path from 'path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { spawnSync } from 'node:child_process';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 
 const CLI = path.resolve(__dirname, '../../dist/cli.js');
 const TEST_ROOT = path.join(os.tmpdir(), 'tim-cli-help-tests');
 
-function run(args: string[], env: Record<string, string> = {}) {
-  const result = spawnSync('node', [CLI, ...args], {
-    encoding: 'utf8',
-    env: { ...process.env, ...env },
-  });
-  return {
-    stdout: result.stdout ?? '',
-    stderr: result.stderr ?? '',
-    status: result.status ?? 1,
+interface HelpCase {
+  args: string[];
+  usage: string;
+}
+
+const HELP_CASES: HelpCase[] = [
+  { args: [], usage: 'Usage: tim <command>' },
+  { args: ['init'], usage: 'Usage: tim init' },
+  { args: ['doctor'], usage: 'Usage: tim doctor' },
+  { args: ['stats'], usage: 'Usage: tim stats' },
+  { args: ['resolve-project'], usage: 'Usage: tim resolve-project' },
+  { args: ['resolve-session'], usage: 'Usage: tim resolve-session' },
+  { args: ['bind-project'], usage: 'Usage: tim bind-project' },
+  { args: ['new-project'], usage: 'Usage: tim new-project' },
+  { args: ['record-commit'], usage: 'Usage: tim record-commit' },
+  { args: ['hook'], usage: 'Usage: tim hook' },
+  { args: ['hook', 'session-start'], usage: 'Usage: tim hook session-start' },
+  { args: ['hook', 'session-end'], usage: 'Usage: tim hook session-end' },
+  { args: ['hook', 'log'], usage: 'Usage: tim hook log' },
+  { args: ['hook', 'prompt-submit'], usage: 'Usage: tim hook prompt-submit' },
+  { args: ['hook', 'claude-stop'], usage: 'Usage: tim hook claude-stop' },
+  { args: ['checkpoint'], usage: 'Usage: tim checkpoint' },
+  { args: ['rebalance'], usage: 'Usage: tim rebalance' },
+  { args: ['statusline'], usage: 'Usage: tim statusline' },
+  { args: ['setup-hermes-statusline'], usage: 'Usage: tim setup-hermes-statusline' },
+  { args: ['export'], usage: 'Usage: tim export' },
+  { args: ['import'], usage: 'Usage: tim import' },
+  { args: ['migrate-from-hmem'], usage: 'Usage: tim migrate-from-hmem' },
+  { args: ['migrate'], usage: 'Usage: tim migrate' },
+  { args: ['migrate', 'tags-to-types'], usage: 'Usage: tim migrate tags-to-types' },
+  { args: ['migrate', 'project-kind'], usage: 'Usage: tim migrate project-kind' },
+  { args: ['snapshot'], usage: 'Usage: tim snapshot' },
+  { args: ['restore'], usage: 'Usage: tim restore' },
+  { args: ['release-check'], usage: 'Usage: tim release-check' },
+  { args: ['setup-agent'], usage: 'Usage: tim setup-agent' },
+  { args: ['sync'], usage: 'Usage: tim sync' },
+  { args: ['sync', 'connect'], usage: 'Usage: tim sync connect' },
+  { args: ['sync', 'disconnect'], usage: 'Usage: tim sync disconnect' },
+  { args: ['sync', 'push'], usage: 'Usage: tim sync push' },
+  { args: ['sync', 'pull'], usage: 'Usage: tim sync pull' },
+  { args: ['sync', 'status'], usage: 'Usage: tim sync status' },
+  { args: ['sync', 'dev'], usage: 'Usage: tim sync dev' },
+  { args: ['root-entries'], usage: 'Usage: tim root-entries' },
+  { args: ['consolidate'], usage: 'Usage: tim consolidate' },
+  { args: ['consolidate', 'find-duplicates'], usage: 'Usage: tim consolidate find-duplicates' },
+  { args: ['consolidate', 'find-decay'], usage: 'Usage: tim consolidate find-decay' },
+  { args: ['consolidate', 'run'], usage: 'Usage: tim consolidate run' },
+  { args: ['consolidate', 'status'], usage: 'Usage: tim consolidate status' },
+  { args: ['secret'], usage: 'Usage: tim secret' },
+  { args: ['secret', 'set'], usage: 'Usage: tim secret set' },
+  { args: ['secret', 'status'], usage: 'Usage: tim secret status' },
+  { args: ['secret', 'list'], usage: 'Usage: tim secret list' },
+  { args: ['user'], usage: 'Usage: tim user' },
+  { args: ['user', 'init'], usage: 'Usage: tim user init' },
+  { args: ['user', 'profile'], usage: 'Usage: tim user profile' },
+  { args: ['update-skills'], usage: 'Usage: tim update-skills' },
+  { args: ['--version'], usage: 'Usage: tim --version' },
+  { args: ['-v'], usage: 'Usage: tim --version' },
+];
+
+function snapshotTree(root: string): Record<string, string> {
+  const snapshot: Record<string, string> = {};
+  const visit = (dir: string): void => {
+    for (const name of fs.readdirSync(dir).sort()) {
+      const absolute = path.join(dir, name);
+      const relative = path.relative(root, absolute);
+      const stat = fs.lstatSync(absolute);
+      if (stat.isDirectory()) {
+        snapshot[`${relative}/`] = 'directory';
+        visit(absolute);
+      } else {
+        snapshot[relative] = fs.readFileSync(absolute, 'utf8');
+      }
+    }
   };
+  visit(root);
+  return snapshot;
 }
 
 describe('tim CLI help safety', () => {
+  let caseRoot: string;
   let homeDir: string;
+  let cwd: string;
   let dbPath: string;
 
   beforeEach(() => {
     fs.mkdirSync(TEST_ROOT, { recursive: true });
-    homeDir = fs.mkdtempSync(path.join(TEST_ROOT, 'home-'));
-    dbPath = path.join(homeDir, 'tim.db');
+    caseRoot = fs.mkdtempSync(path.join(TEST_ROOT, 'case-'));
+    homeDir = path.join(caseRoot, 'home');
+    cwd = path.join(caseRoot, 'workspace');
+    fs.mkdirSync(homeDir);
+    fs.mkdirSync(cwd);
+    fs.writeFileSync(path.join(cwd, '.tim-project'), '{"project":"P0042"}\n');
+    const blockedParent = path.join(caseRoot, 'not-a-directory');
+    fs.writeFileSync(blockedParent, 'database access must not reach this path');
+    dbPath = path.join(blockedParent, 'missing', 'tim.db');
   });
 
   afterEach(() => {
-    fs.rmSync(homeDir, { recursive: true, force: true });
+    fs.rmSync(caseRoot, { recursive: true, force: true });
   });
 
-  it('init --help does not initialize the database', () => {
-    const result = run(['init', '--help'], {
-      HOME: homeDir,
-      TIM_DB_PATH: dbPath,
+  for (const { args, usage } of HELP_CASES) {
+    for (const helpFlag of ['-h', '--help']) {
+      const invocation = [...args, helpFlag];
+      it(`${invocation.join(' ')} exits zero and makes no filesystem changes`, () => {
+        const before = snapshotTree(caseRoot);
+        const result = spawnSync('node', [CLI, ...invocation], {
+          cwd,
+          encoding: 'utf8',
+          env: {
+            ...process.env,
+            HOME: homeDir,
+            TIM_DB_PATH: dbPath,
+          },
+        });
+
+        expect(result.status, result.stderr).toBe(0);
+        expect(result.stdout).toContain(usage);
+        expect(result.stderr).toBe('');
+        expect(snapshotTree(caseRoot)).toEqual(before);
+      });
+    }
+  }
+
+  it('treats --help as data when an explicit value option consumes it', () => {
+    const target = path.join(caseRoot, 'help-named-project');
+    const validDbPath = path.join(caseRoot, 'help-value.db');
+    const result = spawnSync('node', [
+      CLI,
+      'new-project',
+      '--path', target,
+      '--name', '--help',
+      '--no-git',
+    ], {
+      cwd,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        HOME: homeDir,
+        TIM_DB_PATH: validDbPath,
+        TIM_MARKER_MAX_ROOT: caseRoot,
+      },
     });
 
-    expect(result.status).toBe(0);
-    expect(result.stdout).toContain('Usage: tim init');
-    expect(fs.existsSync(path.join(homeDir, '.tim'))).toBe(false);
-    expect(fs.existsSync(dbPath)).toBe(false);
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).not.toContain('Usage:');
+    expect(result.stdout).toContain('Created project P0001 "--help"');
+    expect(fs.existsSync(path.join(target, '.tim-project'))).toBe(true);
   });
 
-  it('doctor --help does not open or create the database', () => {
-    const result = run(['doctor', '--help'], {
-      HOME: homeDir,
-      TIM_DB_PATH: dbPath,
+  it('stops at help before a later incomplete value option', () => {
+    const before = snapshotTree(caseRoot);
+    const result = spawnSync('node', [CLI, 'new-project', '--help', '--name'], {
+      cwd,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        HOME: homeDir,
+        TIM_DB_PATH: dbPath,
+      },
     });
 
-    expect(result.status).toBe(0);
-    expect(result.stdout).toContain('Usage: tim doctor');
-    expect(fs.existsSync(dbPath)).toBe(false);
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain('Usage: tim new-project');
+    expect(result.stderr).toBe('');
+    expect(snapshotTree(caseRoot)).toEqual(before);
   });
 
-  it('stats --help does not open or create the database', () => {
-    const result = run(['stats', '--help'], {
-      HOME: homeDir,
-      TIM_DB_PATH: dbPath,
+  it('prints useful root usage for help on an unknown command', () => {
+    const result = spawnSync('node', [CLI, 'not-a-command', '--help'], {
+      cwd,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        HOME: homeDir,
+        TIM_DB_PATH: dbPath,
+      },
     });
 
-    expect(result.status).toBe(0);
-    expect(result.stdout).toContain('Usage: tim stats');
-    expect(fs.existsSync(dbPath)).toBe(false);
-  });
-
-  it('release-check --help does not open or create the database', () => {
-    const result = run(['release-check', '--help'], {
-      HOME: homeDir,
-      TIM_DB_PATH: dbPath,
-    });
-
-    expect(result.status).toBe(0);
-    expect(result.stdout).toContain('Usage: tim release-check');
-    expect(fs.existsSync(dbPath)).toBe(false);
-  });
-
-  it('import --help does not open or create the database', () => {
-    const result = run(['import', '--help'], {
-      HOME: homeDir,
-      TIM_DB_PATH: dbPath,
-    });
-
-    expect(result.status).toBe(0);
-    expect(result.stdout).toContain('Usage: tim import');
-    expect(fs.existsSync(dbPath)).toBe(false);
-  });
-
-  it('setup-agent --help does not open or create the database', () => {
-    const result = run(['setup-agent', '--help'], {
-      HOME: homeDir,
-      TIM_DB_PATH: dbPath,
-    });
-
-    expect(result.status).toBe(0);
-    expect(result.stdout).toContain('Usage: tim setup-agent');
-    expect(fs.existsSync(dbPath)).toBe(false);
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain('Unknown command: not-a-command');
+    expect(result.stdout).toContain('Usage: tim <command>');
+    expect(result.stdout).not.toContain('undefined');
+    expect(result.stderr).toBe('');
   });
 });

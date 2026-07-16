@@ -29,7 +29,7 @@ node packages/tim-cli/dist/cli.js statusline
 
 ---
 
-## Command Overview (33 commands)
+## Command Overview (36 commands)
 
 ### Top-Level Summary
 
@@ -53,7 +53,7 @@ node packages/tim-cli/dist/cli.js statusline
 | 16 | `tim export` | Export TIM DB to `.hmem` or text format |
 | 17 | `tim import` | Import from `.hmem` file |
 | 18 | `tim migrate-from-hmem` | Guided hmem-to-TIM migration with dry-run, snapshot, import, audit handoff |
-| 19 | `tim migrate tags-to-types` | Convert legacy `#rule` / `#human` tags to `metadata.type` |
+| 19 | `tim migrate` | Convert legacy `#rule` / `#human` tags to `metadata.type` (`migrate tags-to-types`) |
 | 20 | `tim snapshot` | Snapshot live DB to `/tmp/tim-snapshots/` (SQLite backup) |
 | 21 | `tim restore` | Restore DB from a snapshot |
 | 22 | `tim release-check` | Verify release gates, beta smoke checks, and packaging safety |
@@ -67,7 +67,10 @@ node packages/tim-cli/dist/cli.js statusline
 | 30 | `tim user init` | Create the human profile scaffold |
 | 31 | `tim user profile` | Show the human profile tree summary |
 | 32 | `tim update-skills` | Copy bundled TIM skills to detected agent hosts |
-| 33 | `tim --help` | Show top-level help |
+| 33 | `tim root-entries` | List root entries |
+| 34 | `tim consolidate` | Run memory consolidation |
+| 35 | `tim secret` | Manage secret entry metadata |
+| 36 | `tim --help` | Show top-level help |
 
 ---
 
@@ -79,11 +82,11 @@ Initialize TIM (create DB, create tables, register agents, write MCP config).
 **Idempotent-safe** — if DB exists, it validates health instead of re-creating.
 
 ```
-✓ Database created: /home/bbbee/.tim/tim.db
-✓ MCP config written: /home/bbbee/.tim/mcp.json
+✓ Database created: <home>/.tim/tim.db
+✓ MCP config written: <home>/.tim/mcp.json
 ✓ Health: 2750 entries, FTS5=OK
 
-TIM ready. Connect your MCP client to /home/bbbee/.tim/mcp.json
+TIM ready. Connect your MCP client to <home>/.tim/mcp.json
 ```
 
 **Note:** `tim init --help` prints usage and exits before any DB work.
@@ -95,7 +98,7 @@ TIM ready. Connect your MCP client to /home/bbbee/.tim/mcp.json
     "tim": {
       "command": "npx",
       "args": ["tim-mcp"],
-      "env": { "TIM_DB_PATH": "/home/bbbee/.tim/tim.db" }
+      "env": { "TIM_DB_PATH": "<home>/.tim/tim.db" }
     }
   }
 }
@@ -114,7 +117,7 @@ top tags, and whether Hermes statusline integration is installed.
 **Full output** (`samples/tim-doctor.txt`):
 ```
 ═══ TIM Doctor ═══
-DB: /home/bbbee/.tim/tim.db
+DB: <home>/.tim/tim.db
 Entries: 2750 | Edges: 10451
 Confidence avg: 1.00
 Broken links: 2
@@ -366,7 +369,7 @@ Install the Hermes TUI status bar integration. Symlinks hooks, patches `cli.py`,
 builds TypeScript, and verifies the integration.
 
 ```
-✓ scripts: /home/bbbee/projects/tim/packages/tim-hooks/scripts
+✓ scripts: <tim-repo>/packages/tim-hooks/scripts
 ○ symlink:tim-hermes-session-cache.sh: already linked
 ○ symlink:tim-hermes-statusline.sh: already linked
 ○ config.yaml: tim-hermes-session-cache.sh already registered
@@ -489,7 +492,7 @@ modified within the last 60 minutes unless `--force` is passed.
 
 ```
 restore: refusing to overwrite DB modified 38m ago (safety threshold 60m)
-current db: /home/bbbee/.tim/tim.db
+current db: <home>/.tim/tim.db
 use --force to override (NOT recommended unless you know what you are doing)
 ```
 
@@ -592,7 +595,7 @@ Unacked staging: 7281
 Last push: 2026-06-17T07:35:19.297Z
 Last pull: 2026-06-17T07:35:19.338Z
 Cursor: 1
-Config: /home/bbbee/.tim/sync.json
+Config: <home>/.tim/sync.json
 ```
 
 **`tim sync dev`**
@@ -616,7 +619,22 @@ Copy bundled TIM skills to detected agent-host skill directories. This mutates h
 configuration directories; use `tim setup-agent --host <host> --dry-run` when you need
 a non-mutating installation preview.
 
-### 33. `tim --help`
+### 33. `tim root-entries [--type <type>] [--tag '#tag'] [--format json|text]`
+
+List root/top-level entries filtered by `metadata.type` (preferred) or a legacy
+`#type` tag (deprecated alias, auto-normalized with a warning).
+
+### 34. `tim consolidate <find-duplicates|find-decay|...> --project <P00XX>`
+
+Run a memory-consolidation subcommand (duplicate/decay candidate discovery, etc.)
+against one project's entries.
+
+### 35. `tim secret <set|status|...> <id>`
+
+Manage the `metadata.secret` marker on an entry subtree — set/unset the secret
+boundary and check whether an entry inherits secrecy from an ancestor.
+
+### 36. `tim --help`
 
 Print the top-level command inventory without opening the TIM database.
 
@@ -706,7 +724,7 @@ Configure your MCP client with `~/.tim/mcp.json`:
     "tim": {
       "command": "npx",
       "args": ["tim-mcp"],
-      "env": { "TIM_DB_PATH": "/home/bbbee/.tim/tim.db" }
+      "env": { "TIM_DB_PATH": "<home>/.tim/tim.db" }
     }
   }
 }

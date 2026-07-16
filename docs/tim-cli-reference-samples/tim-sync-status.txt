@@ -7,4 +7,4 @@ Unacked staging: 7281
 Last push: 2026-06-17T07:35:19.297Z
 Last pull: 2026-06-17T07:35:19.338Z
 Cursor: 1
-Config: /home/bbbee/.tim/sync.json
+Config: <home>/.tim/sync.json

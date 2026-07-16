@@ -55,6 +55,7 @@ const path = __importStar(require("path"));
 const os = __importStar(require("os"));
 const child_process_1 = require("child_process");
 const snapshot_js_1 = require("./snapshot.js");
+const args_js_1 = require("./args.js");
 const DEFAULT_SNAPSHOT_DIR = '/tmp/tim-snapshots';
 const MIN_AGE_MS = 3600 * 1000; // 1h safety: refuse restore if current db is younger
 const STOP_SCRIPT_CANDIDATES = [
@@ -79,24 +80,6 @@ function whichScript(candidates) {
             return abs;
     }
     return null;
-}
-function parseFlags(args) {
-    const out = {};
-    for (let i = 0; i < args.length; i++) {
-        const a = args[i];
-        if (!a.startsWith('--'))
-            continue;
-        const k = a.slice(2);
-        const v = args[i + 1];
-        if (v && !v.startsWith('--')) {
-            out[k] = v;
-            i++;
-        }
-        else {
-            out[k] = 'true';
-        }
-    }
-    return out;
 }
 function listSnapshots(dir) {
     if (!fs.existsSync(dir))
@@ -172,7 +155,7 @@ async function cmdRestoreList() {
     }
 }
 async function cmdRestore(args) {
-    const flags = parseFlags(args);
+    const { flags } = (0, args_js_1.parseArgs)(args, { valueOptions: (0, args_js_1.valueOptionsFor)('restore') });
     if (flags.list === 'true') {
         await cmdRestoreList();
         return;

@@ -36,13 +36,25 @@ function stagingToEnvelope(row) {
         device = row.lww_device;
     }
     const deleted = operation === 'delete';
+    let payload = row.payload;
+    if (entityType === 'entry' && !deleted) {
+        try {
+            const parsed = JSON.parse(payload);
+            if (typeof parsed.metadata_raw !== 'string' && typeof parsed.metadata === 'string') {
+                payload = JSON.stringify({ ...parsed, metadata_raw: parsed.metadata });
+            }
+        }
+        catch {
+            // Keep malformed legacy payloads unchanged; the receiver rejects them.
+        }
+    }
     return {
         v: 1,
         type: entityType,
         key,
         lww: new Date(lwwTs).toISOString(),
         deleted,
-        payload: row.payload,
+        payload,
         ...(device ? { device } : {}),
     };
 }

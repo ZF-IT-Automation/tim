@@ -2,6 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { spawn, type ChildProcess } from 'node:child_process';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
+import { childServerCwd, isolateChildServerCwd } from './helpers/child-server-workspace.js';
+isolateChildServerCwd();
 
 const SERVER_PATH = path.resolve(__dirname, '..', '..', 'dist', 'server.js');
 
@@ -23,6 +25,7 @@ class McpClient {
       throw new Error(`Server dist not found: ${SERVER_PATH}. Run "npm run build" first.`);
     }
     this.proc = spawn('node', [SERVER_PATH], {
+      cwd: childServerCwd(),
       env: { ...process.env, TIM_DB_PATH: dbPath },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
@@ -129,8 +132,8 @@ describe('tim_update (renamed entry title)', () => {
     expect(renamed.title).toBe('Renamed');
 
     const searchResp = await client.callTool('tim_search', { query: 'Renamed' });
-    const results = JSON.parse(searchResp.result!.content[0].text);
-    expect(results.some((r: { id: string }) => r.id === written.id)).toBe(true);
+    const response = JSON.parse(searchResp.result!.content[0].text);
+    expect(response.results.some((r: { id: string }) => r.id === written.id)).toBe(true);
   });
 
   it('tim_rename_title is removed — call returns Unknown tool error', async () => {

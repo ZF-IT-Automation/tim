@@ -64,6 +64,7 @@ const auto_init_js_1 = require("./auto-init.js");
 const fs = __importStar(require("fs"));
 const os = __importStar(require("os"));
 const path = __importStar(require("path"));
+const search_response_js_1 = require("./search-response.js");
 /**
  * Format a tool response payload to JSON.
  * Uses compact format (no whitespace) for payloads over COMPACT_THRESHOLD bytes
@@ -77,6 +78,12 @@ function formatToolResponse(payload) {
         return JSON.stringify(payload, null, 2);
     }
     return compact;
+}
+function findConfiguredMarker(cwd) {
+    return (0, tim_hooks_1.findMarker)(cwd, {
+        walkUp: true,
+        ...((0, tim_hooks_1.findMarkerOptionsFromEnv)() ?? {}),
+    });
 }
 // ─── CLI ────────────────────────────────────────────────
 function parseCliArgs() {
@@ -141,12 +148,15 @@ const TimWriteSchema = zod_1.z.object({
 const TimSearchSchema = zod_1.z.object({
     query: zod_1.z.string().describe('FTS5 search query'),
     topK: zod_1.z.number().min(1).max(100).optional().default(10),
+    excerptChars: zod_1.z.number().int().min(0).max(500).optional().default(500)
+        .describe('Maximum Unicode code points per result excerpt'),
     searchType: zod_1.z.enum(['fts', 'vector', 'hybrid']).optional().default('fts'),
     root: zod_1.z.string().optional().describe('Scope to project (label/alias/name)'),
     type: zod_1.z.string().optional().describe('Filter metadata.type'),
     tag: zod_1.z.string().optional().describe('Filter exact tag'),
     status: zod_1.z.string().optional().describe('Filter metadata.status'),
-});
+}).describe('Returns {results, returned, omitted, truncated}. Results contain bounded excerpts; ' +
+    'use tim_read for the full body.');
 const TimGuardSchema = zod_1.z.object({
     action: zod_1.z.string().min(3)
         .describe('The planned action, in plain words — e.g. "upload PDF via rmapi"'),
@@ -448,7 +458,8 @@ exports.TOOL_DEFS = [
         name: 'tim_search',
         description: 'Search TIM entries using FTS5 full-text search: keywords, "quoted phrases", ' +
             'prefix*. NOT SQL — no column filters. For vague/associative queries use tim_remember; ' +
-            'for a known label use tim_read directly.',
+            'for a known label use tim_read directly. Returns {results, returned, omitted, truncated}; ' +
+            'results contain bounded excerpts. Use tim_read for the full body.',
         schema: TimSearchSchema,
     },
     {
@@ -980,7 +991,7 @@ async function formatTasksOutput(store, tasks) {
 async function resolveRoots(store, root) {
     if (root === undefined) {
         if (!transportIsHttp) {
-            const marker = (0, tim_hooks_1.findMarker)(process.cwd(), { walkUp: true });
+            const marker = findConfiguredMarker(process.cwd());
             if (marker)
                 return { labels: [marker.marker.project] };
         }
@@ -1416,7 +1427,7 @@ function usageSessionId() {
         return (0, tim_core_1.resolveActiveSessionId)({
             markerSession: transportIsHttp
                 ? undefined
-                : (0, tim_hooks_1.findMarker)(process.cwd(), { walkUp: true })?.marker.session,
+                : findConfiguredMarker(process.cwd())?.marker.session,
             useSessionCache: !transportIsHttp,
             useEnv: !transportIsHttp,
         }) ?? null;
@@ -1834,7 +1845,7 @@ async function createMcpServer(options = {}) {
                     };
                 }
                 case 'tim_search': {
-                    const { query, topK, root, type, tag, status } = TimSearchSchema.parse(args);
+                    const { query, topK, excerptChars, root, type, tag, status } = TimSearchSchema.parse(args);
                     const hasFilters = Boolean(root || type || tag || status);
                     let results = await s.search({ query, topK: hasFilters ? 1000 : topK });
                     if (root) {
@@ -1860,9 +1871,10 @@ async function createMcpServer(options = {}) {
                     if (hasFilters) {
                         results = results.slice(0, topK);
                     }
-                    bestEffortTelemetry('recordRead', () => s.recordRead(results.map(e => e.id), usageSessionId()));
+                    const response = (0, search_response_js_1.buildBoundedSearchResponse)(results, excerptChars);
+                    bestEffortTelemetry('recordRead', () => s.recordRead(response.results.map(e => e.id), usageSessionId()));
                     return {
-                        content: [{ type: 'text', text: formatToolResponse(results) }],
+                        content: [{ type: 'text', text: JSON.stringify(response) }],
                     };
                 }
                 case 'tim_guard': {
@@ -1933,7 +1945,7 @@ async function createMcpServer(options = {}) {
                     let baseline = 'explicit since argument';
                     if (!cutoff) {
                         const currentSession = (0, tim_core_1.resolveActiveSessionId)({
-                            markerSession: isHttp ? undefined : (0, tim_hooks_1.findMarker)(process.cwd(), { walkUp: true })?.marker.session,
+                            markerSession: isHttp ? undefined : findConfiguredMarker(process.cwd())?.marker.session,
                             useSessionCache: !isHttp,
                             useEnv: !isHttp,
                         });
@@ -2457,7 +2469,7 @@ async function createMcpServer(options = {}) {
                     const { sessionId, rawCount } = TimSessionResumeSchema.parse(args);
                     const cwd = isHttp ? undefined : process.cwd();
                     const newHarnessId = (0, tim_core_1.resolveActiveSessionId)({
-                        markerSession: cwd ? (0, tim_hooks_1.findMarker)(cwd, { walkUp: true })?.marker.session : undefined,
+                        markerSession: cwd ? findConfiguredMarker(cwd)?.marker.session : undefined,
                         useSessionCache: !isHttp,
                         useEnv: !isHttp,
                     });
@@ -2670,7 +2682,7 @@ async function createMcpServer(options = {}) {
                     const sessionId = (0, tim_core_1.resolveActiveSessionId)({
                         sessionIdArg: sessionIdArg,
                         markerSession: cwd
-                            ? (0, tim_hooks_1.findMarker)(cwd, { walkUp: true })?.marker.session
+                            ? findConfiguredMarker(cwd)?.marker.session
                             : undefined,
                         useSessionCache: !isHttp,
                         useEnv: !isHttp,
@@ -2705,9 +2717,12 @@ async function createMcpServer(options = {}) {
                             // Non-critical — project brief still returned
                         }
                     }
-                    if (cwd) {
+                    if (bind && cwd) {
                         try {
-                            (0, tim_hooks_1.syncNearestProjectMarker)(cwd, projectLabel, { sessionId });
+                            (0, tim_hooks_1.syncNearestProjectMarker)(cwd, projectLabel, {
+                                sessionId,
+                                findOptions: (0, tim_hooks_1.findMarkerOptionsFromEnv)(),
+                            });
                         }
                         catch {
                             // Non-critical — brief still returned

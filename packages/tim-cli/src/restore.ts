@@ -19,6 +19,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { execFileSync } from 'child_process';
 import { resolveDbPath } from './snapshot.js';
+import { parseArgs, valueOptionsFor } from './args.js';
 
 const DEFAULT_SNAPSHOT_DIR = '/tmp/tim-snapshots';
 const MIN_AGE_MS = 3600 * 1000; // 1h safety: refuse restore if current db is younger
@@ -44,23 +45,6 @@ function whichScript(candidates: string[]): string | null {
     if (fs.existsSync(abs)) return abs;
   }
   return null;
-}
-
-function parseFlags(args: string[]): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i];
-    if (!a.startsWith('--')) continue;
-    const k = a.slice(2);
-    const v = args[i + 1];
-    if (v && !v.startsWith('--')) {
-      out[k] = v;
-      i++;
-    } else {
-      out[k] = 'true';
-    }
-  }
-  return out;
 }
 
 function listSnapshots(dir: string): Array<{ path: string; mtime: number; size: number }> {
@@ -144,7 +128,7 @@ export async function cmdRestoreList(): Promise<void> {
 }
 
 export async function cmdRestore(args: string[]): Promise<void> {
-  const flags = parseFlags(args);
+  const { flags } = parseArgs(args, { valueOptions: valueOptionsFor('restore') });
 
   if (flags.list === 'true') {
     await cmdRestoreList();

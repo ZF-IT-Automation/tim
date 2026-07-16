@@ -4,8 +4,15 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { spawn, type ChildProcess } from 'node:child_process';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
+import {
+  childServerCwd,
+  childServerDbPath,
+  childServerOutsideMarkerPath,
+  isolateChildServerCwd,
+} from './helpers/child-server-workspace.js';
 
 const SERVER_PATH = path.resolve(__dirname, '..', '..', 'dist', 'server.js');
+isolateChildServerCwd();
 
 interface JsonRpcResp {
   id: number;
@@ -25,6 +32,7 @@ class McpClient {
       throw new Error(`Server dist not found: ${SERVER_PATH}. Run "npm run build" first.`);
     }
     this.proc = spawn('node', [SERVER_PATH], {
+      cwd: childServerCwd(),
       env: { ...process.env, TIM_DB_PATH: dbPath },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
@@ -100,7 +108,7 @@ describe('error contract', () => {
   let dbPath: string;
 
   beforeEach(async () => {
-    dbPath = `/tmp/tim-err-contract-${Date.now()}-${Math.random().toString(36).slice(2)}.db`;
+    dbPath = childServerDbPath();
     if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath);
     client = new McpClient(dbPath);
     await client.init();
@@ -136,6 +144,16 @@ describe('error contract', () => {
     expect(b.error).toBeUndefined();
 
     // First load binds the session.
+    const externalMarker = childServerOutsideMarkerPath();
+    fs.writeFileSync(externalMarker, JSON.stringify({
+      version: 2,
+      project: 'P0700',
+      session: 'external-session',
+      exchanges: 11,
+      batch_size: 5,
+      batches_summarized: 2,
+    }, null, 2));
+    const before = fs.readFileSync(externalMarker);
     const first = await client.callTool('tim_load_project', { label: 'P8001', sessionId });
     expect(first.error).toBeUndefined();
     expect(first.result!.isError).toBeFalsy();
@@ -145,6 +163,26 @@ describe('error contract', () => {
     expect(second.error).toBeUndefined();
     expect(second.result!.isError).toBe(true);
     expect(getText(second)).toContain('P8001');
+    expect(fs.readFileSync(externalMarker)).toEqual(before);
+  });
+
+  it('ignores session identity from a marker outside TIM_MARKER_MAX_ROOT', async () => {
+    const externalMarker = childServerOutsideMarkerPath();
+    fs.writeFileSync(externalMarker, JSON.stringify({
+      version: 2,
+      project: 'P0700',
+      session: 'outside-boundary-session',
+      exchanges: 0,
+      batch_size: 5,
+      batches_summarized: 0,
+    }));
+    await client.callTool('tim_create_project', { label: 'P8001', content: 'A' });
+
+    const loaded = await client.callTool('tim_load_project', { label: 'P8001' });
+    expect(loaded.result!.isError).toBeFalsy();
+
+    const leakedSession = await client.callTool('tim_read', { id: 'outside-boundary-session' });
+    expect(leakedSession.result!.isError).toBe(true);
   });
 
   it('tim_write without content returns isError (zod parse error)', async () => {

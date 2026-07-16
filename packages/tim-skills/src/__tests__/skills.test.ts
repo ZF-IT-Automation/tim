@@ -36,10 +36,11 @@ describe('weak-model skills', () => {
     expect(lineCount(TIM_REMEMBER_SKILL.content)).toBeLessThanOrEqual(50);
   });
 
-  it('tim-session-start covers lifecycle steps', () => {
+  it('tim-session-start covers lifecycle steps without model-driven exchange logging', () => {
     expect(TIM_SESSION_START_SKILL.content).toContain('tim_session_start');
     expect(TIM_SESSION_START_SKILL.content).toContain('tim_load_project');
-    expect(TIM_SESSION_START_SKILL.content).toContain('tim_session_log');
+    expect(TIM_SESSION_START_SKILL.content).not.toContain('tim_session_log');
+    expect(TIM_SESSION_START_SKILL.content).toMatch(/hooks log exchanges automatically/i);
     expect(lineCount(TIM_SESSION_START_SKILL.content)).toBeLessThanOrEqual(50);
   });
 

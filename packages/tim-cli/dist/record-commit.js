@@ -40,30 +40,13 @@ const tim_store_1 = require("tim-store");
 const tim_core_1 = require("tim-core");
 const tim_hooks_1 = require("tim-hooks");
 const git_commit_js_1 = require("./git-commit.js");
+const args_js_1 = require("./args.js");
 function getDbPath(config) {
     return process.env.TIM_DB_PATH || config.dbPath || path.join(os.homedir(), '.tim', 'tim.db');
 }
-function parseArgs(args) {
-    const parsed = {};
-    for (let i = 0; i < args.length; i++) {
-        const arg = args[i];
-        if (arg.startsWith('--')) {
-            const key = arg.slice(2);
-            const next = args[i + 1];
-            if (next && !next.startsWith('--')) {
-                parsed[key] = next;
-                i++;
-            }
-            else {
-                parsed[key] = 'true';
-            }
-        }
-    }
-    return parsed;
-}
 /** Record git commit under project Commits section. Silent skip when no .tim-project. */
 async function cmdRecordCommit(args) {
-    const flags = parseArgs(args);
+    const { flags } = (0, args_js_1.parseArgs)(args, { valueOptions: (0, args_js_1.valueOptionsFor)('record-commit') });
     const cwd = flags.cwd ?? process.cwd();
     const located = (0, tim_hooks_1.findMarker)(cwd, { walkUp: true, ...(0, tim_hooks_1.findMarkerOptionsFromEnv)() });
     const projectId = flags.project ?? located?.marker.project;

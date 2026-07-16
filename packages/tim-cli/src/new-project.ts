@@ -15,6 +15,7 @@ import {
   readMarker,
   type BoundProjectCreationResult,
 } from 'tim-hooks';
+import { NEW_PROJECT_ALIASES, parseArgs, valueOptionsFor } from './args.js';
 
 const STANDARD_SECTIONS = [
   { label: 'Tasks', content: 'Actionable work items and open tasks' },
@@ -29,36 +30,6 @@ const STANDARD_SECTIONS = [
 function getDbPath(): string {
   const config = loadConfig();
   return process.env.TIM_DB_PATH || config.dbPath || path.join(os.homedir(), '.tim', 'tim.db');
-}
-
-function parseNewProjectArgs(args: string[]): Record<string, string> {
-  const flags: Record<string, string> = {};
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
-    if (arg === '-p' || arg === '--path') {
-      const next = args[++i];
-      if (next) flags.path = next;
-    } else if (arg === '-n' || arg === '--name') {
-      const next = args[++i];
-      if (next) flags.name = next;
-    } else if (arg === '--no-git') {
-      flags['no-git'] = 'true';
-    } else if (arg === '--confirm') {
-      flags.confirm = 'true';
-    } else if (arg === '-h' || arg === '--help') {
-      flags.help = 'true';
-    } else if (arg.startsWith('--')) {
-      const key = arg.slice(2);
-      const next = args[i + 1];
-      if (next && !next.startsWith('-')) {
-        flags[key] = next;
-        i++;
-      } else {
-        flags[key] = 'true';
-      }
-    }
-  }
-  return flags;
 }
 
 function exitWith(code: number, message: string): never {
@@ -196,7 +167,10 @@ export async function cmdNewProject(
   args: string[],
   deps: NewProjectDeps = DEFAULT_NEW_PROJECT_DEPS,
 ): Promise<void> {
-  const flags = parseNewProjectArgs(args);
+  const { flags } = parseArgs(args, {
+    valueOptions: valueOptionsFor('new-project'),
+    aliases: NEW_PROJECT_ALIASES,
+  });
 
   if (flags.help === 'true') {
     console.log(`Usage: tim new-project --path <dir> --name <string> [--no-git] [--confirm]

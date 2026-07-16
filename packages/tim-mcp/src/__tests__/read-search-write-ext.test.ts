@@ -4,6 +4,9 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { spawn, type ChildProcess } from 'node:child_process';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
+import { childServerCwd, isolateChildServerCwd } from './helpers/child-server-workspace.js';
+import { TimStore } from 'tim-store';
+isolateChildServerCwd();
 
 const SERVER_PATH = path.resolve(__dirname, '..', '..', 'dist', 'server.js');
 
@@ -25,6 +28,7 @@ class McpClient {
       throw new Error(`Server dist not found: ${SERVER_PATH}. Run "npm run build" first.`);
     }
     this.proc = spawn('node', [SERVER_PATH], {
+      cwd: childServerCwd(),
       env: { ...process.env, TIM_DB_PATH: dbPath },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
@@ -229,9 +233,9 @@ describe('tim_search extended', () => {
       query: 'AlphaSearchToken',
       root: 'P0510',
     });
-    const results = JSON.parse(resp.result!.content[0].text);
-    expect(results.length).toBeGreaterThanOrEqual(1);
-    expect(results.every((r: { title: string }) => r.title === 'AlphaSearchToken')).toBe(true);
+    const response = JSON.parse(resp.result!.content[0].text);
+    expect(response.results.length).toBeGreaterThanOrEqual(1);
+    expect(response.results.every((r: { title: string }) => r.title === 'AlphaSearchToken')).toBe(true);
   });
 
   it('type tag status filters combine with AND', async () => {
@@ -250,9 +254,9 @@ describe('tim_search extended', () => {
       tag: 'combo',
       status: 'todo',
     });
-    const hitResults = JSON.parse(hit.result!.content[0].text);
-    expect(hitResults).toHaveLength(1);
-    expect(hitResults[0].title).toBe('Errmark');
+    const hitResponse = JSON.parse(hit.result!.content[0].text);
+    expect(hitResponse.results).toHaveLength(1);
+    expect(hitResponse.results[0].title).toBe('Errmark');
 
     const miss = await client.callTool('tim_search', {
       query: 'Rulemark',
@@ -260,9 +264,117 @@ describe('tim_search extended', () => {
       tag: 'combo',
       status: 'todo',
     });
-    const missResults = JSON.parse(miss.result!.content[0].text);
-    expect(missResults).toHaveLength(0);
+    const missResponse = JSON.parse(miss.result!.content[0].text);
+    expect(missResponse.results).toHaveLength(0);
   });
+
+  it('rejects requested excerpts above 500 Unicode code points', async () => {
+    client.kill();
+    const store = new TimStore(dbPath);
+    try {
+      await store.write(`ExcerptCapNeedle\n${'😀'.repeat(1_000)}`);
+    } finally {
+      store.close();
+    }
+    client = new McpClient(dbPath);
+    await client.init();
+
+    const result = await client.callTool('tim_search', {
+      query: 'ExcerptCapNeedle',
+      excerptChars: 501,
+    });
+
+    expect(result.result?.isError).toBe(true);
+    expect(result.result?.content[0].text).toContain('500');
+  });
+
+  it('marks a shortened excerpt truncated when no results are omitted', async () => {
+    client.kill();
+    const store = new TimStore(dbPath);
+    try {
+      await store.write(`ExcerptFlagNeedle\n${'😀'.repeat(1_000)}`);
+    } finally {
+      store.close();
+    }
+    client = new McpClient(dbPath);
+    await client.init();
+
+    const result = await client.callTool('tim_search', {
+      query: 'ExcerptFlagNeedle',
+    });
+    const response = JSON.parse(result.result!.content[0].text);
+
+    expect(response.returned).toBe(1);
+    expect(response.omitted).toBe(0);
+    expect(response.truncated).toBe(true);
+  });
+
+  it('bounds 100 huge Unicode results to 24 KiB with stable order and counters', async () => {
+    client.kill();
+    const store = new TimStore(dbPath);
+    const ids: string[] = [];
+    try {
+      for (let i = 0; i < 100; i++) {
+        const bodySize = 20_000 + (i % 9) * 10_000;
+        const entry = await store.write(
+          `BoundedNeedle ${String(i).padStart(3, '0')}\n${'😀'.repeat(bodySize / 2)}`,
+          {
+            tags: ['#bounded', `#item-${i}`],
+            metadata: {
+              kind: i === 0 ? 'project' : 'note',
+              label: i === 0 ? 'P0777' : undefined,
+              type: i % 2 === 0 ? 'learning' : 'note',
+              status: i % 3 === 0 ? 'active' : 'done',
+              project_ref: 'P0777',
+              task: { status: 'open', priority: i % 5 },
+              secret_field: 'must-not-leak',
+            },
+          },
+        );
+        ids.push(entry.id);
+      }
+    } finally {
+      store.close();
+    }
+    client = new McpClient(dbPath);
+    await client.init();
+
+    const first = await client.callTool('tim_search', {
+      query: 'BoundedNeedle',
+      topK: 100,
+    });
+    const second = await client.callTool('tim_search', {
+      query: 'BoundedNeedle',
+      topK: 100,
+    });
+    const firstText = first.result!.content[0].text;
+    const response = JSON.parse(firstText);
+    const responseAgain = JSON.parse(second.result!.content[0].text);
+
+    expect(Buffer.byteLength(firstText, 'utf8')).toBeLessThanOrEqual(24 * 1024);
+    expect(response.returned).toBe(response.results.length);
+    expect(response.omitted).toBe(100 - response.returned);
+    expect(response.truncated).toBe(true);
+    expect(response.returned).toBeGreaterThan(0);
+    expect(response.results.map((r: { id: string }) => r.id)).toEqual(
+      responseAgain.results.map((r: { id: string }) => r.id),
+    );
+
+    for (const result of response.results) {
+      expect(Array.from(result.excerpt).length).toBeLessThanOrEqual(500);
+      expect(result.excerpt.endsWith('…')).toBe(true);
+      expect(Object.keys(result.metadata).sort()).toEqual(
+        ['kind', 'label', 'project_ref', 'status', 'task', 'type']
+          .filter(key => result.metadata[key] !== undefined)
+          .sort(),
+      );
+      expect(result.metadata.secret_field).toBeUndefined();
+    }
+
+    const read = await client.callTool('tim_read', { id: ids[0], include_body: true });
+    const full = JSON.parse(read.result!.content[0].text);
+    expect(Array.from(full.entry.content).length).toBeGreaterThan(500);
+  }, 30_000);
 });
 
 describe('tim_write where shorthand', () => {

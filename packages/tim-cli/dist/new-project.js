@@ -42,6 +42,7 @@ const child_process_1 = require("child_process");
 const tim_store_1 = require("tim-store");
 const tim_core_1 = require("tim-core");
 const tim_hooks_1 = require("tim-hooks");
+const args_js_1 = require("./args.js");
 const STANDARD_SECTIONS = [
     { label: 'Tasks', content: 'Actionable work items and open tasks' },
     { label: 'Ideas', content: 'Brainstorming and undecided proposals' },
@@ -54,43 +55,6 @@ const STANDARD_SECTIONS = [
 function getDbPath() {
     const config = (0, tim_core_1.loadConfig)();
     return process.env.TIM_DB_PATH || config.dbPath || path.join(os.homedir(), '.tim', 'tim.db');
-}
-function parseNewProjectArgs(args) {
-    const flags = {};
-    for (let i = 0; i < args.length; i++) {
-        const arg = args[i];
-        if (arg === '-p' || arg === '--path') {
-            const next = args[++i];
-            if (next)
-                flags.path = next;
-        }
-        else if (arg === '-n' || arg === '--name') {
-            const next = args[++i];
-            if (next)
-                flags.name = next;
-        }
-        else if (arg === '--no-git') {
-            flags['no-git'] = 'true';
-        }
-        else if (arg === '--confirm') {
-            flags.confirm = 'true';
-        }
-        else if (arg === '-h' || arg === '--help') {
-            flags.help = 'true';
-        }
-        else if (arg.startsWith('--')) {
-            const key = arg.slice(2);
-            const next = args[i + 1];
-            if (next && !next.startsWith('-')) {
-                flags[key] = next;
-                i++;
-            }
-            else {
-                flags[key] = 'true';
-            }
-        }
-    }
-    return flags;
 }
 function exitWith(code, message) {
     console.error(message);
@@ -200,7 +164,10 @@ async function initProjectSchema(store, projectId) {
     }
 }
 async function cmdNewProject(args, deps = DEFAULT_NEW_PROJECT_DEPS) {
-    const flags = parseNewProjectArgs(args);
+    const { flags } = (0, args_js_1.parseArgs)(args, {
+        valueOptions: (0, args_js_1.valueOptionsFor)('new-project'),
+        aliases: args_js_1.NEW_PROJECT_ALIASES,
+    });
     if (flags.help === 'true') {
         console.log(`Usage: tim new-project --path <dir> --name <string> [--no-git] [--confirm]
        tim new-project -p <dir> -n <string> [--no-git] [--confirm]

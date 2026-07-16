@@ -4,32 +4,15 @@ import { TimStore, CommitManager } from 'tim-store';
 import { loadConfig, type TimConfigFile } from 'tim-core';
 import { findMarker, findMarkerOptionsFromEnv } from 'tim-hooks';
 import { readGitCommit, isGitRepo } from './git-commit.js';
+import { parseArgs, valueOptionsFor } from './args.js';
 
 function getDbPath(config: TimConfigFile): string {
   return process.env.TIM_DB_PATH || config.dbPath || path.join(os.homedir(), '.tim', 'tim.db');
 }
 
-function parseArgs(args: string[]): Record<string, string> {
-  const parsed: Record<string, string> = {};
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
-    if (arg.startsWith('--')) {
-      const key = arg.slice(2);
-      const next = args[i + 1];
-      if (next && !next.startsWith('--')) {
-        parsed[key] = next;
-        i++;
-      } else {
-        parsed[key] = 'true';
-      }
-    }
-  }
-  return parsed;
-}
-
 /** Record git commit under project Commits section. Silent skip when no .tim-project. */
 export async function cmdRecordCommit(args: string[]): Promise<void> {
-  const flags = parseArgs(args);
+  const { flags } = parseArgs(args, { valueOptions: valueOptionsFor('record-commit') });
   const cwd = flags.cwd ?? process.cwd();
 
   const located = findMarker(cwd, { walkUp: true, ...findMarkerOptionsFromEnv() });

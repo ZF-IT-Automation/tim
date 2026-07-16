@@ -37,6 +37,7 @@ import { resolveEntryTaskStatus } from './task-status.js';
 import {
   createProjectCoordinated,
   findMarker,
+  findMarkerOptionsFromEnv,
   getActiveProjectLabel,
   getBriefingMaxTokens,
   maybeSpawnSummarizer,
@@ -54,6 +55,7 @@ import { runAutoInit } from './auto-init.js';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { buildBoundedSearchResponse } from './search-response.js';
 
 /**
  * Format a tool response payload to JSON.
@@ -69,6 +71,13 @@ function formatToolResponse(payload: unknown): string {
       return JSON.stringify(payload, null, 2);
   }
   return compact;
+}
+
+function findConfiguredMarker(cwd: string) {
+  return findMarker(cwd, {
+    walkUp: true,
+    ...(findMarkerOptionsFromEnv() ?? {}),
+  });
 }
 
 // ─── CLI ────────────────────────────────────────────────
@@ -142,12 +151,17 @@ const TimWriteSchema = z.object({
 const TimSearchSchema = z.object({
   query: z.string().describe('FTS5 search query'),
   topK: z.number().min(1).max(100).optional().default(10),
+  excerptChars: z.number().int().min(0).max(500).optional().default(500)
+    .describe('Maximum Unicode code points per result excerpt'),
   searchType: z.enum(['fts', 'vector', 'hybrid']).optional().default('fts'),
   root: z.string().optional().describe('Scope to project (label/alias/name)'),
   type: z.string().optional().describe('Filter metadata.type'),
   tag: z.string().optional().describe('Filter exact tag'),
   status: z.string().optional().describe('Filter metadata.status'),
-});
+}).describe(
+  'Returns {results, returned, omitted, truncated}. Results contain bounded excerpts; ' +
+  'use tim_read for the full body.',
+);
 
 const TimGuardSchema = z.object({
   action: z.string().min(3)
@@ -509,7 +523,8 @@ export const TOOL_DEFS: Array<{
     name: 'tim_search',
     description: 'Search TIM entries using FTS5 full-text search: keywords, "quoted phrases", ' +
       'prefix*. NOT SQL — no column filters. For vague/associative queries use tim_remember; ' +
-      'for a known label use tim_read directly.',
+      'for a known label use tim_read directly. Returns {results, returned, omitted, truncated}; ' +
+      'results contain bounded excerpts. Use tim_read for the full body.',
     schema: TimSearchSchema,
   },
   {
@@ -1082,7 +1097,7 @@ type ResolveRootsResult =
 async function resolveRoots(store: TimStore, root?: string): Promise<ResolveRootsResult> {
   if (root === undefined) {
     if (!transportIsHttp) {
-      const marker = findMarker(process.cwd(), { walkUp: true });
+      const marker = findConfiguredMarker(process.cwd());
       if (marker) return { labels: [marker.marker.project] };
     }
     const active = getActiveProjectLabel();
@@ -1559,7 +1574,7 @@ function usageSessionId(): string | null {
     return resolveActiveSessionId({
       markerSession: transportIsHttp
         ? undefined
-        : findMarker(process.cwd(), { walkUp: true })?.marker.session,
+        : findConfiguredMarker(process.cwd())?.marker.session,
       useSessionCache: !transportIsHttp,
       useEnv: !transportIsHttp,
     }) ?? null;
@@ -2025,7 +2040,7 @@ export async function createMcpServer(
         }
 
         case 'tim_search': {
-          const { query, topK, root, type, tag, status } = TimSearchSchema.parse(args);
+          const { query, topK, excerptChars, root, type, tag, status } = TimSearchSchema.parse(args);
           const hasFilters = Boolean(root || type || tag || status);
           let results = await s.search({ query, topK: hasFilters ? 1000 : topK });
           if (root) {
@@ -2053,10 +2068,11 @@ export async function createMcpServer(
           if (hasFilters) {
             results = results.slice(0, topK);
           }
+          const response = buildBoundedSearchResponse(results, excerptChars);
           bestEffortTelemetry('recordRead', () =>
-            s.recordRead(results.map(e => e.id), usageSessionId()));
+            s.recordRead(response.results.map(e => e.id), usageSessionId()));
           return {
-            content: [{ type: 'text', text: formatToolResponse(results) }],
+            content: [{ type: 'text', text: JSON.stringify(response) }],
           };
         }
 
@@ -2130,7 +2146,7 @@ export async function createMcpServer(
           let baseline = 'explicit since argument';
           if (!cutoff) {
             const currentSession = resolveActiveSessionId({
-              markerSession: isHttp ? undefined : findMarker(process.cwd(), { walkUp: true })?.marker.session,
+              markerSession: isHttp ? undefined : findConfiguredMarker(process.cwd())?.marker.session,
               useSessionCache: !isHttp,
               useEnv: !isHttp,
             });
@@ -2690,7 +2706,7 @@ export async function createMcpServer(
           const { sessionId, rawCount } = TimSessionResumeSchema.parse(args);
           const cwd = isHttp ? undefined : process.cwd();
           const newHarnessId = resolveActiveSessionId({
-            markerSession: cwd ? findMarker(cwd, { walkUp: true })?.marker.session : undefined,
+            markerSession: cwd ? findConfiguredMarker(cwd)?.marker.session : undefined,
             useSessionCache: !isHttp,
             useEnv: !isHttp,
           });
@@ -2924,7 +2940,7 @@ export async function createMcpServer(
           const sessionId = resolveActiveSessionId({
             sessionIdArg: sessionIdArg,
             markerSession: cwd
-              ? findMarker(cwd, { walkUp: true })?.marker.session
+              ? findConfiguredMarker(cwd)?.marker.session
               : undefined,
             useSessionCache: !isHttp,
             useEnv: !isHttp,
@@ -2965,9 +2981,12 @@ export async function createMcpServer(
             }
           }
 
-          if (cwd) {
+          if (bind && cwd) {
             try {
-              syncNearestProjectMarker(cwd, projectLabel, { sessionId });
+              syncNearestProjectMarker(cwd, projectLabel, {
+                sessionId,
+                findOptions: findMarkerOptionsFromEnv(),
+              });
             } catch {
               // Non-critical — brief still returned
             }

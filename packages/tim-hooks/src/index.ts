@@ -38,6 +38,15 @@ export {
 } from './prompt-submit.js';
 
 export {
+  runClaudeStop,
+  readLastExchange,
+  MAX_TRANSCRIPT_BYTES,
+  MAX_EXCHANGE_CHARS,
+  type ClaudeStopPayload,
+  type ClaudeStopResult,
+} from './claude-stop.js';
+
+export {
   readMarker,
   writeMarker,
   writeMarkerAtomic,

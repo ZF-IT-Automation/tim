@@ -558,7 +558,7 @@ export function buildLoadDirective(
     `This session is bound to TIM project ${display}.`,
     ``,
     `ACTION: call tim_load_project(label="${projectLabel}") now to load the project ` +
-      `brief from the TIM store, then run the o9k-session-start skill. STEP 1 ` +
+      `brief from the TIM store, then run the tim-session-start skill. STEP 1 ` +
       `(project binding) is already decided by this marker — do NOT ask which ` +
       `project, and do NOT run any hmem/active-project cwd→project resolution. ` +
       `The TIM marker is authoritative for this turn.`,
@@ -577,7 +577,7 @@ export function buildSessionDirective(
     `This session is bound to TIM project ${display}.`,
     ``,
     `ACTION: call tim_load_project(label="${projectLabel}") now to load the project ` +
-      `brief from the TIM store, then run the o9k-session-start skill. STEP 1 ` +
+      `brief from the TIM store, then run the tim-session-start skill. STEP 1 ` +
       `is already decided by this TIM session — do NOT ask which project, and do NOT ` +
       `run any hmem/active-project cwd→project resolution. The TIM binding is authoritative ` +
       `for this turn.`,

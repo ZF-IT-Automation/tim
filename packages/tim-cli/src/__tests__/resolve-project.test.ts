@@ -43,10 +43,16 @@ describe('tim resolve-project / bind-project', () => {
     expect(run(['resolve-project', '--cwd', dir], { TIM_MARKER_MAX_ROOT: dir }).trim()).toBe('');
   });
 
-  it('resolve-project --format directive contains the load instruction', () => {
+  it('resolve-project --format directive contains the load instruction', async () => {
+    const store = new TimStore(dbPath);
+    await store.createProject('P0063');
+    store.close();
     fs.writeFileSync(path.join(dir, '.tim-project'),
       JSON.stringify({ project: 'P0063', session: 's', exchanges: 0, batch_size: 5, batches_summarized: 0 }));
-    const out = run(['resolve-project', '--cwd', dir, '--format', 'directive'], { TIM_MARKER_MAX_ROOT: dir });
+    const out = run(['resolve-project', '--cwd', dir, '--format', 'directive'], {
+      TIM_DB_PATH: dbPath,
+      TIM_MARKER_MAX_ROOT: dir,
+    });
     expect(out).toContain('tim_load_project(label="P0063")');
   });
 
@@ -108,14 +114,23 @@ describe('tim resolve-project / bind-project', () => {
     expect(fs.existsSync(path.join(dir, '.tim-project'))).toBe(false);
   });
 
-  it('resolve-project --format directive emits nothing for phantom marker', () => {
-    fs.writeFileSync(path.join(dir, '.tim-project'),
-      JSON.stringify({ project: 'P0888', session: 's', exchanges: 0, batch_size: 5, batches_summarized: 0 }));
+  it('resolve-project --format directive emits repair guidance for an unrepaired phantom marker', () => {
+    fs.writeFileSync(path.join(dir, 'tim.json'), JSON.stringify({ project: 'P0063' }));
+    fs.writeFileSync(path.join(dir, '.tim-project'), JSON.stringify({
+      version: 2,
+      project: 'P0888',
+      session: 's',
+      exchanges: 0,
+      batch_size: 5,
+      batches_summarized: 0,
+    }));
     const out = run(['resolve-project', '--cwd', dir, '--format', 'directive'], {
       TIM_MARKER_MAX_ROOT: dir,
       TIM_DB_PATH: dbPath,
     });
-    expect(out.trim()).toBe('');
+    expect(out).toContain('Stale TIM project marker');
+    expect(out).toContain('tim bind-project --label <P00XX>');
+    expect(out).not.toContain('tim_load_project');
   });
 
   it('resolve-project --format directive recovers phantom marker via alias', async () => {

@@ -79,6 +79,12 @@ export interface GetBugsOptions {
 export interface GetTasksOptions {
     status?: string;
 }
+interface EntryIdRewrite {
+    sourceId: string;
+    targetId: string;
+    entryIds: string[];
+    edgeIds: string[];
+}
 export declare class TimStore implements MemoryInterface {
     private db;
     private readonly databasePath;
@@ -239,6 +245,35 @@ export declare class TimStore implements MemoryInterface {
     getChildByKindSync(parentId: string, kind: string): Entry[];
     getChildrenBySeqSync(parentId: string): Entry[];
     readSync(id: string): Entry | null;
+    /** Synchronous raw-id read for repair paths; includes irrelevant and tombstoned rows. */
+    readIncludingTombstoneSync(id: string): Entry | null;
+    /** Raw metadata read reserved for system repair; bypasses public boolean coercion. */
+    readSystemRepairEntrySync(id: string): Entry | null;
+    /** Find every physical row carrying a logical metadata label, including suppressed rows. */
+    findByMetadataLabelIncludingTombstoneSync(label: string): Entry[];
+    /** Raw metadata label scan reserved for system repair. */
+    findSystemRepairEntriesByLabelSync(label: string): Entry[];
+    /**
+     * Canonicalize a physical entry id without changing its payload. Must be called
+     * inside runExclusive; rewrites all local references before removing oldId.
+     */
+    canonicalizeEntryIdSync(oldId: string, newId: string): {
+        entry: Entry;
+        rewrite: EntryIdRewrite | null;
+    };
+    /**
+     * Merge a duplicate system entry's metadata into the canonical row, repoint
+     * structural references, preserve a recovery snapshot, then remove the duplicate.
+     */
+    mergeSystemRepairEntrySync(sourceId: string, targetId: string): EntryIdRewrite | null;
+    /** Emit the syncable state transition for physical-id rewrites after the target is final. */
+    stageEntryIdRewritesSync(targetId: string, rewrites: EntryIdRewrite[]): void;
+    private repointEntryReferencesSync;
+    /**
+     * Persist a reserved system-entry repair without normalizing legacy user data.
+     * Callers must supply the complete preserved title, tags, and metadata payload.
+     */
+    repairSystemEntrySync(id: string, patch: Pick<Entry, 'title' | 'content' | 'tags' | 'metadata' | 'irrelevant' | 'tombstonedAt'>): Entry;
     /** Synchronous update for use inside `runExclusive` transactions. */
     updateSync(id: string, patch: Partial<Entry>): Entry;
     /** Entries whose metadata JSON has non-boolean values for known boolean keys (legacy 1/0/"true"/"false"). */
@@ -398,4 +433,5 @@ export declare function splitTitleBody(content: string, explicitTitle?: string):
 };
 /** Cosine similarity between two same-length vectors. Range: [-1, 1]. */
 export declare function cosineSimilarity(a: Float32Array, b: Float32Array): number;
+export {};
 //# sourceMappingURL=store.d.ts.map
