@@ -17,6 +17,7 @@ import { runMigrations, createTriggers, getCurrentVersion } from './schema.js';
 import { CurateManager } from './curate.js';
 import { ConsolidationManager } from './consolidate.js';
 import { metadataNeedsCoercion, parseAndCoerceMetadata } from './metadata-coerce.js';
+import { applyIdeaPromote } from './idea-promote.js';
 import { recordFromPayload, entryLocalLwwTimestamp, edgeLocalLwwTimestamp } from './sync-methods.js';
 import { parentIsSecret } from './secret.js';
 
@@ -1380,6 +1381,41 @@ export class TimStore implements MemoryInterface {
     return null;
   }
 
+  /**
+   * Synchronous counterpart of the `resolveSectionByTitle` "found" path.
+   * Used inside `updateSync` (which cannot await) to move an entry to a
+   * sibling section. Throws instead of returning a tagged union — callers
+   * that need not_found/ambiguous handling should use the async version.
+   */
+  private resolveSectionIdByTitleSync(projectLabel: string, title: string): string {
+    const projectRow = this.db.prepare(`
+      SELECT id FROM entries
+      WHERE json_extract(metadata, '$.kind') = 'project'
+        AND json_extract(metadata, '$.label') = ?
+        AND irrelevant = 0
+        AND tombstoned_at IS NULL
+    `).get(projectLabel) as { id: string } | undefined;
+    if (!projectRow) {
+      throw new Error(`Project not found: ${projectLabel}`);
+    }
+
+    const matches = this.db.prepare(`
+      SELECT e.id FROM entries e
+      WHERE e.parent_id = ?
+        AND e.title = ?
+        AND e.irrelevant = 0
+        AND e.tombstoned_at IS NULL
+      ORDER BY e.created_at ASC
+    `).all(projectRow.id, title) as Array<{ id: string }>;
+
+    if (matches.length !== 1) {
+      throw new Error(
+        `Expected exactly one '${title}' section in project ${projectLabel}, found ${matches.length}`,
+      );
+    }
+    return matches[0]!.id;
+  }
+
   close(): void {
     this.db.close();
   }
@@ -1484,6 +1520,8 @@ export class TimStore implements MemoryInterface {
       }
     }
 
+    let didPromote = false;
+
     const updated = {
       ...existing,
       title,
@@ -1514,30 +1552,62 @@ export class TimStore implements MemoryInterface {
             ...(patchMeta.task as Record<string, unknown>),
           };
         }
+        if (
+          typeof existingMeta.idea === 'object' && existingMeta.idea !== null &&
+          typeof patchMeta.idea === 'object' && patchMeta.idea !== null
+        ) {
+          patchMeta.idea = {
+            ...(existingMeta.idea as Record<string, unknown>),
+            ...(patchMeta.idea as Record<string, unknown>),
+          };
+        }
         const merged = { ...existingMeta, ...patchMeta };
+
+        const promote = applyIdeaPromote(merged, now);
+        if (promote.error) {
+          throw new Error(promote.error);
+        }
+        didPromote = promote.didPromote;
+        const finalMeta = promote.metadata;
+
         const oldStatus = this.extractTaskStatus(existingMeta);
-        const newStatus = this.extractTaskStatus(merged);
+        const newStatus = this.extractTaskStatus(finalMeta);
         if (newStatus === 'done' && oldStatus !== 'done') {
-          if (typeof merged.task === 'object' && merged.task !== null && !Array.isArray(merged.task)) {
-            const taskObj = { ...(merged.task as Record<string, unknown>) };
+          if (typeof finalMeta.task === 'object' && finalMeta.task !== null && !Array.isArray(finalMeta.task)) {
+            const taskObj = { ...(finalMeta.task as Record<string, unknown>) };
             delete taskObj.order;
-            merged.task = taskObj;
+            finalMeta.task = taskObj;
           }
         }
-        return JSON.stringify(merged);
+        return JSON.stringify(finalMeta);
       })(),
       accessed_at: now,
       updated_at: now,
       lww_device: this.deviceId,
     };
 
+    if (didPromote) {
+      const projectLabel = this.findProjectLabelForParent(existing.parent_id);
+      if (!projectLabel) {
+        throw new Error(`Cannot promote entry ${id}: no project ancestor found`);
+      }
+      const tasksSectionId = this.resolveSectionIdByTitleSync(projectLabel, 'Tasks');
+      if (tasksSectionId !== existing.parent_id) {
+        const parentRow = this.db.prepare('SELECT depth FROM entries WHERE id = ?')
+          .get(tasksSectionId) as { depth: number } | undefined;
+        updated.parent_id = tasksSectionId;
+        updated.depth = Math.min((parentRow?.depth ?? 0) + 1, 5);
+      }
+    }
+
     this.db.transaction(() => {
       this.db.prepare(`UPDATE entries SET title=?, content=?, content_type=?, confidence=?,
         decay_rate=?, visibility=?, tags=?, irrelevant=?, tombstoned_at=?, metadata=?,
-        accessed_at=?, updated_at=?, lww_device=? WHERE id=?`).run(
+        parent_id=?, depth=?, accessed_at=?, updated_at=?, lww_device=? WHERE id=?`).run(
         updated.title, updated.content, updated.content_type, updated.confidence,
         updated.decay_rate, updated.visibility, updated.tags,
         updated.irrelevant, updated.tombstoned_at, updated.metadata,
+        updated.parent_id, updated.depth,
         updated.accessed_at, updated.updated_at, updated.lww_device, id
       );
       this.insertStagingSync(updated, timestamp, updated.confidence);
