@@ -148,9 +148,9 @@ describe('tim new-project', () => {
     });
     fs.writeFileSync(path.join(target, '.tim-project'), markerContent);
 
-    const result = run(['new-project', '-p', target, '-n', 'Blocked', '--confirm'], env);
+    const result = run(['new-project', '-p', target, '-n', 'Blocked'], env);
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain('P0042');
+    expect(result.stderr).toContain('Path already bound to P0042');
     expect(result.stderr).toMatch(/reconcil/i);
     expect(result.stderr).not.toContain('to rebind');
     expect(fs.readFileSync(path.join(target, '.tim-project'), 'utf8')).toBe(markerContent);
@@ -220,16 +220,39 @@ describe('tim new-project', () => {
 
   it('rejects home directory', () => {
     const home = os.homedir();
-    const result = run(['new-project', '-p', home, '-n', 'Home', '--confirm'], env);
+    const result = run(['new-project', '-p', home, '-n', 'Home'], env);
     expect(result.status).toBe(1);
     expect(result.stderr).toMatch(/home directory|Invalid --path/i);
   });
 
   it('rejects relative path', () => {
-    const result = run(['new-project', '-p', 'relative/path', '-n', 'Bad'], env);
+    const relative = `relative-${path.basename(workDir)}/path`;
+    const resolved = path.resolve(relative);
+    const result = run(['new-project', '-p', relative, '-n', 'Bad'], env);
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain('absolute project path');
-    fs.rmSync(path.resolve('relative'), { recursive: true, force: true });
+    expect(result.stderr).toContain('must be absolute path');
+    expect(fs.existsSync(resolved)).toBe(false);
+  });
+
+  it.each(['~/tim-project', '$HOME/tim-project', '%HOME%/tim-project'])(
+    'rejects path shorthand without creating directories: %s',
+    shorthand => {
+      const resolved = path.resolve(shorthand);
+      const result = run(['new-project', '-p', shorthand, '-n', 'Bad'], env);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toMatch(/shorthand|absolute path/i);
+      expect(fs.existsSync(resolved)).toBe(false);
+    },
+  );
+
+  it('rejects an existing non-directory target before confirmation', () => {
+    const target = path.join(workDir, 'existing-file');
+    fs.writeFileSync(target, 'not a directory');
+
+    const result = run(['new-project', '-p', target, '-n', 'Bad'], env);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toMatch(/must be a directory/i);
+    expect(fs.readFileSync(target, 'utf8')).toBe('not a directory');
   });
 
   it('rejects empty name', () => {
@@ -323,9 +346,9 @@ describe('tim new-project', () => {
       }),
     );
 
-    const result = run(['new-project', '-p', target, '-n', 'Force', '--force', '--confirm'], env);
+    const result = run(['new-project', '-p', target, '-n', 'Force', '--force'], env);
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain('P0099');
+    expect(result.stderr).toContain('Path already bound to P0099');
     expect(fs.existsSync(path.join(target, '.tim-project.bak'))).toBe(false);
   });
 

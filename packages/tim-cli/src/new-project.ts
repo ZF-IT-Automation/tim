@@ -8,6 +8,7 @@ import { loadConfig } from 'tim-core';
 import {
   createProjectCoordinated,
   ProjectCreationPartialFailureError,
+  readMarker,
   type BoundProjectCreationResult,
 } from 'tim-hooks';
 
@@ -65,6 +66,45 @@ function validateName(name: string): void {
   if (!name?.trim()) {
     exitWith(1, 'Error: --name is required and must be non-empty');
   }
+}
+
+function precheckNewProjectPath(requestedPath: string): string {
+  const environmentShorthand = /\$(?:\{|[A-Za-z_])|%[A-Za-z_][A-Za-z0-9_]*%/;
+  if (requestedPath.startsWith('~') || environmentShorthand.test(requestedPath)) {
+    exitWith(1, `Error: Invalid --path: home and environment shorthand are not supported (got: ${requestedPath})`);
+  }
+  if (!path.isAbsolute(requestedPath)) {
+    exitWith(1, `Error: Invalid --path: must be absolute path (got: ${requestedPath})`);
+  }
+
+  const targetPath = path.resolve(requestedPath);
+  if (targetPath === fs.realpathSync(os.homedir())) {
+    exitWith(1, `Error: Invalid --path: refusing home directory (${targetPath})`);
+  }
+  if (!fs.existsSync(targetPath)) return targetPath;
+
+  const targetStat = fs.statSync(targetPath);
+  if (!targetStat.isDirectory()) {
+    exitWith(1, `Error: Invalid --path: existing target must be a directory (${targetPath})`);
+  }
+  if (fs.realpathSync(targetPath) === fs.realpathSync(os.homedir())) {
+    exitWith(1, `Error: Invalid --path: refusing home directory (${targetPath})`);
+  }
+
+  const markerFile = path.join(targetPath, '.tim-project');
+  try {
+    fs.lstatSync(markerFile);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return targetPath;
+    throw err;
+  }
+
+  const boundLabel = readMarker(targetPath)?.project ?? 'unknown';
+  exitWith(
+    1,
+    `Error: Path already bound to ${boundLabel}. tim bind-project is recovery-only and cannot replace a different marker. ` +
+      'Inspect the existing binding, reconcile the database projects if necessary, and remove `.tim-project` only when it is confirmed stale; then retry tim new-project.',
+  );
 }
 
 function isDupProjectError(err: unknown): boolean {
@@ -186,7 +226,6 @@ Create a new TIM project, register it in the database, write .tim-project, and i
   }
 
   const requestedPath = flags.path ?? '';
-  const targetPath = path.resolve(requestedPath);
   const name = flags.name ?? '';
   const noGit = flags['no-git'] === 'true';
   const confirm = flags.confirm === 'true';
@@ -195,6 +234,7 @@ Create a new TIM project, register it in the database, write .tim-project, and i
     exitWith(1, 'Error: --path is required');
   }
   validateName(name);
+  const targetPath = precheckNewProjectPath(requestedPath);
 
   if (!fs.existsSync(targetPath)) {
     try {
