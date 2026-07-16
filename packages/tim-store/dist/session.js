@@ -195,6 +195,90 @@ class SessionManager {
         }
         return written;
     }
+    /**
+     * Synchronous body of logExchange for use inside `store.runExclusive`.
+     * Caller must already hold the exclusive lock and have validated the session.
+     */
+    logExchangeSync(sessionId, entries, options = {}) {
+        const session = this.store.readSync(sessionId);
+        if (!session || session.metadata.kind !== session_tree_js_1.KIND_SESSION) {
+            throw new Error(`Project session not found: ${sessionId}`);
+        }
+        const allExNodes = this.store.getChildByKindSync(sessionId, session_tree_js_1.KIND_EXCHANGES_ROOT);
+        const exNode = allExNodes[0];
+        if (!exNode)
+            throw new Error(`Exchanges node missing for session: ${sessionId}`);
+        const batchSize = typeof session.metadata.batch_size === 'number'
+            ? session.metadata.batch_size
+            : session_tree_js_1.DEFAULT_BATCH_SIZE;
+        let allBatches = this.store.getChildByKindSync(exNode.id, session_tree_js_1.KIND_EXCHANGE_BATCH);
+        let batchNode = allBatches[allBatches.length - 1] ?? null;
+        if (!batchNode) {
+            batchNode = this.store.writeSync('Batch 1', {
+                parentId: exNode.id,
+                metadata: { kind: session_tree_js_1.KIND_EXCHANGE_BATCH, batch_index: 1, order: 1 },
+            });
+            allBatches = [batchNode];
+        }
+        let usersInBatch = this.store.getChildrenBySeqSync(batchNode.id).filter(u => u.metadata.role === 'user');
+        const allUserNodes = [];
+        for (const b of allBatches) {
+            const users = this.store.getChildrenBySeqSync(b.id).filter(u => u.metadata.role === 'user');
+            allUserNodes.push(...users);
+        }
+        let seq = allUserNodes.reduce((m, u) => Math.max(m, typeof u.metadata.seq === 'number' ? u.metadata.seq : 0), 0);
+        let currentUser = allUserNodes[allUserNodes.length - 1] ?? null;
+        const result = [];
+        const keyMeta = options.exchangeKey ? { exchange_key: options.exchangeKey } : {};
+        for (const e of entries) {
+            if (e.role === 'user') {
+                if (usersInBatch.length >= batchSize) {
+                    const fullBatchId = batchNode.id;
+                    const fullBatchIndex = typeof batchNode.metadata.batch_index === 'number'
+                        ? batchNode.metadata.batch_index
+                        : allBatches.length;
+                    const nextIndex = fullBatchIndex + 1;
+                    batchNode = this.store.writeSync(`Batch ${nextIndex}`, {
+                        parentId: exNode.id,
+                        metadata: { kind: session_tree_js_1.KIND_EXCHANGE_BATCH, batch_index: nextIndex, order: nextIndex },
+                    });
+                    allBatches.push(batchNode);
+                    usersInBatch = [];
+                    this.onBatchFull?.({
+                        sessionId,
+                        batchId: fullBatchId,
+                        batchIndex: fullBatchIndex,
+                    });
+                }
+                seq += 1;
+                currentUser = this.store.writeSync(e.content, {
+                    parentId: batchNode.id,
+                    metadata: { kind: session_tree_js_1.KIND_EXCHANGE, role: 'user', seq, sessionId, ...keyMeta },
+                    tags: ['#exchange'],
+                });
+                usersInBatch.push(currentUser);
+                result.push(currentUser);
+            }
+            else {
+                const parentId = currentUser ? currentUser.id : batchNode.id;
+                const agentSeq = currentUser ? currentUser.metadata.seq : seq;
+                const a = this.store.writeSync(e.content, {
+                    parentId,
+                    metadata: { kind: session_tree_js_1.KIND_EXCHANGE, role: 'agent', seq: agentSeq, sessionId, ...keyMeta },
+                    tags: ['#exchange'],
+                });
+                result.push(a);
+            }
+        }
+        const { exchangeCount } = (0, session_tree_js_1.deriveCountersSync)(this.store, sessionId);
+        const freshSession = this.store.readSync(sessionId);
+        if (freshSession) {
+            this.store.updateSync(sessionId, {
+                metadata: { ...freshSession.metadata, exchange_count: exchangeCount },
+            });
+        }
+        return result;
+    }
     async logExchange(sessionId, entries) {
         sessionId = this.store.resolveSessionAlias(sessionId);
         const session = await this.store.read(sessionId);
@@ -204,78 +288,33 @@ class SessionManager {
         const exNode = await (0, session_tree_js_1.findChildByKind)(this.store, sessionId, session_tree_js_1.KIND_EXCHANGES_ROOT);
         if (!exNode)
             throw new Error(`Exchanges node missing for session: ${sessionId}`);
-        const batchSize = typeof session.metadata.batch_size === 'number'
-            ? session.metadata.batch_size
-            : session_tree_js_1.DEFAULT_BATCH_SIZE;
-        const written = this.store.runExclusive(() => {
-            let allBatches = this.store.getChildByKindSync(exNode.id, session_tree_js_1.KIND_EXCHANGE_BATCH);
-            let batchNode = allBatches[allBatches.length - 1] ?? null;
-            if (!batchNode) {
-                batchNode = this.store.writeSync('Batch 1', {
-                    parentId: exNode.id,
-                    metadata: { kind: session_tree_js_1.KIND_EXCHANGE_BATCH, batch_index: 1, order: 1 },
-                });
-                allBatches = [batchNode];
-            }
-            let usersInBatch = this.store.getChildrenBySeqSync(batchNode.id).filter(u => u.metadata.role === 'user');
-            const allUserNodes = [];
-            for (const b of allBatches) {
-                const users = this.store.getChildrenBySeqSync(b.id).filter(u => u.metadata.role === 'user');
-                allUserNodes.push(...users);
-            }
-            let seq = allUserNodes.reduce((m, u) => Math.max(m, typeof u.metadata.seq === 'number' ? u.metadata.seq : 0), 0);
-            let currentUser = allUserNodes[allUserNodes.length - 1] ?? null;
-            const result = [];
-            for (const e of entries) {
-                if (e.role === 'user') {
-                    if (usersInBatch.length >= batchSize) {
-                        const fullBatchId = batchNode.id;
-                        const fullBatchIndex = typeof batchNode.metadata.batch_index === 'number'
-                            ? batchNode.metadata.batch_index
-                            : allBatches.length;
-                        const nextIndex = fullBatchIndex + 1;
-                        batchNode = this.store.writeSync(`Batch ${nextIndex}`, {
-                            parentId: exNode.id,
-                            metadata: { kind: session_tree_js_1.KIND_EXCHANGE_BATCH, batch_index: nextIndex, order: nextIndex },
-                        });
-                        allBatches.push(batchNode);
-                        usersInBatch = [];
-                        this.onBatchFull?.({
-                            sessionId,
-                            batchId: fullBatchId,
-                            batchIndex: fullBatchIndex,
-                        });
-                    }
-                    seq += 1;
-                    currentUser = this.store.writeSync(e.content, {
-                        parentId: batchNode.id,
-                        metadata: { kind: session_tree_js_1.KIND_EXCHANGE, role: 'user', seq, sessionId },
-                        tags: ['#exchange'],
-                    });
-                    usersInBatch.push(currentUser);
-                    result.push(currentUser);
-                }
-                else {
-                    const parentId = currentUser ? currentUser.id : batchNode.id;
-                    const agentSeq = currentUser ? currentUser.metadata.seq : seq;
-                    const a = this.store.writeSync(e.content, {
-                        parentId,
-                        metadata: { kind: session_tree_js_1.KIND_EXCHANGE, role: 'agent', seq: agentSeq, sessionId },
-                        tags: ['#exchange'],
-                    });
-                    result.push(a);
-                }
-            }
-            const { exchangeCount } = (0, session_tree_js_1.deriveCountersSync)(this.store, sessionId);
-            const freshSession = this.store.readSync(sessionId);
-            if (freshSession) {
-                this.store.updateSync(sessionId, {
-                    metadata: { ...freshSession.metadata, exchange_count: exchangeCount },
-                });
-            }
-            return result;
+        return this.store.runExclusive(() => this.logExchangeSync(sessionId, entries));
+    }
+    /**
+     * Log an exchange at most once for the given deterministic exchange key.
+     * Duplicate check and writes share one exclusive transaction.
+     */
+    async logExchangeOnce(sessionId, exchangeKey, entries) {
+        sessionId = this.store.resolveSessionAlias(sessionId);
+        const session = await this.store.read(sessionId);
+        if (!session || session.metadata.kind !== session_tree_js_1.KIND_SESSION) {
+            throw new Error(`Project session not found: ${sessionId}`);
+        }
+        const exNode = await (0, session_tree_js_1.findChildByKind)(this.store, sessionId, session_tree_js_1.KIND_EXCHANGES_ROOT);
+        if (!exNode)
+            throw new Error(`Exchanges node missing for session: ${sessionId}`);
+        return this.store.runExclusive(() => {
+            const existing = this.store.getDb().prepare(`
+        SELECT 1 FROM entries
+        WHERE json_extract(metadata, '$.sessionId') = ?
+          AND json_extract(metadata, '$.exchange_key') = ?
+          AND tombstoned_at IS NULL
+        LIMIT 1
+      `).get(sessionId, exchangeKey);
+            if (existing)
+                return [];
+            return this.logExchangeSync(sessionId, entries, { exchangeKey });
         });
-        return written;
     }
     async showUnsummarized(sessionId) {
         sessionId = this.store.resolveSessionAlias(sessionId);

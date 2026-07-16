@@ -46,6 +46,7 @@ const tim_store_1 = require("tim-store");
 const install_js_1 = require("./install.js");
 const update_skills_js_1 = require("./update-skills.js");
 const hermes_statusline_install_js_1 = require("./hermes-statusline-install.js");
+const claude_hooks_install_js_1 = require("./claude-hooks-install.js");
 const args_js_1 = require("./args.js");
 function buildSetupAgentPlan(opts) {
     assertAgentHost(opts.host);
@@ -321,7 +322,13 @@ async function cmdSetupAgent(args) {
                     ? { action: 'would-install-toml', path: path.join(os.homedir(), '.codex', 'config.toml'), snippet: buildCodexMcpConfig(dbPath) }
                     : { action: 'manual', reason: 'No JSON MCP installer exists for this host yet' },
             skills: { action: host === 'cursor' ? 'manual' : 'would-copy' },
-            hooks: { action: host === 'hermes' ? 'would-install-hermes-statusline' : 'not-required' },
+            hooks: {
+                action: host === 'hermes'
+                    ? 'would-install-hermes-statusline'
+                    : host === 'claude'
+                        ? 'would-install-claude-hooks'
+                        : 'not-required',
+            },
             smoke: { action: 'would-run-health-check', command: 'tim doctor' },
         }, null, 2));
         return;
@@ -341,7 +348,9 @@ async function cmdSetupAgent(args) {
     const skills = (0, update_skills_js_1.updateSkillsForHost)(host);
     const hooks = host === 'hermes'
         ? await (0, hermes_statusline_install_js_1.installHermesStatusline)({ skipBuild: true })
-        : { ok: true, steps: [{ step: 'hooks', status: 'skip', detail: 'No host hook install needed' }] };
+        : host === 'claude'
+            ? (0, claude_hooks_install_js_1.installClaudeHooks)()
+            : { ok: true, steps: [{ step: 'hooks', status: 'skip', detail: 'No host hook install needed' }] };
     const store = new tim_store_1.TimStore(dbPath);
     try {
         const health = await store.health();

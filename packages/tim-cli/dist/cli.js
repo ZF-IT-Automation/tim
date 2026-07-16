@@ -90,11 +90,12 @@ const COMMAND_HELP = {
     'bind-project': 'Usage: tim bind-project --label <P00XX> [--cwd <dir>] [--session <id>]',
     'new-project': 'Usage: tim new-project --path <dir> --name <string> [--no-git] [--confirm]',
     'record-commit': 'Usage: tim record-commit [--cwd <dir>] [--project <label>] [--session <id>] [--hash <sha>] [--message <text>] [--diff <stat>] [--author <name>] [--date <iso>] [--branch <name>]',
-    hook: 'Usage: tim hook <session-start|session-end|log|prompt-submit> [options]',
+    hook: 'Usage: tim hook <session-start|session-end|log|prompt-submit|claude-stop> [options]',
     'hook session-start': 'Usage: tim hook session-start --session <id> [--agent <name>] [--cwd <path>] [--harness <name>] [--project <label>] [--tool <name>] [--model <name>] [--task-summary <text>]',
     'hook session-end': 'Usage: tim hook session-end --session <id>',
     'hook log': 'Usage: tim hook log --session <id> --user <text> --agent <text> [--cwd <path>]',
     'hook prompt-submit': 'Usage: tim hook prompt-submit < Claude UserPromptSubmit JSON',
+    'hook claude-stop': 'Usage: tim hook claude-stop < Claude Stop JSON',
     checkpoint: 'Usage: tim checkpoint --session <id> [--handoff-note <text>]',
     rebalance: 'Usage: tim rebalance --session <id> [--cwd <dir>]',
     statusline: 'Usage: tim statusline [--cwd <dir>] [--session <id>] [--format text|hermes]',
@@ -362,8 +363,9 @@ async function cmdHook(args) {
         try {
             const payload = await (0, claude_hook_io_js_1.readJsonStdin)();
             const prompt = typeof payload?.prompt === 'string' ? payload.prompt : '';
-            const cwd = typeof payload?.cwd === 'string' ? payload.cwd : '';
-            if (!prompt.trim() || !cwd.trim())
+            const cwdRaw = typeof payload?.cwd === 'string' ? payload.cwd : '';
+            const cwd = cwdRaw.trim();
+            if (!prompt.trim() || !cwd)
                 return;
             const config = (0, tim_core_1.loadConfig)();
             if (config.hooks?.promptSubmit?.enabled === false)
@@ -387,6 +389,40 @@ async function cmdHook(args) {
         }
         catch {
             // Claude hooks fail soft: no context, diagnostics, or nonzero exit.
+        }
+        return;
+    }
+    if (sub === 'claude-stop') {
+        try {
+            const payload = await (0, claude_hook_io_js_1.readJsonStdin)();
+            if (!payload)
+                return;
+            if (payload.stop_hook_active === true)
+                return;
+            const sessionId = typeof payload.session_id === 'string' ? payload.session_id.trim() : '';
+            const transcriptPath = typeof payload.transcript_path === 'string' ? payload.transcript_path.trim() : '';
+            const cwd = typeof payload.cwd === 'string' ? payload.cwd.trim() : '';
+            if (!sessionId || !transcriptPath || !cwd)
+                return;
+            const marker = (0, tim_hooks_1.findMarker)(cwd);
+            if (!marker)
+                return;
+            const config = (0, tim_core_1.loadConfig)();
+            const store = new tim_store_1.TimStore(getDbPath(config));
+            try {
+                await (0, tim_hooks_1.runClaudeStop)(store, {
+                    session_id: sessionId,
+                    transcript_path: transcriptPath,
+                    cwd,
+                    stop_hook_active: payload.stop_hook_active === true,
+                }, { cwd });
+            }
+            finally {
+                store.close();
+            }
+        }
+        catch {
+            // Claude Stop hooks fail soft: never block the harness.
         }
         return;
     }
@@ -456,7 +492,7 @@ async function cmdHook(args) {
             }
             default:
                 console.error(`Unknown hook: ${sub ?? '(none)'}`);
-                console.error('Usage: tim hook <session-start|session-end|log|prompt-submit> [options]');
+                console.error('Usage: tim hook <session-start|session-end|log|prompt-submit|claude-stop> [options]');
                 process.exit(1);
         }
     }

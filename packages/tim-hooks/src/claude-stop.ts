@@ -3,7 +3,7 @@ import * as fs from 'node:fs';
 import type { TimStore } from 'tim-store';
 import { SessionManager, deriveCounters } from 'tim-store';
 import { afterExchangeLogged, type CadenceResult } from './cadence-runner.js';
-import { findMarker, readMarker } from './marker.js';
+import { findMarker } from './marker.js';
 
 export const MAX_TRANSCRIPT_BYTES = 1024 * 1024;
 export const MAX_EXCHANGE_CHARS = 64 * 1024;
@@ -151,7 +151,7 @@ async function ensureSessionForStop(
   const existing = await store.read(sessionId);
   if (existing?.metadata.kind === 'session') return true;
 
-  const marker = findMarker(cwd)?.marker ?? readMarker(cwd);
+  const marker = findMarker(cwd)?.marker;
   if (!marker?.project) return false;
 
   try {

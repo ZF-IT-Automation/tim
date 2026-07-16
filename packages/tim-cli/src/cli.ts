@@ -390,8 +390,9 @@ async function cmdHook(args: string[]) {
     try {
       const payload = await readJsonStdin();
       const prompt = typeof payload?.prompt === 'string' ? payload.prompt : '';
-      const cwd = typeof payload?.cwd === 'string' ? payload.cwd : '';
-      if (!prompt.trim() || !cwd.trim()) return;
+      const cwdRaw = typeof payload?.cwd === 'string' ? payload.cwd : '';
+      const cwd = cwdRaw.trim();
+      if (!prompt.trim() || !cwd) return;
 
       const config = loadConfig();
       if (config.hooks?.promptSubmit?.enabled === false) return;
@@ -424,11 +425,11 @@ async function cmdHook(args: string[]) {
       if (!payload) return;
       if (payload.stop_hook_active === true) return;
 
-      const sessionId = typeof payload.session_id === 'string' ? payload.session_id : '';
+      const sessionId = typeof payload.session_id === 'string' ? payload.session_id.trim() : '';
       const transcriptPath =
-        typeof payload.transcript_path === 'string' ? payload.transcript_path : '';
-      const cwd = typeof payload.cwd === 'string' ? payload.cwd : '';
-      if (!sessionId.trim() || !transcriptPath.trim() || !cwd.trim()) return;
+        typeof payload.transcript_path === 'string' ? payload.transcript_path.trim() : '';
+      const cwd = typeof payload.cwd === 'string' ? payload.cwd.trim() : '';
+      if (!sessionId || !transcriptPath || !cwd) return;
 
       const marker = findMarker(cwd);
       if (!marker) return;

@@ -113,7 +113,17 @@ export declare class SessionManager {
     sessionStart(params: SessionStartParams): Promise<Entry>;
     startProjectSession(params: ProjectSessionParams): Promise<Entry>;
     sessionLog(sessionId: string, entries: Exchange[]): Promise<Entry[]>;
+    /**
+     * Synchronous body of logExchange for use inside `store.runExclusive`.
+     * Caller must already hold the exclusive lock and have validated the session.
+     */
+    private logExchangeSync;
     logExchange(sessionId: string, entries: Exchange[]): Promise<Entry[]>;
+    /**
+     * Log an exchange at most once for the given deterministic exchange key.
+     * Duplicate check and writes share one exclusive transaction.
+     */
+    logExchangeOnce(sessionId: string, exchangeKey: string, entries: Exchange[]): Promise<Entry[]>;
     showUnsummarized(sessionId: string): Promise<UnsummarizedBatch>;
     writeBatchSummary(sessionId: string, batchIndex: number, summaryText: string, range: {
         seqFrom: number;

@@ -1,0 +1,1 @@
+{"root":["./src/index.ts","./src/tim-explain.ts","./src/tim-handoff.ts","./src/tim-hmem-import-audit.ts","./src/tim-mcp-smoke.ts","./src/tim-project-curate.ts","./src/tim-release-beta.ts","./src/tim-remember.ts","./src/tim-secret-audit.ts","./src/tim-session-start.ts","./src/tim-sync-triage.ts","./src/tim-using.ts"],"version":"5.9.3"}
