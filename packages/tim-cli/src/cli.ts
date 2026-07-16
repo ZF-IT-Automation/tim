@@ -11,11 +11,9 @@ import {
   findMarkerOptionsFromEnv,
   buildLoadDirective,
   buildSessionDirective,
-  readMarker,
-  writeMarker,
+  recoverProjectBinding,
   rebalanceBatch,
   afterExchangeLogged,
-  type ProjectMarker,
 } from 'tim-hooks';
 import { installMcpForHosts } from './install.js';
 import { cmdUserInit, cmdUserProfile, cmdUpdateSkills } from './user.js';
@@ -292,17 +290,18 @@ async function cmdBindProject(args: string[]) {
     console.error('Usage: tim bind-project --label <P00XX> [--cwd <dir>] [--session <id>]');
     process.exit(1);
   }
-  const existing = readMarker(cwd);
-  const marker: ProjectMarker = {
-    project: label,
-    session: flags.session ?? existing?.session ?? '',
-    exchanges: existing?.exchanges ?? 0,
-    batch_size: existing?.batch_size ?? 5,
-    batches_summarized: existing?.batches_summarized ?? 0,
-    version: 2,
-  };
-  writeMarker(cwd, marker);
-  console.log(`Wrote .tim-project → ${label} at ${cwd}`);
+  const config = loadConfig();
+  const store = new TimStore(getDbPath(config));
+  try {
+    const result = await recoverProjectBinding(store, {
+      label,
+      path: cwd,
+      sessionId: flags.session,
+    });
+    console.log(`Wrote .tim-project → ${result.label} at ${result.projectPath}`);
+  } finally {
+    store.close();
+  }
 }
 
 async function cmdHook(args: string[]) {
@@ -825,7 +824,7 @@ Commands:
   stats                 Show memory statistics
   resolve-project       Print bound project from nearest .tim-project (--cwd, --walk-up, --format label|json|directive)
   resolve-session       Print project_ref for a TIM session (--session, --format label|directive|json)
-  bind-project          Write/refresh .tim-project for a project (--label, --cwd, --session)
+  bind-project          Safely bind .tim-project to an existing project (--label, --cwd, --session)
   new-project           Create a new TIM project + bind to dir (-p <path> -n <name> [--no-git] [--confirm])
   record-commit         Record git commit to project Commits section (--cwd, --hash, --message, --diff)
   hook session-start    Start a session (--session, --agent, --cwd, --harness)

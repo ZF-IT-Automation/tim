@@ -291,6 +291,38 @@ describe('project creation', () => {
     expect(fs.existsSync(path.join(dir, '.tim-project'))).toBe(false);
   });
 
+  it.each(['not-a-project', 'P9999'])('rejects marker-invalid bound label %s before DB or marker mutation', async (label) => {
+    const error = await createProjectCoordinated(store, { label, path: dir })
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toMatch(/invalid project label/i);
+    expect((error as Error).message).not.toContain('tim bind-project');
+    expect(await store.loadProject(label)).toBeNull();
+    expect(fs.existsSync(path.join(dir, '.tim-project'))).toBe(false);
+  });
+
+  it('treats a dangling target-local marker symlink as an existing unknown marker', async () => {
+    const marker = path.join(dir, '.tim-project');
+    fs.symlinkSync(path.join(dir, 'missing-marker-target'), marker);
+
+    await expect(createProjectCoordinated(store, { label: 'P1089', path: dir }))
+      .rejects.toThrow(/unknown or corrupt/i);
+    expect(fs.lstatSync(marker).isSymbolicLink()).toBe(true);
+    expect(fs.readlinkSync(marker)).toBe(path.join(dir, 'missing-marker-target'));
+    expect(await store.loadProject('P1089')).toBeNull();
+  });
+
+  it('treats a special target-local marker pathname as existing without reading it', async () => {
+    const marker = path.join(dir, '.tim-project');
+    fs.mkdirSync(marker);
+
+    await expect(createProjectCoordinated(store, { label: 'P1088', path: dir }))
+      .rejects.toThrow(/unknown or corrupt/i);
+    expect(fs.lstatSync(marker).isDirectory()).toBe(true);
+    expect(await store.loadProject('P1088')).toBeNull();
+  });
+
   it('leaves no marker when the requested label already resolves as an alias', async () => {
     await store.createProject('P1090', { aliases: ['P1091'] });
 
@@ -418,5 +450,22 @@ describe('project creation', () => {
     await expect(recoverProjectBinding(store, { label: 'P1023', path: dir }))
       .rejects.toThrow(/unknown or corrupt/i);
     expect(fs.readFileSync(marker, 'utf8')).toBe('{not json');
+  });
+
+  it('recovery preserves a marker that wins after its initial local check', async () => {
+    await store.createProject('P1024');
+    const lateWinner = () => {
+      writeMarkerExclusive(dir, {
+        project: 'P1025', session: 'winner', exchanges: 2, batch_size: 5, batches_summarized: 1,
+      });
+      return writeMarkerExclusive(dir, {
+        project: 'P1024', session: 'loser', exchanges: 0, batch_size: 5, batches_summarized: 0,
+      });
+    };
+
+    await expect(recoverProjectBinding(store, { label: 'P1024', path: dir }, {
+      writeExclusive: lateWinner,
+    })).rejects.toThrow(/P1024.*P1025|P1025.*P1024/);
+    expect(readMarker(dir)).toMatchObject({ project: 'P1025', session: 'winner' });
   });
 });

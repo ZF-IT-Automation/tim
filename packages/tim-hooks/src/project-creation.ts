@@ -7,6 +7,7 @@ import { TimStore } from 'tim-store';
 import {
   readMarker,
   markerPath as projectMarkerPath,
+  validateProjectLabel,
   writeMarkerExclusive,
 } from './marker.js';
 
@@ -120,7 +121,22 @@ const UNKNOWN_LOCAL_MARKER = Symbol('unknown-local-marker');
 type LocalMarkerLabel = string | null | typeof UNKNOWN_LOCAL_MARKER;
 
 function localMarkerLabel(projectPath: string): LocalMarkerLabel {
-  if (!fs.existsSync(projectMarkerPath(projectPath))) return null;
+  const marker = projectMarkerPath(projectPath);
+  let markerStat: fs.Stats;
+  try {
+    markerStat = fs.lstatSync(marker);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    return UNKNOWN_LOCAL_MARKER;
+  }
+  if (markerStat.isSymbolicLink()) {
+    try {
+      markerStat = fs.statSync(marker);
+    } catch {
+      return UNKNOWN_LOCAL_MARKER;
+    }
+  }
+  if (!markerStat.isFile()) return UNKNOWN_LOCAL_MARKER;
   return readMarker(projectPath)?.project ?? UNKNOWN_LOCAL_MARKER;
 }
 
@@ -203,6 +219,9 @@ export async function createProjectCoordinated(
   }
 
   const projectPath = canonicalDirectory(args.path!);
+  if (!validateProjectLabel(args.label)) {
+    throw new Error(`Invalid project label for a bound project: ${args.label}`);
+  }
   const markerPath = projectMarkerPath(projectPath);
   const existing = localMarkerLabel(projectPath);
   if (existing !== null) {
