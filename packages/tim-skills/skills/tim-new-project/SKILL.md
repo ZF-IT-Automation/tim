@@ -9,12 +9,16 @@ Use when an agent must create a project in the configured live TIM database.
 
 For a disk-backed repository or workspace:
 1. Resolve one canonical absolute path for the repository/workspace.
-2. Inspect the configured live database and allocate a non-conflicting `P` label.
-3. Call `tim_create_project` with `label`, `content`, `aliases`, and
-   `path="/absolute/path/to/repository"`.
-4. Accept success only when the result has `mode="bound"` and its `markerPath`
-   is the `.tim-project` path for that same canonical repository. Otherwise stop.
-5. Call `tim_load_project`, then fill the appropriate seeded sections with TIM tools.
+2. Prefer `tim new-project --path <absolute-path> --name <name>`. The CLI owns
+   label allocation/retry, database creation, marker publication, and section setup.
+3. Call `tim_load_project`, then fill the appropriate seeded sections with TIM tools.
+
+If directly using MCP, start only with an already-known non-conflicting `P` label and
+call `tim_create_project` with `label`, `content`, `aliases`, and
+`path="/absolute/path/to/repository"`. On collision, retry only under an explicit,
+known allocation policy. If no supported allocator/list is available, do not guess:
+use the CLI or ask the user. Accept success only when the result has `mode="bound"`
+and its `markerPath` is the `.tim-project` path for that same canonical repository.
 
 Use `memoryOnly=true` only for an intentionally virtual/database-only project.
 Never use `memoryOnly=true` for an unknown cwd; resolve the canonical path first.

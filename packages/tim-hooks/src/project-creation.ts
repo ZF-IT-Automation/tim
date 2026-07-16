@@ -154,8 +154,8 @@ function markerInput(label: string, session: string) {
   };
 }
 
-function recoveryCommand(label: string, projectPath: string): string {
-  return `tim bind-project --label ${shellSingleQuote(label)} --cwd ${shellSingleQuote(projectPath)}`;
+function recoveryCommand(databasePath: string, label: string, projectPath: string): string {
+  return `TIM_DB_PATH=${shellSingleQuote(databasePath)} tim bind-project --label ${shellSingleQuote(label)} --cwd ${shellSingleQuote(projectPath)}`;
 }
 
 function errorText(error: unknown): string {
@@ -171,13 +171,14 @@ function targetMarkerConflict(markerPath: string, label: LocalMarkerLabel): Erro
 }
 
 function publicationFailure(
+  databasePath: string,
   label: string,
   projectPath: string,
   reason: string,
 ): ProjectCreationPartialFailureError {
   return new ProjectCreationPartialFailureError(
     `Project ${label} was created in the database, but its local marker was not published or verified at ${projectPath}: ${reason}. ` +
-      `Recover the binding with: ${recoveryCommand(label, projectPath)}`,
+      `Recover the binding with: ${recoveryCommand(databasePath, label, projectPath)}`,
     label,
     projectPath,
   );
@@ -255,14 +256,19 @@ export async function createProjectCoordinated(
       throw publicationRace(args.label, winner, projectPath);
     }
     if (winner !== args.label) {
-      throw publicationFailure(args.label, projectPath, errorText(error));
+      throw publicationFailure(store.getDatabasePath(), args.label, projectPath, errorText(error));
     }
   }
 
   const verified = localMarkerLabel(projectPath);
   if (verified !== args.label) {
     if (verified !== null) throw publicationRace(args.label, verified, projectPath);
-    throw publicationFailure(args.label, projectPath, 'the marker is absent after publication');
+    throw publicationFailure(
+      store.getDatabasePath(),
+      args.label,
+      projectPath,
+      'the marker is absent after publication',
+    );
   }
 
   return { ...entry, mode, projectPath, markerPath };

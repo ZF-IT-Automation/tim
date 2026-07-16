@@ -29,7 +29,7 @@ node packages/tim-cli/dist/cli.js statusline
 
 ---
 
-## Command Overview (28 commands)
+## Command Overview (29 commands)
 
 ### Top-Level Summary
 
@@ -41,28 +41,29 @@ node packages/tim-cli/dist/cli.js statusline
 | 4 | `tim resolve-project` | Print bound project from nearest `.tim-project` marker |
 | 5 | `tim resolve-session` | Print project_ref for a TIM session |
 | 6 | `tim bind-project` | Safely recover a missing `.tim-project` for an existing project |
-| 7 | `tim record-commit` | Record a git commit to the project's Commits section |
-| 8 | `tim hook session-start` | Start a new session |
-| 9 | `tim hook session-end` | End a session and run checkpoint |
-| 10 | `tim checkpoint` | Manual checkpoint for a session |
-| 11 | `tim rebalance` | Rebalance exchange batches at boundaries |
-| 12 | `tim statusline` | Status text or Hermes JSON for UI display |
-| 13 | `tim setup-hermes-statusline` | Install Hermes TUI status bar integration |
-| 14 | `tim export` | Export TIM DB to `.hmem` or text format |
-| 15 | `tim import` | Import from `.hmem` file |
-| 16 | `tim migrate-from-hmem` | Guided hmem-to-TIM migration with dry-run, snapshot, import, audit handoff |
-| 17 | `tim migrate tags-to-types` | Convert legacy `#rule` / `#human` tags to `metadata.type` |
-| 18 | `tim snapshot` | Snapshot live DB to `/tmp/tim-snapshots/` (SQLite backup) |
-| 19 | `tim restore` | Restore DB from a snapshot |
-| 20 | `tim release-check` | Verify release gates, beta smoke checks, and packaging safety |
-| 21 | `tim setup-agent` | Install TIM MCP, skills, hooks, and smoke guidance for one agent host |
-| 22 | `tim sync connect` | Connect to o9k-sync server |
-| 23 | `tim sync push` | Push unacked staging to server |
-| 24 | `tim sync pull` | Pull remote changes |
-| 25 | `tim sync status` | Show sync configuration and health |
-| 26 | `tim sync dev` | Start local dev sync server (port 3100) |
-| 27 | `tim --help` | Show top-level help |
-| 28 | `tim hook log` | Log a single exchange to a session |
+| 7 | `tim new-project` | Create a path-bound project with coordinated label allocation and marker publication |
+| 8 | `tim record-commit` | Record a git commit to the project's Commits section |
+| 9 | `tim hook session-start` | Start a new session |
+| 10 | `tim hook session-end` | End a session and run checkpoint |
+| 11 | `tim checkpoint` | Manual checkpoint for a session |
+| 12 | `tim rebalance` | Rebalance exchange batches at boundaries |
+| 13 | `tim statusline` | Status text or Hermes JSON for UI display |
+| 14 | `tim setup-hermes-statusline` | Install Hermes TUI status bar integration |
+| 15 | `tim export` | Export TIM DB to `.hmem` or text format |
+| 16 | `tim import` | Import from `.hmem` file |
+| 17 | `tim migrate-from-hmem` | Guided hmem-to-TIM migration with dry-run, snapshot, import, audit handoff |
+| 18 | `tim migrate tags-to-types` | Convert legacy `#rule` / `#human` tags to `metadata.type` |
+| 19 | `tim snapshot` | Snapshot live DB to `/tmp/tim-snapshots/` (SQLite backup) |
+| 20 | `tim restore` | Restore DB from a snapshot |
+| 21 | `tim release-check` | Verify release gates, beta smoke checks, and packaging safety |
+| 22 | `tim setup-agent` | Install TIM MCP, skills, hooks, and smoke guidance for one agent host |
+| 23 | `tim sync connect` | Connect to o9k-sync server |
+| 24 | `tim sync push` | Push unacked staging to server |
+| 25 | `tim sync pull` | Pull remote changes |
+| 26 | `tim sync status` | Show sync configuration and health |
+| 27 | `tim sync dev` | Start local dev sync server (port 3100) |
+| 28 | `tim --help` | Show top-level help |
+| 29 | `tim hook log` | Log a single exchange to a session |
 
 ---
 
@@ -225,6 +226,9 @@ Usage: tim bind-project --label <P00XX> [--cwd <dir>] [--session <id>]
 **Example:**
 ```bash
 tim bind-project --label P0062 --cwd ~/projects/tim
+
+# Select the exact database named by a partial-creation error:
+TIM_DB_PATH='/exact/path/to/tim.db' tim bind-project --label P0062 --cwd ~/projects/tim
 ```
 
 Project creation coordinates a database write with local marker publication, but it is
@@ -235,7 +239,34 @@ do not overwrite it.
 
 ---
 
-### 7. `tim record-commit --cwd <dir> --hash <sha> --message <msg> [--diff <path>]`
+### 7. `tim new-project --path <absolute-dir> --name <name>`
+
+Preferred flow for creating a disk-backed TIM project. The command allocates a live
+non-conflicting `P` label (retrying bounded concurrent collisions), creates the database
+project, publishes `.tim-project`, initializes standard sections, and optionally runs
+`git init`.
+
+```bash
+tim new-project --path /absolute/path/to/repository --name "Project name"
+tim new-project -p /absolute/path/to/repository -n "Project name" --no-git --confirm
+```
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--path <dir>`, `-p <dir>` | Yes | Repository/workspace path; `--path` must be absolute and cannot be the home directory or use shell shorthand |
+| `--name <name>`, `-n <name>` | Yes | Non-empty project display name |
+| `--no-git` | No | Do not initialize a Git repository |
+| `--confirm` | No | Allow a non-empty directory without an interactive prompt |
+
+Creation is coordinated, not a cross-database/filesystem transaction: the database
+commit can succeed before local marker publication fails. In that case, run only the
+exact returned recovery command. It includes a shell-quoted `TIM_DB_PATH` selecting the
+same database used for creation. If a different marker already exists, reconcile it
+explicitly; neither `new-project` nor recovery-only `bind-project` overwrites it.
+
+---
+
+### 8. `tim record-commit --cwd <dir> --hash <sha> --message <msg> [--diff <path>]`
 
 Record a git commit to a project's Commits section in the TIM tree.
 **WRITES to the DB** — `--help` prints usage and exits; run it only when you intend to record a real commit.
@@ -258,7 +289,7 @@ when run from a directory whose .tim-project points to a missing/unknown project
 
 ---
 
-### 8-9. `tim hook session-start` / `tim hook session-end`
+### 9-10. `tim hook session-start` / `tim hook session-end`
 
 Session lifecycle hooks for tracking agent work sessions in TIM.
 
@@ -288,7 +319,7 @@ tim hook session-end --session $SESSION_ID
 
 ---
 
-### 10. `tim checkpoint --session <id>`
+### 11. `tim checkpoint --session <id>`
 
 Manually trigger a checkpoint for a session — summarizes exchange batches.
 
@@ -298,7 +329,7 @@ Usage: tim checkpoint --session <id>
 
 ---
 
-### 11. `tim rebalance --session <id>`
+### 12. `tim rebalance --session <id>`
 
 Rebalance exchange batches at boundary points — re-groups exchanges into
 optimized batch sizes.
@@ -309,7 +340,7 @@ Usage: tim rebalance --session <id>
 
 ---
 
-### 12. `tim statusline [--cwd <dir>] [--session <id>] [--format text|hermes]`
+### 13. `tim statusline [--cwd <dir>] [--session <id>] [--format text|hermes]`
 
 Short status string for shell prompts or Hermes TUI status bar.
 
@@ -325,7 +356,7 @@ P9999 · 0/5 exchanges · summary in 5
 
 ---
 
-### 13. `tim setup-hermes-statusline [--dry-run] [--skip-build]`
+### 14. `tim setup-hermes-statusline [--dry-run] [--skip-build]`
 
 Install the Hermes TUI status bar integration. Symlinks hooks, patches `cli.py`,
 builds TypeScript, and verifies the integration.
@@ -345,7 +376,7 @@ Test: bash ~/.hermes/agent-hooks/tim-hermes-statusline.sh | jq .
 
 ---
 
-### 14. `tim export <path> [--format hmem|text]`
+### 15. `tim export <path> [--format hmem|text]`
 
 Export database to `.hmem` or plain text format.
 
@@ -355,7 +386,7 @@ Usage: tim export <path.hmem> [--format hmem|text]
 
 ---
 
-### 15. `tim import <path> [--dry-run] [--deduplicate] [--repair-flags] [--no-snapshot-check]`
+### 16. `tim import <path> [--dry-run] [--deduplicate] [--repair-flags] [--no-snapshot-check]`
 
 Import from a `.hmem` file into the live database.
 
@@ -378,7 +409,7 @@ the live TIM database.
 
 ---
 
-### 16. `tim migrate-from-hmem <path.hmem> [--deduplicate] [--no-deduplicate] [--dry-run]`
+### 17. `tim migrate-from-hmem <path.hmem> [--deduplicate] [--no-deduplicate] [--dry-run]`
 
 Guided hmem-to-TIM migration for agents. It inspects the source, performs a dry
 run, snapshots the TIM database before writing, imports, runs a health check,
@@ -402,7 +433,7 @@ for focused repair or lower-level migration work.
 
 ---
 
-### 17. `tim migrate tags-to-types [--dry-run] [--sample-limit N]`
+### 18. `tim migrate tags-to-types [--dry-run] [--sample-limit N]`
 
 One-time migration: convert legacy `#rule` and `#human` tags into `metadata.type`
 fields. Uses heuristics to detect the correct type.
@@ -427,7 +458,7 @@ tim migrate tags-to-types --dry-run --sample-limit 3
 
 ---
 
-### 18. `tim snapshot`
+### 19. `tim snapshot`
 
 Create a safe backup of the live TIM database to `/tmp/tim-snapshots/`.
 Uses SQLite backup API (safe for live DB — no corruption risk).
@@ -447,7 +478,7 @@ snapshot: /tmp/tim-snapshots/tim-20260617-0956.db (67072000 bytes, 141ms)
 
 ---
 
-### 19. `tim restore [--from <path>] [--list] [--dry-run] [--force]`
+### 20. `tim restore [--from <path>] [--list] [--dry-run] [--force]`
 
 Restore TIM DB from a snapshot. Has a safety guard — refuses to overwrite a DB
 modified within the last 60 minutes unless `--force` is passed.
@@ -469,7 +500,7 @@ use --force to override (NOT recommended unless you know what you are doing)
 
 ---
 
-### 20. `tim release-check [--beta] [--json] [--skip-tests true]`
+### 21. `tim release-check [--beta] [--json] [--skip-tests true]`
 
 Run the release gate sequence before tagging or packaging.
 
@@ -499,7 +530,7 @@ when you already ran it.
 
 ---
 
-### 21. `tim setup-agent --host claude|codex|cursor|hermes [--dry-run]`
+### 22. `tim setup-agent --host claude|codex|cursor|hermes [--dry-run]`
 
 Install TIM for one agent host. The command prints a JSON report covering MCP
 config, copied skills, host hooks, and a doctor-style smoke status.
@@ -523,7 +554,7 @@ open or create the TIM DB.
 
 ---
 
-### 22-25. `tim sync` Subcommands
+### 23-26. `tim sync` Subcommands
 
 Distributed sync for multi-device TIM setups.
 

@@ -50,7 +50,9 @@ describe('project creation', () => {
     preflightIo.removeProbeAfterWrite = false;
     preflightIo.uuid = null;
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tim-project-creation-'));
-    store = new TimStore(path.join(dir, 'tim.db'));
+    const dbDir = path.join(dir, "database dir's");
+    fs.mkdirSync(dbDir);
+    store = new TimStore(path.join(dbDir, 'custom tim.db'));
   });
 
   afterEach(() => {
@@ -371,6 +373,10 @@ describe('project creation', () => {
 
     expect(error).toBeInstanceOf(ProjectCreationPartialFailureError);
     expect(error).toMatchObject({ createdLabel: 'P1016', projectPath: canonical });
+    const databasePath = fs.realpathSync(store.getDatabasePath());
+    expect((error as Error).message).toContain(
+      `TIM_DB_PATH='${databasePath.replaceAll("'", "'\"'\"'")}' tim bind-project`,
+    );
     expect((error as Error).message).toContain("tim bind-project --label 'P1016'");
     expect((error as Error).message).toContain(`--cwd '${canonical.replaceAll("'", "'\"'\"'")}'`);
     expect((error as Error).message).toContain('disk full');

@@ -31,13 +31,13 @@ class StdioMcpClient {
   private buffer = '';
   private initialized = false;
 
-  constructor(dbPath: string, cwd: string) {
+  constructor(dbPath: string, cwd: string, extraEnv: Record<string, string> = {}) {
     if (!fs.existsSync(SERVER_PATH)) {
       throw new Error(`Server dist not found: ${SERVER_PATH}. Run "npm run build" first.`);
     }
     this.proc = spawn('node', [SERVER_PATH], {
       cwd,
-      env: { ...process.env, TIM_DB_PATH: dbPath },
+      env: { ...process.env, ...extraEnv, TIM_DB_PATH: dbPath },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     this.proc.stdout!.on('data', chunk => this.onData(chunk.toString('utf8')));
@@ -128,7 +128,9 @@ describe('tim_create_project explicit mode contract', () => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), 'tim-create-contract-'));
     serverCwd = path.join(root, 'server-cwd');
     fs.mkdirSync(serverCwd);
-    dbPath = path.join(root, 'tim.db');
+    const dbDir = path.join(root, "database dir's");
+    fs.mkdirSync(dbDir);
+    dbPath = path.join(dbDir, 'custom tim.db');
     client = new StdioMcpClient(dbPath, serverCwd);
     await client.init();
   });
@@ -211,6 +213,41 @@ describe('tim_create_project explicit mode contract', () => {
     });
     expect(readMarker(canonical)?.project).toBe('P1202');
     expect(fs.existsSync(path.join(serverCwd, '.tim-project'))).toBe(false);
+  });
+
+  it('returns a shell-safe same-DB recovery command after MCP marker publication fails', async () => {
+    client.close();
+    const preload = path.join(root, 'fail-marker-write.cjs');
+    fs.writeFileSync(preload, `
+const fs = require('node:fs');
+const original = fs.writeFileSync;
+fs.writeFileSync = function(file, ...args) {
+  if (String(file).includes('.tim-project.tmp.')) throw new Error('simulated marker failure');
+  return original.call(this, file, ...args);
+};
+`);
+    client = new StdioMcpClient(dbPath, serverCwd, {
+      NODE_OPTIONS: `--require=${preload}`,
+    });
+    const target = path.join(root, 'partial-target');
+    fs.mkdirSync(target);
+
+    const result = resultOf(await client.createProject({
+      label: 'P1203',
+      content: 'Partial project',
+      path: target,
+    }));
+
+    expect(result.isError).toBe(true);
+    const canonicalDb = fs.realpathSync(dbPath);
+    expect(result.content[0].text).toContain(
+      `TIM_DB_PATH='${canonicalDb.replaceAll("'", "'\"'\"'")}' tim bind-project`,
+    );
+    expect(result.content[0].text).toContain("--label 'P1203'");
+    expect(fs.existsSync(path.join(target, '.tim-project'))).toBe(false);
+    const store = new TimStore(dbPath);
+    expect(await store.loadProject('P1203')).not.toBeNull();
+    store.close();
   });
 
   it.each([

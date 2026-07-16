@@ -63,7 +63,9 @@ describe('tim new-project', () => {
   beforeEach(() => {
     fs.mkdirSync(TEST_ROOT, { recursive: true });
     workDir = fs.mkdtempSync(path.join(TEST_ROOT, 'case-'));
-    dbPath = path.join(workDir, 'test.db');
+    const dbDir = path.join(workDir, "database dir's");
+    fs.mkdirSync(dbDir);
+    dbPath = path.join(dbDir, 'custom tim.db');
     env = { TIM_DB_PATH: dbPath, TIM_MARKER_MAX_ROOT: workDir };
   });
 
@@ -266,17 +268,14 @@ describe('tim new-project', () => {
     exitSpy.mockRestore();
   });
 
-  it('preserves coordinated partial failure errors for top-level exit 1 handling', async () => {
+  it('preserves a shell-safe same-DB recovery command after coordinated partial failure', async () => {
     const target = path.join(workDir, 'partial-failure');
-    const partial = new ProjectCreationPartialFailureError(
-      `Project P0001 was created, but marker publication failed. Recover with: tim bind-project --label P0001 --cwd ${target}`,
-      'P0001',
-      target,
-    );
     let attempts = 0;
-    const createProject: typeof createProjectCoordinated = async () => {
+    const createProject: typeof createProjectCoordinated = async (store, args) => {
       attempts++;
-      throw partial;
+      return createProjectCoordinated(store, args, {
+        writeExclusive: () => { throw new Error('simulated disk full'); },
+      });
     };
     const exitSpy = mockExit();
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -284,10 +283,14 @@ describe('tim new-project', () => {
     process.env.TIM_DB_PATH = dbPath;
 
     try {
-      await expect(cmdNewProject(
+      const error = await cmdNewProject(
         ['--path', target, '--name', 'Partial', '--no-git'],
         { createProject },
-      )).rejects.toBe(partial);
+      ).catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(ProjectCreationPartialFailureError);
+      expect((error as Error).message).toContain(
+        `TIM_DB_PATH='${fs.realpathSync(dbPath).replaceAll("'", "'\"'\"'")}' tim bind-project`,
+      );
     } finally {
       if (prevDb === undefined) delete process.env.TIM_DB_PATH;
       else process.env.TIM_DB_PATH = prevDb;
@@ -297,6 +300,19 @@ describe('tim new-project', () => {
     expect(exitSpy).not.toHaveBeenCalled();
     expect(errorSpy).not.toHaveBeenCalledWith(expect.stringContaining('Failed to create project in database'));
     exitSpy.mockRestore();
+  });
+
+  it('documents new-project as the preferred absolute-path creation command', () => {
+    const reference = fs.readFileSync(
+      path.resolve(__dirname, '../../../../docs/tim-cli-reference.md'),
+      'utf8',
+    );
+
+    expect(reference).toContain('## Command Overview (29 commands)');
+    expect(reference).toMatch(/\| 7 \| `tim new-project` \|/);
+    expect(reference).toContain('### 7. `tim new-project --path <absolute-dir> --name <name>');
+    expect(reference).toContain('`--path` must be absolute');
+    expect(reference).toContain("TIM_DB_PATH='/exact/path/to/tim.db' tim bind-project");
   });
 
   it('starts at P0001 for empty DB', () => {

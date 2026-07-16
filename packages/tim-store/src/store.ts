@@ -2,6 +2,7 @@
 // SQLite-backed MemoryInterface implementation.
 
 import Database from 'better-sqlite3';
+import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { ulid } from 'ulid';
 import { formatEntryId } from './entry-id.js';
@@ -158,12 +159,14 @@ export interface GetTasksOptions {
 
 export class TimStore implements MemoryInterface {
   private db: Database.Database;
+  private readonly databasePath: string;
   private emitter?: Pick<EventBus, 'emit'>;
   private agentId: string;
   private deviceId: string;
 
   constructor(dbPath: string, options: TimStoreOptions = {}) {
     this.db = new Database(dbPath);
+    this.databasePath = this.db.name === ':memory:' ? ':memory:' : fs.realpathSync(this.db.name);
     this.emitter = options.emitter;
     this.agentId = options.agentId ?? 'system';
     this.deviceId = options.deviceId ?? 'local';
@@ -1395,6 +1398,11 @@ export class TimStore implements MemoryInterface {
   /** @internal Exposed for tests */
   getDb(): Database.Database {
     return this.db;
+  }
+
+  /** Canonical identity of the SQLite database opened by this store. */
+  getDatabasePath(): string {
+    return this.databasePath;
   }
 
   /** Run `fn` inside a single exclusive DB transaction (serializes concurrent callers). */

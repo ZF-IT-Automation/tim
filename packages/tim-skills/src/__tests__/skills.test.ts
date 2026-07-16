@@ -72,10 +72,13 @@ describe('weak-model skills', () => {
       /^---\nname: (.+)\ndescription: (.+)\n---\n\n([\s\S]*)$/,
     );
     const requiredGuidance = [
+      'tim new-project --path <absolute-path> --name <name>',
       'path="/absolute/path/to/repository"',
       'memoryOnly=true',
       'unknown cwd',
       'markerPath',
+      'already-known non-conflicting',
+      'do not guess',
     ];
 
     for (const guidance of requiredGuidance) {
