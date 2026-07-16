@@ -27,6 +27,7 @@ const HELP_CASES: HelpCase[] = [
   { args: ['hook', 'session-end'], usage: 'Usage: tim hook session-end' },
   { args: ['hook', 'log'], usage: 'Usage: tim hook log' },
   { args: ['hook', 'prompt-submit'], usage: 'Usage: tim hook prompt-submit' },
+  { args: ['hook', 'claude-stop'], usage: 'Usage: tim hook claude-stop' },
   { args: ['checkpoint'], usage: 'Usage: tim checkpoint' },
   { args: ['rebalance'], usage: 'Usage: tim rebalance' },
   { args: ['statusline'], usage: 'Usage: tim statusline' },
