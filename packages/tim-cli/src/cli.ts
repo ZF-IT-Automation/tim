@@ -16,6 +16,7 @@ import {
   writeMarker,
   rebalanceBatch,
   afterExchangeLogged,
+  runPromptSubmit,
   type ProjectMarker,
 } from 'tim-hooks';
 import { buildTimMcpEntry, installMcpEntryForHosts } from './install.js';
@@ -38,6 +39,7 @@ import { runReleaseCheck } from './release-check.js';
 import { cmdMigrateFromHmem } from './migrate-from-hmem.js';
 import { cmdSetupAgent } from './setup-agent.js';
 import { NEW_PROJECT_ALIASES, hasBooleanFlag, parseArgs, valueOptionsFor } from './args.js';
+import { promptSubmitEnvelope, readJsonStdin } from './claude-hook-io.js';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -82,12 +84,13 @@ const COMMAND_HELP: Record<string, string> = {
     'Usage: tim new-project --path <dir> --name <string> [--no-git] [--confirm]',
   'record-commit':
     'Usage: tim record-commit [--cwd <dir>] [--project <label>] [--session <id>] [--hash <sha>] [--message <text>] [--diff <stat>] [--author <name>] [--date <iso>] [--branch <name>]',
-  hook: 'Usage: tim hook <session-start|session-end|log> [options]',
+  hook: 'Usage: tim hook <session-start|session-end|log|prompt-submit> [options]',
   'hook session-start':
     'Usage: tim hook session-start --session <id> [--agent <name>] [--cwd <path>] [--harness <name>] [--project <label>] [--tool <name>] [--model <name>] [--task-summary <text>]',
   'hook session-end': 'Usage: tim hook session-end --session <id>',
   'hook log':
     'Usage: tim hook log --session <id> --user <text> --agent <text> [--cwd <path>]',
+  'hook prompt-submit': 'Usage: tim hook prompt-submit < Claude UserPromptSubmit JSON',
   checkpoint: 'Usage: tim checkpoint --session <id> [--handoff-note <text>]',
   rebalance: 'Usage: tim rebalance --session <id> [--cwd <dir>]',
   statusline:
@@ -380,6 +383,39 @@ async function cmdBindProject(args: string[]) {
 
 async function cmdHook(args: string[]) {
   const sub = args[0];
+
+  if (sub === 'prompt-submit') {
+    try {
+      const payload = await readJsonStdin();
+      const prompt = typeof payload?.prompt === 'string' ? payload.prompt : '';
+      const cwd = typeof payload?.cwd === 'string' ? payload.cwd : '';
+      if (!prompt.trim() || !cwd.trim()) return;
+
+      const config = loadConfig();
+      if (config.hooks?.promptSubmit?.enabled === false) return;
+
+      const store = new TimStore(getDbPath(config));
+      let context: string | null = null;
+      try {
+        const marker = findMarker(cwd);
+        const result = await runPromptSubmit(store, {
+          prompt,
+          projectLabel: marker?.marker.project,
+        });
+        context = result?.context ?? null;
+      } finally {
+        store.close();
+      }
+
+      if (context) {
+        process.stdout.write(JSON.stringify(promptSubmitEnvelope(context)));
+      }
+    } catch {
+      // Claude hooks fail soft: no context, diagnostics, or nonzero exit.
+    }
+    return;
+  }
+
   const { flags } = parseArgs(args.slice(1), {
     valueOptions: valueOptionsFor('hook', sub),
   });
@@ -455,7 +491,7 @@ async function cmdHook(args: string[]) {
 
       default:
         console.error(`Unknown hook: ${sub ?? '(none)'}`);
-        console.error('Usage: tim hook <session-start|session-end|log> [options]');
+        console.error('Usage: tim hook <session-start|session-end|log|prompt-submit> [options]');
         process.exit(1);
     }
   } finally {
