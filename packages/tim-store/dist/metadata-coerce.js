@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.BOOLEAN_METADATA_KEYS = void 0;
 exports.normalizeTaskValue = normalizeTaskValue;
 exports.isTaskMarker = isTaskMarker;
+exports.isIdeaMarker = isIdeaMarker;
 exports.coerceMetadataBooleans = coerceMetadataBooleans;
 exports.metadataNeedsCoercion = metadataNeedsCoercion;
 exports.parseAndCoerceMetadata = parseAndCoerceMetadata;
@@ -38,6 +39,10 @@ function isTaskMarker(value) {
         return true;
     }
     return false;
+}
+/** Idea marker is a nested object only (no boolean shorthand). */
+function isIdeaMarker(value) {
+    return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 function coerceBooleanValue(value) {
     if (value === 1 || value === 'true')

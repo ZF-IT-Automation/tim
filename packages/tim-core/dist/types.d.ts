@@ -12,10 +12,13 @@ export declare const METADATA_TYPES: readonly ["standard", "project", "task", "e
 export declare const ALL_METADATA_TYPES: readonly ["standard", "project", "task", "error", "decision", "learning", "idea", "log", "commit", "summary", "session", "batch_summary", "exchange", "event", "rule", "human"];
 /** Nested task sub-section (Schema v3 Phase 2a). */
 export interface TaskMetadata {
-    status?: 'todo' | 'in_progress' | 'done' | 'cancelled';
+    status?: 'todo' | 'in_progress' | 'done' | 'cancelled' | 'changes_pending';
     priority?: 'low' | 'medium' | 'high' | 'critical';
     due_date?: string;
     completion_evidence?: string | null;
+    subtype?: 'coding';
+    commits?: string[];
+    reviewed?: boolean;
 }
 /** Stub for Phase 2b */
 export interface RuleMetadata {
@@ -26,6 +29,10 @@ export interface RuleMetadata {
 export interface BugMetadata {
     severity?: 'P0' | 'P1' | 'P2' | 'P3';
     status?: 'open' | 'in_progress' | 'fixed' | 'wontfix';
+}
+/** Nested idea sub-section — lifecycle until promote-to-task. */
+export interface IdeaMetadata {
+    status?: 'new' | 'planned' | 'parked' | 'rejected';
 }
 /** Entry metadata — `type` is the Schema v3 semantic classifier. */
 export interface EntryMetadata {

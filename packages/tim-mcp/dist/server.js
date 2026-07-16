@@ -1147,6 +1147,16 @@ async function applyWith(store, entries, withStr) {
                 result = result.filter(e => Date.parse(e.createdAt) >= cutoff);
                 break;
             }
+            case 'needs_review':
+                result = result.filter(e => (0, tim_store_1.isCodingNeedsReview)(e.metadata));
+                break;
+            case 'coding':
+                result = result.filter(e => {
+                    const task = e.metadata.task;
+                    return typeof task === 'object' && task !== null
+                        && task.subtype === 'coding';
+                });
+                break;
             default: {
                 const tagForm = t.startsWith('#') ? t : `#${t}`;
                 if (result.some(e => e.tags.includes(tagForm) || e.tags.includes(t))) {

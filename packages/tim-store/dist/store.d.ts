@@ -78,6 +78,8 @@ export interface GetBugsOptions {
 }
 export interface GetTasksOptions {
     status?: string;
+    subtype?: string;
+    needs_review?: boolean;
 }
 export declare class TimStore implements MemoryInterface {
     private db;
@@ -224,6 +226,13 @@ export declare class TimStore implements MemoryInterface {
      */
     getProjectLabel(entryId: string): string | null;
     private findProjectLabelForParent;
+    /**
+     * Synchronous counterpart of the `resolveSectionByTitle` "found" path.
+     * Used inside `updateSync` (which cannot await) to move an entry to a
+     * sibling section. Throws instead of returning a tagged union — callers
+     * that need not_found/ambiguous handling should use the async version.
+     */
+    private resolveSectionIdByTitleSync;
     close(): void;
     curate(): CurateManager;
     consolidate(): ConsolidationManager;
