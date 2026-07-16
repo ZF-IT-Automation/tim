@@ -19,6 +19,14 @@ const HOOK_SCRIPTS = [
   'tim-cursor-inject.sh',
   'tim-statusline.sh',
 ];
+const PUBLIC_GUIDANCE_FILES = [
+  'README.md',
+  'packages/tim-hooks/README.md',
+  'docs/tim-cli-reference.md',
+  'docs/tim-cli-reference-samples/tim-doctor.txt',
+  'docs/tim-cli-reference-samples/tim-sync-status.txt',
+  'docs/tim-capabilities.md',
+];
 
 describe('canonical project (repo structural guard)', () => {
   it('.gitignore lists .tim-project', () => {
@@ -60,6 +68,14 @@ describe('canonical project (repo structural guard)', () => {
     ]) {
       expect(directive).toContain('tim-session-start');
       expect(directive).not.toContain('o9k-session-start');
+    }
+  });
+
+  it('maintained public guidance has no author paths or obsolete skill names', () => {
+    for (const relativePath of PUBLIC_GUIDANCE_FILES) {
+      const text = fs.readFileSync(path.join(REPO_ROOT, relativePath), 'utf8');
+      expect(text, relativePath).not.toContain('/home/bbbee');
+      expect(text, relativePath).not.toContain('o9k-session-start');
     }
   });
 });
