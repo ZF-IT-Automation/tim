@@ -94,3 +94,15 @@ export {
   type SessionStopReason,
   type MaybeSpawnSummarizerOptions,
 } from './session-hooks.js';
+
+export {
+  MODE_ERROR,
+  validateMode,
+  canonicalDirectory,
+  createProjectCoordinated,
+  type ProjectCreationArgs,
+  type MemoryOnlyProjectCreationResult,
+  type BoundProjectCreationResult,
+  type ProjectCreationResult,
+  type ProjectCreationDeps,
+} from './project-creation.js';
