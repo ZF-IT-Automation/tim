@@ -133,7 +133,7 @@ function markerInput(label: string, session: string) {
     project: label,
     session,
     exchanges: 0,
-    batch_size: 0,
+    batch_size: 5,
     batches_summarized: 0,
   };
 }

@@ -265,7 +265,7 @@ describe('project creation', () => {
       project: 'P1010',
       session: 'injected-session',
       exchanges: 0,
-      batch_size: 0,
+      batch_size: 5,
       batches_summarized: 0,
     });
     expect(readMarker(dir)?.project).toBe('P1111');
@@ -393,7 +393,7 @@ describe('project creation', () => {
       label: 'P1020', projectPath: fs.realpathSync(dir), markerPath: path.join(fs.realpathSync(dir), '.tim-project'), alreadyBound: false,
     });
     expect(second).toEqual({ ...first, alreadyBound: true });
-    expect(readMarker(dir)?.session).toBe('recovery-session');
+    expect(readMarker(dir)).toMatchObject({ session: 'recovery-session', batch_size: 5 });
   });
 
   it('recovery rejects a missing label and never overwrites a different marker', async () => {
