@@ -88,6 +88,26 @@ describe('buildBoundedSearchResponse', () => {
     expect(response.truncated).toBe(true);
   });
 
+  it('projects canonical task fields without enumerating a huge task keyspace', () => {
+    const task: Record<string, unknown> = Object.fromEntries(
+      Array.from({ length: 100_000 }, (_, index) => [`extra_${index}`, index]),
+    );
+    task.status = 'todo';
+    task.completion_evidence = 'verified';
+    const objectKeys = vi.spyOn(Object, 'keys');
+    try {
+      const response = buildBoundedSearchResponse([entry({ metadata: { task } })]);
+
+      expect(response.results[0]?.metadata.task).toEqual({
+        status: 'todo',
+        completion_evidence: 'verified',
+      });
+      expect(objectKeys.mock.calls.some(([value]) => value === task)).toBe(false);
+    } finally {
+      objectKeys.mockRestore();
+    }
+  });
+
   it('returns only a ranked prefix when the next bounded hit cannot fit', () => {
     const response = buildBoundedSearchResponse([
       entry({ id: 'FIRST', title: '😀'.repeat(10_000) }),

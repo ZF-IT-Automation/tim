@@ -72,7 +72,7 @@ class TestDiscoverProjectsSearchResponse(unittest.TestCase):
         with self.assertRaisesRegex(McpError, "incomplete|truncated"):
             discover_projects(FakeClient(response), self.logger)
 
-    def test_discards_partial_labels_when_a_complete_query_succeeds(self):
+    def test_refuses_union_when_any_non_equivalent_query_is_partial(self):
         truncated = {
             "results": [
                 {"id": "01PARTIAL", "metadata": {"kind": "project", "label": "P0041"}},
@@ -88,13 +88,11 @@ class TestDiscoverProjectsSearchResponse(unittest.TestCase):
             "truncated": False,
         }
 
-        self.assertEqual(
+        with self.assertRaisesRegex(McpError, "incomplete|omitted"):
             discover_projects(
                 SequencedFakeClient([truncated, complete, complete]),
                 self.logger,
-            ),
-            ["P0042"],
-        )
+            )
 
 
 if __name__ == "__main__":

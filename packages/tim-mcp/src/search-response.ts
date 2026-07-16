@@ -83,9 +83,7 @@ function boundedTask(value: unknown): BoundedValue<unknown> {
 
   const task = value as Record<string, unknown>;
   const selected: Record<string, string | number | boolean | null> = {};
-  let truncated = Object.keys(task).some(
-    key => !(SEARCH_TASK_KEYS as readonly string[]).includes(key),
-  );
+  let truncated = false;
   for (const key of SEARCH_TASK_KEYS) {
     const field = boundedScalar(task[key]);
     truncated ||= field.truncated;

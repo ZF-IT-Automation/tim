@@ -155,7 +155,10 @@ const TimSearchSchema = z.object({
   type: z.string().optional().describe('Filter metadata.type'),
   tag: z.string().optional().describe('Filter exact tag'),
   status: z.string().optional().describe('Filter metadata.status'),
-});
+}).describe(
+  'Returns {results, returned, omitted, truncated}. Results contain bounded excerpts; ' +
+  'use tim_read for the full body.',
+);
 
 const TimGuardSchema = z.object({
   action: z.string().min(3)
@@ -513,7 +516,8 @@ export const TOOL_DEFS: Array<{
     name: 'tim_search',
     description: 'Search TIM entries using FTS5 full-text search: keywords, "quoted phrases", ' +
       'prefix*. NOT SQL — no column filters. For vague/associative queries use tim_remember; ' +
-      'for a known label use tim_read directly.',
+      'for a known label use tim_read directly. Returns {results, returned, omitted, truncated}; ' +
+      'results contain bounded excerpts. Use tim_read for the full body.',
     schema: TimSearchSchema,
   },
   {

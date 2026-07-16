@@ -58,7 +58,7 @@ function boundedTask(value) {
         return { value: undefined, truncated: true };
     const task = value;
     const selected = {};
-    let truncated = Object.keys(task).some(key => !SEARCH_TASK_KEYS.includes(key));
+    let truncated = false;
     for (const key of SEARCH_TASK_KEYS) {
         const field = boundedScalar(task[key]);
         truncated ||= field.truncated;

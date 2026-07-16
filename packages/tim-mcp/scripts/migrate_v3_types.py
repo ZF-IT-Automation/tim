@@ -466,14 +466,14 @@ def discover_projects(client: McpClient, logger: logging.Logger) -> list[str]:
                 if isinstance(label, str) and label:
                     labels.add(label)
 
-    if labels:
-        return sorted(labels)
-
     if incomplete_queries:
         raise McpError(
             "Project discovery incomplete: tim_search omitted results for "
             + ", ".join(repr(query) for query in incomplete_queries)
         )
+
+    if labels:
+        return sorted(labels)
 
     # Fallback: probe P0000–P0099
     logger.info("FTS discovery empty — probing P0000–P0099")
