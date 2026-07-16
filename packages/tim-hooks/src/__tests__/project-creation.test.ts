@@ -70,12 +70,14 @@ describe('project creation', () => {
     ['home shorthand', '~/workspace'],
     ['environment shorthand', '$HOME/workspace'],
     ['braced environment shorthand', '${HOME}/workspace'],
+    ['embedded environment shorthand', '/tmp/repo-$HOME'],
+    ['embedded braced environment shorthand', '/tmp/repo-${HOME}'],
     ['Windows environment shorthand in an absolute path', '/tmp/%HOME%/workspace'],
   ])('rejects %s before creating a project', async (_name, projectPath) => {
     await expect(createProjectCoordinated(store, {
       label: 'P1002',
       path: projectPath,
-    })).rejects.toThrow();
+    })).rejects.toThrow(/shorthand/);
     expect(await store.loadProject('P1002')).toBeNull();
   });
 
@@ -153,8 +155,8 @@ describe('project creation', () => {
     expect(canonicalDirectory(link)).toBe(fs.realpathSync(target));
   });
 
-  it('allows a literal dollar in an absolute directory name', () => {
-    const target = path.join(dir, 'cash$money');
+  it('allows a dollar not followed by an environment variable name', () => {
+    const target = path.join(dir, 'cash$5');
     fs.mkdirSync(target);
 
     expect(canonicalDirectory(target)).toBe(fs.realpathSync(target));

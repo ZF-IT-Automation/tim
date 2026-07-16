@@ -58,8 +58,8 @@ export function validateMode(args: ProjectCreationArgs): 'bound' | 'memory-only'
 }
 
 export function canonicalDirectory(directory: string): string {
-  const shorthand = /(^|[\\/])(?:~(?=[\\/]|$)|\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[A-Za-z_][A-Za-z0-9_]*\})(?=[\\/]|$)|%[A-Za-z_][A-Za-z0-9_]*%(?=[\\/]|$))/;
-  if (shorthand.test(directory)) {
+  const environmentShorthand = /\$(?:\{|[A-Za-z_])|%[A-Za-z_][A-Za-z0-9_]*%/;
+  if (directory.startsWith('~') || environmentShorthand.test(directory)) {
     throw new Error(`Project path must not use home or environment shorthand: ${directory}`);
   }
   if (!path.isAbsolute(directory)) {
