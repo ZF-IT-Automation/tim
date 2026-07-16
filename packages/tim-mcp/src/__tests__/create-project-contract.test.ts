@@ -1,7 +1,7 @@
 // TIM MCP — explicit project creation mode contract through stdio JSON-RPC.
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -9,6 +9,7 @@ import { TimStore } from 'tim-store';
 import { readMarker } from 'tim-hooks';
 
 const SERVER_PATH = path.resolve(__dirname, '..', '..', 'dist', 'server.js');
+const CLI_PATH = path.resolve(__dirname, '..', '..', '..', 'tim-cli', 'dist', 'cli.js');
 
 interface JsonRpcResponse {
   id: number;
@@ -93,6 +94,11 @@ class StdioMcpClient {
   async createProject(args: Record<string, unknown>): Promise<JsonRpcResponse> {
     await this.init();
     return this.send('tools/call', { name: 'tim_create_project', arguments: args });
+  }
+
+  async doctor(): Promise<JsonRpcResponse> {
+    await this.init();
+    return this.send('tools/call', { name: 'tim_doctor', arguments: {} });
   }
 
   async listTools(): Promise<ToolListing[]> {
@@ -248,6 +254,53 @@ fs.writeFileSync = function(file, ...args) {
     const store = new TimStore(dbPath);
     expect(await store.loadProject('P1203')).not.toBeNull();
     store.close();
+  });
+
+  it('reports the canonical opened DB and supports the quoted CLI flow from another cwd', async () => {
+    client.close();
+    const relativeDb = path.join("relative database dir's", 'custom tim.db');
+    fs.mkdirSync(path.join(serverCwd, path.dirname(relativeDb)), { recursive: true });
+    client = new StdioMcpClient(relativeDb, serverCwd);
+
+    const doctor = resultOf(await client.doctor());
+    expect(doctor.isError).toBeFalsy();
+    const canonicalDb = fs.realpathSync(path.join(serverCwd, relativeDb));
+    expect(doctor.content[0].text).toContain(`TIM Doctor — ${canonicalDb}`);
+    expect(doctor.content[0].text).not.toContain(`TIM Doctor — ${relativeDb}\n`);
+
+    const shellCwd = path.join(root, 'invoking-shell');
+    const target = path.join(root, 'created-from-doctor');
+    fs.mkdirSync(shellCwd);
+    const quote = (value: string) => `'${value.replaceAll("'", "'\"'\"'")}'`;
+    const command = [
+      `TIM_DB_PATH=${quote(canonicalDb)}`,
+      quote(process.execPath),
+      quote(CLI_PATH),
+      'new-project',
+      '--path', quote(target),
+      '--name', quote('Doctor path project'),
+      '--no-git',
+    ].join(' ');
+    const created = spawnSync('/bin/sh', ['-c', command], {
+      cwd: shellCwd,
+      encoding: 'utf8',
+      env: process.env,
+    });
+    expect(created.status).toBe(0, created.stderr);
+    expect(readMarker(target)?.project).toBe('P0001');
+    const store = new TimStore(canonicalDb);
+    expect(await store.loadProject('P0001')).not.toBeNull();
+    store.close();
+  });
+
+  it('reports the active transient store identity accurately', async () => {
+    client.close();
+    client = new StdioMcpClient(':memory:', serverCwd);
+
+    const doctor = resultOf(await client.doctor());
+
+    expect(doctor.isError).toBeFalsy();
+    expect(doctor.content[0].text).toContain('TIM Doctor — :memory:');
   });
 
   it.each([

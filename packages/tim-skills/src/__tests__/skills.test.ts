@@ -81,6 +81,8 @@ describe('weak-model skills', () => {
       'already-known non-conflicting',
       'do not guess',
       'persistent',
+      "TIM_DB_PATH='/srv/Agent DB'\"'\"'s/tim.db' tim new-project",
+      'Replace every apostrophe with `\'"\'"\'`, then wrap the whole value in apostrophes',
     ];
 
     for (const guidance of requiredGuidance) {

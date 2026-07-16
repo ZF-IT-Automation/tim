@@ -2390,7 +2390,7 @@ async function createMcpServer(options = {}) {
                     const errorStats = getErrorLogger().getStats({ hours: 24, limit: 5 });
                     const representedIssues = new Set([...report.blockers, ...report.warnings]);
                     const text = [
-                        `TIM Doctor — ${DB_PATH}`,
+                        `TIM Doctor — ${s.getDatabasePath()}`,
                         `Entries: ${stats.totalEntries} | Edges: ${stats.totalEdges}`,
                         `Status: ${report.status}`,
                         `Broken links: ${report.brokenLinks} | Orphans: ${report.orphanEntries}`,
