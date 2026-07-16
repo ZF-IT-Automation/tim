@@ -408,4 +408,95 @@ describe('tim_show', () => {
     expect(text).toMatch(/\[!\].*in_progress|#in_progress/);
     expect(text).toContain('[!]=in_progress');
   });
+
+  it('with:needs_review returns only coding tasks with commits awaiting review', async () => {
+    const proj = await client.callTool('tim_create_project', { label: 'P0470', content: 'Review Proj' });
+    const project = JSON.parse(proj.result!.content[0].text);
+    const section = await client.callTool('tim_write', {
+      content: 'Tasks',
+      parentId: project.id,
+      metadata: { kind: 'section' },
+      tags: ['#section', '#schema'],
+    });
+    const sec = JSON.parse(section.result!.content[0].text);
+
+    for (const [content, taskMeta] of [
+      ['Needs review task', { subtype: 'coding', commits: ['abc123'], reviewed: false }],
+      ['Already reviewed', { subtype: 'coding', commits: ['def456'], reviewed: true }],
+      ['No commits yet', { subtype: 'coding', commits: [], reviewed: false }],
+      ['Plain task', { status: 'todo' }],
+    ] as const) {
+      await client.callTool('tim_write', {
+        content,
+        parentId: sec.id,
+        metadata: { task: taskMeta },
+        tags: ['#task', '#test'],
+      });
+    }
+
+    const resp = await client.callTool('tim_show', { what: 'tasks', root: 'P0470', with: 'needs_review' });
+    const text = resp.result!.content[0].text;
+    expect(text).toContain('Needs review task');
+    expect(text).not.toContain('Already reviewed');
+    expect(text).not.toContain('No commits yet');
+    expect(text).not.toContain('Plain task');
+  });
+
+  it('with:coding returns only tasks with subtype coding', async () => {
+    const proj = await client.callTool('tim_create_project', { label: 'P0471', content: 'Coding Proj' });
+    const project = JSON.parse(proj.result!.content[0].text);
+    const section = await client.callTool('tim_write', {
+      content: 'Tasks',
+      parentId: project.id,
+      metadata: { kind: 'section' },
+      tags: ['#section', '#schema'],
+    });
+    const sec = JSON.parse(section.result!.content[0].text);
+
+    for (const [content, taskMeta] of [
+      ['Coding task', { subtype: 'coding', status: 'todo' }],
+      ['Regular task', { status: 'todo' }],
+    ] as const) {
+      await client.callTool('tim_write', {
+        content,
+        parentId: sec.id,
+        metadata: { task: taskMeta },
+        tags: ['#task', '#test'],
+      });
+    }
+
+    const resp = await client.callTool('tim_show', { what: 'tasks', root: 'P0471', with: 'coding' });
+    const text = resp.result!.content[0].text;
+    expect(text).toContain('Coding task');
+    expect(text).not.toContain('Regular task');
+  });
+
+  it('with:open keeps changes_pending tasks', async () => {
+    const proj = await client.callTool('tim_create_project', { label: 'P0472', content: 'Pending Proj' });
+    const project = JSON.parse(proj.result!.content[0].text);
+    const section = await client.callTool('tim_write', {
+      content: 'Tasks',
+      parentId: project.id,
+      metadata: { kind: 'section' },
+      tags: ['#section', '#schema'],
+    });
+    const sec = JSON.parse(section.result!.content[0].text);
+
+    for (const [content, status] of [
+      ['Changes pending task', 'changes_pending'],
+      ['Done task', 'done'],
+    ] as const) {
+      await client.callTool('tim_write', {
+        content,
+        parentId: sec.id,
+        metadata: { task: { status } },
+        tags: ['#task', '#test'],
+      });
+    }
+
+    const resp = await client.callTool('tim_show', { what: 'tasks', root: 'P0472', with: 'open' });
+    const text = resp.result!.content[0].text;
+    expect(text).toContain('Changes pending task');
+    expect(text).not.toContain('Done task');
+  });
 });

@@ -26,6 +26,7 @@ import {
   estimateProjectTokens,
   listProjectTokenEstimates,
   type TaskRecord,
+  isCodingNeedsReview,
 } from 'tim-store';
 import { formatProjectOutput, type ProjectSchema } from './project-output.js';
 import { loadConfig, resolveActiveSessionId, evaluateLoadGate, stripDeprecatedTags, SCHEMA_KINDS, type EdgeType, type Entry } from 'tim-core';
@@ -1261,6 +1262,16 @@ async function applyWith(
         result = result.filter(e => Date.parse(e.createdAt) >= cutoff);
         break;
       }
+      case 'needs_review':
+        result = result.filter(e => isCodingNeedsReview(e.metadata));
+        break;
+      case 'coding':
+        result = result.filter(e => {
+          const task = e.metadata.task;
+          return typeof task === 'object' && task !== null
+            && (task as { subtype?: string }).subtype === 'coding';
+        });
+        break;
       default: {
         const tagForm = t.startsWith('#') ? t : `#${t}`;
         if (result.some(e => e.tags.includes(tagForm) || e.tags.includes(t))) {
