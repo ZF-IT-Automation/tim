@@ -11,6 +11,7 @@ import type {
   AgentIdentity, StagingRecord, ContentType,
   SyncEntity, SyncOperation, EventBus, EventType,
   ResolveProjectResult, ResolveSectionResult, SectionCandidate,
+  TaskStatusValue,
 } from 'tim-core';
 import { stripDeprecatedTags, resolveLWW, SCHEMA_KINDS, staleDays, isStale } from 'tim-core';
 import { runMigrations, createTriggers, getCurrentVersion } from './schema.js';
@@ -18,7 +19,7 @@ import { CurateManager } from './curate.js';
 import { ConsolidationManager } from './consolidate.js';
 import { metadataNeedsCoercion, parseAndCoerceMetadata } from './metadata-coerce.js';
 import { applyIdeaPromote } from './idea-promote.js';
-import { isCodingNeedsReview } from './task-status-history.js';
+import { isCodingNeedsReview, migrateTaskHistory, appendTaskStatus } from './task-status-history.js';
 import { recordFromPayload, entryLocalLwwTimestamp, edgeLocalLwwTimestamp } from './sync-methods.js';
 import { parentIsSecret } from './secret.js';
 
@@ -1562,13 +1563,31 @@ export class TimStore implements MemoryInterface {
           }
         }
         if (
-          typeof existingMeta.task === 'object' && existingMeta.task !== null &&
-          typeof patchMeta.task === 'object' && patchMeta.task !== null
+          typeof patchMeta.task === 'object' && patchMeta.task !== null && !Array.isArray(patchMeta.task)
         ) {
-          patchMeta.task = {
-            ...(existingMeta.task as Record<string, unknown>),
-            ...(patchMeta.task as Record<string, unknown>),
-          };
+          const existingTaskObj =
+            typeof existingMeta.task === 'object' && existingMeta.task !== null && !Array.isArray(existingMeta.task)
+              ? (existingMeta.task as Record<string, unknown>)
+              : {};
+
+          // 1. Start from the migrated (history-seeded) existing task — never patch.task.history.
+          let taskObj = migrateTaskHistory(existingTaskObj, now);
+
+          // 2. Merge non-status fields from patch (priority, commits, subtype, vcs, etc.).
+          const rawPatchTask = patchMeta.task as Record<string, unknown>;
+          const { status: patchStatus, history: _ignoredPatchHistory, ...patchTaskRest } = rawPatchTask;
+          taskObj = { ...taskObj, ...patchTaskRest };
+
+          // 3. A status change becomes an append, never an overwrite.
+          if (typeof patchStatus === 'string' && patchStatus !== taskObj.status) {
+            const result = appendTaskStatus(taskObj, patchStatus as TaskStatusValue, { at: now });
+            if (result.error) {
+              throw new Error(result.error);
+            }
+            taskObj = result.task;
+          }
+
+          patchMeta.task = taskObj;
         }
         if (
           typeof existingMeta.idea === 'object' && existingMeta.idea !== null &&
@@ -1703,6 +1722,9 @@ export class TimStore implements MemoryInterface {
     }
 
     const metadata: Record<string, unknown> = { ...(options.metadata ?? {}) };
+    if (typeof metadata.task === 'object' && metadata.task !== null && !Array.isArray(metadata.task)) {
+      metadata.task = migrateTaskHistory(metadata.task as Record<string, unknown>, now);
+    }
     if (parentId && metadata.order === undefined) {
       const maxRow = this.db.prepare(`
         SELECT MAX(CAST(json_extract(metadata, '$.order') AS INTEGER)) AS max_order
