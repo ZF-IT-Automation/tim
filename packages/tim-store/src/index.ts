@@ -96,6 +96,7 @@ export {
   validateTaskMetadata,
   validateRuleMetadata,
   validateBugMetadata,
+  validateIdeaMetadata,
   validateTagsDeprecated,
 } from './validate.js';
 export { ErrorLogger, type ErrorLogEntry, type ErrorStats } from './error-log.js';
@@ -111,11 +112,22 @@ export {
 export {
   coerceMetadataBooleans,
   isTaskMarker,
+  isIdeaMarker,
   normalizeTaskValue,
   metadataNeedsCoercion,
   parseAndCoerceMetadata,
   BOOLEAN_METADATA_KEYS,
 } from './metadata-coerce.js';
+export { applyIdeaPromote, type PromoteResult } from './idea-promote.js';
+export {
+  getTaskHistory,
+  migrateTaskHistory,
+  appendTaskStatus,
+  deriveStartedAt,
+  deriveFinishedAt,
+  isCodingNeedsReview,
+  hasFreshReview,
+} from './task-status-history.js';
 export {
   isSecret,
   parentIsSecret,
@@ -138,3 +150,4 @@ export {
   CHARS_PER_TOKEN,
   type ProjectTokenEstimate,
 } from './token-budget.js';
+export { detectProjectVcs } from './vcs.js';

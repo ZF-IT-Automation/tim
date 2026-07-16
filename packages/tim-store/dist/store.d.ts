@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3';
-import type { Entry, Edge, EdgeType, ReadOptions, WriteOptions, DecayOptions, SearchOptions, MemoryInterface, HealthReport, MemoryStats, ContentStats, AgentIdentity, StagingRecord, EventBus, ResolveProjectResult, ResolveSectionResult } from 'tim-core';
+import type { Entry, Edge, EdgeType, ReadOptions, WriteOptions, UpdateOptions, DecayOptions, SearchOptions, MemoryInterface, HealthReport, MemoryStats, ContentStats, AgentIdentity, StagingRecord, EventBus, ResolveProjectResult, ResolveSectionResult } from 'tim-core';
 import { CurateManager } from './curate.js';
 import { ConsolidationManager } from './consolidate.js';
 /**
@@ -78,6 +78,8 @@ export interface GetBugsOptions {
 }
 export interface GetTasksOptions {
     status?: string;
+    subtype?: string;
+    needs_review?: boolean;
 }
 interface EntryIdRewrite {
     sourceId: string;
@@ -231,6 +233,13 @@ export declare class TimStore implements MemoryInterface {
      */
     getProjectLabel(entryId: string): string | null;
     private findProjectLabelForParent;
+    /**
+     * Synchronous counterpart of the `resolveSectionByTitle` "found" path.
+     * Used inside `updateSync` (which cannot await) to move an entry to a
+     * sibling section. Throws instead of returning a tagged union — callers
+     * that need not_found/ambiguous handling should use the async version.
+     */
+    private resolveSectionIdByTitleSync;
     close(): void;
     curate(): CurateManager;
     consolidate(): ConsolidationManager;
@@ -240,6 +249,11 @@ export declare class TimStore implements MemoryInterface {
     getDatabasePath(): string;
     /** Run `fn` inside a single exclusive DB transaction (serializes concurrent callers). */
     runExclusive<T>(fn: () => T): T;
+    /**
+     * If metadata has idea.status=planned, promote in-place and retarget parent
+     * to the project's Tasks section (same end state as update-path promote).
+     */
+    private applyWritePromote;
     /** Synchronous write for use inside `runExclusive` transactions. */
     writeSync(content: string, options?: WriteOptions): Entry;
     getChildByKindSync(parentId: string, kind: string): Entry[];
@@ -275,7 +289,7 @@ export declare class TimStore implements MemoryInterface {
      */
     repairSystemEntrySync(id: string, patch: Pick<Entry, 'title' | 'content' | 'tags' | 'metadata' | 'irrelevant' | 'tombstonedAt'>): Entry;
     /** Synchronous update for use inside `runExclusive` transactions. */
-    updateSync(id: string, patch: Partial<Entry>): Entry;
+    updateSync(id: string, patch: Partial<Entry>, options?: UpdateOptions): Entry;
     /** Entries whose metadata JSON has non-boolean values for known boolean keys (legacy 1/0/"true"/"false"). */
     findEntriesWithNonBooleanTask(): Array<{
         id: string;
@@ -298,7 +312,7 @@ export declare class TimStore implements MemoryInterface {
     /** Atomically insert entry + staging row (rollback on either failure). */
     private writeEntryWithStaging;
     write(content: string, options?: WriteOptions): Promise<Entry>;
-    update(id: string, patch: Partial<Entry>): Promise<Entry>;
+    update(id: string, patch: Partial<Entry>, options?: UpdateOptions): Promise<Entry>;
     delete(id: string, hard?: boolean): Promise<void>;
     /** Hard/soft delete multiple ids in one transaction; skips missing or tombstoned ids. */
     deleteBatch(ids: string[], hard?: boolean): Promise<number>;

@@ -8,12 +8,15 @@ export { CommitManager, type RecordCommitParams, } from './commit.js';
 export { COMMITS_SECTION_TITLE, COMMITS_SECTION_ORDER, KIND_COMMITS_ROOT, KIND_COMMIT, COMMIT_TAG, } from './commit-tree.js';
 export { CurateManager, type UpdateManyFlags } from './curate.js';
 export { ConsolidationManager, type ConsolidationCandidate, type ConsolidationType, type CurationStatus, type CurationMetadata, } from './consolidate.js';
-export { validateTaskMetadata, validateRuleMetadata, validateBugMetadata, validateTagsDeprecated, } from './validate.js';
+export { validateTaskMetadata, validateRuleMetadata, validateBugMetadata, validateIdeaMetadata, validateTagsDeprecated, } from './validate.js';
 export { ErrorLogger, type ErrorLogEntry, type ErrorStats } from './error-log.js';
 export { formatEntryId, sessionShortFromMetadata } from './entry-id.js';
 export { ackStaging, applyRemoteEntry, applyRemoteEdge, getUnackedStaging, recordFromPayload, type StagingRow, } from './sync-methods.js';
-export { coerceMetadataBooleans, isTaskMarker, normalizeTaskValue, metadataNeedsCoercion, parseAndCoerceMetadata, BOOLEAN_METADATA_KEYS, } from './metadata-coerce.js';
+export { coerceMetadataBooleans, isTaskMarker, isIdeaMarker, normalizeTaskValue, metadataNeedsCoercion, parseAndCoerceMetadata, BOOLEAN_METADATA_KEYS, } from './metadata-coerce.js';
+export { applyIdeaPromote, type PromoteResult } from './idea-promote.js';
+export { getTaskHistory, migrateTaskHistory, appendTaskStatus, deriveStartedAt, deriveFinishedAt, isCodingNeedsReview, hasFreshReview, } from './task-status-history.js';
 export { isSecret, parentIsSecret, findSecretSource, setSecretSubtree, ensureSecretInheritance, materializeSecretSubtreeSync, } from './secret.js';
 export { ensureHumanProfile, getHumanProfileSummary, HUMAN_ROOT_LABEL, HUMAN_SECTIONS, type HumanProfileNode, } from './user.js';
 export { charsToTokens, estimateProjectTokens, listProjectTokenEstimates, CHARS_PER_TOKEN, type ProjectTokenEstimate, } from './token-budget.js';
+export { detectProjectVcs } from './vcs.js';
 //# sourceMappingURL=index.d.ts.map

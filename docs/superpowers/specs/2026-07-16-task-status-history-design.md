@@ -1,7 +1,7 @@
 # Append-Only Task Status History (+ Git-Conditional Coding Gates)
 
 **Date:** 2026-07-16  
-**Status:** Approved — plan at `docs/superpowers/plans/2026-07-16-task-status-history.md`  
+**Status:** Implemented (branch `feature/idea-promote-coding-task`)  
 **Supersedes / extends:** `docs/superpowers/specs/2026-07-16-idea-promote-coding-task-design.md`  
 **Related branch:** `feature/idea-promote-coding-task` (idea promote + coding subtype already implemented; status model evolves here)
 

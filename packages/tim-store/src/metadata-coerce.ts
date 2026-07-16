@@ -33,6 +33,11 @@ export function isTaskMarker(value: unknown): boolean {
   return false;
 }
 
+/** Idea marker is a nested object only (no boolean shorthand). */
+export function isIdeaMarker(value: unknown): boolean {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
 function coerceBooleanValue(value: unknown): unknown {
   if (value === 1 || value === 'true') return true;
   if (value === 0 || value === 'false') return false;

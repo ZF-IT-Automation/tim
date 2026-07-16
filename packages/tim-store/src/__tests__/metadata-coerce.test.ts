@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { coerceMetadataBooleans } from '../metadata-coerce.js';
+import { coerceMetadataBooleans, isIdeaMarker } from '../metadata-coerce.js';
 
 describe('coerceMetadataBooleans', () => {
   it('coerces integer task to boolean true', () => {
@@ -41,5 +41,32 @@ describe('coerceMetadataBooleans', () => {
       priority: 'high',
       count: 5,
     });
+  });
+});
+
+describe('isIdeaMarker', () => {
+  it('returns true for idea object with status', () => {
+    expect(isIdeaMarker({ status: 'new' })).toBe(true);
+  });
+
+  it('returns false for boolean true', () => {
+    expect(isIdeaMarker(true)).toBe(false);
+  });
+
+  it('returns false for boolean false', () => {
+    expect(isIdeaMarker(false)).toBe(false);
+  });
+
+  it('returns false for null', () => {
+    expect(isIdeaMarker(null)).toBe(false);
+  });
+
+  it('returns false for arrays', () => {
+    expect(isIdeaMarker([])).toBe(false);
+    expect(isIdeaMarker([{ status: 'new' }])).toBe(false);
+  });
+
+  it('returns false for strings', () => {
+    expect(isIdeaMarker('idea')).toBe(false);
   });
 });

@@ -63,7 +63,9 @@ describe('update() symmetric flags', () => {
 
     await store.update(entry.id, { metadata: { task: { status: 'done' } } });
     const updated = await store.read(entry.id);
-    expect(updated!.metadata.task).toEqual({ status: 'done' });
+    const task = updated!.metadata.task as { status: string; history: Array<{ status: string }> };
+    expect(task.status).toBe('done');
+    expect(task.history.map((e) => e.status)).toEqual(['todo', 'done']);
     expect(updated!.metadata.provenance).toEqual({ commit: 'abc', branch: 'main' });
     expect(updated!.metadata.verified_at).toBe('2026-01-01T00:00:00.000Z');
   });

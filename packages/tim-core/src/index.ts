@@ -19,9 +19,12 @@ export {
   type LegacyMetadataType,
   type MetadataType,
   type EntryMetadata,
+  type TaskStatusValue,
+  type TaskStatusEvent,
   type TaskMetadata,
   type RuleMetadata,
   type BugMetadata,
+  type IdeaMetadata,
   type HealthSeverity,
   type HealthReport,
   isBuiltinMetadataType,
@@ -103,6 +106,13 @@ export interface WriteOptions {
   tags?: string[];
   edges?: Omit<Edge, 'id'>[];   // edges to create alongside entry
   metadata?: Record<string, unknown>;
+  /** Filesystem path of the project the entry belongs to; used to auto-detect coding task.vcs. */
+  projectPath?: string;
+}
+
+export interface UpdateOptions {
+  /** Filesystem path of the project the entry belongs to; used to auto-detect coding task.vcs. */
+  projectPath?: string;
 }
 
 export interface DecayOptions {
@@ -143,7 +153,7 @@ export interface MemoryInterface {
   // CRUD
   read(id: string, options?: ReadOptions): Promise<Entry | null>;
   write(content: string, options?: WriteOptions): Promise<Entry>;
-  update(id: string, patch: Partial<Entry>): Promise<Entry>;
+  update(id: string, patch: Partial<Entry>, options?: UpdateOptions): Promise<Entry>;
   delete(id: string, hard?: boolean): Promise<void>;
 
   // Search

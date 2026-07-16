@@ -3,6 +3,8 @@ export declare const BOOLEAN_METADATA_KEYS: readonly ["task", "archived", "pinne
 type BooleanMetadataKey = (typeof BOOLEAN_METADATA_KEYS)[number];
 export declare function normalizeTaskValue(value: unknown): boolean | unknown;
 export declare function isTaskMarker(value: unknown): boolean;
+/** Idea marker is a nested object only (no boolean shorthand). */
+export declare function isIdeaMarker(value: unknown): boolean;
 export declare function coerceMetadataBooleans(meta: Record<string, unknown>): Record<string, unknown>;
 export declare function metadataNeedsCoercion(meta: Record<string, unknown>): boolean;
 export declare function parseAndCoerceMetadata(metadataJson: string): Record<string, unknown>;

@@ -4,6 +4,7 @@
  */
 
 import { isDeprecatedTag } from 'tim-core';
+import { getTaskHistory, hasFreshReview } from './task-status-history.js';
 
 export function validateTaskMetadata(metadata: Record<string, unknown>): string[] {
   const warnings: string[] = [];
@@ -16,8 +17,33 @@ export function validateTaskMetadata(metadata: Record<string, unknown>): string[
       );
     } else {
       const taskObj = task as Record<string, unknown>;
+      if (typeof taskObj.reviewed === 'boolean') {
+        warnings.push(
+          'reviewed boolean is deprecated — append a "reviewed" event to metadata.task.history instead',
+        );
+      }
       if (taskObj.status === 'done' && !taskObj.completion_evidence) {
         warnings.push('completion_evidence recommended for done tasks');
+      }
+      if (taskObj.subtype === 'coding') {
+        if (taskObj.status === 'done' && !hasFreshReview(getTaskHistory(taskObj))) {
+          warnings.push(
+            'coding task marked done without a fresh "reviewed" event in history (no changes_pending after it)',
+          );
+        }
+        if (
+          taskObj.status === 'done' &&
+          (!Array.isArray(taskObj.commits) || taskObj.commits.length === 0)
+        ) {
+          warnings.push('commits recommended for done coding tasks');
+        }
+      } else {
+        if (taskObj.commits !== undefined || taskObj.reviewed !== undefined) {
+          warnings.push('commits/reviewed are for subtype=coding');
+        }
+        if (taskObj.status === 'changes_pending') {
+          warnings.push('changes_pending is intended for subtype=coding');
+        }
       }
     }
   }
@@ -42,6 +68,19 @@ export function validateRuleMetadata(metadata: Record<string, unknown>): string[
       if (typeof action !== 'string' || !action.trim()) {
         warnings.push('action recommended');
       }
+    }
+  }
+
+  return warnings;
+}
+
+export function validateIdeaMetadata(metadata: Record<string, unknown>): string[] {
+  const warnings: string[] = [];
+
+  if (metadata.type === 'idea') {
+    const idea = metadata.idea;
+    if (!idea || typeof idea !== 'object' || Array.isArray(idea)) {
+      warnings.push('idea metadata missing');
     }
   }
 

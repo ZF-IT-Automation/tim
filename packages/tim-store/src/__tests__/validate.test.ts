@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { validateTaskMetadata, validateRuleMetadata, validateBugMetadata } from '../validate.js';
+import {
+  validateTaskMetadata,
+  validateRuleMetadata,
+  validateBugMetadata,
+  validateIdeaMetadata,
+} from '../validate.js';
 
 describe('validateTaskMetadata', () => {
   it('warns when type=task but task sub-section missing', () => {
@@ -50,6 +55,136 @@ describe('validateTaskMetadata', () => {
     expect(validateTaskMetadata({ type: 'standard' })).toEqual([]);
     expect(validateTaskMetadata({})).toEqual([]);
   });
+
+  describe('coding subtype', () => {
+    it('warns when coding task done without a fresh reviewed event in history', () => {
+      const warnings = validateTaskMetadata({
+        type: 'task',
+        task: {
+          subtype: 'coding',
+          status: 'done',
+          completion_evidence: 'shipped',
+          history: [
+            { status: 'todo', at: '2026-07-16T10:00:00.000Z' },
+            { status: 'done', at: '2026-07-16T11:00:00.000Z' },
+          ],
+        },
+      });
+      expect(warnings).toContainEqual(
+        expect.stringContaining('coding task marked done without a fresh "reviewed" event'),
+      );
+    });
+
+    it('warns when done coding task has changes_pending after the latest reviewed', () => {
+      const warnings = validateTaskMetadata({
+        type: 'task',
+        task: {
+          subtype: 'coding',
+          status: 'done',
+          completion_evidence: 'shipped',
+          commits: ['abc123'],
+          history: [
+            { status: 'todo', at: '2026-07-16T10:00:00.000Z' },
+            { status: 'reviewed', at: '2026-07-16T11:00:00.000Z' },
+            { status: 'changes_pending', at: '2026-07-16T12:00:00.000Z' },
+            { status: 'done', at: '2026-07-16T13:00:00.000Z' },
+          ],
+        },
+      });
+      expect(warnings).toContainEqual(
+        expect.stringContaining('coding task marked done without a fresh "reviewed" event'),
+      );
+    });
+
+    it('warns when coding task done without commits', () => {
+      const warnings = validateTaskMetadata({
+        type: 'task',
+        task: {
+          subtype: 'coding',
+          status: 'done',
+          completion_evidence: 'shipped',
+          history: [
+            { status: 'todo', at: '2026-07-16T10:00:00.000Z' },
+            { status: 'reviewed', at: '2026-07-16T11:00:00.000Z' },
+            { status: 'done', at: '2026-07-16T12:00:00.000Z' },
+          ],
+        },
+      });
+      expect(warnings).toContainEqual('commits recommended for done coding tasks');
+    });
+
+    it('no coding warnings for valid done coding task', () => {
+      const warnings = validateTaskMetadata({
+        type: 'task',
+        task: {
+          subtype: 'coding',
+          status: 'done',
+          commits: ['abc123'],
+          completion_evidence: 'shipped',
+          history: [
+            { status: 'todo', at: '2026-07-16T10:00:00.000Z' },
+            { status: 'reviewed', at: '2026-07-16T11:00:00.000Z' },
+            { status: 'done', at: '2026-07-16T12:00:00.000Z' },
+          ],
+        },
+      });
+      expect(warnings).toEqual([]);
+    });
+
+    it('warns when commits/reviewed set on non-coding task', () => {
+      const warnings = validateTaskMetadata({
+        type: 'task',
+        task: { status: 'todo', commits: ['abc'], reviewed: true },
+      });
+      expect(warnings).toContainEqual('commits/reviewed are for subtype=coding');
+    });
+
+    it('warns when changes_pending on non-coding task', () => {
+      const warnings = validateTaskMetadata({
+        type: 'task',
+        task: { status: 'changes_pending' },
+      });
+      expect(warnings).toContainEqual(
+        'changes_pending is intended for subtype=coding',
+      );
+    });
+  });
+
+  describe('deprecated boolean reviewed', () => {
+    it('warns when boolean reviewed is present on a coding task', () => {
+      const warnings = validateTaskMetadata({
+        type: 'task',
+        task: {
+          subtype: 'coding',
+          status: 'in_progress',
+          reviewed: true,
+        },
+      });
+      expect(warnings).toContainEqual(
+        expect.stringContaining('reviewed boolean is deprecated'),
+      );
+    });
+
+    it('warns when boolean reviewed:false is present', () => {
+      const warnings = validateTaskMetadata({
+        type: 'task',
+        task: { subtype: 'coding', status: 'todo', reviewed: false },
+      });
+      expect(warnings).toContainEqual(
+        expect.stringContaining('reviewed boolean is deprecated'),
+      );
+    });
+
+    it('does not warn about deprecated boolean when reviewed is absent', () => {
+      const warnings = validateTaskMetadata({
+        type: 'task',
+        task: { subtype: 'coding', status: 'todo' },
+      });
+      expect(warnings).not.toContainEqual(
+        expect.stringContaining('reviewed boolean is deprecated'),
+      );
+    });
+  });
 });
 
 describe('validateRuleMetadata', () => {
@@ -90,6 +225,31 @@ describe('validateRuleMetadata', () => {
   it('ignores non-rule entries', () => {
     expect(validateRuleMetadata({ type: 'standard' })).toEqual([]);
     expect(validateRuleMetadata({})).toEqual([]);
+  });
+});
+
+describe('validateIdeaMetadata', () => {
+  it('warns when type=idea but idea sub-section missing', () => {
+    const warnings = validateIdeaMetadata({ type: 'idea' });
+    expect(warnings).toContainEqual(expect.stringContaining('idea metadata missing'));
+  });
+
+  it('warns when idea sub-section is boolean not object', () => {
+    const warnings = validateIdeaMetadata({ type: 'idea', idea: true });
+    expect(warnings).toContainEqual(expect.stringContaining('idea metadata missing'));
+  });
+
+  it('no warnings for valid idea sub-section', () => {
+    const warnings = validateIdeaMetadata({
+      type: 'idea',
+      idea: { status: 'new' },
+    });
+    expect(warnings).toEqual([]);
+  });
+
+  it('ignores non-idea entries', () => {
+    expect(validateIdeaMetadata({ type: 'standard' })).toEqual([]);
+    expect(validateIdeaMetadata({})).toEqual([]);
   });
 });
 

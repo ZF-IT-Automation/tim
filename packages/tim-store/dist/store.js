@@ -57,6 +57,9 @@ const schema_js_1 = require("./schema.js");
 const curate_js_1 = require("./curate.js");
 const consolidate_js_1 = require("./consolidate.js");
 const metadata_coerce_js_1 = require("./metadata-coerce.js");
+const idea_promote_js_1 = require("./idea-promote.js");
+const task_status_history_js_1 = require("./task-status-history.js");
+const vcs_js_1 = require("./vcs.js");
 const sync_methods_js_1 = require("./sync-methods.js");
 const secret_js_1 = require("./secret.js");
 /**
@@ -869,6 +872,10 @@ class TimStore {
       ) = ?`;
             params.push(opts.status);
         }
+        if (opts?.subtype) {
+            sql += ` AND json_extract(e.metadata, '$.task.subtype') = ?`;
+            params.push(opts.subtype);
+        }
         sql += `
       ORDER BY
         COALESCE(CAST(json_extract(e.metadata, '$.task.order') AS INTEGER), 999999),
@@ -877,6 +884,7 @@ class TimStore {
           json_extract(e.metadata, '$.status')
         )
           WHEN 'in_progress' THEN 0
+          WHEN 'changes_pending' THEN 0
           WHEN 'todo' THEN 1
           ELSE 2
         END,
@@ -899,7 +907,7 @@ class TimStore {
         ) ASC
     `;
         const rows = this.db.prepare(sql).all(...params);
-        return rows.map(row => {
+        const mapped = rows.map(row => {
             const meta = JSON.parse(row.metadata);
             let status = null;
             let priority = null;
@@ -917,16 +925,23 @@ class TimStore {
                 due = meta.due ?? null;
             }
             return {
-                id: row.id,
-                title: row.title,
-                content: row.content,
-                parent_id: row.parent_id,
-                project_label: this.findProjectLabelForParent(row.parent_id),
-                status,
-                priority,
-                due,
+                record: {
+                    id: row.id,
+                    title: row.title,
+                    content: row.content,
+                    parent_id: row.parent_id,
+                    project_label: this.findProjectLabelForParent(row.parent_id),
+                    status,
+                    priority,
+                    due,
+                },
+                meta,
             };
         });
+        if (opts?.needs_review) {
+            return mapped.filter(({ meta }) => (0, task_status_history_js_1.isCodingNeedsReview)(meta)).map(({ record }) => record);
+        }
+        return mapped.map(({ record }) => record);
     }
     extractTaskOrder(entry) {
         const task = entry.metadata.task;
@@ -1262,6 +1277,36 @@ class TimStore {
         }
         return null;
     }
+    /**
+     * Synchronous counterpart of the `resolveSectionByTitle` "found" path.
+     * Used inside `updateSync` (which cannot await) to move an entry to a
+     * sibling section. Throws instead of returning a tagged union — callers
+     * that need not_found/ambiguous handling should use the async version.
+     */
+    resolveSectionIdByTitleSync(projectLabel, title) {
+        const projectRow = this.db.prepare(`
+      SELECT id FROM entries
+      WHERE json_extract(metadata, '$.kind') = 'project'
+        AND json_extract(metadata, '$.label') = ?
+        AND irrelevant = 0
+        AND tombstoned_at IS NULL
+    `).get(projectLabel);
+        if (!projectRow) {
+            throw new Error(`Project not found: ${projectLabel}`);
+        }
+        const matches = this.db.prepare(`
+      SELECT e.id FROM entries e
+      WHERE e.parent_id = ?
+        AND e.title = ?
+        AND e.irrelevant = 0
+        AND e.tombstoned_at IS NULL
+      ORDER BY e.created_at ASC
+    `).all(projectRow.id, title);
+        if (matches.length !== 1) {
+            throw new Error(`Expected exactly one '${title}' section in project ${projectLabel}, found ${matches.length}`);
+        }
+        return matches[0].id;
+    }
     close() {
         this.db.close();
     }
@@ -1283,6 +1328,39 @@ class TimStore {
     runExclusive(fn) {
         return this.db.transaction(fn).exclusive();
     }
+    /**
+     * If metadata has idea.status=planned, promote in-place and retarget parent
+     * to the project's Tasks section (same end state as update-path promote).
+     */
+    applyWritePromote(entry, now) {
+        const metadata = JSON.parse(entry.metadata || '{}');
+        const promote = (0, idea_promote_js_1.applyIdeaPromote)(metadata, now);
+        if (promote.error) {
+            throw new Error(promote.error);
+        }
+        if (!promote.didPromote) {
+            return entry;
+        }
+        let parentId = entry.parent_id;
+        let depth = entry.depth;
+        const projectLabel = this.findProjectLabelForParent(entry.parent_id);
+        if (!projectLabel) {
+            throw new Error(`Cannot promote entry ${entry.id}: no project ancestor found`);
+        }
+        const tasksSectionId = this.resolveSectionIdByTitleSync(projectLabel, 'Tasks');
+        if (tasksSectionId !== entry.parent_id) {
+            const parentRow = this.db.prepare('SELECT depth FROM entries WHERE id = ?')
+                .get(tasksSectionId);
+            parentId = tasksSectionId;
+            depth = Math.min((parentRow?.depth ?? 0) + 1, 5);
+        }
+        return {
+            ...entry,
+            parent_id: parentId,
+            depth,
+            metadata: JSON.stringify(promote.metadata),
+        };
+    }
     /** Synchronous write for use inside `runExclusive` transactions. */
     writeSync(content, options = {}) {
         if (options.parentId && (0, secret_js_1.parentIsSecret)(this.db, options.parentId)) {
@@ -1291,11 +1369,12 @@ class TimStore {
                 metadata: { ...(options.metadata ?? {}), secret: true },
             };
         }
-        const { entry, now, timestamp } = this.buildEntryRow(content, options);
+        const built = this.buildEntryRow(content, options);
+        const entry = this.applyWritePromote(built.entry, built.now);
         this.insertEntrySync(entry);
-        this.insertStagingSync(entry, timestamp, options.confidence ?? 1.0);
+        this.insertStagingSync(entry, built.timestamp, options.confidence ?? 1.0);
         const result = rowToEntry(entry);
-        this.emit('memory:written', { entry: result, agentId: this.agentId, timestamp: now });
+        this.emit('memory:written', { entry: result, agentId: this.agentId, timestamp: built.now });
         return result;
     }
     getChildByKindSync(parentId, kind) {
@@ -1531,7 +1610,7 @@ class TimStore {
         return rowToEntry(updated);
     }
     /** Synchronous update for use inside `runExclusive` transactions. */
-    updateSync(id, patch) {
+    updateSync(id, patch, options) {
         const existing = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(id);
         if (!existing)
             throw new Error(`Entry not found: ${id}`);
@@ -1562,6 +1641,7 @@ class TimStore {
                 body = patch.content;
             }
         }
+        let didPromote = false;
         const updated = {
             ...existing,
             title,
@@ -1584,33 +1664,78 @@ class TimStore {
                         patchMeta[f] = existingMeta[f];
                     }
                 }
-                if (typeof existingMeta.task === 'object' && existingMeta.task !== null &&
-                    typeof patchMeta.task === 'object' && patchMeta.task !== null) {
-                    patchMeta.task = {
-                        ...existingMeta.task,
-                        ...patchMeta.task,
+                if (typeof patchMeta.task === 'object' && patchMeta.task !== null && !Array.isArray(patchMeta.task)) {
+                    const existingTaskObj = typeof existingMeta.task === 'object' && existingMeta.task !== null && !Array.isArray(existingMeta.task)
+                        ? existingMeta.task
+                        : {};
+                    // 1. Start from the migrated (history-seeded) existing task — never patch.task.history.
+                    let taskObj = (0, task_status_history_js_1.migrateTaskHistory)(existingTaskObj, now);
+                    // 2. Merge non-status fields from patch (priority, commits, subtype, vcs, etc.).
+                    const rawPatchTask = patchMeta.task;
+                    const { status: patchStatus, history: _ignoredPatchHistory, ...patchTaskRest } = rawPatchTask;
+                    taskObj = { ...taskObj, ...patchTaskRest };
+                    // 3. A status change becomes an append, never an overwrite.
+                    if (typeof patchStatus === 'string' && patchStatus !== taskObj.status) {
+                        const result = (0, task_status_history_js_1.appendTaskStatus)(taskObj, patchStatus, { at: now });
+                        if (result.error) {
+                            throw new Error(result.error);
+                        }
+                        taskObj = result.task;
+                    }
+                    // 4. Auto-detect vcs once for coding tasks when the caller told us where the project lives.
+                    if (taskObj.subtype === 'coding' && !taskObj.vcs && options?.projectPath) {
+                        taskObj.vcs = (0, vcs_js_1.detectProjectVcs)(options.projectPath);
+                    }
+                    patchMeta.task = taskObj;
+                }
+                if (typeof existingMeta.idea === 'object' && existingMeta.idea !== null &&
+                    typeof patchMeta.idea === 'object' && patchMeta.idea !== null) {
+                    patchMeta.idea = {
+                        ...existingMeta.idea,
+                        ...patchMeta.idea,
                     };
                 }
                 const merged = { ...existingMeta, ...patchMeta };
+                const promote = (0, idea_promote_js_1.applyIdeaPromote)(merged, now, {
+                    hadIdeaMarker: (0, metadata_coerce_js_1.isIdeaMarker)(existingMeta.idea),
+                });
+                if (promote.error) {
+                    throw new Error(promote.error);
+                }
+                didPromote = promote.didPromote;
+                const finalMeta = promote.metadata;
                 const oldStatus = this.extractTaskStatus(existingMeta);
-                const newStatus = this.extractTaskStatus(merged);
+                const newStatus = this.extractTaskStatus(finalMeta);
                 if (newStatus === 'done' && oldStatus !== 'done') {
-                    if (typeof merged.task === 'object' && merged.task !== null && !Array.isArray(merged.task)) {
-                        const taskObj = { ...merged.task };
+                    if (typeof finalMeta.task === 'object' && finalMeta.task !== null && !Array.isArray(finalMeta.task)) {
+                        const taskObj = { ...finalMeta.task };
                         delete taskObj.order;
-                        merged.task = taskObj;
+                        finalMeta.task = taskObj;
                     }
                 }
-                return JSON.stringify(merged);
+                return JSON.stringify(finalMeta);
             })(),
             accessed_at: now,
             updated_at: now,
             lww_device: this.deviceId,
         };
+        if (didPromote) {
+            const projectLabel = this.findProjectLabelForParent(existing.parent_id);
+            if (!projectLabel) {
+                throw new Error(`Cannot promote entry ${id}: no project ancestor found`);
+            }
+            const tasksSectionId = this.resolveSectionIdByTitleSync(projectLabel, 'Tasks');
+            if (tasksSectionId !== existing.parent_id) {
+                const parentRow = this.db.prepare('SELECT depth FROM entries WHERE id = ?')
+                    .get(tasksSectionId);
+                updated.parent_id = tasksSectionId;
+                updated.depth = Math.min((parentRow?.depth ?? 0) + 1, 5);
+            }
+        }
         this.db.transaction(() => {
             this.db.prepare(`UPDATE entries SET title=?, content=?, content_type=?, confidence=?,
         decay_rate=?, visibility=?, tags=?, irrelevant=?, tombstoned_at=?, metadata=?,
-        accessed_at=?, updated_at=?, lww_device=? WHERE id=?`).run(updated.title, updated.content, updated.content_type, updated.confidence, updated.decay_rate, updated.visibility, updated.tags, updated.irrelevant, updated.tombstoned_at, updated.metadata, updated.accessed_at, updated.updated_at, updated.lww_device, id);
+        parent_id=?, depth=?, accessed_at=?, updated_at=?, lww_device=? WHERE id=?`).run(updated.title, updated.content, updated.content_type, updated.confidence, updated.decay_rate, updated.visibility, updated.tags, updated.irrelevant, updated.tombstoned_at, updated.metadata, updated.parent_id, updated.depth, updated.accessed_at, updated.updated_at, updated.lww_device, id);
             this.insertStagingSync(updated, timestamp, updated.confidence);
         })();
         return rowToEntry(updated);
@@ -1670,6 +1795,13 @@ class TimStore {
                 depth = Math.min(parent.depth + 1, 5);
         }
         const metadata = { ...(options.metadata ?? {}) };
+        if (typeof metadata.task === 'object' && metadata.task !== null && !Array.isArray(metadata.task)) {
+            const taskObj = (0, task_status_history_js_1.migrateTaskHistory)(metadata.task, now);
+            if (taskObj.subtype === 'coding' && !taskObj.vcs && options.projectPath) {
+                taskObj.vcs = (0, vcs_js_1.detectProjectVcs)(options.projectPath);
+            }
+            metadata.task = taskObj;
+        }
         if (parentId && metadata.order === undefined) {
             const maxRow = this.db.prepare(`
         SELECT MAX(CAST(json_extract(metadata, '$.order') AS INTEGER)) AS max_order
@@ -1728,19 +1860,20 @@ class TimStore {
                 metadata: { ...(options.metadata ?? {}), secret: true },
             };
         }
-        const { entry, now, timestamp } = this.buildEntryRow(content, options);
-        this.writeEntryWithStaging(entry, timestamp, options.confidence ?? 1.0);
+        const built = this.buildEntryRow(content, options);
+        const entry = this.applyWritePromote(built.entry, built.now);
+        this.writeEntryWithStaging(entry, built.timestamp, options.confidence ?? 1.0);
         if (options.edges) {
             for (const edge of options.edges) {
                 await this.link(entry.id, edge.targetId, edge.type, edge.weight, edge.metadata);
             }
         }
         const result = rowToEntry(entry);
-        this.emit('memory:written', { entry: result, agentId: this.agentId, timestamp: now });
+        this.emit('memory:written', { entry: result, agentId: this.agentId, timestamp: built.now });
         return result;
     }
-    async update(id, patch) {
-        const result = this.updateSync(id, patch);
+    async update(id, patch, options) {
+        const result = this.updateSync(id, patch, options);
         this.emit('memory:updated', { entry: result, agentId: this.agentId, timestamp: result.accessedAt });
         return result;
     }

@@ -37,12 +37,35 @@ export const ALL_METADATA_TYPES = [
   ...LEGACY_METADATA_TYPES,
 ] as const;
 
+export type TaskStatusValue =
+  | 'todo'
+  | 'in_progress'
+  | 'changes_pending'
+  | 'pushed'
+  | 'reviewed'
+  | 'done'
+  | 'cancelled';
+
+export interface TaskStatusEvent {
+  status: TaskStatusValue;
+  at: string; // ISO 8601
+  by?: string;
+  note?: string;
+}
+
 /** Nested task sub-section (Schema v3 Phase 2a). */
 export interface TaskMetadata {
-  status?: 'todo' | 'in_progress' | 'done' | 'cancelled';
+  /** Cache of last history entry status */
+  status?: TaskStatusValue;
+  /** Append-only status log */
+  history?: TaskStatusEvent[];
   priority?: 'low' | 'medium' | 'high' | 'critical';
-  due_date?: string; // ISO 8601 date
+  due_date?: string;
   completion_evidence?: string | null;
+  subtype?: 'coding';
+  commits?: string[];
+  /** Set once: git worktree vs not. Not "git installed". */
+  vcs?: 'git' | 'none';
 }
 
 /** Stub for Phase 2b */
@@ -55,6 +78,11 @@ export interface RuleMetadata {
 export interface BugMetadata {
   severity?: 'P0' | 'P1' | 'P2' | 'P3';
   status?: 'open' | 'in_progress' | 'fixed' | 'wontfix';
+}
+
+/** Nested idea sub-section — lifecycle until promote-to-task. */
+export interface IdeaMetadata {
+  status?: 'new' | 'planned' | 'parked' | 'rejected';
 }
 
 /** Entry metadata — `type` is the Schema v3 semantic classifier. */

@@ -1,6 +1,6 @@
 import type { HealthReport } from './types.js';
 export type ContentType = 'text' | 'json' | 'blob';
-export { BUILTIN_METADATA_TYPES, BUILTIN_TYPES, LEGACY_METADATA_TYPES, ALL_METADATA_TYPES, METADATA_TYPES, type BuiltinMetadataType, type BuiltinType, type LegacyMetadataType, type MetadataType, type EntryMetadata, type TaskMetadata, type RuleMetadata, type BugMetadata, type HealthSeverity, type HealthReport, isBuiltinMetadataType, isBuiltinType, isMetadataType, normalizeLegacyTypeTag, DEPRECATED_STATUS_TAGS, DEPRECATED_PRIORITY_TAGS, DEPRECATED_TAGS, isDeprecatedTag, stripDeprecatedTags, } from './types.js';
+export { BUILTIN_METADATA_TYPES, BUILTIN_TYPES, LEGACY_METADATA_TYPES, ALL_METADATA_TYPES, METADATA_TYPES, type BuiltinMetadataType, type BuiltinType, type LegacyMetadataType, type MetadataType, type EntryMetadata, type TaskStatusValue, type TaskStatusEvent, type TaskMetadata, type RuleMetadata, type BugMetadata, type IdeaMetadata, type HealthSeverity, type HealthReport, isBuiltinMetadataType, isBuiltinType, isMetadataType, normalizeLegacyTypeTag, DEPRECATED_STATUS_TAGS, DEPRECATED_PRIORITY_TAGS, DEPRECATED_TAGS, isDeprecatedTag, stripDeprecatedTags, } from './types.js';
 export interface Entry {
     id: string;
     parentId: string | null;
@@ -56,6 +56,12 @@ export interface WriteOptions {
     tags?: string[];
     edges?: Omit<Edge, 'id'>[];
     metadata?: Record<string, unknown>;
+    /** Filesystem path of the project the entry belongs to; used to auto-detect coding task.vcs. */
+    projectPath?: string;
+}
+export interface UpdateOptions {
+    /** Filesystem path of the project the entry belongs to; used to auto-detect coding task.vcs. */
+    projectPath?: string;
 }
 export interface DecayOptions {
     before: string;
@@ -85,7 +91,7 @@ export type { ConflictResolution } from './lww.js';
 export interface MemoryInterface {
     read(id: string, options?: ReadOptions): Promise<Entry | null>;
     write(content: string, options?: WriteOptions): Promise<Entry>;
-    update(id: string, patch: Partial<Entry>): Promise<Entry>;
+    update(id: string, patch: Partial<Entry>, options?: UpdateOptions): Promise<Entry>;
     delete(id: string, hard?: boolean): Promise<void>;
     search(options: SearchOptions): Promise<Entry[]>;
     searchFts(query: string, limit?: number): Promise<Entry[]>;

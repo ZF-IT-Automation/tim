@@ -2,7 +2,7 @@
 // TIM Store — package exports
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.validateBugMetadata = exports.validateRuleMetadata = exports.validateTaskMetadata = exports.ConsolidationManager = exports.CurateManager = exports.COMMIT_TAG = exports.KIND_COMMIT = exports.KIND_COMMITS_ROOT = exports.COMMITS_SECTION_ORDER = exports.COMMITS_SECTION_TITLE = exports.CommitManager = exports.INBOX_PROJECT_LABEL = exports.MARKER_LOCK = exports.MARKER_FILENAME = exports.SESSION_ROLLUP_THRESHOLD = exports.DEFAULT_BATCH_SIZE = exports.SESSION_SUMMARY_TAG = exports.KIND_EXCHANGE = exports.KIND_EXCHANGE_BATCH = exports.KIND_EXCHANGES_ROOT = exports.KIND_BATCH = exports.KIND_SUMMARY_ROOT = exports.KIND_SESSION_ALIAS = exports.KIND_SESSION = exports.KIND_SESSIONS_ROOT = exports.EXCHANGES_NODE_TITLE = exports.SUMMARY_NODE_TITLE = exports.SESSIONS_SECTION_TITLE = exports.foldBatchSummaries = exports.ensureInboxProject = exports.getCurrentBatch = exports.findChildByKind = exports.deriveCounters = exports.ensureProjectForPath = exports.SessionManager = exports.MIGRATIONS = exports.getCurrentVersion = exports.runMigrations = exports.resolveProjectBindingLabel = exports.resolveProjectDisplayName = exports.projectDisplayNameFromEntry = exports.cropDisplayName = exports.nextLabelAfterProjectLabelConflict = exports.incrementProjectLabel = exports.isProjectLabelConflictError = exports.runBenchmark = exports.cosineSimilarity = exports.titleSimilarity = exports.splitTitleBody = exports.TimStore = void 0;
-exports.CHARS_PER_TOKEN = exports.listProjectTokenEstimates = exports.estimateProjectTokens = exports.charsToTokens = exports.HUMAN_SECTIONS = exports.HUMAN_ROOT_LABEL = exports.getHumanProfileSummary = exports.ensureHumanProfile = exports.materializeSecretSubtreeSync = exports.ensureSecretInheritance = exports.setSecretSubtree = exports.findSecretSource = exports.parentIsSecret = exports.isSecret = exports.BOOLEAN_METADATA_KEYS = exports.parseAndCoerceMetadata = exports.metadataNeedsCoercion = exports.normalizeTaskValue = exports.isTaskMarker = exports.coerceMetadataBooleans = exports.recordFromPayload = exports.getUnackedStaging = exports.applyRemoteEdge = exports.applyRemoteEntry = exports.ackStaging = exports.sessionShortFromMetadata = exports.formatEntryId = exports.ErrorLogger = exports.validateTagsDeprecated = void 0;
+exports.detectProjectVcs = exports.CHARS_PER_TOKEN = exports.listProjectTokenEstimates = exports.estimateProjectTokens = exports.charsToTokens = exports.HUMAN_SECTIONS = exports.HUMAN_ROOT_LABEL = exports.getHumanProfileSummary = exports.ensureHumanProfile = exports.materializeSecretSubtreeSync = exports.ensureSecretInheritance = exports.setSecretSubtree = exports.findSecretSource = exports.parentIsSecret = exports.isSecret = exports.hasFreshReview = exports.isCodingNeedsReview = exports.deriveFinishedAt = exports.deriveStartedAt = exports.appendTaskStatus = exports.migrateTaskHistory = exports.getTaskHistory = exports.applyIdeaPromote = exports.BOOLEAN_METADATA_KEYS = exports.parseAndCoerceMetadata = exports.metadataNeedsCoercion = exports.normalizeTaskValue = exports.isIdeaMarker = exports.isTaskMarker = exports.coerceMetadataBooleans = exports.recordFromPayload = exports.getUnackedStaging = exports.applyRemoteEdge = exports.applyRemoteEntry = exports.ackStaging = exports.sessionShortFromMetadata = exports.formatEntryId = exports.ErrorLogger = exports.validateTagsDeprecated = exports.validateIdeaMetadata = void 0;
 var store_js_1 = require("./store.js");
 Object.defineProperty(exports, "TimStore", { enumerable: true, get: function () { return store_js_1.TimStore; } });
 Object.defineProperty(exports, "splitTitleBody", { enumerable: true, get: function () { return store_js_1.splitTitleBody; } });
@@ -63,6 +63,7 @@ var validate_js_1 = require("./validate.js");
 Object.defineProperty(exports, "validateTaskMetadata", { enumerable: true, get: function () { return validate_js_1.validateTaskMetadata; } });
 Object.defineProperty(exports, "validateRuleMetadata", { enumerable: true, get: function () { return validate_js_1.validateRuleMetadata; } });
 Object.defineProperty(exports, "validateBugMetadata", { enumerable: true, get: function () { return validate_js_1.validateBugMetadata; } });
+Object.defineProperty(exports, "validateIdeaMetadata", { enumerable: true, get: function () { return validate_js_1.validateIdeaMetadata; } });
 Object.defineProperty(exports, "validateTagsDeprecated", { enumerable: true, get: function () { return validate_js_1.validateTagsDeprecated; } });
 var error_log_js_1 = require("./error-log.js");
 Object.defineProperty(exports, "ErrorLogger", { enumerable: true, get: function () { return error_log_js_1.ErrorLogger; } });
@@ -78,10 +79,21 @@ Object.defineProperty(exports, "recordFromPayload", { enumerable: true, get: fun
 var metadata_coerce_js_1 = require("./metadata-coerce.js");
 Object.defineProperty(exports, "coerceMetadataBooleans", { enumerable: true, get: function () { return metadata_coerce_js_1.coerceMetadataBooleans; } });
 Object.defineProperty(exports, "isTaskMarker", { enumerable: true, get: function () { return metadata_coerce_js_1.isTaskMarker; } });
+Object.defineProperty(exports, "isIdeaMarker", { enumerable: true, get: function () { return metadata_coerce_js_1.isIdeaMarker; } });
 Object.defineProperty(exports, "normalizeTaskValue", { enumerable: true, get: function () { return metadata_coerce_js_1.normalizeTaskValue; } });
 Object.defineProperty(exports, "metadataNeedsCoercion", { enumerable: true, get: function () { return metadata_coerce_js_1.metadataNeedsCoercion; } });
 Object.defineProperty(exports, "parseAndCoerceMetadata", { enumerable: true, get: function () { return metadata_coerce_js_1.parseAndCoerceMetadata; } });
 Object.defineProperty(exports, "BOOLEAN_METADATA_KEYS", { enumerable: true, get: function () { return metadata_coerce_js_1.BOOLEAN_METADATA_KEYS; } });
+var idea_promote_js_1 = require("./idea-promote.js");
+Object.defineProperty(exports, "applyIdeaPromote", { enumerable: true, get: function () { return idea_promote_js_1.applyIdeaPromote; } });
+var task_status_history_js_1 = require("./task-status-history.js");
+Object.defineProperty(exports, "getTaskHistory", { enumerable: true, get: function () { return task_status_history_js_1.getTaskHistory; } });
+Object.defineProperty(exports, "migrateTaskHistory", { enumerable: true, get: function () { return task_status_history_js_1.migrateTaskHistory; } });
+Object.defineProperty(exports, "appendTaskStatus", { enumerable: true, get: function () { return task_status_history_js_1.appendTaskStatus; } });
+Object.defineProperty(exports, "deriveStartedAt", { enumerable: true, get: function () { return task_status_history_js_1.deriveStartedAt; } });
+Object.defineProperty(exports, "deriveFinishedAt", { enumerable: true, get: function () { return task_status_history_js_1.deriveFinishedAt; } });
+Object.defineProperty(exports, "isCodingNeedsReview", { enumerable: true, get: function () { return task_status_history_js_1.isCodingNeedsReview; } });
+Object.defineProperty(exports, "hasFreshReview", { enumerable: true, get: function () { return task_status_history_js_1.hasFreshReview; } });
 var secret_js_1 = require("./secret.js");
 Object.defineProperty(exports, "isSecret", { enumerable: true, get: function () { return secret_js_1.isSecret; } });
 Object.defineProperty(exports, "parentIsSecret", { enumerable: true, get: function () { return secret_js_1.parentIsSecret; } });
@@ -99,4 +111,6 @@ Object.defineProperty(exports, "charsToTokens", { enumerable: true, get: functio
 Object.defineProperty(exports, "estimateProjectTokens", { enumerable: true, get: function () { return token_budget_js_1.estimateProjectTokens; } });
 Object.defineProperty(exports, "listProjectTokenEstimates", { enumerable: true, get: function () { return token_budget_js_1.listProjectTokenEstimates; } });
 Object.defineProperty(exports, "CHARS_PER_TOKEN", { enumerable: true, get: function () { return token_budget_js_1.CHARS_PER_TOKEN; } });
+var vcs_js_1 = require("./vcs.js");
+Object.defineProperty(exports, "detectProjectVcs", { enumerable: true, get: function () { return vcs_js_1.detectProjectVcs; } });
 //# sourceMappingURL=index.js.map

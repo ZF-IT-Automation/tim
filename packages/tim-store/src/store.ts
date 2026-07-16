@@ -7,17 +7,21 @@ import * as path from 'node:path';
 import { ulid } from 'ulid';
 import { formatEntryId } from './entry-id.js';
 import type {
-  Entry, Edge, EdgeType, ReadOptions, WriteOptions, DecayOptions,
+  Entry, Edge, EdgeType, ReadOptions, WriteOptions, UpdateOptions, DecayOptions,
   SearchOptions, MemoryInterface, HealthReport, MemoryStats, ContentStats,
   AgentIdentity, StagingRecord, ContentType,
   SyncEntity, SyncOperation, EventBus, EventType,
   ResolveProjectResult, ResolveSectionResult, SectionCandidate,
+  TaskStatusValue,
 } from 'tim-core';
 import { stripDeprecatedTags, resolveLWW, SCHEMA_KINDS, staleDays, isStale } from 'tim-core';
 import { runMigrations, createTriggers, getCurrentVersion } from './schema.js';
 import { CurateManager } from './curate.js';
 import { ConsolidationManager } from './consolidate.js';
-import { metadataNeedsCoercion, parseAndCoerceMetadata } from './metadata-coerce.js';
+import { metadataNeedsCoercion, parseAndCoerceMetadata, isIdeaMarker } from './metadata-coerce.js';
+import { applyIdeaPromote } from './idea-promote.js';
+import { isCodingNeedsReview, migrateTaskHistory, appendTaskStatus } from './task-status-history.js';
+import { detectProjectVcs } from './vcs.js';
 import { recordFromPayload, entryLocalLwwTimestamp, edgeLocalLwwTimestamp } from './sync-methods.js';
 import { parentIsSecret } from './secret.js';
 
@@ -155,6 +159,8 @@ export interface GetBugsOptions {
 
 export interface GetTasksOptions {
   status?: string;
+  subtype?: string;
+  needs_review?: boolean;
 }
 
 interface EntryIdRewrite {
@@ -1006,6 +1012,11 @@ export class TimStore implements MemoryInterface {
       params.push(opts.status);
     }
 
+    if (opts?.subtype) {
+      sql += ` AND json_extract(e.metadata, '$.task.subtype') = ?`;
+      params.push(opts.subtype);
+    }
+
     sql += `
       ORDER BY
         COALESCE(CAST(json_extract(e.metadata, '$.task.order') AS INTEGER), 999999),
@@ -1014,6 +1025,7 @@ export class TimStore implements MemoryInterface {
           json_extract(e.metadata, '$.status')
         )
           WHEN 'in_progress' THEN 0
+          WHEN 'changes_pending' THEN 0
           WHEN 'todo' THEN 1
           ELSE 2
         END,
@@ -1037,7 +1049,7 @@ export class TimStore implements MemoryInterface {
     `;
 
     const rows = this.db.prepare(sql).all(...params) as RowEntry[];
-    return rows.map(row => {
+    const mapped = rows.map(row => {
       const meta = JSON.parse(row.metadata) as Record<string, unknown>;
       let status: string | null = null;
       let priority: string | null = null;
@@ -1056,16 +1068,25 @@ export class TimStore implements MemoryInterface {
       }
 
       return {
-        id: row.id,
-        title: row.title,
-        content: row.content,
-        parent_id: row.parent_id,
-        project_label: this.findProjectLabelForParent(row.parent_id),
-        status,
-        priority,
-        due,
+        record: {
+          id: row.id,
+          title: row.title,
+          content: row.content,
+          parent_id: row.parent_id,
+          project_label: this.findProjectLabelForParent(row.parent_id),
+          status,
+          priority,
+          due,
+        },
+        meta,
       };
     });
+
+    if (opts?.needs_review) {
+      return mapped.filter(({ meta }) => isCodingNeedsReview(meta)).map(({ record }) => record);
+    }
+
+    return mapped.map(({ record }) => record);
   }
 
   private extractTaskOrder(entry: Entry): number | undefined {
@@ -1434,6 +1455,41 @@ export class TimStore implements MemoryInterface {
     return null;
   }
 
+  /**
+   * Synchronous counterpart of the `resolveSectionByTitle` "found" path.
+   * Used inside `updateSync` (which cannot await) to move an entry to a
+   * sibling section. Throws instead of returning a tagged union — callers
+   * that need not_found/ambiguous handling should use the async version.
+   */
+  private resolveSectionIdByTitleSync(projectLabel: string, title: string): string {
+    const projectRow = this.db.prepare(`
+      SELECT id FROM entries
+      WHERE json_extract(metadata, '$.kind') = 'project'
+        AND json_extract(metadata, '$.label') = ?
+        AND irrelevant = 0
+        AND tombstoned_at IS NULL
+    `).get(projectLabel) as { id: string } | undefined;
+    if (!projectRow) {
+      throw new Error(`Project not found: ${projectLabel}`);
+    }
+
+    const matches = this.db.prepare(`
+      SELECT e.id FROM entries e
+      WHERE e.parent_id = ?
+        AND e.title = ?
+        AND e.irrelevant = 0
+        AND e.tombstoned_at IS NULL
+      ORDER BY e.created_at ASC
+    `).all(projectRow.id, title) as Array<{ id: string }>;
+
+    if (matches.length !== 1) {
+      throw new Error(
+        `Expected exactly one '${title}' section in project ${projectLabel}, found ${matches.length}`,
+      );
+    }
+    return matches[0]!.id;
+  }
+
   close(): void {
     this.db.close();
   }
@@ -1461,6 +1517,42 @@ export class TimStore implements MemoryInterface {
     return this.db.transaction(fn).exclusive();
   }
 
+  /**
+   * If metadata has idea.status=planned, promote in-place and retarget parent
+   * to the project's Tasks section (same end state as update-path promote).
+   */
+  private applyWritePromote(entry: RowEntry, now: string): RowEntry {
+    const metadata = JSON.parse(entry.metadata || '{}') as Record<string, unknown>;
+    const promote = applyIdeaPromote(metadata, now);
+    if (promote.error) {
+      throw new Error(promote.error);
+    }
+    if (!promote.didPromote) {
+      return entry;
+    }
+
+    let parentId = entry.parent_id;
+    let depth = entry.depth;
+    const projectLabel = this.findProjectLabelForParent(entry.parent_id);
+    if (!projectLabel) {
+      throw new Error(`Cannot promote entry ${entry.id}: no project ancestor found`);
+    }
+    const tasksSectionId = this.resolveSectionIdByTitleSync(projectLabel, 'Tasks');
+    if (tasksSectionId !== entry.parent_id) {
+      const parentRow = this.db.prepare('SELECT depth FROM entries WHERE id = ?')
+        .get(tasksSectionId) as { depth: number } | undefined;
+      parentId = tasksSectionId;
+      depth = Math.min((parentRow?.depth ?? 0) + 1, 5);
+    }
+
+    return {
+      ...entry,
+      parent_id: parentId,
+      depth,
+      metadata: JSON.stringify(promote.metadata),
+    };
+  }
+
   /** Synchronous write for use inside `runExclusive` transactions. */
   writeSync(content: string, options: WriteOptions = {}): Entry {
     if (options.parentId && parentIsSecret(this.db, options.parentId)) {
@@ -1469,11 +1561,12 @@ export class TimStore implements MemoryInterface {
         metadata: { ...(options.metadata ?? {}), secret: true },
       };
     }
-    const { entry, now, timestamp } = this.buildEntryRow(content, options);
+    const built = this.buildEntryRow(content, options);
+    const entry = this.applyWritePromote(built.entry, built.now);
     this.insertEntrySync(entry);
-    this.insertStagingSync(entry, timestamp, options.confidence ?? 1.0);
+    this.insertStagingSync(entry, built.timestamp, options.confidence ?? 1.0);
     const result = rowToEntry(entry);
-    this.emit('memory:written', { entry: result, agentId: this.agentId, timestamp: now });
+    this.emit('memory:written', { entry: result, agentId: this.agentId, timestamp: built.now });
     return result;
   }
 
@@ -1786,7 +1879,7 @@ export class TimStore implements MemoryInterface {
   }
 
   /** Synchronous update for use inside `runExclusive` transactions. */
-  updateSync(id: string, patch: Partial<Entry>): Entry {
+  updateSync(id: string, patch: Partial<Entry>, options?: UpdateOptions): Entry {
     const existing = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(id) as RowEntry | undefined;
     if (!existing) throw new Error(`Entry not found: ${id}`);
 
@@ -1820,6 +1913,8 @@ export class TimStore implements MemoryInterface {
       }
     }
 
+    let didPromote = false;
+
     const updated = {
       ...existing,
       title,
@@ -1842,38 +1937,95 @@ export class TimStore implements MemoryInterface {
           }
         }
         if (
-          typeof existingMeta.task === 'object' && existingMeta.task !== null &&
-          typeof patchMeta.task === 'object' && patchMeta.task !== null
+          typeof patchMeta.task === 'object' && patchMeta.task !== null && !Array.isArray(patchMeta.task)
         ) {
-          patchMeta.task = {
-            ...(existingMeta.task as Record<string, unknown>),
-            ...(patchMeta.task as Record<string, unknown>),
+          const existingTaskObj =
+            typeof existingMeta.task === 'object' && existingMeta.task !== null && !Array.isArray(existingMeta.task)
+              ? (existingMeta.task as Record<string, unknown>)
+              : {};
+
+          // 1. Start from the migrated (history-seeded) existing task — never patch.task.history.
+          let taskObj = migrateTaskHistory(existingTaskObj, now);
+
+          // 2. Merge non-status fields from patch (priority, commits, subtype, vcs, etc.).
+          const rawPatchTask = patchMeta.task as Record<string, unknown>;
+          const { status: patchStatus, history: _ignoredPatchHistory, ...patchTaskRest } = rawPatchTask;
+          taskObj = { ...taskObj, ...patchTaskRest };
+
+          // 3. A status change becomes an append, never an overwrite.
+          if (typeof patchStatus === 'string' && patchStatus !== taskObj.status) {
+            const result = appendTaskStatus(taskObj, patchStatus as TaskStatusValue, { at: now });
+            if (result.error) {
+              throw new Error(result.error);
+            }
+            taskObj = result.task;
+          }
+
+          // 4. Auto-detect vcs once for coding tasks when the caller told us where the project lives.
+          if (taskObj.subtype === 'coding' && !taskObj.vcs && options?.projectPath) {
+            taskObj.vcs = detectProjectVcs(options.projectPath);
+          }
+
+          patchMeta.task = taskObj;
+        }
+        if (
+          typeof existingMeta.idea === 'object' && existingMeta.idea !== null &&
+          typeof patchMeta.idea === 'object' && patchMeta.idea !== null
+        ) {
+          patchMeta.idea = {
+            ...(existingMeta.idea as Record<string, unknown>),
+            ...(patchMeta.idea as Record<string, unknown>),
           };
         }
         const merged = { ...existingMeta, ...patchMeta };
+
+        const promote = applyIdeaPromote(merged, now, {
+          hadIdeaMarker: isIdeaMarker(existingMeta.idea),
+        });
+        if (promote.error) {
+          throw new Error(promote.error);
+        }
+        didPromote = promote.didPromote;
+        const finalMeta = promote.metadata;
+
         const oldStatus = this.extractTaskStatus(existingMeta);
-        const newStatus = this.extractTaskStatus(merged);
+        const newStatus = this.extractTaskStatus(finalMeta);
         if (newStatus === 'done' && oldStatus !== 'done') {
-          if (typeof merged.task === 'object' && merged.task !== null && !Array.isArray(merged.task)) {
-            const taskObj = { ...(merged.task as Record<string, unknown>) };
+          if (typeof finalMeta.task === 'object' && finalMeta.task !== null && !Array.isArray(finalMeta.task)) {
+            const taskObj = { ...(finalMeta.task as Record<string, unknown>) };
             delete taskObj.order;
-            merged.task = taskObj;
+            finalMeta.task = taskObj;
           }
         }
-        return JSON.stringify(merged);
+        return JSON.stringify(finalMeta);
       })(),
       accessed_at: now,
       updated_at: now,
       lww_device: this.deviceId,
     };
 
+    if (didPromote) {
+      const projectLabel = this.findProjectLabelForParent(existing.parent_id);
+      if (!projectLabel) {
+        throw new Error(`Cannot promote entry ${id}: no project ancestor found`);
+      }
+      const tasksSectionId = this.resolveSectionIdByTitleSync(projectLabel, 'Tasks');
+      if (tasksSectionId !== existing.parent_id) {
+        const parentRow = this.db.prepare('SELECT depth FROM entries WHERE id = ?')
+          .get(tasksSectionId) as { depth: number } | undefined;
+        updated.parent_id = tasksSectionId;
+        updated.depth = Math.min((parentRow?.depth ?? 0) + 1, 5);
+      }
+    }
+
     this.db.transaction(() => {
       this.db.prepare(`UPDATE entries SET title=?, content=?, content_type=?, confidence=?,
         decay_rate=?, visibility=?, tags=?, irrelevant=?, tombstoned_at=?, metadata=?,
-        accessed_at=?, updated_at=?, lww_device=? WHERE id=?`).run(
+        parent_id=?, depth=?, accessed_at=?, updated_at=?, lww_device=? WHERE id=?`).run(
         updated.title, updated.content, updated.content_type, updated.confidence,
         updated.decay_rate, updated.visibility, updated.tags,
         updated.irrelevant, updated.tombstoned_at, updated.metadata,
+        updated.parent_id, updated.depth,
         updated.accessed_at, updated.updated_at, updated.lww_device, id
       );
       this.insertStagingSync(updated, timestamp, updated.confidence);
@@ -1951,6 +2103,13 @@ export class TimStore implements MemoryInterface {
     }
 
     const metadata: Record<string, unknown> = { ...(options.metadata ?? {}) };
+    if (typeof metadata.task === 'object' && metadata.task !== null && !Array.isArray(metadata.task)) {
+      const taskObj = migrateTaskHistory(metadata.task as Record<string, unknown>, now);
+      if (taskObj.subtype === 'coding' && !taskObj.vcs && options.projectPath) {
+        taskObj.vcs = detectProjectVcs(options.projectPath);
+      }
+      metadata.task = taskObj;
+    }
     if (parentId && metadata.order === undefined) {
       const maxRow = this.db.prepare(`
         SELECT MAX(CAST(json_extract(metadata, '$.order') AS INTEGER)) AS max_order
@@ -2028,8 +2187,9 @@ export class TimStore implements MemoryInterface {
       };
     }
 
-    const { entry, now, timestamp } = this.buildEntryRow(content, options);
-    this.writeEntryWithStaging(entry, timestamp, options.confidence ?? 1.0);
+    const built = this.buildEntryRow(content, options);
+    const entry = this.applyWritePromote(built.entry, built.now);
+    this.writeEntryWithStaging(entry, built.timestamp, options.confidence ?? 1.0);
 
     if (options.edges) {
       for (const edge of options.edges) {
@@ -2038,12 +2198,12 @@ export class TimStore implements MemoryInterface {
     }
 
     const result = rowToEntry(entry);
-    this.emit('memory:written', { entry: result, agentId: this.agentId, timestamp: now });
+    this.emit('memory:written', { entry: result, agentId: this.agentId, timestamp: built.now });
     return result;
   }
 
-  async update(id: string, patch: Partial<Entry>): Promise<Entry> {
-    const result = this.updateSync(id, patch);
+  async update(id: string, patch: Partial<Entry>, options?: UpdateOptions): Promise<Entry> {
+    const result = this.updateSync(id, patch, options);
     this.emit('memory:updated', { entry: result, agentId: this.agentId, timestamp: result.accessedAt });
     return result;
   }

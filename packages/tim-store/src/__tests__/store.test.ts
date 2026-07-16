@@ -599,6 +599,132 @@ describe('TimStore', () => {
       expect(todoTasks).toHaveLength(1);
       expect(todoTasks[0].title).toBe('Open nested');
     });
+
+    it('filters by subtype coding', async () => {
+      const project = await store.createProject('P0211', { content: 'Subtype Filter' });
+      const section = await store.write('Tasks', {
+        parentId: project.id,
+        metadata: { kind: 'section' },
+      });
+      const coding = await store.write('Coding task', {
+        parentId: section.id,
+        metadata: {
+          type: 'task',
+          task: { status: 'todo', subtype: 'coding' },
+        },
+      });
+      await store.write('Plain task', {
+        parentId: section.id,
+        metadata: { task: true, status: 'todo' },
+      });
+
+      const list = await store.getTasks({ subtype: 'coding' });
+      expect(list).toHaveLength(1);
+      expect(list[0].id).toBe(coding.id);
+      expect(list[0].title).toBe('Coding task');
+    });
+
+    it('filters needs_review coding tasks with commits unreviewed', async () => {
+      const project = await store.createProject('P0212', { content: 'Needs Review' });
+      const section = await store.write('Tasks', {
+        parentId: project.id,
+        metadata: { kind: 'section' },
+      });
+      const needsReview = await store.write('Awaiting review', {
+        parentId: section.id,
+        metadata: {
+          type: 'task',
+          task: {
+            status: 'in_progress',
+            subtype: 'coding',
+            commits: ['abc123'],
+          },
+        },
+      });
+      const plain = await store.write('Plain todo', {
+        parentId: section.id,
+        metadata: { task: true, status: 'todo' },
+      });
+      const alreadyReviewed = await store.write('Already reviewed', {
+        parentId: section.id,
+        metadata: {
+          type: 'task',
+          task: {
+            status: 'in_progress',
+            subtype: 'coding',
+            commits: ['def456'],
+          },
+        },
+      });
+      await store.update(alreadyReviewed.id, {
+        metadata: { task: { status: 'reviewed' } },
+      });
+
+      const list = await store.getTasks({ needs_review: true });
+      const ids = list.map(t => t.id);
+      expect(ids).toContain(needsReview.id);
+      expect(ids).not.toContain(plain.id);
+      expect(ids).not.toContain(alreadyReviewed.id);
+      expect(list).toHaveLength(1);
+    });
+
+    it('filters by status changes_pending', async () => {
+      const project = await store.createProject('P0213', { content: 'Changes Pending' });
+      const section = await store.write('Tasks', {
+        parentId: project.id,
+        metadata: { kind: 'section' },
+      });
+      await store.write('Open todo', {
+        parentId: section.id,
+        metadata: { task: true, status: 'todo' },
+      });
+      const pending = await store.write('Rework needed', {
+        parentId: section.id,
+        metadata: {
+          type: 'task',
+          task: {
+            status: 'changes_pending',
+            subtype: 'coding',
+            commits: ['ghi789'],
+          },
+        },
+      });
+
+      const list = await store.getTasks({ status: 'changes_pending' });
+      expect(list).toHaveLength(1);
+      expect(list[0].id).toBe(pending.id);
+    });
+
+    it('sorts changes_pending with in_progress before todo', async () => {
+      const project = await store.createProject('P0214', { content: 'Sort Pending' });
+      const section = await store.write('Tasks', {
+        parentId: project.id,
+        metadata: { kind: 'section' },
+      });
+      await store.write('Todo task', {
+        parentId: section.id,
+        metadata: { task: true, status: 'todo', priority: 'high' },
+      });
+      await store.write('Changes pending task', {
+        parentId: section.id,
+        metadata: {
+          type: 'task',
+          task: { status: 'changes_pending', subtype: 'coding', priority: 'low' },
+        },
+      });
+      await store.write('In progress task', {
+        parentId: section.id,
+        metadata: { task: true, status: 'in_progress', priority: 'low' },
+      });
+
+      const tasks = await store.getTasks();
+      expect(tasks).toHaveLength(3);
+      expect(tasks[2].title).toBe('Todo task');
+      expect([tasks[0].title, tasks[1].title].sort()).toEqual([
+        'Changes pending task',
+        'In progress task',
+      ]);
+    });
   });
 
   // ─── getRules — nested metadata.rule sub-section ────────

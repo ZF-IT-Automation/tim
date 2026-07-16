@@ -4,6 +4,7 @@
  */
 export declare function validateTaskMetadata(metadata: Record<string, unknown>): string[];
 export declare function validateRuleMetadata(metadata: Record<string, unknown>): string[];
+export declare function validateIdeaMetadata(metadata: Record<string, unknown>): string[];
 export declare function validateBugMetadata(metadata: Record<string, unknown>): string[];
 export declare function validateTagsDeprecated(tags: string[]): string[];
 //# sourceMappingURL=validate.d.ts.map

@@ -28,11 +28,13 @@ import {
   isProjectLabelConflictError,
   nextLabelAfterProjectLabelConflict,
   type TaskRecord,
+  isCodingNeedsReview,
 } from 'tim-store';
 import { formatProjectOutput, type ProjectSchema } from './project-output.js';
 import { loadConfig, resolveActiveSessionId, evaluateLoadGate, stripDeprecatedTags, SCHEMA_KINDS, type EdgeType, type Entry } from 'tim-core';
 import { annotateTrust } from './trust.js';
 import { captureProvenance } from './provenance.js';
+import { resolveCallerProjectPath } from './project-path.js';
 import { resolveEntryTaskStatus } from './task-status.js';
 import {
   createProjectCoordinated,
@@ -1283,6 +1285,16 @@ async function applyWith(
         result = result.filter(e => Date.parse(e.createdAt) >= cutoff);
         break;
       }
+      case 'needs_review':
+        result = result.filter(e => isCodingNeedsReview(e.metadata));
+        break;
+      case 'coding':
+        result = result.filter(e => {
+          const task = e.metadata.task;
+          return typeof task === 'object' && task !== null
+            && (task as { subtype?: string }).subtype === 'coding';
+        });
+        break;
       default: {
         const tagForm = t.startsWith('#') ? t : `#${t}`;
         if (result.some(e => e.tags.includes(tagForm) || e.tags.includes(t))) {
@@ -2024,7 +2036,10 @@ export async function createMcpServer(
             }
           }
 
-          const entry = await s.write(opts.content, writeOpts);
+          const entry = await s.write(opts.content, {
+            ...writeOpts,
+            projectPath: resolveCallerProjectPath(isHttp),
+          });
           const usageSid = usageSessionId();
           if (usageSid) {
             const readIds = s.getSessionReadIds(usageSid);
@@ -2230,11 +2245,12 @@ export async function createMcpServer(
           const { id, ...patch } = TimUpdateSchema.parse(args);
           const resolved = await s.read(id, { showIrrelevant: true, includeChildren: false });
           if (!resolved) return errorResult(`Entry not found: ${id}`);
+          const projectPath = resolveCallerProjectPath(isHttp);
           if (patch.tags !== undefined) {
             const tagWarnings = validateTagsDeprecated(patch.tags);
             const { clean: cleanTags } = stripDeprecatedTags(patch.tags);
             patch.tags = cleanTags;
-            const entry = await s.update(resolved.id, patch as Partial<Entry>);
+            const entry = await s.update(resolved.id, patch as Partial<Entry>, { projectPath });
             bestEffortTelemetry('markReferenced', () =>
               s.markReferenced([entry.id], usageSessionId()));
             const payload = tagWarnings.length > 0 ? { entry, warnings: tagWarnings } : entry;
@@ -2242,7 +2258,7 @@ export async function createMcpServer(
               content: [{ type: 'text', text: formatToolResponse(payload) }],
             };
           }
-          const entry = await s.update(resolved.id, patch as Partial<Entry>);
+          const entry = await s.update(resolved.id, patch as Partial<Entry>, { projectPath });
           bestEffortTelemetry('markReferenced', () =>
             s.markReferenced([entry.id], usageSessionId()));
           return {
