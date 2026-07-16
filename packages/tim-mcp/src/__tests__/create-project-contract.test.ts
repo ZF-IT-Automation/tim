@@ -16,6 +16,14 @@ interface JsonRpcResponse {
   error?: { code: number; message: string };
 }
 
+interface ToolListing {
+  name: string;
+  description?: string;
+  inputSchema: {
+    properties?: Record<string, { description?: string }>;
+  };
+}
+
 class StdioMcpClient {
   private readonly proc: ChildProcess;
   private readonly pending = new Map<number, (response: JsonRpcResponse) => void>();
@@ -87,6 +95,12 @@ class StdioMcpClient {
     return this.send('tools/call', { name: 'tim_create_project', arguments: args });
   }
 
+  async listTools(): Promise<ToolListing[]> {
+    await this.init();
+    const response = await this.send('tools/list', {});
+    return (response.result as unknown as { tools: ToolListing[] }).tools;
+  }
+
   close(): void {
     this.proc.kill('SIGTERM');
   }
@@ -132,6 +146,21 @@ describe('tim_create_project explicit mode contract', () => {
       store.close();
     }
   }
+
+  it('publishes the exact explicit-mode schema guidance', async () => {
+    const tool = (await client.listTools()).find(candidate => candidate.name === 'tim_create_project');
+
+    expect(tool?.description).toBe(
+      'Create a project in exactly one mode. Every project representing files on disk MUST pass its absolute path; memoryOnly:true is only for an intentionally virtual/database-only project and is never a shortcut for an unknown cwd.',
+    );
+    expect(tool?.inputSchema.properties?.path?.description).toBe(
+      'Absolute directory for every project representing files on disk',
+    );
+    expect(tool?.inputSchema.properties?.memoryOnly?.description).toBe(
+      'Must be true, and only for an intentional database-only project; mutually exclusive with path',
+    );
+    expect(tool?.inputSchema.properties?.aliases?.description).toBeUndefined();
+  });
 
   it('rejects a label-only call with actionable mode guidance and creates no project', async () => {
     const response = await client.createProject({ label: 'P1200' });

@@ -372,7 +372,11 @@ const TimCreateProjectSchema = zod_1.z.object({
     label: zod_1.z.string().describe('Project label, e.g. P0062'),
     metadata: zod_1.z.record(zod_1.z.unknown()).optional().default({}),
     content: zod_1.z.string().optional(),
-    aliases: zod_1.z.array(zod_1.z.string()).optional().describe('Short names for tim_load_project, e.g. ["o9k", "hmem"]'),
+    aliases: zod_1.z.array(zod_1.z.string()).optional(),
+    path: zod_1.z.string().optional()
+        .describe('Absolute directory for every project representing files on disk'),
+    memoryOnly: zod_1.z.boolean().optional()
+        .describe('Must be true, and only for an intentional database-only project; mutually exclusive with path'),
 });
 const TimLoadProjectSchema = zod_1.z.object({
     label: zod_1.z.string().describe('Project label, e.g. P0062'),
@@ -664,7 +668,7 @@ exports.TOOL_DEFS = [
     },
     {
         name: 'tim_create_project',
-        description: 'Register a project entry so load_project can find it later.',
+        description: 'Create a project in exactly one mode. Every project representing files on disk MUST pass its absolute path; memoryOnly:true is only for an intentionally virtual/database-only project and is never a shortcut for an unknown cwd.',
         schema: TimCreateProjectSchema,
     },
     {
@@ -2626,8 +2630,8 @@ async function createMcpServer(options = {}) {
                     };
                 }
                 case 'tim_create_project': {
-                    const { label, metadata, content, aliases } = TimCreateProjectSchema.parse(args);
-                    const entry = await s.createProject(label, { metadata, content, aliases });
+                    const input = TimCreateProjectSchema.parse(args);
+                    const entry = await (0, tim_hooks_1.createProjectCoordinated)(s, input);
                     return {
                         content: [{ type: 'text', text: formatToolResponse(entry) }],
                     };

@@ -409,11 +409,11 @@ const TimCreateProjectSchema = z.object({
   label: z.string().describe('Project label, e.g. P0062'),
   metadata: z.record(z.unknown()).optional().default({}),
   content: z.string().optional(),
-  aliases: z.array(z.string()).optional().describe('Short names for tim_load_project, e.g. ["o9k", "hmem"]'),
+  aliases: z.array(z.string()).optional(),
   path: z.string().optional()
-    .describe('Absolute path of the project directory for a project representing files on disk.'),
+    .describe('Absolute directory for every project representing files on disk'),
   memoryOnly: z.boolean().optional()
-    .describe('Set true only for an intentionally virtual/database-only project; mutually exclusive with path.'),
+    .describe('Must be true, and only for an intentional database-only project; mutually exclusive with path'),
 });
 
 const TimLoadProjectSchema = z.object({

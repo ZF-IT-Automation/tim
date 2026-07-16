@@ -95,6 +95,12 @@ export declare function readMarker(cwd: string): ProjectMarker | null;
 export declare function validateMarkerAgainstStore(marker: ProjectMarker, store: Pick<TimStore, 'resolveProjectLabel'>): Promise<ProjectMarker | null>;
 /** Atomically write JSON to `filePath` (tmp + rename — no torn reads on POSIX). */
 export declare function writeMarkerAtomic(filePath: string, content: string): void;
+export declare class ExclusiveMarkerConflictError extends Error {
+    readonly filePath: string;
+    constructor(filePath: string);
+}
+/** Publish a marker only when no local marker exists already. */
+export declare function writeMarkerExclusive(cwd: string, marker: ProjectMarkerInput): ProjectMarker;
 /** Write a project marker file. Always emits the current schema version:
  *  the on-disk file becomes v2 on first write, regardless of the caller's
  *  input. This is the auto-upgrade path for v1 files. */
