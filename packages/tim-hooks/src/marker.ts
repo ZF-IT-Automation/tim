@@ -263,9 +263,11 @@ export function writeMarkerExclusive(cwd: string, marker: ProjectMarkerInput): P
   const filePath = markerPath(cwd);
   const tmp = `${filePath}.tmp.${process.pid}.${crypto.randomUUID()}`;
   const complete: ProjectMarker = { ...marker, version: MARKER_VERSION };
+  let ownsTemp = false;
 
   try {
     fs.writeFileSync(tmp, JSON.stringify(complete, null, 2), { flag: 'wx' });
+    ownsTemp = true;
     try {
       fs.linkSync(tmp, filePath);
     } catch (err) {
@@ -276,7 +278,13 @@ export function writeMarkerExclusive(cwd: string, marker: ProjectMarkerInput): P
     }
     return complete;
   } finally {
-    fs.rmSync(tmp, { force: true });
+    if (ownsTemp) {
+      try {
+        fs.rmSync(tmp, { force: true });
+      } catch {
+        // Publication success or failure is authoritative; cleanup is best-effort.
+      }
+    }
   }
 }
 
