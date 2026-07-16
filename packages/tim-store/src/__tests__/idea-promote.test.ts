@@ -1,39 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { applyIdeaPromote, isCodingNeedsReview } from '../idea-promote.js';
+import { applyIdeaPromote } from '../idea-promote.js';
 
-describe('isCodingNeedsReview', () => {
-  it('returns true for coding task with commits and not reviewed', () => {
-    expect(
-      isCodingNeedsReview({
-        task: { subtype: 'coding', commits: ['abc123'], reviewed: false },
-      }),
-    ).toBe(true);
-  });
-
-  it('returns false when reviewed is true', () => {
-    expect(
-      isCodingNeedsReview({
-        task: { subtype: 'coding', commits: ['abc123'], reviewed: true },
-      }),
-    ).toBe(false);
-  });
-
-  it('returns false when commits array is empty', () => {
-    expect(
-      isCodingNeedsReview({
-        task: { subtype: 'coding', commits: [], reviewed: false },
-      }),
-    ).toBe(false);
-  });
-
-  it('returns false when subtype is missing', () => {
-    expect(
-      isCodingNeedsReview({
-        task: { commits: ['abc123'], reviewed: false },
-      }),
-    ).toBe(false);
-  });
-});
+// isCodingNeedsReview now lives in task-status-history.ts (history-based,
+// not boolean `reviewed`) — see task-status-history.test.ts for its coverage.
 
 describe('applyIdeaPromote', () => {
   const nowIso = '2026-07-16T12:00:00.000Z';

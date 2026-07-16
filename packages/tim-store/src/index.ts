@@ -115,7 +115,15 @@ export {
   parseAndCoerceMetadata,
   BOOLEAN_METADATA_KEYS,
 } from './metadata-coerce.js';
-export { applyIdeaPromote, isCodingNeedsReview, type PromoteResult } from './idea-promote.js';
+export { applyIdeaPromote, type PromoteResult } from './idea-promote.js';
+export {
+  getTaskHistory,
+  migrateTaskHistory,
+  appendTaskStatus,
+  deriveStartedAt,
+  deriveFinishedAt,
+  isCodingNeedsReview,
+} from './task-status-history.js';
 export {
   isSecret,
   parentIsSecret,

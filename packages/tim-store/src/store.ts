@@ -17,7 +17,8 @@ import { runMigrations, createTriggers, getCurrentVersion } from './schema.js';
 import { CurateManager } from './curate.js';
 import { ConsolidationManager } from './consolidate.js';
 import { metadataNeedsCoercion, parseAndCoerceMetadata } from './metadata-coerce.js';
-import { applyIdeaPromote, isCodingNeedsReview } from './idea-promote.js';
+import { applyIdeaPromote } from './idea-promote.js';
+import { isCodingNeedsReview } from './task-status-history.js';
 import { recordFromPayload, entryLocalLwwTimestamp, edgeLocalLwwTimestamp } from './sync-methods.js';
 import { parentIsSecret } from './secret.js';
 
