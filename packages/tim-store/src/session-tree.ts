@@ -142,9 +142,9 @@ const INBOX_PROJECT_TAGS = ['#project', '#inbox', '#system'] as const;
 export async function ensureInboxProject(store: TimStore): Promise<Entry> {
   return store.runExclusive(() => {
     const rewrites: Parameters<TimStore['stageEntryIdRewritesSync']>[1] = [];
-    let existing = store.readIncludingTombstoneSync(INBOX_PROJECT_LABEL);
+    let existing = store.readSystemRepairEntrySync(INBOX_PROJECT_LABEL);
     if (!existing) {
-      const logical = store.findByMetadataLabelIncludingTombstoneSync(INBOX_PROJECT_LABEL)
+      const logical = store.findSystemRepairEntriesByLabelSync(INBOX_PROJECT_LABEL)
         .find(entry => entry.id !== INBOX_PROJECT_LABEL);
       if (logical) {
         const canonicalized = store.canonicalizeEntryIdSync(logical.id, INBOX_PROJECT_LABEL);
@@ -171,7 +171,7 @@ export async function ensureInboxProject(store: TimStore): Promise<Entry> {
     const tags = new Set([...existing.tags, ...INBOX_PROJECT_TAGS]);
     let mergedDuplicate = false;
 
-    const duplicates = store.findByMetadataLabelIncludingTombstoneSync(INBOX_PROJECT_LABEL)
+    const duplicates = store.findSystemRepairEntriesByLabelSync(INBOX_PROJECT_LABEL)
       .filter(entry => entry.id !== INBOX_PROJECT_LABEL);
     for (const duplicate of duplicates) {
       const snapshots = Array.isArray(metadata.merged_inbox_entries)
@@ -184,8 +184,13 @@ export async function ensureInboxProject(store: TimStore): Promise<Entry> {
         metadata: duplicate.metadata,
         tags: duplicate.tags,
       });
+      const rewrittenDuplicateMetadata = store.rewriteSystemRepairMetadataReferences(
+        duplicate.metadata,
+        duplicate.id,
+        INBOX_PROJECT_LABEL,
+      );
       metadata = {
-        ...duplicate.metadata,
+        ...rewrittenDuplicateMetadata,
         ...metadata,
         merged_inbox_entries: snapshots,
       };
@@ -204,6 +209,13 @@ export async function ensureInboxProject(store: TimStore): Promise<Entry> {
       }
       const rewrite = store.mergeEntryReferencesAndDeleteSync(duplicate.id, INBOX_PROJECT_LABEL);
       if (rewrite) rewrites.push(rewrite);
+      const postRewriteCanonical = store.readSystemRepairEntrySync(INBOX_PROJECT_LABEL);
+      if (!postRewriteCanonical) throw new Error('Inbox canonical row disappeared during repair');
+      metadata = {
+        ...metadata,
+        ...postRewriteCanonical.metadata,
+        merged_inbox_entries: snapshots,
+      };
       mergedDuplicate = true;
     }
 

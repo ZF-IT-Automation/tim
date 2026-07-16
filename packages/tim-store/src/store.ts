@@ -1488,6 +1488,12 @@ export class TimStore implements MemoryInterface {
     return row ? rowToEntry(row) : null;
   }
 
+  /** Raw metadata read reserved for system repair; bypasses public boolean coercion. */
+  readSystemRepairEntrySync(id: string): Entry | null {
+    const row = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(id) as RowEntry | undefined;
+    return row ? rowToSystemRepairEntry(row) : null;
+  }
+
   /** Find every physical row carrying a logical metadata label, including suppressed rows. */
   findByMetadataLabelIncludingTombstoneSync(label: string): Entry[] {
     const rows = this.db.prepare(
@@ -1496,6 +1502,27 @@ export class TimStore implements MemoryInterface {
        ORDER BY created_at ASC, rowid ASC`,
     ).all(label) as RowEntry[];
     return rows.map(rowToEntry);
+  }
+
+  /** Raw metadata label scan reserved for system repair. */
+  findSystemRepairEntriesByLabelSync(label: string): Entry[] {
+    const rows = this.db.prepare(
+      `SELECT * FROM entries
+       WHERE json_extract(metadata, '$.label') = ?
+       ORDER BY created_at ASC, rowid ASC`,
+    ).all(label) as RowEntry[];
+    return rows.map(rowToSystemRepairEntry);
+  }
+
+  /** Structurally rewrite exact ID-valued metadata strings for system repair. */
+  rewriteSystemRepairMetadataReferences(
+    metadata: Record<string, unknown>,
+    sourceId: string,
+    targetId: string,
+  ): Record<string, unknown> {
+    return JSON.parse(
+      rewriteExactJsonReferences(JSON.stringify(metadata), sourceId, targetId),
+    ) as Record<string, unknown>;
   }
 
   /**
@@ -1507,7 +1534,7 @@ export class TimStore implements MemoryInterface {
     rewrite: EntryIdRewrite | null;
   } {
     if (oldId === newId) {
-      const existing = this.readIncludingTombstoneSync(oldId);
+      const existing = this.readSystemRepairEntrySync(oldId);
       if (!existing) throw new Error(`Entry not found: ${oldId}`);
       return { entry: existing, rewrite: null };
     }
@@ -1532,7 +1559,7 @@ export class TimStore implements MemoryInterface {
     this.db.prepare('UPDATE entry_vectors SET entry_id = ? WHERE entry_id = ?').run(newId, oldId);
 
     this.db.prepare('DELETE FROM entries WHERE id = ?').run(oldId);
-    return { entry: this.readIncludingTombstoneSync(newId)!, rewrite };
+    return { entry: this.readSystemRepairEntrySync(newId)!, rewrite };
   }
 
   /** Repoint every structural reference to targetId, then remove sourceId without staging. */
@@ -3256,6 +3283,20 @@ export function cosineSimilarity(a: Float32Array, b: Float32Array): number {
 }
 
 function rowToEntry(row: RowEntry): Entry {
+  return rowToEntryWithMetadata(row, parseAndCoerceMetadata(row.metadata));
+}
+
+function rowToSystemRepairEntry(row: RowEntry): Entry {
+  return rowToEntryWithMetadata(
+    row,
+    JSON.parse(row.metadata) as Record<string, unknown>,
+  );
+}
+
+function rowToEntryWithMetadata(
+  row: RowEntry,
+  metadata: Record<string, unknown>,
+): Entry {
   return {
     id: row.id,
     parentId: row.parent_id,
@@ -3273,7 +3314,7 @@ function rowToEntry(row: RowEntry): Entry {
     irrelevant: row.irrelevant === 1,
     favorite: row.favorite === 1,
     tombstonedAt: row.tombstoned_at,
-    metadata: parseAndCoerceMetadata(row.metadata),
+    metadata,
   };
 }
 

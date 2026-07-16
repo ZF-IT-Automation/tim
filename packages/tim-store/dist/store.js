@@ -1315,6 +1315,11 @@ class TimStore {
         const row = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(id);
         return row ? rowToEntry(row) : null;
     }
+    /** Raw metadata read reserved for system repair; bypasses public boolean coercion. */
+    readSystemRepairEntrySync(id) {
+        const row = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(id);
+        return row ? rowToSystemRepairEntry(row) : null;
+    }
     /** Find every physical row carrying a logical metadata label, including suppressed rows. */
     findByMetadataLabelIncludingTombstoneSync(label) {
         const rows = this.db.prepare(`SELECT * FROM entries
@@ -1322,13 +1327,24 @@ class TimStore {
        ORDER BY created_at ASC, rowid ASC`).all(label);
         return rows.map(rowToEntry);
     }
+    /** Raw metadata label scan reserved for system repair. */
+    findSystemRepairEntriesByLabelSync(label) {
+        const rows = this.db.prepare(`SELECT * FROM entries
+       WHERE json_extract(metadata, '$.label') = ?
+       ORDER BY created_at ASC, rowid ASC`).all(label);
+        return rows.map(rowToSystemRepairEntry);
+    }
+    /** Structurally rewrite exact ID-valued metadata strings for system repair. */
+    rewriteSystemRepairMetadataReferences(metadata, sourceId, targetId) {
+        return JSON.parse(rewriteExactJsonReferences(JSON.stringify(metadata), sourceId, targetId));
+    }
     /**
      * Canonicalize a physical entry id without changing its payload. Must be called
      * inside runExclusive; rewrites all local references before removing oldId.
      */
     canonicalizeEntryIdSync(oldId, newId) {
         if (oldId === newId) {
-            const existing = this.readIncludingTombstoneSync(oldId);
+            const existing = this.readSystemRepairEntrySync(oldId);
             if (!existing)
                 throw new Error(`Entry not found: ${oldId}`);
             return { entry: existing, rewrite: null };
@@ -1352,7 +1368,7 @@ class TimStore {
         this.db.prepare('UPDATE entry_usage SET entry_id = ? WHERE entry_id = ?').run(newId, oldId);
         this.db.prepare('UPDATE entry_vectors SET entry_id = ? WHERE entry_id = ?').run(newId, oldId);
         this.db.prepare('DELETE FROM entries WHERE id = ?').run(oldId);
-        return { entry: this.readIncludingTombstoneSync(newId), rewrite };
+        return { entry: this.readSystemRepairEntrySync(newId), rewrite };
     }
     /** Repoint every structural reference to targetId, then remove sourceId without staging. */
     mergeEntryReferencesAndDeleteSync(sourceId, targetId) {
@@ -2713,6 +2729,12 @@ function cosineSimilarity(a, b) {
     return denom === 0 ? 0 : dot / denom;
 }
 function rowToEntry(row) {
+    return rowToEntryWithMetadata(row, (0, metadata_coerce_js_1.parseAndCoerceMetadata)(row.metadata));
+}
+function rowToSystemRepairEntry(row) {
+    return rowToEntryWithMetadata(row, JSON.parse(row.metadata));
+}
+function rowToEntryWithMetadata(row, metadata) {
     return {
         id: row.id,
         parentId: row.parent_id,
@@ -2730,7 +2752,7 @@ function rowToEntry(row) {
         irrelevant: row.irrelevant === 1,
         favorite: row.favorite === 1,
         tombstonedAt: row.tombstoned_at,
-        metadata: (0, metadata_coerce_js_1.parseAndCoerceMetadata)(row.metadata),
+        metadata,
     };
 }
 function rowToEdge(row) {

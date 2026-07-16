@@ -412,6 +412,35 @@ describe('SessionManager', () => {
       expect(payload.lww_device).not.toBe('legacy-device');
     });
 
+    it('preserves raw custom numeric metadata during Inbox repair', async () => {
+      await store.write('Raw metadata Inbox', {
+        id: 'P0000',
+        metadata: { kind: 'note', label: 'N0000' },
+      });
+      store.getDb().prepare(
+        `UPDATE entries SET metadata = ? WHERE id = 'P0000'`,
+      ).run(JSON.stringify({
+        kind: 'note',
+        label: 'N0000',
+        custom: { pinned: 1 },
+      }));
+      store.getDb().prepare('DELETE FROM staging').run();
+
+      await ensureInboxProject(store);
+
+      const row = store.getDb().prepare(
+        `SELECT metadata FROM entries WHERE id = 'P0000'`,
+      ).get() as { metadata: string };
+      expect(JSON.parse(row.metadata)).toMatchObject({
+        kind: 'project',
+        label: 'P0000',
+        custom: { pinned: 1 },
+      });
+      const staging = await store.getStaging();
+      const payload = JSON.parse(staging[0]!.payload) as { metadata: string };
+      expect(JSON.parse(payload.metadata).custom.pinned).toBe(1);
+    });
+
     it('canonicalizes a logical P0000 stored under a different id without losing data or edges', async () => {
       const legacy = await store.write('Legacy Inbox\nPreserve this body', {
         id: 'LEGACY-INBOX-ID',
@@ -580,12 +609,22 @@ describe('SessionManager', () => {
       await store.write('Canonical Inbox\nCanonical body', {
         id: 'P0000',
         tags: ['#canonical'],
-        metadata: { kind: 'note', label: 'WRONG', canonical_custom: true },
+        metadata: {
+          kind: 'note',
+          label: 'WRONG',
+          canonical_custom: true,
+          project_ref: 'LEGACY-INBOX-DUPLICATE',
+        },
       });
       const duplicate = await store.write('Duplicate Inbox\nDuplicate body', {
         id: 'LEGACY-INBOX-DUPLICATE',
         tags: ['#legacy'],
-        metadata: { kind: 'project', label: 'P0000', legacy_custom: { keep: true } },
+        metadata: {
+          kind: 'project',
+          label: 'P0000',
+          legacy_custom: { keep: true },
+          duplicate_ref: 'LEGACY-INBOX-DUPLICATE',
+        },
       });
       const target = await store.write('Edge target');
       await store.link(duplicate.id, target.id, 'relates');
@@ -601,6 +640,8 @@ describe('SessionManager', () => {
         label: 'P0000',
         canonical_custom: true,
         legacy_custom: { keep: true },
+        project_ref: 'P0000',
+        duplicate_ref: 'P0000',
       });
       expect(repaired.metadata.merged_inbox_entries).toEqual([
         expect.objectContaining({
