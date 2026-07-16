@@ -156,6 +156,24 @@ describe('tim CLI help safety', () => {
     expect(fs.existsSync(path.join(target, '.tim-project'))).toBe(true);
   });
 
+  it('stops at help before a later incomplete value option', () => {
+    const before = snapshotTree(caseRoot);
+    const result = spawnSync('node', [CLI, 'new-project', '--help', '--name'], {
+      cwd,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        HOME: homeDir,
+        TIM_DB_PATH: dbPath,
+      },
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain('Usage: tim new-project');
+    expect(result.stderr).toBe('');
+    expect(snapshotTree(caseRoot)).toEqual(before);
+  });
+
   it('prints useful root usage for help on an unknown command', () => {
     const result = spawnSync('node', [CLI, 'not-a-command', '--help'], {
       cwd,

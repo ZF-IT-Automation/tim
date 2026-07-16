@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseArgs, valueOptionsFor } from '../args.js';
+import { hasBooleanFlag, parseArgs, valueOptionsFor } from '../args.js';
 
 describe('parseArgs', () => {
   it('supports equals syntax and boolean flags', () => {
@@ -26,6 +26,16 @@ describe('parseArgs', () => {
   it('reports a declared value option that has no following token', () => {
     expect(() => parseArgs(['--name'], { valueOptions: new Set(['name']) }))
       .toThrow('Missing value for --name');
+  });
+
+  it('finds help in order without validating later options', () => {
+    const options = {
+      valueOptions: new Set(['name']),
+      aliases: { h: 'help' },
+    };
+
+    expect(hasBooleanFlag(['--help', '--name'], 'help', options)).toBe(true);
+    expect(hasBooleanFlag(['--name', '--help'], 'help', options)).toBe(false);
   });
 
   it('does not let boolean flags consume the following positional argument', () => {

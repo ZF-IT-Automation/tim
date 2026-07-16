@@ -75,11 +75,10 @@ function buildStaleMarkerDirective(projectLabel, markerDir) {
 }
 const HELP_ALIASES = { h: 'help' };
 function hasHelpFlag(args, command, subcommand) {
-    const { flags } = (0, args_js_1.parseArgs)(args, {
+    return (0, args_js_1.hasBooleanFlag)(args, 'help', {
         valueOptions: (0, args_js_1.valueOptionsFor)(command, subcommand),
         aliases: command === 'new-project' ? args_js_1.NEW_PROJECT_ALIASES : HELP_ALIASES,
     });
-    return flags.help === 'true';
 }
 const COMMAND_HELP = {
     init: 'Usage: tim init',

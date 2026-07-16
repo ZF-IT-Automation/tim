@@ -37,7 +37,7 @@ import { cmdSecret } from './secret.js';
 import { runReleaseCheck } from './release-check.js';
 import { cmdMigrateFromHmem } from './migrate-from-hmem.js';
 import { cmdSetupAgent } from './setup-agent.js';
-import { NEW_PROJECT_ALIASES, parseArgs, valueOptionsFor } from './args.js';
+import { NEW_PROJECT_ALIASES, hasBooleanFlag, parseArgs, valueOptionsFor } from './args.js';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -63,11 +63,10 @@ function buildStaleMarkerDirective(projectLabel: string, markerDir: string): str
 const HELP_ALIASES: Readonly<Record<string, string>> = { h: 'help' };
 
 function hasHelpFlag(args: string[], command: string, subcommand?: string): boolean {
-  const { flags } = parseArgs(args, {
+  return hasBooleanFlag(args, 'help', {
     valueOptions: valueOptionsFor(command, subcommand),
     aliases: command === 'new-project' ? NEW_PROJECT_ALIASES : HELP_ALIASES,
   });
-  return flags.help === 'true';
 }
 
 const COMMAND_HELP: Record<string, string> = {

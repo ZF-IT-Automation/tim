@@ -12,5 +12,6 @@ export declare class MissingOptionValueError extends Error {
 }
 export declare const NEW_PROJECT_ALIASES: Readonly<Record<string, string>>;
 export declare function valueOptionsFor(command: string, subcommand?: string): ReadonlySet<string>;
+export declare function hasBooleanFlag(args: string[], target: string, options?: ParseOptions): boolean;
 export declare function parseArgs(args: string[], options?: ParseOptions): ParsedArgs;
 //# sourceMappingURL=args.d.ts.map
