@@ -102,8 +102,8 @@ describe('tim_load_project bind:false', () => {
     await client.init();
 
     // Seed two projects.
-    await client.callTool('tim_create_project', { label: 'P8101', content: 'Project 8101' });
-    await client.callTool('tim_create_project', { label: 'P8102', content: 'Project 8102' });
+    await client.callTool('tim_create_project', { label: 'P8101', content: 'Project 8101', memoryOnly: true });
+    await client.callTool('tim_create_project', { label: 'P8102', content: 'Project 8102', memoryOnly: true });
   });
 
   afterEach(() => {

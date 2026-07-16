@@ -183,7 +183,7 @@ describe('MCP tool response JSON safety (BUG 2)', () => {
     // substrings of the formatted text.
     //
     // Create a project first, then load it.
-    await client.callTool('tim_create_project', { label: 'P9999', aliases: ['bug2-test'] });
+    await client.callTool('tim_create_project', { label: 'P9999', aliases: ['bug2-test'], memoryOnly: true });
     const loadResp = await client.callTool('tim_load_project', { label: 'P9999' });
     expect(loadResp.error).toBeUndefined();
     const text = loadResp.result!.content[0].text;

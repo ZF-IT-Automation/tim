@@ -149,6 +149,7 @@ describe('tim_delta', () => {
     const projRes = await client.callTool('tim_create_project', {
       label: 'P0001',
       content: 'Delta Test',
+      memoryOnly: true,
     });
     const project = JSON.parse(projRes.result!.content[0].text);
     const cutoff = new Date(Date.now() - 1000).toISOString();

@@ -269,6 +269,7 @@ describe('tim_section_children', () => {
     const project = parseResult(await client.callTool('tim_create_project', {
       label: 'P7701',
       content: 'Section Test Project',
+      memoryOnly: true,
     })) as { id: string };
     const section = parseResult(await client.callTool('tim_write', {
       content: 'Tasks',
@@ -304,6 +305,7 @@ describe('tim_section_children', () => {
     const project = parseResult(await client.callTool('tim_create_project', {
       label: 'P7702',
       content: 'Resolve Project',
+      memoryOnly: true,
     })) as { id: string };
     await client.callTool('tim_write', {
       content: 'Ideas',
@@ -325,7 +327,7 @@ describe('tim_section_children', () => {
   });
 
   it('returns empty when section not found', async () => {
-    await client.callTool('tim_create_project', { label: 'P7703', content: 'Empty' });
+    await client.callTool('tim_create_project', { label: 'P7703', content: 'Empty', memoryOnly: true });
     const result = parseResult(await client.callTool('tim_section_children', {
       parentLabel: 'P7703',
       sectionTitle: 'Missing',
@@ -338,6 +340,7 @@ describe('tim_section_children', () => {
     const project = parseResult(await client.callTool('tim_create_project', {
       label: 'P7704',
       content: 'Filter Project',
+      memoryOnly: true,
     })) as { id: string };
     const section = parseResult(await client.callTool('tim_write', {
       content: 'Mixed',

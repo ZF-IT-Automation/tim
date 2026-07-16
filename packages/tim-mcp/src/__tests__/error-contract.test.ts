@@ -130,9 +130,9 @@ describe('error contract', () => {
     const sessionId = `error-contract-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
     // Create two projects.
-    const a = await client.callTool('tim_create_project', { label: 'P8001', content: 'A' });
+    const a = await client.callTool('tim_create_project', { label: 'P8001', content: 'A', memoryOnly: true });
     expect(a.error).toBeUndefined();
-    const b = await client.callTool('tim_create_project', { label: 'P8002', content: 'B' });
+    const b = await client.callTool('tim_create_project', { label: 'P8002', content: 'B', memoryOnly: true });
     expect(b.error).toBeUndefined();
 
     // First load binds the session.

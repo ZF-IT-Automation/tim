@@ -122,6 +122,7 @@ describe('tim_read depth-based includeChildren default (Bug 2 fix)', () => {
     const proj = await client.callTool('tim_create_project', {
       label,
       content: `${label} Proj`,
+      memoryOnly: true,
     });
     const project = JSON.parse(proj.result!.content[0].text);
 

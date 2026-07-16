@@ -99,7 +99,7 @@ async function seedProjectWithTask(
   taskMeta: { status?: string; priority?: string } = {},
   taskTags: string[] = ['#task', '#tim'],
 ): Promise<void> {
-  const proj = await client.callTool('tim_create_project', { label, content: title });
+  const proj = await client.callTool('tim_create_project', { label, content: title, memoryOnly: true });
   expect(proj.error).toBeUndefined();
   const project = JSON.parse(proj.result!.content[0].text);
 
@@ -170,7 +170,7 @@ describe('tim_show', () => {
   });
 
   it('what:bugs returns only #bug tagged entries', async () => {
-    const proj = await client.callTool('tim_create_project', { label: 'P0440', content: 'Bug Proj' });
+    const proj = await client.callTool('tim_create_project', { label: 'P0440', content: 'Bug Proj', memoryOnly: true });
     const project = JSON.parse(proj.result!.content[0].text);
     const section = await client.callTool('tim_write', {
       content: 'Tasks',
@@ -198,7 +198,7 @@ describe('tim_show', () => {
   });
 
   it('what:errors unions type=error and #error tag deduped', async () => {
-    const proj = await client.callTool('tim_create_project', { label: 'P0441', content: 'Error Proj' });
+    const proj = await client.callTool('tim_create_project', { label: 'P0441', content: 'Error Proj', memoryOnly: true });
     const project = JSON.parse(proj.result!.content[0].text);
     const section = await client.callTool('tim_write', {
       content: 'Errors',
@@ -236,6 +236,7 @@ describe('tim_show', () => {
     const proj = await client.callTool('tim_create_project', {
       label: 'P0420',
       content: 'Ideas Project',
+      memoryOnly: true,
     });
     const project = JSON.parse(proj.result!.content[0].text);
 
@@ -264,7 +265,7 @@ describe('tim_show', () => {
   });
 
   it('with:open excludes done and cancelled tasks', async () => {
-    const proj = await client.callTool('tim_create_project', { label: 'P0450', content: 'Filter Proj' });
+    const proj = await client.callTool('tim_create_project', { label: 'P0450', content: 'Filter Proj', memoryOnly: true });
     const project = JSON.parse(proj.result!.content[0].text);
     const section = await client.callTool('tim_write', {
       content: 'Tasks',
@@ -309,7 +310,7 @@ describe('tim_show', () => {
   });
 
   it('with:urgent returns only #urgent entries', async () => {
-    const proj = await client.callTool('tim_create_project', { label: 'P0453', content: 'Urgent Proj' });
+    const proj = await client.callTool('tim_create_project', { label: 'P0453', content: 'Urgent Proj', memoryOnly: true });
     const project = JSON.parse(proj.result!.content[0].text);
     const section = await client.callTool('tim_write', {
       content: 'Tasks',
@@ -364,7 +365,7 @@ describe('tim_show', () => {
   });
 
   it('limit applied after scope not before', async () => {
-    const proj = await client.callTool('tim_create_project', { label: 'P0460', content: 'Limit Proj' });
+    const proj = await client.callTool('tim_create_project', { label: 'P0460', content: 'Limit Proj', memoryOnly: true });
     const project = JSON.parse(proj.result!.content[0].text);
     const section = await client.callTool('tim_write', {
       content: 'Tasks',

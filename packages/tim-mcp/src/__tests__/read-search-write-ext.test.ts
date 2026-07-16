@@ -148,7 +148,7 @@ describe('tim_read extended', () => {
   });
 
   it('project reads project entry by label', async () => {
-    await client.callTool('tim_create_project', { label: 'P0500', content: 'Read Project' });
+    await client.callTool('tim_create_project', { label: 'P0500', content: 'Read Project', memoryOnly: true });
     const readResp = await client.callTool('tim_read', { project: 'P0500' });
     const parsed = JSON.parse(readResp.result!.content[0].text);
     expect(parsed.entry.metadata.label).toBe('P0500');
@@ -156,7 +156,7 @@ describe('tim_read extended', () => {
   });
 
   it('section returns section and children', async () => {
-    const proj = await client.callTool('tim_create_project', { label: 'P0501', content: 'Section Proj' });
+    const proj = await client.callTool('tim_create_project', { label: 'P0501', content: 'Section Proj', memoryOnly: true });
     const project = JSON.parse(proj.result!.content[0].text);
     const secWrite = await client.callTool('tim_write', {
       content: 'Tasks',
@@ -204,7 +204,7 @@ describe('tim_search extended', () => {
     tags: string[],
     meta: Record<string, unknown> = {},
   ) {
-    const proj = await client.callTool('tim_create_project', { label, content: `${label} Proj` });
+    const proj = await client.callTool('tim_create_project', { label, content: `${label} Proj`, memoryOnly: true });
     const project = JSON.parse(proj.result!.content[0].text);
     const section = await client.callTool('tim_write', {
       content: 'Notes',
@@ -282,7 +282,7 @@ describe('tim_write where shorthand', () => {
   });
 
   it('where P0062/Tasks resolves project and section parent', async () => {
-    const proj = await client.callTool('tim_create_project', { label: 'P0600', content: 'Where Proj' });
+    const proj = await client.callTool('tim_create_project', { label: 'P0600', content: 'Where Proj', memoryOnly: true });
     const project = JSON.parse(proj.result!.content[0].text);
     await client.callTool('tim_write', {
       content: 'Tasks',
@@ -310,7 +310,7 @@ describe('tim_write where shorthand', () => {
   });
 
   it('explicit parentId overrides where', async () => {
-    const proj = await client.callTool('tim_create_project', { label: 'P0601', content: 'Override Proj' });
+    const proj = await client.callTool('tim_create_project', { label: 'P0601', content: 'Override Proj', memoryOnly: true });
     const project = JSON.parse(proj.result!.content[0].text);
     const tasks = await client.callTool('tim_write', {
       content: 'Tasks',
@@ -346,7 +346,7 @@ describe('tim_write where shorthand', () => {
   });
 
   it('bad section in where returns clean error', async () => {
-    await client.callTool('tim_create_project', { label: 'P0602', content: 'Bad Section Proj' });
+    await client.callTool('tim_create_project', { label: 'P0602', content: 'Bad Section Proj', memoryOnly: true });
     const writeResp = await client.callTool('tim_write', {
       content: 'Orphan attempt',
       where: 'P0602/NoSuchSection',
@@ -357,7 +357,7 @@ describe('tim_write where shorthand', () => {
   });
 
   it('parentTitle+projectId path still works (regression)', async () => {
-    const proj = await client.callTool('tim_create_project', { label: 'P0603', content: 'Legacy Proj' });
+    const proj = await client.callTool('tim_create_project', { label: 'P0603', content: 'Legacy Proj', memoryOnly: true });
     const project = JSON.parse(proj.result!.content[0].text);
     await client.callTool('tim_write', {
       content: 'Tasks',
@@ -394,7 +394,7 @@ describe('tim_show what=tasks (replaces deprecated tim_tasks)', () => {
   });
 
   async function seedTask(label: string, title: string, status: string) {
-    const proj = await client.callTool('tim_create_project', { label, content: title });
+    const proj = await client.callTool('tim_create_project', { label, content: title, memoryOnly: true });
     const project = JSON.parse(proj.result!.content[0].text);
     const section = await client.callTool('tim_write', {
       content: 'Next Steps',

@@ -167,7 +167,7 @@ describe('hmem import audit MCP tools', () => {
   });
 
   it('tim_repair_section creates sections and can move children safely', async () => {
-    const project = parsePayload(await client.callTool('tim_create_project', { label: 'P0200', content: 'Manual Project' }));
+    const project = parsePayload(await client.callTool('tim_create_project', { label: 'P0200', content: 'Manual Project', memoryOnly: true }));
     const loose = parsePayload(await client.callTool('tim_write', {
       parentId: project.id,
       content: 'Loose child',
@@ -197,7 +197,7 @@ describe('hmem import audit MCP tools', () => {
   });
 
   it('tim_dry_run_move reports move impact without writing', async () => {
-    parsePayload(await client.callTool('tim_create_project', { label: 'P0300', content: 'Move Project' }));
+    parsePayload(await client.callTool('tim_create_project', { label: 'P0300', content: 'Move Project', memoryOnly: true }));
     const section = parsePayload(await client.callTool('tim_repair_section', {
       project: 'P0300',
       title: 'Tasks',
