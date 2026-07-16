@@ -108,8 +108,9 @@ function precheckNewProjectPath(requestedPath: string): string {
 }
 
 function isDupProjectError(err: unknown): boolean {
-  return err instanceof Error &&
-    /^Project label\b.*(?:already exists|already resolves|ambiguous project-label conflict)/i.test(err.message);
+  if (!(err instanceof Error)) return false;
+  return /^Project label already exists: P\d{4}(?: \([^)]+\))?$/i.test(err.message) ||
+    /^Project label P\d{4} (?:already exists|already resolves to project \S+|has an ambiguous project-label conflict)$/i.test(err.message);
 }
 
 function incrementLabel(label: string): string {
@@ -275,7 +276,9 @@ Create a new TIM project, register it in the database, write .tim-project, and i
           'Inspect the existing binding, reconcile the database projects if necessary, and remove the marker only when it is confirmed stale; then retry tim new-project.',
       );
     }
-    throw err;
+    if (err instanceof ProjectCreationPartialFailureError) throw err;
+    const msg = err instanceof Error ? err.message : String(err);
+    exitWith(5, `Error: Failed to create project in database: ${msg}`);
   }
 
   await initProjectSchema(store, result.id);

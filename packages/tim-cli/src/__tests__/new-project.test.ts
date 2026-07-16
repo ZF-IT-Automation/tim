@@ -5,7 +5,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as readline from 'readline';
 import { TimStore } from 'tim-store';
-import { createProjectCoordinated } from 'tim-hooks';
+import { createProjectCoordinated, ProjectCreationPartialFailureError } from 'tim-hooks';
 import { cmdNewProject } from '../new-project.js';
 
 const CLI = path.resolve(__dirname, '../../dist/cli.js');
@@ -206,6 +206,97 @@ describe('tim new-project', () => {
     expect(projects.some(p => p.label === 'P0002')).toBe(false);
     expect(projects.some(p => p.label === 'P0003')).toBe(true);
     store.close();
+  });
+
+  it('stops after ten duplicate label collisions with database failure exit 5', async () => {
+    const target = path.join(workDir, 'collision-exhaustion');
+    const labels: string[] = [];
+    const createProject: typeof createProjectCoordinated = async (_store, args) => {
+      labels.push(args.label);
+      expect(fs.existsSync(path.join(target, '.tim-project'))).toBe(false);
+      throw new Error(`Project label already exists: ${args.label} (racing-project)`);
+    };
+    const exitSpy = mockExit();
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const prevDb = process.env.TIM_DB_PATH;
+    process.env.TIM_DB_PATH = dbPath;
+
+    try {
+      await expect(cmdNewProject(
+        ['--path', target, '--name', 'Exhausted', '--no-git'],
+        { createProject },
+      )).rejects.toThrow('exit:5');
+    } finally {
+      if (prevDb === undefined) delete process.env.TIM_DB_PATH;
+      else process.env.TIM_DB_PATH = prevDb;
+    }
+
+    expect(labels).toEqual(Array.from({ length: 10 }, (_, index) => `P${String(index + 1).padStart(4, '0')}`));
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('Failed to create project in database'));
+    expect(fs.existsSync(path.join(target, '.tim-project'))).toBe(false);
+    exitSpy.mockRestore();
+  });
+
+  it('does not retry a similar non-duplicate database error and exits 5', async () => {
+    const target = path.join(workDir, 'ordinary-db-failure');
+    let attempts = 0;
+    const createProject: typeof createProjectCoordinated = async () => {
+      attempts++;
+      throw new Error('Project label lookup failed because cache already exists');
+    };
+    const exitSpy = mockExit();
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const prevDb = process.env.TIM_DB_PATH;
+    process.env.TIM_DB_PATH = dbPath;
+
+    try {
+      await expect(cmdNewProject(
+        ['--path', target, '--name', 'DB Failure', '--no-git'],
+        { createProject },
+      )).rejects.toThrow('exit:5');
+    } finally {
+      if (prevDb === undefined) delete process.env.TIM_DB_PATH;
+      else process.env.TIM_DB_PATH = prevDb;
+    }
+
+    expect(attempts).toBe(1);
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining(
+      'Failed to create project in database: Project label lookup failed because cache already exists',
+    ));
+    exitSpy.mockRestore();
+  });
+
+  it('preserves coordinated partial failure errors for top-level exit 1 handling', async () => {
+    const target = path.join(workDir, 'partial-failure');
+    const partial = new ProjectCreationPartialFailureError(
+      `Project P0001 was created, but marker publication failed. Recover with: tim bind-project --label P0001 --cwd ${target}`,
+      'P0001',
+      target,
+    );
+    let attempts = 0;
+    const createProject: typeof createProjectCoordinated = async () => {
+      attempts++;
+      throw partial;
+    };
+    const exitSpy = mockExit();
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const prevDb = process.env.TIM_DB_PATH;
+    process.env.TIM_DB_PATH = dbPath;
+
+    try {
+      await expect(cmdNewProject(
+        ['--path', target, '--name', 'Partial', '--no-git'],
+        { createProject },
+      )).rejects.toBe(partial);
+    } finally {
+      if (prevDb === undefined) delete process.env.TIM_DB_PATH;
+      else process.env.TIM_DB_PATH = prevDb;
+    }
+
+    expect(attempts).toBe(1);
+    expect(exitSpy).not.toHaveBeenCalled();
+    expect(errorSpy).not.toHaveBeenCalledWith(expect.stringContaining('Failed to create project in database'));
+    exitSpy.mockRestore();
   });
 
   it('starts at P0001 for empty DB', () => {
