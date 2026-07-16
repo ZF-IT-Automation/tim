@@ -3,10 +3,13 @@ import * as path from 'path';
 import * as os from 'os';
 import * as readline from 'readline';
 import { execSync } from 'child_process';
-import { ulid } from 'ulid';
 import { TimStore } from 'tim-store';
 import { loadConfig } from 'tim-core';
-import { readMarker, writeMarker } from 'tim-hooks';
+import {
+  createProjectCoordinated,
+  ProjectCreationPartialFailureError,
+  type BoundProjectCreationResult,
+} from 'tim-hooks';
 
 const STANDARD_SECTIONS = [
   { label: 'Tasks', content: 'Actionable work items and open tasks' },
@@ -58,22 +61,6 @@ function exitWith(code: number, message: string): never {
   process.exit(code);
 }
 
-function validatePath(targetPath: string): void {
-  if (!targetPath) {
-    exitWith(1, 'Error: --path is required');
-  }
-  if (targetPath.startsWith('~') || targetPath.includes('$HOME')) {
-    exitWith(1, `Error: Invalid --path: must be absolute path (got: ${targetPath})`);
-  }
-  if (!path.isAbsolute(targetPath)) {
-    exitWith(1, `Error: Invalid --path: must be absolute path (got: ${targetPath})`);
-  }
-  const resolved = path.resolve(targetPath);
-  if (resolved === path.resolve(os.homedir())) {
-    exitWith(1, `Error: Invalid --path: refusing home directory (${resolved})`);
-  }
-}
-
 function validateName(name: string): void {
   if (!name?.trim()) {
     exitWith(1, 'Error: --name is required and must be non-empty');
@@ -81,7 +68,8 @@ function validateName(name: string): void {
 }
 
 function isDupProjectError(err: unknown): boolean {
-  return err instanceof Error && /already exists/i.test(err.message);
+  return err instanceof Error &&
+    /^Project label\b.*(?:already exists|already resolves|ambiguous project-label conflict)/i.test(err.message);
 }
 
 function incrementLabel(label: string): string {
@@ -132,28 +120,42 @@ async function createProjectWithRetry(
   startLabel: string,
   name: string,
   targetPath: string,
-): Promise<{ label: string; projectId: string }> {
+  deps: NewProjectDeps,
+): Promise<BoundProjectCreationResult> {
   let label = startLabel;
-  let attempt = 0;
-  while (attempt < 10) {
+  for (let attempt = 0; attempt < 10; attempt++) {
     try {
-      const entry = await store.createProject(label, {
+      const result = await deps.createProject(store, {
+        label,
+        path: targetPath,
         content: name,
-        metadata: { name, path: targetPath },
+        metadata: { name },
       });
-      return { label, projectId: entry.id };
+      if (result.mode !== 'bound') {
+        throw new Error('Coordinated project creation unexpectedly returned a memory-only project');
+      }
+      return result;
     } catch (err) {
       if (isDupProjectError(err)) {
         label = incrementLabel(label);
-        attempt++;
         continue;
       }
-      const msg = err instanceof Error ? err.message : String(err);
-      exitWith(5, `Error: Failed to create project in database: ${msg}`);
+      throw err;
     }
   }
-  exitWith(5, `Error: Project label ${startLabel} already exists (race condition retry exhausted after 10 attempts)`);
+  throw new Error(
+    `Could not allocate a project label after 10 concurrent collisions starting at ${startLabel}. ` +
+      'Retry tim new-project after the other project creations finish.',
+  );
 }
+
+export interface NewProjectDeps {
+  createProject: typeof createProjectCoordinated;
+}
+
+const DEFAULT_NEW_PROJECT_DEPS: NewProjectDeps = {
+  createProject: createProjectCoordinated,
+};
 
 async function initProjectSchema(store: TimStore, projectId: string): Promise<void> {
   for (const section of STANDARD_SECTIONS) {
@@ -169,7 +171,10 @@ async function initProjectSchema(store: TimStore, projectId: string): Promise<vo
   }
 }
 
-export async function cmdNewProject(args: string[]): Promise<void> {
+export async function cmdNewProject(
+  args: string[],
+  deps: NewProjectDeps = DEFAULT_NEW_PROJECT_DEPS,
+): Promise<void> {
   const flags = parseNewProjectArgs(args);
 
   if (flags.help === 'true') {
@@ -180,12 +185,15 @@ Create a new TIM project, register it in the database, write .tim-project, and i
     return;
   }
 
-  const targetPath = path.resolve(flags.path ?? '');
+  const requestedPath = flags.path ?? '';
+  const targetPath = path.resolve(requestedPath);
   const name = flags.name ?? '';
   const noGit = flags['no-git'] === 'true';
   const confirm = flags.confirm === 'true';
 
-  validatePath(flags.path ?? '');
+  if (!requestedPath) {
+    exitWith(1, 'Error: --path is required');
+  }
   validateName(name);
 
   if (!fs.existsSync(targetPath)) {
@@ -195,16 +203,6 @@ Create a new TIM project, register it in the database, write .tim-project, and i
       const msg = err instanceof Error ? err.message : String(err);
       exitWith(3, `Error: mkdir failed: ${msg}`);
     }
-  }
-
-  const markerFile = path.join(targetPath, '.tim-project');
-  if (fs.existsSync(markerFile)) {
-    const existing = readMarker(targetPath);
-    const boundLabel = existing?.project ?? 'unknown';
-    exitWith(
-      1,
-      `Error: Path already bound to ${boundLabel} — use \`tim bind-project --label <new-label> --cwd ${targetPath}\` to rebind, or remove \`.tim-project\` manually.`,
-    );
   }
 
   const fileCount = countDirEntries(targetPath);
@@ -221,44 +219,26 @@ Create a new TIM project, register it in the database, write .tim-project, and i
   const dbPath = getDbPath();
   const store = new TimStore(dbPath);
 
-  let label: string;
-  let projectId: string;
+  let result: BoundProjectCreationResult;
   try {
     const startLabel = await getNextProjectLabel(store);
-    ({ label, projectId } = await createProjectWithRetry(store, startLabel, name.trim(), targetPath));
+    result = await createProjectWithRetry(store, startLabel, name.trim(), requestedPath, deps);
   } catch (err) {
     store.close();
+    if (
+      !(err instanceof ProjectCreationPartialFailureError) &&
+      err instanceof Error &&
+      /target-local project marker already exists/i.test(err.message)
+    ) {
+      throw new Error(
+        `${err.message} tim bind-project is recovery-only and cannot replace a different marker. ` +
+          'Inspect the existing binding, reconcile the database projects if necessary, and remove the marker only when it is confirmed stale; then retry tim new-project.',
+      );
+    }
     throw err;
   }
 
-  try {
-    writeMarker(targetPath, {
-      project: label,
-      session: ulid(),
-      exchanges: 0,
-      batch_size: 5,
-      batches_summarized: 0,
-    });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error(
-      `Warning: DB registered as ${label}, but .tim-project write failed: ${msg}. ` +
-        `Run: tim bind-project --label ${label} --cwd ${targetPath}`,
-    );
-    store.close();
-    process.exit(1);
-  }
-
-  if (!fs.existsSync(markerFile)) {
-    console.error(
-      `Warning: DB registered as ${label}, but .tim-project write failed. ` +
-        `Run: tim bind-project --label ${label} --cwd ${targetPath}`,
-    );
-    store.close();
-    process.exit(1);
-  }
-
-  await initProjectSchema(store, projectId);
+  await initProjectSchema(store, result.id);
 
   if (!noGit) {
     const gitDir = path.join(targetPath, '.git');
@@ -281,8 +261,9 @@ Create a new TIM project, register it in the database, write .tim-project, and i
     console.log('⊘ Git init skipped (--no-git)');
   }
 
-  console.log(`✓ Created project ${label} "${name.trim()}" at ${targetPath}`);
-  console.log(`✓ .tim-project written — next session in this dir binds to ${label}`);
+  const createdLabel = String(result.metadata.label);
+  console.log(`✓ Created project ${createdLabel} "${name.trim()}" at ${result.projectPath}`);
+  console.log(`✓ .tim-project written — next session in this dir binds to ${createdLabel}`);
 
   store.close();
 }

@@ -5,6 +5,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as readline from 'readline';
 import { TimStore } from 'tim-store';
+import { createProjectCoordinated } from 'tim-hooks';
 import { cmdNewProject } from '../new-project.js';
 
 const CLI = path.resolve(__dirname, '../../dist/cli.js');
@@ -147,10 +148,11 @@ describe('tim new-project', () => {
     });
     fs.writeFileSync(path.join(target, '.tim-project'), markerContent);
 
-    const result = run(['new-project', '-p', target, '-n', 'Blocked'], env);
+    const result = run(['new-project', '-p', target, '-n', 'Blocked', '--confirm'], env);
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain('Path already bound to P0042');
-    expect(result.stderr).toContain('bind-project');
+    expect(result.stderr).toContain('P0042');
+    expect(result.stderr).toMatch(/reconcil/i);
+    expect(result.stderr).not.toContain('to rebind');
     expect(fs.readFileSync(path.join(target, '.tim-project'), 'utf8')).toBe(markerContent);
     expect(fs.existsSync(path.join(target, '.tim-project.bak'))).toBe(false);
 
@@ -181,30 +183,27 @@ describe('tim new-project', () => {
   it('retries on label collision', async () => {
     const target = path.join(workDir, 'collision');
     await seedProject(dbPath, 'P0001');
-
-    const original = TimStore.prototype.createProject;
-    let calls = 0;
-    vi.spyOn(TimStore.prototype, 'createProject').mockImplementation(async function (
-      this: TimStore,
-      label: string,
-      options?: Parameters<typeof original>[1],
-    ) {
-      calls++;
-      if (calls === 1 && label === 'P0002') {
+    const labels: string[] = [];
+    const createProject: typeof createProjectCoordinated = async (store, args) => {
+      labels.push(args.label);
+      expect(fs.existsSync(path.join(target, '.tim-project'))).toBe(false);
+      if (args.label === 'P0002') {
         throw new Error('Project label already exists: P0002 (dup-id)');
       }
-      return original.call(this, label, options);
-    });
+      return createProjectCoordinated(store, args);
+    };
 
     const prevDb = process.env.TIM_DB_PATH;
     process.env.TIM_DB_PATH = dbPath;
-    await cmdNewProject(['--path', target, '--name', 'Collision Test']);
+    await cmdNewProject(['--path', target, '--name', 'Collision Test'], { createProject });
     if (prevDb === undefined) delete process.env.TIM_DB_PATH;
     else process.env.TIM_DB_PATH = prevDb;
 
-    expect(calls).toBeGreaterThanOrEqual(2);
+    expect(labels).toEqual(['P0002', 'P0003']);
+    expect(JSON.parse(fs.readFileSync(path.join(target, '.tim-project'), 'utf8')).project).toBe('P0003');
     const store = new TimStore(dbPath);
     const projects = await store.listProjects();
+    expect(projects.some(p => p.label === 'P0002')).toBe(false);
     expect(projects.some(p => p.label === 'P0003')).toBe(true);
     store.close();
   });
@@ -221,7 +220,7 @@ describe('tim new-project', () => {
 
   it('rejects home directory', () => {
     const home = os.homedir();
-    const result = run(['new-project', '-p', home, '-n', 'Home'], env);
+    const result = run(['new-project', '-p', home, '-n', 'Home', '--confirm'], env);
     expect(result.status).toBe(1);
     expect(result.stderr).toMatch(/home directory|Invalid --path/i);
   });
@@ -229,7 +228,8 @@ describe('tim new-project', () => {
   it('rejects relative path', () => {
     const result = run(['new-project', '-p', 'relative/path', '-n', 'Bad'], env);
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain('must be absolute path');
+    expect(result.stderr).toContain('absolute project path');
+    fs.rmSync(path.resolve('relative'), { recursive: true, force: true });
   });
 
   it('rejects empty name', () => {
@@ -323,9 +323,9 @@ describe('tim new-project', () => {
       }),
     );
 
-    const result = run(['new-project', '-p', target, '-n', 'Force', '--force'], env);
+    const result = run(['new-project', '-p', target, '-n', 'Force', '--force', '--confirm'], env);
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain('Path already bound to P0099');
+    expect(result.stderr).toContain('P0099');
     expect(fs.existsSync(path.join(target, '.tim-project.bak'))).toBe(false);
   });
 
@@ -339,7 +339,7 @@ describe('tim new-project', () => {
     expect(marker.batch_size).toBe(5);
     expect(marker.exchanges).toBe(0);
     expect(marker.batches_summarized).toBe(0);
-    expect(marker.session).toMatch(/^[0-9A-Z]{26}$/);
+    expect(marker.session).toMatch(/^[0-9a-f-]{36}$/);
   });
 
   it('metadata.path and metadata.name stored', async () => {

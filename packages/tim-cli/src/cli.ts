@@ -298,7 +298,9 @@ async function cmdBindProject(args: string[]) {
       path: cwd,
       sessionId: flags.session,
     });
-    console.log(`Wrote .tim-project → ${result.label} at ${result.projectPath}`);
+    console.log(result.alreadyBound
+      ? `Already bound .tim-project → ${result.label} at ${result.projectPath}`
+      : `Wrote .tim-project → ${result.label} at ${result.projectPath}`);
   } finally {
     store.close();
   }
