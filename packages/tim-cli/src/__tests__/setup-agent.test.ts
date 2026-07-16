@@ -101,6 +101,52 @@ describe('setup-agent planner', () => {
     expect(updated).not.toContain('/old.db');
   });
 
+  it('normalizes quoted and commented TIM definitions without broad deletion', () => {
+    const existing = [
+      '# keep top-level comment',
+      'mcp_servers.tim.command = "old-bare" # stale',
+      'mcp_servers."tim".args = ["old-quoted"]',
+      '"mcp_servers"."tim".env.TIM_DB_PATH = "/old-dotted.db"',
+      'mcp_servers.other.command = "keep-other"',
+      '',
+      '[mcp_servers."tim"] # stale quoted table',
+      'command = "old-table"',
+      '',
+      '[mcp_servers.other] # keep unrelated table comment',
+      'command = "keep-table"',
+      '# keep unrelated body comment',
+      '',
+      '[mcp_servers."tim".env] # stale quoted env table',
+      'TIM_DB_PATH = "/old-table.db"',
+      '',
+      '[hooks.state] # keep hooks comment',
+      'enabled = true',
+      'mcp_servers.tim.command = "nested-keep"',
+      '',
+    ].join('\n');
+
+    const updated = replaceCodexTimMcpBlock(
+      existing,
+      buildCodexMcpConfig('/tmp/canonical.db', { override: SERVER_PATH }),
+    );
+    expect(updated.match(/\[mcp_servers\.tim\]/g)).toHaveLength(1);
+    expect(updated.match(/\[mcp_servers\.tim\.env\]/g)).toHaveLength(1);
+    expect(updated).not.toContain('old-bare');
+    expect(updated).not.toContain('old-quoted');
+    expect(updated).not.toContain('/old-dotted.db');
+    expect(updated).not.toContain('old-table');
+    expect(updated).not.toContain('/old-table.db');
+    expect(updated).not.toContain('[mcp_servers."tim"]');
+    expect(updated).not.toContain('[mcp_servers."tim".env]');
+    expect(updated).toContain('# keep top-level comment');
+    expect(updated).toContain('mcp_servers.other.command = "keep-other"');
+    expect(updated).toContain('[mcp_servers.other] # keep unrelated table comment');
+    expect(updated).toContain('# keep unrelated body comment');
+    expect(updated).toContain('[hooks.state] # keep hooks comment');
+    expect(updated).toContain('mcp_servers.tim.command = "nested-keep"');
+    expect(updated).toContain('TIM_DB_PATH = "/tmp/canonical.db"');
+  });
+
   it('installs Codex with the shared executable entry and preserves unrelated TOML', () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tim codex config '));
     const configPath = path.join(tmp, 'config.toml');

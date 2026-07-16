@@ -88,6 +88,88 @@ function hostTool(host) {
 function tomlString(value) {
     return JSON.stringify(value).replace(/\u007f/g, '\\u007F');
 }
+function findOutsideTomlQuotes(value, needle) {
+    let quote = null;
+    let escaped = false;
+    for (let i = 0; i < value.length; i++) {
+        const char = value[i];
+        if (quote === '"') {
+            if (escaped)
+                escaped = false;
+            else if (char === '\\')
+                escaped = true;
+            else if (char === '"')
+                quote = null;
+            continue;
+        }
+        if (quote === "'") {
+            if (char === "'")
+                quote = null;
+            continue;
+        }
+        if (char === '"' || char === "'")
+            quote = char;
+        else if (char === needle)
+            return i;
+    }
+    return -1;
+}
+function withoutTomlComment(line) {
+    const comment = findOutsideTomlQuotes(line, '#');
+    return comment < 0 ? line : line.slice(0, comment);
+}
+function normalizeTomlKeySegment(segment) {
+    const value = segment.trim();
+    if (/^[A-Za-z0-9_-]+$/.test(value))
+        return value;
+    if (value.startsWith("'") && value.endsWith("'") && value.length >= 2) {
+        return value.slice(1, -1).includes("'") ? null : value.slice(1, -1);
+    }
+    if (value.startsWith('"') && value.endsWith('"') && value.length >= 2) {
+        try {
+            return JSON.parse(value);
+        }
+        catch {
+            return null;
+        }
+    }
+    return null;
+}
+function normalizeTomlKeyPath(source) {
+    const segments = [];
+    let rest = source;
+    while (rest.length > 0) {
+        const dot = findOutsideTomlQuotes(rest, '.');
+        const raw = dot < 0 ? rest : rest.slice(0, dot);
+        const segment = normalizeTomlKeySegment(raw);
+        if (segment === null)
+            return null;
+        segments.push(segment);
+        if (dot < 0)
+            break;
+        rest = rest.slice(dot + 1);
+    }
+    return segments.length > 0 ? segments : null;
+}
+function tomlHeaderPath(line) {
+    const value = withoutTomlComment(line).trim();
+    const arrayTable = value.startsWith('[[') && value.endsWith(']]');
+    if (!arrayTable && !(value.startsWith('[') && value.endsWith(']')))
+        return null;
+    const inner = arrayTable ? value.slice(2, -2) : value.slice(1, -1);
+    return normalizeTomlKeyPath(inner);
+}
+function isTimTable(path) {
+    return path[0] === 'mcp_servers' && path[1] === 'tim' && (path.length === 2 || (path.length === 3 && path[2] === 'env'));
+}
+function isTopLevelTimAssignment(line) {
+    const value = withoutTomlComment(line);
+    const equals = findOutsideTomlQuotes(value, '=');
+    if (equals < 0)
+        return false;
+    const path = normalizeTomlKeyPath(value.slice(0, equals));
+    return Boolean(path && path[0] === 'mcp_servers' && path[1] === 'tim');
+}
 function buildCodexMcpConfig(dbPath, options = {}) {
     const entry = (0, install_js_1.buildTimMcpEntry)(dbPath, options);
     return [
@@ -102,34 +184,28 @@ function buildCodexMcpConfig(dbPath, options = {}) {
 function replaceCodexTimMcpBlock(existing, block) {
     const lines = existing.split(/\r?\n/);
     const out = [];
-    let replaced = false;
-    for (let i = 0; i < lines.length;) {
-        const trimmed = lines[i].trim();
-        if (trimmed === '[mcp_servers.tim]' || trimmed === '[mcp_servers.tim.env]') {
-            if (!replaced) {
-                if (out.length > 0 && out[out.length - 1] !== '')
-                    out.push('');
-                out.push(...block.split('\n'));
-                replaced = true;
-            }
-            i++;
-            while (i < lines.length) {
-                const t = lines[i].trim();
-                if (t.startsWith('['))
-                    break;
-                i++;
-            }
+    let atTopLevel = true;
+    let inTimTable = false;
+    for (const line of lines) {
+        const header = tomlHeaderPath(line);
+        if (header) {
+            atTopLevel = false;
+            inTimTable = isTimTable(header);
+            if (!inTimTable)
+                out.push(line);
             continue;
         }
-        out.push(lines[i]);
-        i++;
+        if (inTimTable) {
+            if (line.trim() === '' || line.trimStart().startsWith('#'))
+                out.push(line);
+            continue;
+        }
+        if (atTopLevel && isTopLevelTimAssignment(line))
+            continue;
+        out.push(line);
     }
-    if (!replaced) {
-        if (out.length > 0 && out[out.length - 1] !== '')
-            out.push('');
-        out.push(...block.split('\n'));
-    }
-    return out.join('\n').replace(/\n{3,}/g, '\n\n').trimEnd() + '\n';
+    const preserved = out.join('\n').trimEnd();
+    return `${preserved}${preserved ? '\n\n' : ''}${block.trimEnd()}\n`;
 }
 function installCodexMcpConfig(dbPath, configPath = path.join(os.homedir(), '.codex', 'config.toml'), options = {}) {
     const block = buildCodexMcpConfig(dbPath, options);

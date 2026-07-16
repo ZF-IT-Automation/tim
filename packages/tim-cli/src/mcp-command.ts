@@ -33,7 +33,7 @@ export function resolveTimMcpServerPath(options: TimMcpServerOptions = {}): stri
   }
 
   const sibling = path.resolve(__dirname, '..', '..', 'tim-mcp', 'dist', 'server.js');
-  const candidates = [packaged, sibling].filter((candidate): candidate is string => Boolean(candidate));
+  const candidates = [sibling, packaged].filter((candidate): candidate is string => Boolean(candidate));
   const found = candidates.find(isFile);
   if (found) return path.resolve(found);
 

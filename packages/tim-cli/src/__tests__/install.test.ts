@@ -110,6 +110,47 @@ describe('multi-host installer', () => {
     }
   });
 
+  it('prefers the current checkout sibling over a resolvable packaged dependency', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tim-worktree-layout-'));
+    const cliDist = path.join(tmp, 'packages', 'tim-cli', 'dist');
+    const siblingServer = path.join(tmp, 'packages', 'tim-mcp', 'dist', 'server.js');
+    const packagedServer = path.join(
+      tmp,
+      'packages',
+      'tim-cli',
+      'node_modules',
+      'tim-mcp',
+      'dist',
+      'server.js',
+    );
+    fs.mkdirSync(cliDist, { recursive: true });
+    fs.mkdirSync(path.dirname(siblingServer), { recursive: true });
+    fs.mkdirSync(path.dirname(packagedServer), { recursive: true });
+    fs.copyFileSync(MCP_COMMAND_PATH, path.join(cliDist, 'mcp-command.js'));
+    fs.writeFileSync(
+      path.join(tmp, 'packages', 'tim-cli', 'node_modules', 'tim-mcp', 'package.json'),
+      JSON.stringify({ name: 'tim-mcp' }),
+    );
+    fs.writeFileSync(siblingServer, '// checkout sibling\n');
+    fs.writeFileSync(packagedServer, '// packaged dependency\n');
+
+    try {
+      const fixtureModule = path.join(cliDist, 'mcp-command.js');
+      const result = spawnSync(process.execPath, [
+        '-e',
+        `process.stdout.write(require(${JSON.stringify(fixtureModule)}).resolveTimMcpServerPath())`,
+      ], {
+        encoding: 'utf8',
+        env: { ...process.env, TIM_MCP_SERVER: '' },
+      });
+      expect(result.stderr).toBe('');
+      expect(result.status).toBe(0);
+      expect(result.stdout).toBe(siblingServer);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it('resolves an absolute verified server and builds a node entry', () => {
     const entry = buildTimMcpEntry('/tmp/tim.db', { override: SERVER_PATH });
     expect(entry).toEqual({

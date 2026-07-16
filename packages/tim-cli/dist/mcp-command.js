@@ -63,7 +63,7 @@ function resolveTimMcpServerPath(options = {}) {
         // Fall through to the sibling layout used by workspace/package installs.
     }
     const sibling = path.resolve(__dirname, '..', '..', 'tim-mcp', 'dist', 'server.js');
-    const candidates = [packaged, sibling].filter((candidate) => Boolean(candidate));
+    const candidates = [sibling, packaged].filter((candidate) => Boolean(candidate));
     const found = candidates.find(isFile);
     if (found)
         return path.resolve(found);
