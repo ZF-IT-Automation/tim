@@ -10,15 +10,26 @@ export declare const BUILTIN_TYPES: readonly ["standard", "project", "task", "er
 export type BuiltinType = BuiltinMetadataType;
 export declare const METADATA_TYPES: readonly ["standard", "project", "task", "error", "decision", "learning", "idea", "log", "commit", "summary", "session", "batch_summary", "exchange", "event"];
 export declare const ALL_METADATA_TYPES: readonly ["standard", "project", "task", "error", "decision", "learning", "idea", "log", "commit", "summary", "session", "batch_summary", "exchange", "event", "rule", "human"];
+export type TaskStatusValue = 'todo' | 'in_progress' | 'changes_pending' | 'pushed' | 'reviewed' | 'done' | 'cancelled';
+export interface TaskStatusEvent {
+    status: TaskStatusValue;
+    at: string;
+    by?: string;
+    note?: string;
+}
 /** Nested task sub-section (Schema v3 Phase 2a). */
 export interface TaskMetadata {
-    status?: 'todo' | 'in_progress' | 'done' | 'cancelled' | 'changes_pending';
+    /** Cache of last history entry status */
+    status?: TaskStatusValue;
+    /** Append-only status log */
+    history?: TaskStatusEvent[];
     priority?: 'low' | 'medium' | 'high' | 'critical';
     due_date?: string;
     completion_evidence?: string | null;
     subtype?: 'coding';
     commits?: string[];
-    reviewed?: boolean;
+    /** Set once: git worktree vs not. Not "git installed". */
+    vcs?: 'git' | 'none';
 }
 /** Stub for Phase 2b */
 export interface RuleMetadata {

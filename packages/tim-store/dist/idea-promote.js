@@ -1,20 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.isCodingNeedsReview = isCodingNeedsReview;
 exports.applyIdeaPromote = applyIdeaPromote;
 const metadata_coerce_js_1 = require("./metadata-coerce.js");
-function isCodingNeedsReview(metadata) {
-    const task = metadata.task;
-    if (typeof task !== 'object' || task === null || Array.isArray(task))
-        return false;
-    const t = task;
-    if (t.subtype !== 'coding')
-        return false;
-    if (t.reviewed === true)
-        return false;
-    const commits = t.commits;
-    return Array.isArray(commits) && commits.length >= 1;
-}
 function applyIdeaPromote(metadata, nowIso = new Date().toISOString()) {
     const idea = metadata.idea;
     if (idea !== undefined && !(0, metadata_coerce_js_1.isIdeaMarker)(idea)) {
@@ -37,7 +24,10 @@ function applyIdeaPromote(metadata, nowIso = new Date().toISOString()) {
     delete next.idea;
     const priorityFromIdea = typeof ideaObj.priority === 'string' ? ideaObj.priority : undefined;
     const priorityFromMeta = typeof metadata.priority === 'string' ? metadata.priority : undefined;
-    const task = { status: 'todo' };
+    const task = {
+        status: 'todo',
+        history: [{ status: 'todo', at: nowIso }],
+    };
     if (priorityFromIdea)
         task.priority = priorityFromIdea;
     else if (priorityFromMeta)

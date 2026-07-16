@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3';
-import type { Entry, Edge, EdgeType, ReadOptions, WriteOptions, DecayOptions, SearchOptions, MemoryInterface, HealthReport, MemoryStats, ContentStats, AgentIdentity, StagingRecord, EventBus, ResolveProjectResult, ResolveSectionResult } from 'tim-core';
+import type { Entry, Edge, EdgeType, ReadOptions, WriteOptions, UpdateOptions, DecayOptions, SearchOptions, MemoryInterface, HealthReport, MemoryStats, ContentStats, AgentIdentity, StagingRecord, EventBus, ResolveProjectResult, ResolveSectionResult } from 'tim-core';
 import { CurateManager } from './curate.js';
 import { ConsolidationManager } from './consolidate.js';
 /**
@@ -246,7 +246,7 @@ export declare class TimStore implements MemoryInterface {
     getChildrenBySeqSync(parentId: string): Entry[];
     readSync(id: string): Entry | null;
     /** Synchronous update for use inside `runExclusive` transactions. */
-    updateSync(id: string, patch: Partial<Entry>): Entry;
+    updateSync(id: string, patch: Partial<Entry>, options?: UpdateOptions): Entry;
     /** Entries whose metadata JSON has non-boolean values for known boolean keys (legacy 1/0/"true"/"false"). */
     findEntriesWithNonBooleanTask(): Array<{
         id: string;
@@ -269,7 +269,7 @@ export declare class TimStore implements MemoryInterface {
     /** Atomically insert entry + staging row (rollback on either failure). */
     private writeEntryWithStaging;
     write(content: string, options?: WriteOptions): Promise<Entry>;
-    update(id: string, patch: Partial<Entry>): Promise<Entry>;
+    update(id: string, patch: Partial<Entry>, options?: UpdateOptions): Promise<Entry>;
     delete(id: string, hard?: boolean): Promise<void>;
     /** Hard/soft delete multiple ids in one transaction; skips missing or tombstoned ids. */
     deleteBatch(ids: string[], hard?: boolean): Promise<number>;

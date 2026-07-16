@@ -54,6 +54,8 @@ const curate_js_1 = require("./curate.js");
 const consolidate_js_1 = require("./consolidate.js");
 const metadata_coerce_js_1 = require("./metadata-coerce.js");
 const idea_promote_js_1 = require("./idea-promote.js");
+const task_status_history_js_1 = require("./task-status-history.js");
+const vcs_js_1 = require("./vcs.js");
 const sync_methods_js_1 = require("./sync-methods.js");
 const secret_js_1 = require("./secret.js");
 /**
@@ -901,7 +903,7 @@ class TimStore {
             };
         });
         if (opts?.needs_review) {
-            return mapped.filter(({ meta }) => (0, idea_promote_js_1.isCodingNeedsReview)(meta)).map(({ record }) => record);
+            return mapped.filter(({ meta }) => (0, task_status_history_js_1.isCodingNeedsReview)(meta)).map(({ record }) => record);
         }
         return mapped.map(({ record }) => record);
     }
@@ -1330,7 +1332,7 @@ class TimStore {
         return row && !row.tombstoned_at ? rowToEntry(row) : null;
     }
     /** Synchronous update for use inside `runExclusive` transactions. */
-    updateSync(id, patch) {
+    updateSync(id, patch, options) {
         const existing = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(id);
         if (!existing)
             throw new Error(`Entry not found: ${id}`);
@@ -1384,12 +1386,29 @@ class TimStore {
                         patchMeta[f] = existingMeta[f];
                     }
                 }
-                if (typeof existingMeta.task === 'object' && existingMeta.task !== null &&
-                    typeof patchMeta.task === 'object' && patchMeta.task !== null) {
-                    patchMeta.task = {
-                        ...existingMeta.task,
-                        ...patchMeta.task,
-                    };
+                if (typeof patchMeta.task === 'object' && patchMeta.task !== null && !Array.isArray(patchMeta.task)) {
+                    const existingTaskObj = typeof existingMeta.task === 'object' && existingMeta.task !== null && !Array.isArray(existingMeta.task)
+                        ? existingMeta.task
+                        : {};
+                    // 1. Start from the migrated (history-seeded) existing task — never patch.task.history.
+                    let taskObj = (0, task_status_history_js_1.migrateTaskHistory)(existingTaskObj, now);
+                    // 2. Merge non-status fields from patch (priority, commits, subtype, vcs, etc.).
+                    const rawPatchTask = patchMeta.task;
+                    const { status: patchStatus, history: _ignoredPatchHistory, ...patchTaskRest } = rawPatchTask;
+                    taskObj = { ...taskObj, ...patchTaskRest };
+                    // 3. A status change becomes an append, never an overwrite.
+                    if (typeof patchStatus === 'string' && patchStatus !== taskObj.status) {
+                        const result = (0, task_status_history_js_1.appendTaskStatus)(taskObj, patchStatus, { at: now });
+                        if (result.error) {
+                            throw new Error(result.error);
+                        }
+                        taskObj = result.task;
+                    }
+                    // 4. Auto-detect vcs once for coding tasks when the caller told us where the project lives.
+                    if (taskObj.subtype === 'coding' && !taskObj.vcs && options?.projectPath) {
+                        taskObj.vcs = (0, vcs_js_1.detectProjectVcs)(options.projectPath);
+                    }
+                    patchMeta.task = taskObj;
                 }
                 if (typeof existingMeta.idea === 'object' && existingMeta.idea !== null &&
                     typeof patchMeta.idea === 'object' && patchMeta.idea !== null) {
@@ -1496,6 +1515,13 @@ class TimStore {
                 depth = Math.min(parent.depth + 1, 5);
         }
         const metadata = { ...(options.metadata ?? {}) };
+        if (typeof metadata.task === 'object' && metadata.task !== null && !Array.isArray(metadata.task)) {
+            const taskObj = (0, task_status_history_js_1.migrateTaskHistory)(metadata.task, now);
+            if (taskObj.subtype === 'coding' && !taskObj.vcs && options.projectPath) {
+                taskObj.vcs = (0, vcs_js_1.detectProjectVcs)(options.projectPath);
+            }
+            metadata.task = taskObj;
+        }
         if (parentId && metadata.order === undefined) {
             const maxRow = this.db.prepare(`
         SELECT MAX(CAST(json_extract(metadata, '$.order') AS INTEGER)) AS max_order
@@ -1565,8 +1591,8 @@ class TimStore {
         this.emit('memory:written', { entry: result, agentId: this.agentId, timestamp: now });
         return result;
     }
-    async update(id, patch) {
-        const result = this.updateSync(id, patch);
+    async update(id, patch, options) {
+        const result = this.updateSync(id, patch, options);
         this.emit('memory:updated', { entry: result, agentId: this.agentId, timestamp: result.accessedAt });
         return result;
     }

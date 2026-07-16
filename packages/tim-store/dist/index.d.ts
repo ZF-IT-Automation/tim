@@ -13,8 +13,10 @@ export { ErrorLogger, type ErrorLogEntry, type ErrorStats } from './error-log.js
 export { formatEntryId, sessionShortFromMetadata } from './entry-id.js';
 export { ackStaging, applyRemoteEntry, applyRemoteEdge, getUnackedStaging, recordFromPayload, type StagingRow, } from './sync-methods.js';
 export { coerceMetadataBooleans, isTaskMarker, isIdeaMarker, normalizeTaskValue, metadataNeedsCoercion, parseAndCoerceMetadata, BOOLEAN_METADATA_KEYS, } from './metadata-coerce.js';
-export { applyIdeaPromote, isCodingNeedsReview, type PromoteResult } from './idea-promote.js';
+export { applyIdeaPromote, type PromoteResult } from './idea-promote.js';
+export { getTaskHistory, migrateTaskHistory, appendTaskStatus, deriveStartedAt, deriveFinishedAt, isCodingNeedsReview, hasFreshReview, } from './task-status-history.js';
 export { isSecret, parentIsSecret, findSecretSource, setSecretSubtree, ensureSecretInheritance, materializeSecretSubtreeSync, } from './secret.js';
 export { ensureHumanProfile, getHumanProfileSummary, HUMAN_ROOT_LABEL, HUMAN_SECTIONS, type HumanProfileNode, } from './user.js';
 export { charsToTokens, estimateProjectTokens, listProjectTokenEstimates, CHARS_PER_TOKEN, type ProjectTokenEstimate, } from './token-budget.js';
+export { detectProjectVcs } from './vcs.js';
 //# sourceMappingURL=index.d.ts.map

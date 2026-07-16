@@ -10,6 +10,7 @@ exports.validateIdeaMetadata = validateIdeaMetadata;
 exports.validateBugMetadata = validateBugMetadata;
 exports.validateTagsDeprecated = validateTagsDeprecated;
 const tim_core_1 = require("tim-core");
+const task_status_history_js_1 = require("./task-status-history.js");
 function validateTaskMetadata(metadata) {
     const warnings = [];
     if (metadata.type === 'task') {
@@ -19,12 +20,15 @@ function validateTaskMetadata(metadata) {
         }
         else {
             const taskObj = task;
+            if (typeof taskObj.reviewed === 'boolean') {
+                warnings.push('reviewed boolean is deprecated — append a "reviewed" event to metadata.task.history instead');
+            }
             if (taskObj.status === 'done' && !taskObj.completion_evidence) {
                 warnings.push('completion_evidence recommended for done tasks');
             }
             if (taskObj.subtype === 'coding') {
-                if (taskObj.status === 'done' && taskObj.reviewed !== true) {
-                    warnings.push('reviewed=true recommended before marking coding tasks done');
+                if (taskObj.status === 'done' && !(0, task_status_history_js_1.hasFreshReview)((0, task_status_history_js_1.getTaskHistory)(taskObj))) {
+                    warnings.push('coding task marked done without a fresh "reviewed" event in history (no changes_pending after it)');
                 }
                 if (taskObj.status === 'done' &&
                     (!Array.isArray(taskObj.commits) || taskObj.commits.length === 0)) {

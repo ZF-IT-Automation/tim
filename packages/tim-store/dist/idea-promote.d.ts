@@ -1,4 +1,3 @@
-export declare function isCodingNeedsReview(metadata: Record<string, unknown>): boolean;
 export interface PromoteResult {
     metadata: Record<string, unknown>;
     didPromote: boolean;
