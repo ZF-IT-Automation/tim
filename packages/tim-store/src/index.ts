@@ -146,3 +146,4 @@ export {
   CHARS_PER_TOKEN,
   type ProjectTokenEstimate,
 } from './token-budget.js';
+export { detectProjectVcs } from './vcs.js';
