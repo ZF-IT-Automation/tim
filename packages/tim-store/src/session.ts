@@ -1107,6 +1107,10 @@ export async function ensureProjectForPath(
       return { label: byAlias.label, entry, created: false };
     }
   }
+  if (byAlias.status === 'ambiguous') {
+    // Do not mint another project with the same contested alias.
+    return null;
+  }
 
   const timJsonPath = path.join(resolvedPath, 'tim.json');
   if (fs.existsSync(timJsonPath)) {
@@ -1127,7 +1131,6 @@ export async function ensureProjectForPath(
     }
   }
 
-  const aliasForCreate = dirName.toLowerCase();
   const maxAttempts = 3;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const label = await nextAutoProjectLabel(store);
@@ -1135,7 +1138,7 @@ export async function ensureProjectForPath(
       const entry = await store.createProject(label, {
         content: `${dirName} | Active`,
         metadata: { name: dirName, path: resolvedPath, auto_created: true },
-        aliases: [aliasForCreate],
+        aliases: [alias],
       });
 
       for (const section of AUTO_PROJECT_SECTIONS) {

@@ -71,6 +71,7 @@ export async function repairPhantomProjectBinding(
         return resolved.label;
       }
     }
+    // ambiguous → leave unrepaired (caller must not mint another contested alias)
   }
 
   return null;

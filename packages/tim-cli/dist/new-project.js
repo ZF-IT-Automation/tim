@@ -141,6 +141,18 @@ function isDupProjectError(err) {
     return /^Project label already exists: P\d{4}(?: \([^)]+\))?$/i.test(err.message) ||
         /^Project label P\d{4} (?:already exists|already resolves to project \S+|has an ambiguous project-label conflict)$/i.test(err.message);
 }
+/** Advance past a failed label. allocateNext alone can stick if the collision never persisted. */
+function incrementLabel(label) {
+    const num = parseInt(label.slice(1), 10);
+    return `P${String(num + 1).padStart(4, '0')}`;
+}
+function nextLabelAfterCollision(store, failedLabel) {
+    const incremented = incrementLabel(failedLabel);
+    const allocated = store.allocateNextProjectLabel();
+    const incNum = parseInt(incremented.slice(1), 10);
+    const allocNum = parseInt(allocated.slice(1), 10);
+    return Number.isFinite(allocNum) && allocNum > incNum ? allocated : incremented;
+}
 function countDirEntries(dir) {
     try {
         return fs.readdirSync(dir).filter(name => name !== '.git').length;
@@ -179,7 +191,7 @@ async function createProjectWithRetry(store, startLabel, name, targetPath, deps)
         }
         catch (err) {
             if (isDupProjectError(err)) {
-                label = store.allocateNextProjectLabel();
+                label = nextLabelAfterCollision(store, label);
                 continue;
             }
             throw err;

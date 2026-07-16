@@ -245,7 +245,7 @@ async function cmdResolveProject(args: string[]) {
     const validated = await validateMarkerAgainstStore(marker, store);
     let projectLabel = validated?.project ?? null;
 
-    if (!projectLabel && format === 'directive') {
+    if (!projectLabel) {
       const recovered = await repairPhantomProjectBinding(store, dir);
       if (recovered) {
         writeMarker(dir, { ...marker, project: recovered });
@@ -257,8 +257,11 @@ async function cmdResolveProject(args: string[]) {
       if (!projectLabel) return;
       const binding = await resolveProjectBindingLabel(store, projectLabel);
       process.stdout.write(buildLoadDirective(projectLabel, dir, binding));
+    } else if (!projectLabel) {
+      // Phantom and unrepaired — do not echo as a live binding.
+      process.stdout.write(`${marker.project}?`);
     } else {
-      process.stdout.write(marker.project);
+      process.stdout.write(projectLabel);
     }
   } finally {
     store.close();

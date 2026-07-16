@@ -59,7 +59,19 @@ describe('tim resolve-project / bind-project', () => {
     expect(output).toContain('Wrote .tim-project');
     const marker = JSON.parse(fs.readFileSync(path.join(dir, '.tim-project'), 'utf8'));
     expect(marker.project).toBe('P0099');
-    expect(run(['resolve-project', '--cwd', dir], { TIM_MARKER_MAX_ROOT: dir }).trim()).toBe('P0099');
+    expect(run(['resolve-project', '--cwd', dir], {
+      TIM_MARKER_MAX_ROOT: dir,
+      TIM_DB_PATH: dbPath,
+    }).trim()).toBe('P0099');
+  });
+
+  it('resolve-project label format marks unrepaired phantom with ?', () => {
+    fs.writeFileSync(path.join(dir, '.tim-project'),
+      JSON.stringify({ project: 'P0888', session: 's', exchanges: 0, batch_size: 5, batches_summarized: 0 }));
+    expect(run(['resolve-project', '--cwd', dir], {
+      TIM_MARKER_MAX_ROOT: dir,
+      TIM_DB_PATH: dbPath,
+    }).trim()).toBe('P0888?');
   });
 
   it('bind-project is idempotent for the same live label and preserves counters', async () => {
