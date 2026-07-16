@@ -7,6 +7,7 @@ import { HOST_TOOLS, buildTimMcpEntry, installMcpForHostTool, type HostTool } fr
 import type { TimMcpServerOptions } from './mcp-command.js';
 import { updateSkillsForHost } from './update-skills.js';
 import { installHermesStatusline } from './hermes-statusline-install.js';
+import { parseArgs } from './args.js';
 
 export type AgentHost = 'claude' | 'codex' | 'cursor' | 'hermes';
 
@@ -29,23 +30,6 @@ function assertAgentHost(host: string): asserts host is AgentHost {
   if (!['claude', 'codex', 'cursor', 'hermes'].includes(host)) {
     throw new Error(`unsupported host: ${host}`);
   }
-}
-
-function parseArgs(args: string[]): Record<string, string> {
-  const parsed: Record<string, string> = {};
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
-    if (!arg.startsWith('--')) continue;
-    const key = arg.slice(2);
-    const next = args[i + 1];
-    if (next && !next.startsWith('--')) {
-      parsed[key] = next;
-      i++;
-    } else {
-      parsed[key] = 'true';
-    }
-  }
-  return parsed;
 }
 
 function getDbPath(config: TimConfigFile): string {
@@ -298,7 +282,7 @@ export function installCodexMcpConfig(
 }
 
 export async function cmdSetupAgent(args: string[]): Promise<void> {
-  const flags = parseArgs(args);
+  const { flags } = parseArgs(args, { valueOptions: new Set(['host']) });
   const host = flags.host;
   if (!host) {
     console.error('Usage: tim setup-agent --host claude|codex|cursor|hermes [--dry-run]');

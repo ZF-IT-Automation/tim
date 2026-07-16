@@ -46,6 +46,7 @@ const tim_store_1 = require("tim-store");
 const install_js_1 = require("./install.js");
 const update_skills_js_1 = require("./update-skills.js");
 const hermes_statusline_install_js_1 = require("./hermes-statusline-install.js");
+const args_js_1 = require("./args.js");
 function buildSetupAgentPlan(opts) {
     assertAgentHost(opts.host);
     return [
@@ -59,24 +60,6 @@ function assertAgentHost(host) {
     if (!['claude', 'codex', 'cursor', 'hermes'].includes(host)) {
         throw new Error(`unsupported host: ${host}`);
     }
-}
-function parseArgs(args) {
-    const parsed = {};
-    for (let i = 0; i < args.length; i++) {
-        const arg = args[i];
-        if (!arg.startsWith('--'))
-            continue;
-        const key = arg.slice(2);
-        const next = args[i + 1];
-        if (next && !next.startsWith('--')) {
-            parsed[key] = next;
-            i++;
-        }
-        else {
-            parsed[key] = 'true';
-        }
-    }
-    return parsed;
 }
 function getDbPath(config) {
     return process.env.TIM_DB_PATH || config.dbPath || path.join(os.homedir(), '.tim', 'tim.db');
@@ -308,7 +291,7 @@ function installCodexMcpConfig(dbPath, configPath = path.join(os.homedir(), '.co
     return { installed: [{ tool: 'Codex', path: configPath }], skipped: [] };
 }
 async function cmdSetupAgent(args) {
-    const flags = parseArgs(args);
+    const { flags } = (0, args_js_1.parseArgs)(args, { valueOptions: new Set(['host']) });
     const host = flags.host;
     if (!host) {
         console.error('Usage: tim setup-agent --host claude|codex|cursor|hermes [--dry-run]');

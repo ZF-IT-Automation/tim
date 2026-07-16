@@ -37,6 +37,7 @@ import { cmdSecret } from './secret.js';
 import { runReleaseCheck } from './release-check.js';
 import { cmdMigrateFromHmem } from './migrate-from-hmem.js';
 import { cmdSetupAgent } from './setup-agent.js';
+import { parseArgs } from './args.js';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -59,80 +60,129 @@ function buildStaleMarkerDirective(projectLabel: string, markerDir: string): str
   ].join('\n');
 }
 
-function parseArgs(args: string[]): Record<string, string> {
-  const parsed: Record<string, string> = {};
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
-    if (arg.startsWith('--')) {
-      const key = arg.slice(2);
-      const next = args[i + 1];
-      if (next && !next.startsWith('--')) {
-        parsed[key] = next;
-        i++;
-      } else {
-        parsed[key] = 'true';
-      }
-    }
-  }
-  return parsed;
-}
-
 function hasHelpFlag(args: string[]): boolean {
-  return args.some(arg => arg === '-h' || arg === '--help');
+  for (const arg of args) {
+    if (arg === '--') return false;
+    if (arg === '-h' || arg === '--help') return true;
+  }
+  return false;
 }
 
-function printCommandHelp(cmd: string): void {
-  switch (cmd) {
-    case 'init':
-      console.log(`Usage: tim init`);
-      return;
-    case 'doctor':
-      console.log(`Usage: tim doctor`);
-      return;
-    case 'stats':
-      console.log(`Usage: tim stats`);
-      return;
-    case 'export':
-      console.log(`Usage: tim export <path.hmem> [--format hmem|text]`);
-      return;
-    case 'import':
-      console.log(
-        `Usage: tim import <path.hmem> [--dry-run] [--deduplicate] [--repair-flags] [--no-snapshot-check]`,
-      );
-      return;
-    case 'migrate-from-hmem':
-      console.log(`Usage: tim migrate-from-hmem <path.hmem> [--deduplicate] [--no-deduplicate] [--dry-run]`);
-      return;
-    case 'record-commit':
-      console.log(`Usage: tim record-commit --cwd <dir> --hash <sha> --message <msg> [--diff <path>]`);
-      return;
-    case 'checkpoint':
-      console.log(`Usage: tim checkpoint --session <id>`);
-      return;
-    case 'rebalance':
-      console.log(`Usage: tim rebalance --session <id>`);
-      return;
-    case 'statusline':
-      console.log(`Usage: tim statusline [--cwd <dir>] [--session <id>] [--format text|hermes]`);
-      return;
-    case 'snapshot':
-      console.log(`Usage: tim snapshot`);
-      return;
-    case 'restore':
-      console.log(`Usage: tim restore [--from <path>] [--list] [--dry-run] [--force]`);
-      return;
-    case 'release-check':
-      console.log(`Usage: tim release-check [--beta] [--json]`);
-      return;
-    case 'setup-agent':
-      console.log(`Usage: tim setup-agent --host claude|codex|cursor|hermes [--dry-run]`);
-      return;
-    case 'root-entries':
-      console.log(`Usage: tim root-entries [--type <type>] [--tag <tag>] [--format json|content]`);
-      return;
-    default:
-      return;
-  }
+const COMMAND_HELP: Record<string, string> = {
+  init: 'Usage: tim init',
+  doctor: 'Usage: tim doctor',
+  stats: 'Usage: tim stats',
+  'resolve-project':
+    'Usage: tim resolve-project [--cwd <dir>] [--walk-up] [--format label|json|directive]',
+  'resolve-session':
+    'Usage: tim resolve-session --session <id> [--cwd <dir>] [--format label|directive|json]',
+  'bind-project': 'Usage: tim bind-project --label <P00XX> [--cwd <dir>] [--session <id>]',
+  'new-project':
+    'Usage: tim new-project --path <dir> --name <string> [--no-git] [--confirm]',
+  'record-commit':
+    'Usage: tim record-commit [--cwd <dir>] [--project <label>] [--session <id>] [--hash <sha>] [--message <text>] [--diff <stat>] [--author <name>] [--date <iso>] [--branch <name>]',
+  hook: 'Usage: tim hook <session-start|session-end|log> [options]',
+  'hook session-start':
+    'Usage: tim hook session-start --session <id> [--agent <name>] [--cwd <path>] [--harness <name>] [--project <label>] [--tool <name>] [--model <name>] [--task-summary <text>]',
+  'hook session-end': 'Usage: tim hook session-end --session <id>',
+  'hook log':
+    'Usage: tim hook log --session <id> --user <text> --agent <text> [--cwd <path>]',
+  checkpoint: 'Usage: tim checkpoint --session <id> [--handoff-note <text>]',
+  rebalance: 'Usage: tim rebalance --session <id> [--cwd <dir>]',
+  statusline:
+    'Usage: tim statusline [--cwd <dir>] [--session <id>] [--format text|hermes]',
+  'setup-hermes-statusline':
+    'Usage: tim setup-hermes-statusline [--dry-run] [--skip-build]',
+  export: 'Usage: tim export [path.hmem] [--format hmem|text]',
+  import:
+    'Usage: tim import <path.hmem> [--dry-run] [--deduplicate] [--repair-flags] [--no-snapshot-check]',
+  'migrate-from-hmem':
+    'Usage: tim migrate-from-hmem <path.hmem> [--deduplicate] [--no-deduplicate] [--dry-run]',
+  migrate: 'Usage: tim migrate <tags-to-types|project-kind> [options]',
+  'migrate tags-to-types':
+    'Usage: tim migrate tags-to-types [--dry-run] [--sample-limit <count>]',
+  'migrate project-kind': 'Usage: tim migrate project-kind [--dry-run]',
+  snapshot:
+    'Usage: tim snapshot [--db <path>] [--out <path>] [--prune-hours <hours>] [--no-symlink] [--quiet]',
+  restore:
+    'Usage: tim restore [--from <path>] [--db <path>] [--list] [--dry-run] [--force]',
+  'release-check': 'Usage: tim release-check [--beta] [--json] [--skip-tests <true|false>]',
+  'setup-agent':
+    'Usage: tim setup-agent --host claude|codex|cursor|hermes [--dry-run]',
+  sync: 'Usage: tim sync <connect|disconnect|push|pull|status|dev> [options]',
+  'sync connect':
+    'Usage: tim sync connect [--server-url <url>] [--user-id <id>] [--token <token>] [--passphrase <text>] [--register] [--tier free|pro]',
+  'sync disconnect': 'Usage: tim sync disconnect',
+  'sync push': 'Usage: tim sync push [--passphrase <text>]',
+  'sync pull': 'Usage: tim sync pull [--passphrase <text>]',
+  'sync status': 'Usage: tim sync status',
+  'sync dev': 'Usage: tim sync dev [--port <number>]',
+  'root-entries':
+    'Usage: tim root-entries [--type <type>] [--tag <tag>] [--format json|content]',
+  consolidate: 'Usage: tim consolidate <find-duplicates|find-decay|run|status> [options]',
+  'consolidate find-duplicates':
+    'Usage: tim consolidate find-duplicates --project <P00XX> [--threshold <number>]',
+  'consolidate find-decay':
+    'Usage: tim consolidate find-decay --project <P00XX> [--access-days <days>] [--access-count <count>] [--verified-days <days>]',
+  'consolidate run': 'Usage: tim consolidate run --project <P00XX>',
+  'consolidate status': 'Usage: tim consolidate status --project <P00XX>',
+  secret: 'Usage: tim secret <set|status|list> [args]',
+  'secret set': 'Usage: tim secret set <id>',
+  'secret status': 'Usage: tim secret status <id>',
+  'secret list': 'Usage: tim secret list',
+  user: 'Usage: tim user <init|profile>',
+  'user init': 'Usage: tim user init',
+  'user profile': 'Usage: tim user profile',
+  'update-skills': 'Usage: tim update-skills',
+  '--version': 'Usage: tim --version',
+};
+
+function printCommandHelp(cmd: string, subcommand?: string): void {
+  const normalizedCommand = cmd === '-v' ? '--version' : cmd;
+  const subcommandKey =
+    subcommand && subcommand !== '-h' && subcommand !== '--help'
+      ? `${normalizedCommand} ${subcommand}`
+      : normalizedCommand;
+  console.log(COMMAND_HELP[subcommandKey] ?? COMMAND_HELP[normalizedCommand]);
+}
+
+function printRootHelp(): void {
+  console.log(`TIM — Theoretically Infinite Memory
+
+Usage: tim <command>
+
+Commands:
+  init                     Initialize TIM
+  doctor                   Run diagnostics
+  stats                    Show memory statistics
+  resolve-project          Resolve the nearest project marker
+  resolve-session          Resolve a session's project
+  bind-project             Bind a directory to a project
+  new-project              Create and bind a TIM project
+  record-commit            Record a git commit
+  hook                     Run session lifecycle hooks
+  checkpoint               Create a manual checkpoint
+  rebalance                Rebalance exchange batches
+  statusline               Print status text or Hermes JSON
+  setup-hermes-statusline  Install the Hermes status bar
+  export                   Export TIM memory
+  import                   Import TIM memory
+  migrate-from-hmem        Run guided hmem migration
+  migrate                  Run metadata migrations
+  snapshot                 Snapshot the TIM database
+  restore                  Restore the TIM database
+  release-check            Run release verification
+  setup-agent              Install TIM for an agent host
+  sync                     Manage hosted sync
+  root-entries             List root entries
+  consolidate              Run memory consolidation
+  secret                   Manage secret entry metadata
+  user                     Manage the human profile
+  update-skills            Copy TIM skills to detected hosts
+
+Options:
+  -h, --help               Show help
+  -v, --version            Show version`);
 }
 
 async function cmdInit() {
@@ -228,7 +278,7 @@ async function cmdStats() {
 }
 
 async function cmdResolveProject(args: string[]) {
-  const flags = parseArgs(args);
+  const { flags } = parseArgs(args, { valueOptions: new Set(['cwd', 'format']) });
   const cwd = flags.cwd ?? process.cwd();
   const format = flags.format ?? 'label';
 
@@ -264,7 +314,9 @@ async function cmdResolveProject(args: string[]) {
 }
 
 async function cmdResolveSession(args: string[]) {
-  const flags = parseArgs(args);
+  const { flags } = parseArgs(args, {
+    valueOptions: new Set(['session', 'cwd', 'format']),
+  });
   const sessionId = flags.session?.trim();
   if (!sessionId) {
     console.error('Usage: tim resolve-session --session <id> [--cwd <dir>] [--format label|directive|json]');
@@ -296,7 +348,9 @@ async function cmdResolveSession(args: string[]) {
 }
 
 async function cmdBindProject(args: string[]) {
-  const flags = parseArgs(args);
+  const { flags } = parseArgs(args, {
+    valueOptions: new Set(['label', 'cwd', 'session']),
+  });
   const cwd = flags.cwd ?? process.cwd();
   const label = flags.label;
   if (!label) {
@@ -318,7 +372,19 @@ async function cmdBindProject(args: string[]) {
 
 async function cmdHook(args: string[]) {
   const sub = args[0];
-  const flags = parseArgs(args.slice(1));
+  const { flags } = parseArgs(args.slice(1), {
+    valueOptions: new Set([
+      'session',
+      'agent',
+      'cwd',
+      'harness',
+      'project',
+      'tool',
+      'model',
+      'task-summary',
+      'user',
+    ]),
+  });
   const config = loadConfig();
   const store = new TimStore(getDbPath(config));
 
@@ -400,7 +466,7 @@ async function cmdHook(args: string[]) {
 }
 
 async function cmdRebalance(args: string[]) {
-  const flags = parseArgs(args);
+  const { flags } = parseArgs(args, { valueOptions: new Set(['session', 'cwd']) });
   const sessionId = flags.session;
 
   if (!sessionId) {
@@ -422,7 +488,9 @@ async function cmdRebalance(args: string[]) {
 }
 
 async function cmdCheckpoint(args: string[]) {
-  const flags = parseArgs(args);
+  const { flags } = parseArgs(args, {
+    valueOptions: new Set(['session', 'handoff-note']),
+  });
   const sessionId = flags.session;
 
   if (!sessionId) {
@@ -444,8 +512,7 @@ async function cmdCheckpoint(args: string[]) {
 }
 
 async function cmdExport(args: string[]) {
-  const flags = parseArgs(args);
-  const positional = args.filter(a => !a.startsWith('--'));
+  const { flags, positional } = parseArgs(args, { valueOptions: new Set(['format']) });
   const targetPath = positional[0];
   const format = flags.format === 'text' ? 'text' : 'hmem';
 
@@ -472,8 +539,7 @@ async function cmdExport(args: string[]) {
 }
 
 async function cmdImport(args: string[]) {
-  const flags = parseArgs(args);
-  const positional = args.filter(a => !a.startsWith('--'));
+  const { flags, positional } = parseArgs(args);
   const sourcePath = positional[0];
 
   if (!sourcePath) {
@@ -515,7 +581,7 @@ async function cmdImport(args: string[]) {
 }
 
 async function cmdMigrateTagsToTypes(args: string[]) {
-  const flags = parseArgs(args);
+  const { flags } = parseArgs(args, { valueOptions: new Set(['sample-limit']) });
   const dryRun = flags['dry-run'] === 'true';
   const sampleLimit = flags['sample-limit'] ? parseInt(flags['sample-limit'], 10) : 20;
 
@@ -540,7 +606,7 @@ async function cmdMigrateTagsToTypes(args: string[]) {
 }
 
 async function cmdMigrateProjectKind(args: string[]) {
-  const flags = parseArgs(args);
+  const { flags } = parseArgs(args);
   const dryRun = flags['dry-run'] === 'true';
 
   const config = loadConfig();
@@ -564,7 +630,9 @@ async function cmdMigrateProjectKind(args: string[]) {
 }
 
 async function cmdRootEntries(args: string[]) {
-  const flags = parseArgs(args);
+  const { flags } = parseArgs(args, {
+    valueOptions: new Set(['type', 'tag', 'format']),
+  });
   const type = flags.type;
   const tag = flags.tag;
 
@@ -624,7 +692,7 @@ async function cmdRootEntries(args: string[]) {
 }
 
 async function cmdReleaseCheck(args: string[]) {
-  const flags = parseArgs(args);
+  const { flags } = parseArgs(args, { valueOptions: new Set(['skip-tests']) });
   const summary = await runReleaseCheck({
     beta: flags.beta === 'true',
     skipTests: flags['skip-tests'] === 'true',
@@ -653,26 +721,19 @@ async function main() {
   const cmd = process.argv[2] || 'init';
   const rest = process.argv.slice(3);
 
+  if (hasHelpFlag(rest)) {
+    printCommandHelp(cmd, rest[0]);
+    return;
+  }
+
   switch (cmd) {
     case 'init':
-      if (hasHelpFlag(rest)) {
-        printCommandHelp(cmd);
-        break;
-      }
       await cmdInit();
       break;
     case 'doctor':
-      if (hasHelpFlag(rest)) {
-        printCommandHelp(cmd);
-        break;
-      }
       await cmdDoctor();
       break;
     case 'stats':
-      if (hasHelpFlag(rest)) {
-        printCommandHelp(cmd);
-        break;
-      }
       await cmdStats();
       break;
     case 'resolve-project':
@@ -688,31 +749,21 @@ async function main() {
       await cmdNewProject(rest);
       break;
     case 'record-commit':
-      if (hasHelpFlag(rest)) {
-        printCommandHelp(cmd);
-        break;
-      }
       await cmdRecordCommit(rest);
       break;
     case 'hook':
       await cmdHook(rest);
       break;
     case 'checkpoint':
-      if (hasHelpFlag(rest)) {
-        printCommandHelp(cmd);
-        break;
-      }
       await cmdCheckpoint(rest);
       break;
     case 'rebalance':
-      if (hasHelpFlag(rest)) {
-        printCommandHelp(cmd);
-        break;
-      }
       await cmdRebalance(rest);
       break;
     case 'statusline': {
-      const flags = parseArgs(rest);
+      const { flags } = parseArgs(rest, {
+        valueOptions: new Set(['cwd', 'session', 'format']),
+      });
       await runStatusline({
         cwd: flags.cwd,
         sessionId: flags.session,
@@ -724,24 +775,12 @@ async function main() {
       await cmdSetupHermesStatusline(rest);
       break;
     case 'export':
-      if (hasHelpFlag(rest)) {
-        printCommandHelp(cmd);
-        break;
-      }
       await cmdExport(rest);
       break;
     case 'import':
-      if (hasHelpFlag(rest)) {
-        printCommandHelp(cmd);
-        break;
-      }
       await cmdImport(rest);
       break;
     case 'migrate-from-hmem':
-      if (hasHelpFlag(rest)) {
-        printCommandHelp(cmd);
-        break;
-      }
       await cmdMigrateFromHmem(rest);
       break;
     case 'migrate': {
@@ -762,31 +801,15 @@ async function main() {
       break;
     }
     case 'snapshot':
-      if (hasHelpFlag(rest)) {
-        printCommandHelp(cmd);
-        break;
-      }
       await cmdSnapshot(rest);
       break;
     case 'restore':
-      if (hasHelpFlag(rest)) {
-        printCommandHelp(cmd);
-        break;
-      }
       await cmdRestore(rest);
       break;
     case 'release-check':
-      if (hasHelpFlag(rest)) {
-        printCommandHelp(cmd);
-        break;
-      }
       await cmdReleaseCheck(rest);
       break;
     case 'setup-agent':
-      if (hasHelpFlag(rest)) {
-        printCommandHelp(cmd);
-        break;
-      }
       await cmdSetupAgent(rest);
       break;
     case 'sync': {
@@ -795,10 +818,6 @@ async function main() {
       break;
     }
     case 'root-entries':
-      if (hasHelpFlag(rest)) {
-        printCommandHelp(cmd);
-        break;
-      }
       await cmdRootEntries(rest);
       break;
     case 'consolidate':
@@ -826,43 +845,7 @@ async function main() {
       break;
     case '--help':
     case '-h':
-      console.log(`TIM — Theoretically Infinite Memory
-
-Usage: tim <command>
-
-Commands:
-  init                  Initialize TIM (create DB, register agents, write MCP config)
-  doctor                Run diagnostics
-  stats                 Show memory statistics
-  resolve-project       Print bound project from nearest .tim-project (--cwd, --walk-up, --format label|json|directive)
-  resolve-session       Print project_ref for a TIM session (--session, --format label|directive|json)
-  bind-project          Write/refresh .tim-project for a project (--label, --cwd, --session)
-  new-project           Create a new TIM project + bind to dir (-p <path> -n <name> [--no-git] [--confirm])
-  record-commit         Record git commit to project Commits section (--cwd, --hash, --message, --diff)
-  hook session-start    Start a session (--session, --agent, --cwd, --harness)
-  hook session-end      End a session and run checkpoint (--session)
-  checkpoint            Manual checkpoint for a session (--session)
-  rebalance             Rebalance exchange batches at boundaries (--session, --cwd)
-  statusline            Status text or Hermes JSON (--cwd, --session, --format text|hermes)
-  setup-hermes-statusline  Install Hermes TUI status bar (symlinks, config, cli patch) [--dry-run] [--skip-build]
-  export [path]           Export to .hmem or markdown (--format hmem|text)
-  import <path>           Import from .hmem (--dry-run, --deduplicate)
-  migrate-from-hmem <path> Guided hmem→TIM migration with dry-run, snapshot, import, audit handoff
-  migrate tags-to-types   Convert legacy #rule / #human tags to metadata.type (--dry-run, --sample-limit N)
-  snapshot                 Snapshot the live TIM DB to /tmp/tim-snapshots/ (SQLite backup API)
-  restore                  Restore TIM DB from a snapshot (--from, --list, --dry-run, --force)
-  release-check           Verify release gates and smoke checks (--beta, --json, --skip-tests true)
-  setup-agent             Install MCP/skills/hooks for one agent host (--host, --dry-run)
-  sync connect            Connect to hosted sync (use --register for new tenant)
-  sync disconnect         Remove local sync configuration
-  sync push               Push unacked staging to server
-  sync pull               Pull remote changes
-  sync status             Show sync configuration and health
-  sync dev                Start local dev sync server (port 3100)
-  user init               Create human profile scaffold (H0000)
-  user profile            Show human profile tree summary
-  update-skills           Copy TIM skills to detected AI hosts
-  --help                Show this help`);
+      printRootHelp();
       break;
     default:
       console.log(`Unknown command: ${cmd}\nRun 'tim --help' for usage.`);
