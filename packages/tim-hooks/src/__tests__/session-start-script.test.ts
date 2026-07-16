@@ -40,6 +40,24 @@ afterEach(() => {
 });
 
 describe('tim-session-start.sh output envelopes', () => {
+  it('emits the Claude Code hook envelope for a real SessionStart input payload', () => {
+    const out = JSON.parse(runScript(JSON.stringify({
+      session_id: '0d9bda6b-cd0e-4a88-9d06-7db9476f56d7',
+      transcript_path: '/home/bbbee/.claude/projects/-home-bbbee-projects-tim/session.jsonl',
+      cwd: tmpDir,
+      permission_mode: 'default',
+      hook_event_name: 'SessionStart',
+      source: 'startup',
+      model: 'claude-opus-4-1',
+    })));
+    expect(out).toEqual({
+      hookSpecificOutput: {
+        hookEventName: 'SessionStart',
+        additionalContext: 'TIM DIRECTIVE',
+      },
+    });
+  });
+
   it('emits Claude Code hook envelope for payloads with hookSpecificOutput', () => {
     const out = JSON.parse(runScript(JSON.stringify({
       hookSpecificOutput: { hookEventName: 'SessionStart' },

@@ -67,9 +67,11 @@ fi
 
 # --- Detect harness and format output ---
 
-# Claude Code sends payload with .hookSpecificOutput (its own hook envelope)
-if printf '%s' "$payload" | jq -e '.hookSpecificOutput // empty' >/dev/null 2>&1; then
-  # Claude Code / Hermes format
+# Claude Code sends hook_event_name in hook input. Keep accepting the older
+# hookSpecificOutput-shaped payload used by existing integrations/tests.
+if printf '%s' "$payload" | jq -e \
+  '(.hook_event_name == "SessionStart") or (.hookSpecificOutput // false)' >/dev/null 2>&1; then
+  # Claude Code format
   exec jq -n --arg ctx "$directive" \
     '{hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: $ctx}}'
 fi
