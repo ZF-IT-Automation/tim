@@ -105,15 +105,18 @@ describe('tim-session-start.sh marker rotation', () => {
 });
 
 describe('relocatable hook installation', () => {
-  it('runs every entrypoint from a spaced prefix and different HOME via PATH tim', () => {
+  it('runs every symlinked entrypoint with BSD-style readlink from a spaced prefix', () => {
     const installRoot = path.join(tmpDir, 'Different Home', 'TIM Install With Spaces');
     const relocatedScripts = path.join(installRoot, 'node_modules', 'tim-hooks', 'scripts');
     const relocatedHome = path.join(tmpDir, 'Relocated User Home');
+    const hookLinks = path.join(relocatedHome, 'agent hooks with spaces');
     const fakeBin = path.join(tmpDir, 'fake bin');
     const fakeLog = path.join(tmpDir, 'tim-invocations.log');
+    const readlinkLog = path.join(tmpDir, 'readlink-invocations.log');
     const repo = path.join(tmpDir, 'git repo');
     fs.cpSync(SCRIPTS_DIR, relocatedScripts, { recursive: true });
     fs.mkdirSync(relocatedHome, { recursive: true });
+    fs.mkdirSync(hookLinks, { recursive: true });
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.mkdirSync(repo, { recursive: true });
     execFileSync('git', ['init', '-q'], { cwd: repo });
@@ -128,11 +131,28 @@ esac
 `);
     fs.chmodSync(fakeTim, 0o755);
 
+    const systemReadlink = execFileSync('which', ['readlink'], { encoding: 'utf8' }).trim();
+    const fakeReadlink = path.join(fakeBin, 'readlink');
+    fs.writeFileSync(fakeReadlink, `#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "$TIM_READLINK_LOG"
+if [[ "\${1:-}" == "-f" ]]; then
+  printf '%s\\n' 'readlink: -f unsupported' >&2
+  exit 64
+fi
+exec ${JSON.stringify(systemReadlink)} "$@"
+`);
+    fs.chmodSync(fakeReadlink, 0o755);
+
+    for (const entrypoint of RELOCATED_ENTRYPOINTS) {
+      fs.symlinkSync(path.join(relocatedScripts, entrypoint), path.join(hookLinks, entrypoint));
+    }
+
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       HOME: relocatedHome,
       PATH: `${fakeBin}${path.delimiter}${process.env.PATH ?? ''}`,
       TIM_FAKE_LOG: fakeLog,
+      TIM_READLINK_LOG: readlinkLog,
     };
     delete env.TIM_CLI;
 
@@ -153,7 +173,7 @@ esac
 
     for (const entrypoint of RELOCATED_ENTRYPOINTS) {
       const invocation = payloads[entrypoint];
-      expect(() => execFileSync('bash', [path.join(relocatedScripts, entrypoint), ...(invocation.args ?? [])], {
+      expect(() => execFileSync('bash', [path.join(hookLinks, entrypoint), ...(invocation.args ?? [])], {
         cwd: repo,
         env,
         input: invocation.input ?? '',
@@ -165,6 +185,9 @@ esac
     expect(invocations).toContain('resolve-project');
     expect(invocations).toContain('statusline');
     expect(invocations).toContain('record-commit');
+    const readlinkInvocations = fs.readFileSync(readlinkLog, 'utf8').trim().split('\n');
+    expect(readlinkInvocations.length).toBeGreaterThanOrEqual(RELOCATED_ENTRYPOINTS.length);
+    expect(readlinkInvocations.every((args) => !args.startsWith('-f'))).toBe(true);
   });
 
   it('falls back to the relocated sibling tim-cli package when tim is absent from PATH', () => {
