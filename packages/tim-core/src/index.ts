@@ -19,6 +19,8 @@ export {
   type LegacyMetadataType,
   type MetadataType,
   type EntryMetadata,
+  type TaskStatusValue,
+  type TaskStatusEvent,
   type TaskMetadata,
   type RuleMetadata,
   type BugMetadata,

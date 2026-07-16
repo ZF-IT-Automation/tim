@@ -37,15 +37,35 @@ export const ALL_METADATA_TYPES = [
   ...LEGACY_METADATA_TYPES,
 ] as const;
 
+export type TaskStatusValue =
+  | 'todo'
+  | 'in_progress'
+  | 'changes_pending'
+  | 'pushed'
+  | 'reviewed'
+  | 'done'
+  | 'cancelled';
+
+export interface TaskStatusEvent {
+  status: TaskStatusValue;
+  at: string; // ISO 8601
+  by?: string;
+  note?: string;
+}
+
 /** Nested task sub-section (Schema v3 Phase 2a). */
 export interface TaskMetadata {
-  status?: 'todo' | 'in_progress' | 'done' | 'cancelled' | 'changes_pending';
+  /** Cache of last history entry status */
+  status?: TaskStatusValue;
+  /** Append-only status log */
+  history?: TaskStatusEvent[];
   priority?: 'low' | 'medium' | 'high' | 'critical';
-  due_date?: string; // ISO 8601 date
+  due_date?: string;
   completion_evidence?: string | null;
   subtype?: 'coding';
   commits?: string[];
-  reviewed?: boolean;
+  /** Set once: git worktree vs not. Not "git installed". */
+  vcs?: 'git' | 'none';
 }
 
 /** Stub for Phase 2b */
