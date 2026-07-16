@@ -33,6 +33,7 @@ import { annotateTrust } from './trust.js';
 import { captureProvenance } from './provenance.js';
 import { resolveEntryTaskStatus } from './task-status.js';
 import {
+  createProjectCoordinated,
   findMarker,
   getActiveProjectLabel,
   getBriefingMaxTokens,
@@ -409,6 +410,10 @@ const TimCreateProjectSchema = z.object({
   metadata: z.record(z.unknown()).optional().default({}),
   content: z.string().optional(),
   aliases: z.array(z.string()).optional().describe('Short names for tim_load_project, e.g. ["o9k", "hmem"]'),
+  path: z.string().optional()
+    .describe('Absolute path of the project directory for a project representing files on disk.'),
+  memoryOnly: z.boolean().optional()
+    .describe('Set true only for an intentionally virtual/database-only project; mutually exclusive with path.'),
 });
 
 const TimLoadProjectSchema = z.object({
@@ -731,7 +736,7 @@ export const TOOL_DEFS: Array<{
   },
   {
     name: 'tim_create_project',
-    description: 'Register a project entry so load_project can find it later.',
+    description: 'Create a project in exactly one mode. Every project representing files on disk MUST pass its absolute path; memoryOnly:true is only for an intentionally virtual/database-only project and is never a shortcut for an unknown cwd.',
     schema: TimCreateProjectSchema,
   },
   {
@@ -2870,8 +2875,8 @@ export async function createMcpServer(
         }
 
         case 'tim_create_project': {
-          const { label, metadata, content, aliases } = TimCreateProjectSchema.parse(args);
-          const entry = await s.createProject(label, { metadata, content, aliases });
+          const input = TimCreateProjectSchema.parse(args);
+          const entry = await createProjectCoordinated(s, input);
           return {
             content: [{ type: 'text', text: formatToolResponse(entry) }],
           };
