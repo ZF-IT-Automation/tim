@@ -5,6 +5,7 @@ import * as path from 'node:path';
 import type { Entry } from 'tim-core';
 import { TimStore } from 'tim-store';
 import {
+  readMarker,
   markerPath as projectMarkerPath,
   writeMarkerExclusive,
 } from './marker.js';
@@ -38,6 +39,30 @@ export interface ProjectCreationDeps {
   sessionId: () => string;
   writeExclusive: typeof writeMarkerExclusive;
   preflight: typeof preflightProjectDirectory;
+}
+
+export interface RecoverProjectBindingArgs {
+  label: string;
+  path: string;
+  sessionId?: string;
+}
+
+export interface RecoverProjectBindingResult {
+  label: string;
+  projectPath: string;
+  markerPath: string;
+  alreadyBound: boolean;
+}
+
+export class ProjectCreationPartialFailureError extends Error {
+  constructor(
+    message: string,
+    public readonly createdLabel: string,
+    public readonly projectPath: string,
+  ) {
+    super(message);
+    this.name = 'ProjectCreationPartialFailureError';
+  }
 }
 
 const DEFAULT_DEPS: ProjectCreationDeps = {
@@ -91,6 +116,71 @@ export function preflightProjectDirectory(directory: string): void {
   }
 }
 
+const UNKNOWN_LOCAL_MARKER = Symbol('unknown-local-marker');
+type LocalMarkerLabel = string | null | typeof UNKNOWN_LOCAL_MARKER;
+
+function localMarkerLabel(projectPath: string): LocalMarkerLabel {
+  if (!fs.existsSync(projectMarkerPath(projectPath))) return null;
+  return readMarker(projectPath)?.project ?? UNKNOWN_LOCAL_MARKER;
+}
+
+function shellSingleQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\"'\"'")}'`;
+}
+
+function markerInput(label: string, session: string) {
+  return {
+    project: label,
+    session,
+    exchanges: 0,
+    batch_size: 0,
+    batches_summarized: 0,
+  };
+}
+
+function recoveryCommand(label: string, projectPath: string): string {
+  return `tim bind-project --label ${shellSingleQuote(label)} --cwd ${shellSingleQuote(projectPath)}`;
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function targetMarkerConflict(markerPath: string, label: LocalMarkerLabel): Error {
+  const owner = label === UNKNOWN_LOCAL_MARKER ? 'an unknown or corrupt marker' : `project ${label}`;
+  return new Error(
+    `A target-local project marker already exists at ${markerPath} and belongs to ${owner}. ` +
+      'Remove it only if it is stale, or explicitly reconcile/rebind this directory before creating a project.',
+  );
+}
+
+function publicationFailure(
+  label: string,
+  projectPath: string,
+  reason: string,
+): ProjectCreationPartialFailureError {
+  return new ProjectCreationPartialFailureError(
+    `Project ${label} was created in the database, but its local marker was not published or verified at ${projectPath}: ${reason}. ` +
+      `Recover the binding with: ${recoveryCommand(label, projectPath)}`,
+    label,
+    projectPath,
+  );
+}
+
+function publicationRace(
+  requested: string,
+  winner: Exclude<LocalMarkerLabel, null>,
+  projectPath: string,
+): ProjectCreationPartialFailureError {
+  const winnerText = winner === UNKNOWN_LOCAL_MARKER ? 'an unknown or corrupt marker' : `project ${winner}`;
+  return new ProjectCreationPartialFailureError(
+    `Project ${requested} was created in the database, but ${winnerText} won marker publication at ${projectPath}. ` +
+      `The existing marker was preserved. Explicit reconciliation is required between the requested project ${requested} and the marker winner; do not overwrite the marker.`,
+    requested,
+    projectPath,
+  );
+}
+
 export async function createProjectCoordinated(
   store: TimStore,
   args: ProjectCreationArgs,
@@ -114,9 +204,105 @@ export async function createProjectCoordinated(
 
   const projectPath = canonicalDirectory(args.path!);
   const markerPath = projectMarkerPath(projectPath);
-  if (fs.existsSync(markerPath)) {
-    throw new Error(`A target-local project marker already exists at ${markerPath}`);
+  const existing = localMarkerLabel(projectPath);
+  if (existing !== null) {
+    throw new Error(
+      `${targetMarkerConflict(markerPath, existing).message} Requested project: ${args.label}.`,
+    );
   }
   runtime.preflight(projectPath);
-  throw new Error(`Bound project creation requires verified marker publication at ${projectPath}`);
+
+  const resolved = await store.resolveProjectLabel(args.label);
+  if (resolved.status !== 'not_found') {
+    const detail = resolved.status === 'found'
+      ? resolved.label === args.label
+        ? 'already exists'
+        : `already resolves to project ${resolved.label}`
+      : 'has an ambiguous project-label conflict';
+    throw new Error(`Project label ${args.label} ${detail}`);
+  }
+
+  const entry = await store.createProject(args.label, {
+    content: args.content,
+    metadata: { ...(args.metadata ?? {}), path: projectPath },
+    aliases: args.aliases,
+  });
+
+  try {
+    runtime.writeExclusive(projectPath, markerInput(args.label, runtime.sessionId()));
+  } catch (error) {
+    const winner = localMarkerLabel(projectPath);
+    if (winner !== null && winner !== args.label) {
+      throw publicationRace(args.label, winner, projectPath);
+    }
+    if (winner !== args.label) {
+      throw publicationFailure(args.label, projectPath, errorText(error));
+    }
+  }
+
+  const verified = localMarkerLabel(projectPath);
+  if (verified !== args.label) {
+    if (verified !== null) throw publicationRace(args.label, verified, projectPath);
+    throw publicationFailure(args.label, projectPath, 'the marker is absent after publication');
+  }
+
+  return { ...entry, mode, projectPath, markerPath };
+}
+
+export async function recoverProjectBinding(
+  store: TimStore,
+  args: RecoverProjectBindingArgs,
+  deps: Partial<ProjectCreationDeps> = {},
+): Promise<RecoverProjectBindingResult> {
+  const runtime: ProjectCreationDeps = {
+    sessionId: deps.sessionId ?? DEFAULT_DEPS.sessionId,
+    writeExclusive: deps.writeExclusive ?? DEFAULT_DEPS.writeExclusive,
+    preflight: deps.preflight ?? DEFAULT_DEPS.preflight,
+  };
+  const projectPath = canonicalDirectory(args.path);
+  const markerPath = projectMarkerPath(projectPath);
+  const resolved = await store.resolveProjectLabel(args.label);
+  if (resolved.status !== 'found' || resolved.label !== args.label) {
+    throw new Error(`Live project label not found: ${args.label}`);
+  }
+
+  const existing = localMarkerLabel(projectPath);
+  if (existing === args.label) {
+    return { label: args.label, projectPath, markerPath, alreadyBound: true };
+  }
+  if (existing !== null) {
+    throw new Error(
+      `${targetMarkerConflict(markerPath, existing).message} Requested project: ${args.label}.`,
+    );
+  }
+
+  runtime.preflight(projectPath);
+  try {
+    runtime.writeExclusive(
+      projectPath,
+      markerInput(args.label, args.sessionId ?? runtime.sessionId()),
+    );
+  } catch (error) {
+    const winner = localMarkerLabel(projectPath);
+    if (winner === args.label) {
+      return { label: args.label, projectPath, markerPath, alreadyBound: true };
+    }
+    if (winner !== null) {
+      throw new Error(
+        `${targetMarkerConflict(markerPath, winner).message} Requested project: ${args.label}.`,
+      );
+    }
+    throw new Error(`Could not recover project binding for ${args.label} at ${projectPath}: ${errorText(error)}`);
+  }
+
+  const verified = localMarkerLabel(projectPath);
+  if (verified !== args.label) {
+    if (verified !== null) {
+      throw new Error(
+        `${targetMarkerConflict(markerPath, verified).message} Requested project: ${args.label}.`,
+      );
+    }
+    throw new Error(`Could not verify recovered project binding for ${args.label} at ${projectPath}`);
+  }
+  return { label: args.label, projectPath, markerPath, alreadyBound: false };
 }

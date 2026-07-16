@@ -100,9 +100,13 @@ export {
   validateMode,
   canonicalDirectory,
   createProjectCoordinated,
+  recoverProjectBinding,
+  ProjectCreationPartialFailureError,
   type ProjectCreationArgs,
   type MemoryOnlyProjectCreationResult,
   type BoundProjectCreationResult,
   type ProjectCreationResult,
   type ProjectCreationDeps,
+  type RecoverProjectBindingArgs,
+  type RecoverProjectBindingResult,
 } from './project-creation.js';
