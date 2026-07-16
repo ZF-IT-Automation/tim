@@ -14,6 +14,45 @@ function isFile(candidate: string): boolean {
   }
 }
 
+function readJson(filePath: string): Record<string, unknown> | null {
+  try {
+    return JSON.parse(fs.readFileSync(filePath, 'utf8')) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function monorepoSiblingServer(): string | undefined {
+  const cliPackageDir = path.resolve(__dirname, '..');
+  const rootDir = path.resolve(cliPackageDir, '..', '..');
+  const expectedCliDir = path.join(rootDir, 'packages', 'tim-cli');
+  const expectedMcpDir = path.join(rootDir, 'packages', 'tim-mcp');
+  if (cliPackageDir !== expectedCliDir) return undefined;
+
+  const rootPackage = readJson(path.join(rootDir, 'package.json'));
+  const cliPackage = readJson(path.join(expectedCliDir, 'package.json'));
+  const mcpPackage = readJson(path.join(expectedMcpDir, 'package.json'));
+  const workspaceValue = rootPackage?.workspaces;
+  const workspaces = Array.isArray(workspaceValue)
+    ? workspaceValue
+    : workspaceValue && typeof workspaceValue === 'object'
+      ? (workspaceValue as { packages?: unknown }).packages
+      : undefined;
+
+  if (
+    rootPackage?.name !== 'tim' ||
+    rootPackage.private !== true ||
+    !Array.isArray(workspaces) ||
+    !workspaces.includes('packages/tim-cli') ||
+    !workspaces.includes('packages/tim-mcp') ||
+    cliPackage?.name !== 'tim-cli' ||
+    mcpPackage?.name !== 'tim-mcp'
+  ) {
+    return undefined;
+  }
+  return path.join(expectedMcpDir, 'dist', 'server.js');
+}
+
 /** Resolve the built tim-mcp server before any host configuration is changed. */
 export function resolveTimMcpServerPath(options: TimMcpServerOptions = {}): string {
   const override = options.override ?? process.env.TIM_MCP_SERVER;
@@ -32,7 +71,7 @@ export function resolveTimMcpServerPath(options: TimMcpServerOptions = {}): stri
     // Fall through to the sibling layout used by workspace/package installs.
   }
 
-  const sibling = path.resolve(__dirname, '..', '..', 'tim-mcp', 'dist', 'server.js');
+  const sibling = monorepoSiblingServer();
   const candidates = [sibling, packaged].filter((candidate): candidate is string => Boolean(candidate));
   const found = candidates.find(isFile);
   if (found) return path.resolve(found);

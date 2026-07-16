@@ -127,6 +127,19 @@ describe('multi-host installer', () => {
     fs.mkdirSync(path.dirname(siblingServer), { recursive: true });
     fs.mkdirSync(path.dirname(packagedServer), { recursive: true });
     fs.copyFileSync(MCP_COMMAND_PATH, path.join(cliDist, 'mcp-command.js'));
+    fs.writeFileSync(path.join(tmp, 'package.json'), JSON.stringify({
+      name: 'tim',
+      private: true,
+      workspaces: ['packages/tim-cli', 'packages/tim-mcp'],
+    }));
+    fs.writeFileSync(
+      path.join(tmp, 'packages', 'tim-cli', 'package.json'),
+      JSON.stringify({ name: 'tim-cli' }),
+    );
+    fs.writeFileSync(
+      path.join(tmp, 'packages', 'tim-mcp', 'package.json'),
+      JSON.stringify({ name: 'tim-mcp' }),
+    );
     fs.writeFileSync(
       path.join(tmp, 'packages', 'tim-cli', 'node_modules', 'tim-mcp', 'package.json'),
       JSON.stringify({ name: 'tim-mcp' }),
@@ -146,6 +159,37 @@ describe('multi-host installer', () => {
       expect(result.stderr).toBe('');
       expect(result.status).toBe(0);
       expect(result.stdout).toBe(siblingServer);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('prefers the declared dependency over a sibling decoy outside a TIM checkout', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tim-global-layout-'));
+    const cliDist = path.join(tmp, 'node_modules', 'tim-cli', 'dist');
+    const siblingServer = path.join(tmp, 'node_modules', 'tim-mcp', 'dist', 'server.js');
+    const packagedRoot = path.join(tmp, 'node_modules', 'tim-cli', 'node_modules', 'tim-mcp');
+    const packagedServer = path.join(packagedRoot, 'dist', 'server.js');
+    fs.mkdirSync(cliDist, { recursive: true });
+    fs.mkdirSync(path.dirname(siblingServer), { recursive: true });
+    fs.mkdirSync(path.dirname(packagedServer), { recursive: true });
+    fs.copyFileSync(MCP_COMMAND_PATH, path.join(cliDist, 'mcp-command.js'));
+    fs.writeFileSync(path.join(packagedRoot, 'package.json'), JSON.stringify({ name: 'tim-mcp' }));
+    fs.writeFileSync(siblingServer, '// unrelated sibling decoy\n');
+    fs.writeFileSync(packagedServer, '// declared packaged dependency\n');
+
+    try {
+      const fixtureModule = path.join(cliDist, 'mcp-command.js');
+      const result = spawnSync(process.execPath, [
+        '-e',
+        `process.stdout.write(require(${JSON.stringify(fixtureModule)}).resolveTimMcpServerPath())`,
+      ], {
+        encoding: 'utf8',
+        env: { ...process.env, TIM_MCP_SERVER: '' },
+      });
+      expect(result.stderr).toBe('');
+      expect(result.status).toBe(0);
+      expect(result.stdout).toBe(packagedServer);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

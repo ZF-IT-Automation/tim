@@ -87,6 +87,70 @@ function withoutTomlComment(line: string): string {
   return comment < 0 ? line : line.slice(0, comment);
 }
 
+type MultilineDelimiter = '"""' | "'''";
+
+interface TomlScanState {
+  multiline: MultilineDelimiter | null;
+}
+
+interface TomlStructuralLine {
+  structural: string | null;
+  openedMultiline: boolean;
+  closedMultiline: boolean;
+}
+
+function findMultilineClose(line: string, delimiter: MultilineDelimiter, start: number): number {
+  let index = line.indexOf(delimiter, start);
+  while (index >= 0 && delimiter === '"""') {
+    let backslashes = 0;
+    for (let i = index - 1; i >= 0 && line[i] === '\\'; i--) backslashes++;
+    if (backslashes % 2 === 0) return index;
+    index = line.indexOf(delimiter, index + delimiter.length);
+  }
+  return index;
+}
+
+function findMultilineOpen(line: string): { index: number; delimiter: MultilineDelimiter } | null {
+  let quote: '"' | "'" | null = null;
+  let escaped = false;
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
+    if (quote === '"') {
+      if (escaped) escaped = false;
+      else if (char === '\\') escaped = true;
+      else if (char === '"') quote = null;
+      continue;
+    }
+    if (quote === "'") {
+      if (char === "'") quote = null;
+      continue;
+    }
+    if (char === '#') return null;
+    if (line.startsWith('"""', i)) return { index: i, delimiter: '"""' };
+    if (line.startsWith("'''", i)) return { index: i, delimiter: "'''" };
+    if (char === '"' || char === "'") quote = char;
+  }
+  return null;
+}
+
+function scanTomlStructuralLine(line: string, state: TomlScanState): TomlStructuralLine {
+  if (state.multiline) {
+    const close = findMultilineClose(line, state.multiline, 0);
+    if (close >= 0) state.multiline = null;
+    return { structural: null, openedMultiline: false, closedMultiline: close >= 0 };
+  }
+
+  const opening = findMultilineOpen(line);
+  if (!opening) return { structural: line, openedMultiline: false, closedMultiline: false };
+  const close = findMultilineClose(line, opening.delimiter, opening.index + opening.delimiter.length);
+  if (close < 0) state.multiline = opening.delimiter;
+  return {
+    structural: line.slice(0, opening.index),
+    openedMultiline: close < 0,
+    closedMultiline: close >= 0,
+  };
+}
+
 function normalizeTomlKeySegment(segment: string): string | null {
   const value = segment.trim();
   if (/^[A-Za-z0-9_-]+$/.test(value)) return value;
@@ -132,11 +196,13 @@ function isTimTable(path: string[]): boolean {
   );
 }
 
-function isTopLevelTimAssignment(line: string): boolean {
+function tomlAssignmentPath(line: string): string[] | null {
   const value = withoutTomlComment(line);
   const equals = findOutsideTomlQuotes(value, '=');
-  if (equals < 0) return false;
-  const path = normalizeTomlKeyPath(value.slice(0, equals));
+  return equals < 0 ? null : normalizeTomlKeyPath(value.slice(0, equals));
+}
+
+function isTopLevelTimAssignment(path: string[] | null): boolean {
   return Boolean(path && path[0] === 'mcp_servers' && path[1] === 'tim');
 }
 
@@ -158,11 +224,23 @@ export function buildCodexMcpConfig(
 export function replaceCodexTimMcpBlock(existing: string, block: string): string {
   const lines = existing.split(/\r?\n/);
   const out: string[] = [];
+  const scanState: TomlScanState = { multiline: null };
   let atTopLevel = true;
   let inTimTable = false;
+  let droppingTimMultiline = false;
 
   for (const line of lines) {
-    const header = tomlHeaderPath(line);
+    const scanned = scanTomlStructuralLine(line, scanState);
+    if (droppingTimMultiline) {
+      if (scanned.closedMultiline) droppingTimMultiline = false;
+      continue;
+    }
+    if (scanned.structural === null) {
+      if (!inTimTable) out.push(line);
+      continue;
+    }
+
+    const header = tomlHeaderPath(scanned.structural);
     if (header) {
       atTopLevel = false;
       inTimTable = isTimTable(header);
@@ -173,7 +251,18 @@ export function replaceCodexTimMcpBlock(existing: string, block: string): string
       if (line.trim() === '' || line.trimStart().startsWith('#')) out.push(line);
       continue;
     }
-    if (atTopLevel && isTopLevelTimAssignment(line)) continue;
+    if (atTopLevel) {
+      const assignment = tomlAssignmentPath(scanned.structural);
+      if (assignment?.length === 1 && assignment[0] === 'mcp_servers') {
+        throw new Error(
+          'Unsupported top-level mcp_servers assignment; cannot safely merge TIM MCP configuration.',
+        );
+      }
+      if (isTopLevelTimAssignment(assignment)) {
+        droppingTimMultiline = scanned.openedMultiline;
+        continue;
+      }
+    }
     out.push(line);
   }
 

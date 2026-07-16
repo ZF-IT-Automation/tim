@@ -147,6 +147,62 @@ describe('setup-agent planner', () => {
     expect(updated).toContain('TIM_DB_PATH = "/tmp/canonical.db"');
   });
 
+  it('preserves fake MCP syntax inside multiline TOML strings', () => {
+    const multiline = [
+      'notes = """',
+      '[mcp_servers."tim"] # text, not a table',
+      'mcp_servers.tim.command = "text, not an assignment"',
+      '[mcp_servers."tim".env]',
+      'TIM_DB_PATH = "/text-only.db"',
+      '"""',
+    ].join('\n');
+    const existing = [
+      '# keep prose exactly',
+      multiline,
+      '',
+      '[mcp_servers.tim] # real stale table',
+      'command = "old-real"',
+      '',
+      '[hooks.state]',
+      'enabled = true',
+      '',
+    ].join('\n');
+
+    const updated = replaceCodexTimMcpBlock(
+      existing,
+      buildCodexMcpConfig('/tmp/canonical.db', { override: SERVER_PATH }),
+    );
+    expect(updated).toContain(multiline);
+    expect(updated).toContain('# keep prose exactly');
+    expect(updated).toContain('[hooks.state]\nenabled = true');
+    expect(updated).not.toContain('old-real');
+    expect(updated.match(/^\[mcp_servers\.tim\]$/gm)).toHaveLength(1);
+    expect(updated.match(/^\[mcp_servers\.tim\.env\]$/gm)).toHaveLength(1);
+  });
+
+  it('rejects inline mcp_servers atomically instead of creating conflicting TOML', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tim-codex-inline-'));
+    const configPath = path.join(tmp, 'config.toml');
+    const original = [
+      '# preserve inline configuration',
+      'mcp_servers = { tim = { command = "old" }, other = { command = "keep" } }',
+      '',
+    ].join('\n');
+    fs.writeFileSync(configPath, original);
+
+    try {
+      expect(() => installCodexMcpConfig(
+        '/tmp/tim.db',
+        configPath,
+        { override: SERVER_PATH },
+      )).toThrow(/unsupported top-level mcp_servers assignment/i);
+      expect(fs.readFileSync(configPath, 'utf8')).toBe(original);
+      expect(fs.readdirSync(tmp)).toEqual(['config.toml']);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it('installs Codex with the shared executable entry and preserves unrelated TOML', () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tim codex config '));
     const configPath = path.join(tmp, 'config.toml');

@@ -24,7 +24,7 @@
   "scripts": {
     "build": "tsc",
     "pretest": "npm --prefix ../.. run build",
-    "test": "vitest run",
+    "test": "vitest run --root ../.. packages/tim-cli/src/__tests__",
     "postinstall": "node -e \"try{require('./dist/update-skills.js').updateSkills()}catch(e){}\""
   }
 }
