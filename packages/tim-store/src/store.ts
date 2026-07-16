@@ -6,7 +6,7 @@ import * as path from 'node:path';
 import { ulid } from 'ulid';
 import { formatEntryId } from './entry-id.js';
 import type {
-  Entry, Edge, EdgeType, ReadOptions, WriteOptions, DecayOptions,
+  Entry, Edge, EdgeType, ReadOptions, WriteOptions, UpdateOptions, DecayOptions,
   SearchOptions, MemoryInterface, HealthReport, MemoryStats, ContentStats,
   AgentIdentity, StagingRecord, ContentType,
   SyncEntity, SyncOperation, EventBus, EventType,
@@ -20,6 +20,7 @@ import { ConsolidationManager } from './consolidate.js';
 import { metadataNeedsCoercion, parseAndCoerceMetadata } from './metadata-coerce.js';
 import { applyIdeaPromote } from './idea-promote.js';
 import { isCodingNeedsReview, migrateTaskHistory, appendTaskStatus } from './task-status-history.js';
+import { detectProjectVcs } from './vcs.js';
 import { recordFromPayload, entryLocalLwwTimestamp, edgeLocalLwwTimestamp } from './sync-methods.js';
 import { parentIsSecret } from './secret.js';
 
@@ -1505,7 +1506,7 @@ export class TimStore implements MemoryInterface {
   }
 
   /** Synchronous update for use inside `runExclusive` transactions. */
-  updateSync(id: string, patch: Partial<Entry>): Entry {
+  updateSync(id: string, patch: Partial<Entry>, options?: UpdateOptions): Entry {
     const existing = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(id) as RowEntry | undefined;
     if (!existing) throw new Error(`Entry not found: ${id}`);
 
@@ -1585,6 +1586,11 @@ export class TimStore implements MemoryInterface {
               throw new Error(result.error);
             }
             taskObj = result.task;
+          }
+
+          // 4. Auto-detect vcs once for coding tasks when the caller told us where the project lives.
+          if (taskObj.subtype === 'coding' && !taskObj.vcs && options?.projectPath) {
+            taskObj.vcs = detectProjectVcs(options.projectPath);
           }
 
           patchMeta.task = taskObj;
@@ -1723,7 +1729,11 @@ export class TimStore implements MemoryInterface {
 
     const metadata: Record<string, unknown> = { ...(options.metadata ?? {}) };
     if (typeof metadata.task === 'object' && metadata.task !== null && !Array.isArray(metadata.task)) {
-      metadata.task = migrateTaskHistory(metadata.task as Record<string, unknown>, now);
+      const taskObj = migrateTaskHistory(metadata.task as Record<string, unknown>, now);
+      if (taskObj.subtype === 'coding' && !taskObj.vcs && options.projectPath) {
+        taskObj.vcs = detectProjectVcs(options.projectPath);
+      }
+      metadata.task = taskObj;
     }
     if (parentId && metadata.order === undefined) {
       const maxRow = this.db.prepare(`
@@ -1812,8 +1822,8 @@ export class TimStore implements MemoryInterface {
     return result;
   }
 
-  async update(id: string, patch: Partial<Entry>): Promise<Entry> {
-    const result = this.updateSync(id, patch);
+  async update(id: string, patch: Partial<Entry>, options?: UpdateOptions): Promise<Entry> {
+    const result = this.updateSync(id, patch, options);
     this.emit('memory:updated', { entry: result, agentId: this.agentId, timestamp: result.accessedAt });
     return result;
   }
