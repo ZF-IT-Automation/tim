@@ -96,20 +96,45 @@ function deriveCountersSync(store, sessionId) {
     }
     return { exchangeCount, batchesSummarized };
 }
-/** Auto-create P0000 Inbox catch-all project if missing. */
+const INBOX_PROJECT_TAGS = ['#project', '#inbox', '#system'];
+/** Create or repair the reserved P0000 Inbox project atomically. */
 async function ensureInboxProject(store) {
-    const existing = await store.read(exports.INBOX_PROJECT_LABEL);
-    if (existing?.metadata.kind === 'project')
-        return existing;
-    return store.write('Inbox', {
-        id: exports.INBOX_PROJECT_LABEL,
-        metadata: {
-            kind: 'project',
-            label: exports.INBOX_PROJECT_LABEL,
-            is_system: true,
-            render_depth: 1,
-        },
-        tags: ['#project', '#inbox', '#system'],
+    return store.runExclusive(() => {
+        const existing = store.readIncludingTombstoneSync(exports.INBOX_PROJECT_LABEL);
+        if (!existing) {
+            return store.writeSync('Inbox', {
+                id: exports.INBOX_PROJECT_LABEL,
+                metadata: {
+                    kind: 'project',
+                    label: exports.INBOX_PROJECT_LABEL,
+                    is_system: true,
+                    render_depth: 1,
+                },
+                tags: [...INBOX_PROJECT_TAGS],
+            });
+        }
+        const tags = [...new Set([...existing.tags, ...INBOX_PROJECT_TAGS])];
+        const valid = existing.metadata.kind === 'project' &&
+            existing.metadata.label === exports.INBOX_PROJECT_LABEL &&
+            existing.metadata.is_system === true &&
+            existing.metadata.render_depth === 1 &&
+            !existing.irrelevant &&
+            existing.tombstonedAt === null &&
+            INBOX_PROJECT_TAGS.every(tag => existing.tags.includes(tag));
+        if (valid)
+            return existing;
+        return store.updateSync(existing.id, {
+            irrelevant: false,
+            tombstonedAt: null,
+            tags,
+            metadata: {
+                ...existing.metadata,
+                kind: 'project',
+                label: exports.INBOX_PROJECT_LABEL,
+                is_system: true,
+                render_depth: 1,
+            },
+        });
     });
 }
 //# sourceMappingURL=session-tree.js.map

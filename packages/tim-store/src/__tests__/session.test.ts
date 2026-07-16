@@ -312,6 +312,99 @@ describe('SessionManager', () => {
       expect(first.title).toBe('Inbox');
       expect(second.id).toBe(first.id);
     });
+
+    it.each([
+      { shape: 'missing kind', metadata: { label: 'N0000' } },
+      { shape: 'wrong kind and label', metadata: { kind: 'note', label: 'N0000' } },
+    ])('repairs P0000 with $shape without losing user data and stages once', async ({ metadata }) => {
+      await store.write('Custom Inbox\nKeep this content', {
+        id: 'P0000',
+        tags: ['#custom', '#project'],
+        metadata: {
+          ...metadata,
+          custom: 'preserved',
+          is_system: false,
+          render_depth: 4,
+        },
+      });
+      store.getDb().prepare(
+        `UPDATE entries SET irrelevant = 1, tombstoned_at = '2026-01-01T00:00:00.000Z'
+         WHERE id = 'P0000'`,
+      ).run();
+      store.getDb().prepare('DELETE FROM staging').run();
+
+      const repaired = await ensureInboxProject(store);
+      const repeated = await ensureInboxProject(store);
+
+      expect(repaired).toMatchObject({
+        id: 'P0000',
+        title: 'Custom Inbox',
+        content: 'Keep this content',
+        irrelevant: false,
+        tombstonedAt: null,
+      });
+      expect(repaired.metadata).toMatchObject({
+        kind: 'project',
+        label: 'P0000',
+        is_system: true,
+        render_depth: 1,
+        custom: 'preserved',
+      });
+      expect(repaired.tags).toEqual(expect.arrayContaining([
+        '#custom', '#project', '#inbox', '#system',
+      ]));
+      expect(repeated).toEqual(repaired);
+      expect(await store.getStaging()).toHaveLength(1);
+      const session = await sessions.startProjectSession({
+        sessionId: 'inbox-repair-session',
+        projectId: 'P0000',
+        agentName: 'test',
+        cwd: '/tmp',
+        harness: 'test',
+      });
+      expect(session.metadata.project_ref).toBe('P0000');
+      const rowCount = store.getDb().prepare(
+        `SELECT COUNT(*) AS count FROM entries WHERE id = 'P0000'`,
+      ).get() as { count: number };
+      expect(rowCount.count).toBe(1);
+    });
+
+    it('rolls back a repair when sync staging fails', async () => {
+      await store.write('User Inbox\nDo not lose', {
+        id: 'P0000',
+        tags: ['#custom'],
+        metadata: { kind: 'note', label: 'N0000', custom: 'preserved' },
+      });
+      store.getDb().prepare(
+        `UPDATE entries SET irrelevant = 1, tombstoned_at = '2026-01-01T00:00:00.000Z'
+         WHERE id = 'P0000'`,
+      ).run();
+      store.getDb().prepare('DELETE FROM staging').run();
+
+      const internals = store as unknown as {
+        insertStagingSync: (...args: unknown[]) => void;
+      };
+      const original = internals.insertStagingSync.bind(store);
+      internals.insertStagingSync = () => { throw new Error('staging boom'); };
+
+      await expect(ensureInboxProject(store)).rejects.toThrow('staging boom');
+      internals.insertStagingSync = original;
+
+      const row = store.getDb().prepare(
+        `SELECT title, content, tags, irrelevant, tombstoned_at, metadata
+         FROM entries WHERE id = 'P0000'`,
+      ).get() as Record<string, unknown>;
+      expect(row).toMatchObject({
+        title: 'User Inbox',
+        content: 'Do not lose',
+        irrelevant: 1,
+        tombstoned_at: '2026-01-01T00:00:00.000Z',
+      });
+      expect(JSON.parse(row.metadata as string)).toMatchObject({
+        kind: 'note', label: 'N0000', custom: 'preserved',
+      });
+      expect(await store.getStaging()).toHaveLength(0);
+    });
   });
 
   describe('startProjectSession', () => {

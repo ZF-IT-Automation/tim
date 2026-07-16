@@ -1399,7 +1399,7 @@ export class TimStore implements MemoryInterface {
 
   /** Run `fn` inside a single exclusive DB transaction (serializes concurrent callers). */
   runExclusive<T>(fn: () => T): T {
-    return this.db.transaction(fn)();
+    return this.db.transaction(fn).exclusive();
   }
 
   /** Synchronous write for use inside `runExclusive` transactions. */
@@ -1447,6 +1447,12 @@ export class TimStore implements MemoryInterface {
   readSync(id: string): Entry | null {
     const row = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(id) as RowEntry | undefined;
     return row && !row.tombstoned_at ? rowToEntry(row) : null;
+  }
+
+  /** Synchronous raw-id read for repair paths; includes irrelevant and tombstoned rows. */
+  readIncludingTombstoneSync(id: string): Entry | null {
+    const row = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(id) as RowEntry | undefined;
+    return row ? rowToEntry(row) : null;
   }
 
   /** Synchronous update for use inside `runExclusive` transactions. */

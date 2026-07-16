@@ -236,6 +236,8 @@ export declare class TimStore implements MemoryInterface {
     getChildByKindSync(parentId: string, kind: string): Entry[];
     getChildrenBySeqSync(parentId: string): Entry[];
     readSync(id: string): Entry | null;
+    /** Synchronous raw-id read for repair paths; includes irrelevant and tombstoned rows. */
+    readIncludingTombstoneSync(id: string): Entry | null;
     /** Synchronous update for use inside `runExclusive` transactions. */
     updateSync(id: string, patch: Partial<Entry>): Entry;
     /** Entries whose metadata JSON has non-boolean values for known boolean keys (legacy 1/0/"true"/"false"). */

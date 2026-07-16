@@ -1241,7 +1241,7 @@ class TimStore {
     }
     /** Run `fn` inside a single exclusive DB transaction (serializes concurrent callers). */
     runExclusive(fn) {
-        return this.db.transaction(fn)();
+        return this.db.transaction(fn).exclusive();
     }
     /** Synchronous write for use inside `runExclusive` transactions. */
     writeSync(content, options = {}) {
@@ -1285,6 +1285,11 @@ class TimStore {
     readSync(id) {
         const row = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(id);
         return row && !row.tombstoned_at ? rowToEntry(row) : null;
+    }
+    /** Synchronous raw-id read for repair paths; includes irrelevant and tombstoned rows. */
+    readIncludingTombstoneSync(id) {
+        const row = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(id);
+        return row ? rowToEntry(row) : null;
     }
     /** Synchronous update for use inside `runExclusive` transactions. */
     updateSync(id, patch) {

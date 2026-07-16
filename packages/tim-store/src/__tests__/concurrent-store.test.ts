@@ -3,7 +3,7 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { TimStore } from '../index.js';
+import { TimStore, ensureInboxProject } from '../index.js';
 import type { Entry } from 'tim-core';
 
 describe('concurrent TimStore', () => {
@@ -77,6 +77,32 @@ describe('concurrent TimStore', () => {
           /Project label already exists|SQLITE_CONSTRAINT|UNIQUE/i,
         );
       }
+    } finally {
+      store1.close();
+      store2.close();
+    }
+  });
+
+  it('concurrent ensureInboxProject calls converge on one row and one staging write', async () => {
+    const store1 = new TimStore(dbPath);
+    const store2 = new TimStore(dbPath);
+
+    try {
+      const [first, second] = await Promise.all([
+        ensureInboxProject(store1),
+        ensureInboxProject(store2),
+      ]);
+
+      expect(first.id).toBe('P0000');
+      expect(second.id).toBe('P0000');
+      const row = store1.getDb().prepare(
+        `SELECT COUNT(*) AS count FROM entries WHERE id = 'P0000'`,
+      ).get() as { count: number };
+      const staging = store1.getDb().prepare(
+        `SELECT COUNT(*) AS count FROM staging WHERE key = 'P0000'`,
+      ).get() as { count: number };
+      expect(row.count).toBe(1);
+      expect(staging.count).toBe(1);
     } finally {
       store1.close();
       store2.close();

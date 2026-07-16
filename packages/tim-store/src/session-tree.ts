@@ -136,19 +136,48 @@ export function deriveCountersSync(
   return { exchangeCount, batchesSummarized };
 }
 
-/** Auto-create P0000 Inbox catch-all project if missing. */
-export async function ensureInboxProject(store: TimStore): Promise<Entry> {
-  const existing = await store.read(INBOX_PROJECT_LABEL);
-  if (existing?.metadata.kind === 'project') return existing;
+const INBOX_PROJECT_TAGS = ['#project', '#inbox', '#system'] as const;
 
-  return store.write('Inbox', {
-    id: INBOX_PROJECT_LABEL,
-    metadata: {
-      kind: 'project',
-      label: INBOX_PROJECT_LABEL,
-      is_system: true,
-      render_depth: 1,
-    },
-    tags: ['#project', '#inbox', '#system'],
+/** Create or repair the reserved P0000 Inbox project atomically. */
+export async function ensureInboxProject(store: TimStore): Promise<Entry> {
+  return store.runExclusive(() => {
+    const existing = store.readIncludingTombstoneSync(INBOX_PROJECT_LABEL);
+    if (!existing) {
+      return store.writeSync('Inbox', {
+        id: INBOX_PROJECT_LABEL,
+        metadata: {
+          kind: 'project',
+          label: INBOX_PROJECT_LABEL,
+          is_system: true,
+          render_depth: 1,
+        },
+        tags: [...INBOX_PROJECT_TAGS],
+      });
+    }
+
+    const tags = [...new Set([...existing.tags, ...INBOX_PROJECT_TAGS])];
+    const valid =
+      existing.metadata.kind === 'project' &&
+      existing.metadata.label === INBOX_PROJECT_LABEL &&
+      existing.metadata.is_system === true &&
+      existing.metadata.render_depth === 1 &&
+      !existing.irrelevant &&
+      existing.tombstonedAt === null &&
+      INBOX_PROJECT_TAGS.every(tag => existing.tags.includes(tag));
+
+    if (valid) return existing;
+
+    return store.updateSync(existing.id, {
+      irrelevant: false,
+      tombstonedAt: null,
+      tags,
+      metadata: {
+        ...existing.metadata,
+        kind: 'project',
+        label: INBOX_PROJECT_LABEL,
+        is_system: true,
+        render_depth: 1,
+      },
+    });
   });
 }
