@@ -11,6 +11,7 @@ import {
   findMarkerOptionsFromEnv,
   buildLoadDirective,
   buildSessionDirective,
+  validateMarkerAgainstStore,
   readMarker,
   writeMarker,
   rebalanceBatch,
@@ -48,6 +49,14 @@ function ensureDir(dir: string) {
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
+}
+
+function buildStaleMarkerDirective(projectLabel: string, markerDir: string): string {
+  return [
+    `⚠️ Stale TIM project marker (.tim-project in ${markerDir}): ${projectLabel} does not exist in the configured TIM store.`,
+    `ACTION: run tim bind-project --label <P00XX> --cwd "${markerDir}" to repair it, ` +
+      `or remove ${path.join(markerDir, '.tim-project')} explicitly.`,
+  ].join('\n');
 }
 
 function parseArgs(args: string[]): Record<string, string> {
@@ -242,6 +251,11 @@ async function cmdResolveProject(args: string[]) {
   const store = new TimStore(getDbPath(config));
   try {
     if (format === 'directive') {
+      const validated = await validateMarkerAgainstStore(marker, store);
+      if (!validated) {
+        process.stdout.write(buildStaleMarkerDirective(marker.project, dir));
+        return;
+      }
       const binding = await resolveProjectBindingLabel(store, marker.project);
       process.stdout.write(buildLoadDirective(marker.project, dir, binding));
     } else {

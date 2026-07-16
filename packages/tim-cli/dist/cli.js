@@ -65,6 +65,13 @@ function ensureDir(dir) {
         fs.mkdirSync(dir, { recursive: true });
     }
 }
+function buildStaleMarkerDirective(projectLabel, markerDir) {
+    return [
+        `⚠️ Stale TIM project marker (.tim-project in ${markerDir}): ${projectLabel} does not exist in the configured TIM store.`,
+        `ACTION: run tim bind-project --label <P00XX> --cwd "${markerDir}" to repair it, ` +
+            `or remove ${path.join(markerDir, '.tim-project')} explicitly.`,
+    ].join('\n');
+}
 function parseArgs(args) {
     const parsed = {};
     for (let i = 0; i < args.length; i++) {
@@ -240,6 +247,11 @@ async function cmdResolveProject(args) {
     const store = new tim_store_1.TimStore(getDbPath(config));
     try {
         if (format === 'directive') {
+            const validated = await (0, tim_hooks_1.validateMarkerAgainstStore)(marker, store);
+            if (!validated) {
+                process.stdout.write(buildStaleMarkerDirective(marker.project, dir));
+                return;
+            }
             const binding = await (0, tim_store_1.resolveProjectBindingLabel)(store, marker.project);
             process.stdout.write((0, tim_hooks_1.buildLoadDirective)(marker.project, dir, binding));
         }
