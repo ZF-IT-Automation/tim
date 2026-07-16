@@ -12,18 +12,21 @@
   "task_annotation": {
     "description": "When a node has task: true in metadata, it behaves as a task with additional rendering and sorting rules.",
     "fields": {
-      "status":  { "type": "enum",   "values": ["todo", "in_progress", "done", "cancelled", "changes_pending"], "default": "todo" },
+      "status":  { "type": "enum",   "values": ["todo", "in_progress", "changes_pending", "pushed", "reviewed", "done", "cancelled"], "default": "todo", "description": "Cache of last history entry status — updated on every append" },
+      "history": { "type": "array",  "items": { "status": { "type": "enum", "values": ["todo", "in_progress", "changes_pending", "pushed", "reviewed", "done", "cancelled"] }, "at": { "type": "datetime", "description": "ISO 8601" }, "by": { "type": "string", "optional": true }, "note": { "type": "string", "optional": true } }, "description": "Append-only status log. Never overwrite via normal update APIs." },
       "priority": { "type": "enum",   "values": ["high", "medium", "low"], "default": "medium" },
       "due":      { "type": "date",   "optional": true, "description": "ISO 8601 date" },
       "done_at":  { "type": "datetime","automatic": true, "description": "Set automatically when status → done" },
       "subtype":  { "type": "enum",   "values": ["coding"], "optional": true },
-      "commits":  { "type": "array",  "items": "string", "optional": true },
-      "reviewed": { "type": "boolean", "optional": true, "default": false }
+      "commits":  { "type": "array",  "items": "string", "optional": true, "description": "Git SHAs — required before done when vcs=git" },
+      "vcs":      { "type": "enum",   "values": ["git", "none"], "optional": true, "description": "Set once: git worktree vs not. Not 'git installed'." }
     },
     "render_rules": {
       "todo":             "Prominent in Next Steps, sorted by priority (high first), overdue due dates in red",
       "in_progress":      "Highlighted, sorted above todo with same priority",
       "changes_pending":  "Highlighted in Next Steps (post-review rework), same sort bucket as in_progress",
+      "pushed":           "Coding + vcs=git: commits pushed to remote; intermediate gate before reviewed/done",
+      "reviewed":         "Coding: review passed; required in history before done",
       "done":             "Collapsed under Previous Steps, sorted by done_at descending",
       "cancelled":        "Collapsed under Previous Steps, greyed out, below done items"
     }

@@ -6,7 +6,8 @@ All notable changes to TIM are documented in this file.
 
 ### Added
 
-- **Idea lifecycle & coding tasks** — ideas track `metadata.idea.status` with in-place promote to task when status → `planned`. Coding tasks add `subtype`, `commits`, `reviewed` metadata, `changes_pending` status, and `needs_review` filter on `getTasks` / `tim_show`.
+- **Idea lifecycle & coding tasks** — ideas track `metadata.idea.status` with in-place promote to task when status → `planned`. Coding tasks add `subtype`, `commits`, `changes_pending` status, and `needs_review` filter on `getTasks` / `tim_show`.
+- **Append-only task status history** — `metadata.task.history` is an append-only event log (ISO `at`, optional `by`/`note`); `metadata.task.status` caches the last entry. Coding `done` requires prior `reviewed` in history; `commits` and `pushed` status are required only when `metadata.task.vcs === 'git'` (worktree detection, not "git installed"). Replaces boolean `reviewed` gate.
 - **Cross-tool session resumption (`/tim-resume`)** — `tim-store`: `resolveSessionAlias`, `SessionManager.resumeSession`, `listResumableSessions`, alias-transparent session APIs (`logExchange`, `showUnsummarized`, etc. resolve harness ids). `tim-mcp`: new tools `tim_resume_list`, `tim_session_resume`. `tim-skills`: new skill `tim-resume`.
 - **Hybrid search** — `entry_vectors` table (migration v10, device-local), fastembed-based embedding hook (`tim-hooks`), three-signal re-rank in `search()` (FTS5 + cosine similarity + graph/usage/staleness boost). `TIM_EMBEDDING_DISABLED=1` disables entirely.
 - **Summary-first reads** — `tim_read` returns `summary` by default (500 chars or `metadata.summary`); full content only with `include_body=true`.
