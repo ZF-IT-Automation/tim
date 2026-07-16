@@ -4,8 +4,10 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { spawn, type ChildProcess } from 'node:child_process';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
+import { childServerCwd, childServerDbPath, isolateChildServerCwd } from './helpers/child-server-workspace.js';
 
 const SERVER_PATH = path.resolve(__dirname, '..', '..', 'dist', 'server.js');
+isolateChildServerCwd();
 
 interface JsonRpcResp {
   id: number;
@@ -25,6 +27,7 @@ class McpClient {
       throw new Error(`Server dist not found: ${SERVER_PATH}. Run "npm run build" first.`);
     }
     this.proc = spawn('node', [SERVER_PATH], {
+      cwd: childServerCwd(),
       env: { ...process.env, TIM_DB_PATH: dbPath },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
@@ -100,7 +103,7 @@ describe('error contract', () => {
   let dbPath: string;
 
   beforeEach(async () => {
-    dbPath = `/tmp/tim-err-contract-${Date.now()}-${Math.random().toString(36).slice(2)}.db`;
+    dbPath = childServerDbPath();
     if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath);
     client = new McpClient(dbPath);
     await client.init();
@@ -134,15 +137,19 @@ describe('error contract', () => {
     expect(b.error).toBeUndefined();
 
     // First load binds the session.
-    const first = await client.callTool('tim_load_project', { label: 'P8001' });
+    const externalMarker = path.join(process.cwd(), '.tim-project');
+    const before = fs.existsSync(externalMarker) ? fs.readFileSync(externalMarker) : null;
+    const sessionId = 'error-contract-load-gate';
+    const first = await client.callTool('tim_load_project', { label: 'P8001', sessionId });
     expect(first.error).toBeUndefined();
     expect(first.result!.isError).toBeFalsy();
 
     // Second load to a different project is rejected with isError.
-    const second = await client.callTool('tim_load_project', { label: 'P8002' });
+    const second = await client.callTool('tim_load_project', { label: 'P8002', sessionId });
     expect(second.error).toBeUndefined();
     expect(second.result!.isError).toBe(true);
     expect(getText(second)).toContain('P8001');
+    expect(fs.existsSync(externalMarker) ? fs.readFileSync(externalMarker) : null).toEqual(before);
   });
 
   it('tim_write without content returns isError (zod parse error)', async () => {

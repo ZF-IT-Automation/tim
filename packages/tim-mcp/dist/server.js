@@ -2681,7 +2681,7 @@ async function createMcpServer(options = {}) {
                             // Non-critical — project brief still returned
                         }
                     }
-                    if (cwd) {
+                    if (bind && cwd) {
                         try {
                             (0, tim_hooks_1.syncNearestProjectMarker)(cwd, projectLabel, { sessionId });
                         }

@@ -4,8 +4,10 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { spawn, type ChildProcess } from 'node:child_process';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
+import { childServerCwd, childServerDbPath, isolateChildServerCwd } from './helpers/child-server-workspace.js';
 
 const SERVER_PATH = path.resolve(__dirname, '..', '..', 'dist', 'server.js');
+isolateChildServerCwd();
 
 interface JsonRpcResp {
   id: number;
@@ -25,6 +27,7 @@ class McpClient {
       throw new Error(`Server dist not found: ${SERVER_PATH}. Run "npm run build" first.`);
     }
     this.proc = spawn('node', [SERVER_PATH], {
+      cwd: childServerCwd(),
       env: { ...process.env, TIM_DB_PATH: dbPath },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
@@ -96,7 +99,7 @@ describe('tim_load_project bind:false', () => {
   let dbPath: string;
 
   beforeEach(async () => {
-    dbPath = `/tmp/tim-bind-${Date.now()}-${Math.random().toString(36).slice(2)}.db`;
+    dbPath = childServerDbPath();
     if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath);
     client = new McpClient(dbPath);
     await client.init();
@@ -123,6 +126,50 @@ describe('tim_load_project bind:false', () => {
     const c = await client.callTool('tim_load_project', { label: 'P8101', bind: false });
     expect(c.error).toBeUndefined();
     expect(c.result!.isError).toBeFalsy();
+  });
+
+  it('bind:false preserves marker bytes and mtime', async () => {
+    const markerPath = path.join(childServerCwd(), '.tim-project');
+    fs.writeFileSync(markerPath, JSON.stringify({
+      version: 2,
+      project: 'P8101',
+      session: 'bind-false-session',
+      exchanges: 7,
+      batch_size: 5,
+      batches_summarized: 1,
+    }, null, 2));
+    const beforeBytes = fs.readFileSync(markerPath);
+    const beforeMtime = fs.statSync(markerPath, { bigint: true }).mtimeNs;
+
+    const response = await client.callTool('tim_load_project', {
+      label: 'P8102',
+      bind: false,
+      sessionId: 'bind-false-session',
+    });
+
+    expect(response.result?.isError).toBeFalsy();
+    expect(fs.readFileSync(markerPath)).toEqual(beforeBytes);
+    expect(fs.statSync(markerPath, { bigint: true }).mtimeNs).toBe(beforeMtime);
+  });
+
+  it('tim_read_project preserves marker bytes and mtime', async () => {
+    const markerPath = path.join(childServerCwd(), '.tim-project');
+    fs.writeFileSync(markerPath, JSON.stringify({
+      version: 2,
+      project: 'P8101',
+      session: 'read-project-session',
+      exchanges: 4,
+      batch_size: 5,
+      batches_summarized: 0,
+    }, null, 2));
+    const beforeBytes = fs.readFileSync(markerPath);
+    const beforeMtime = fs.statSync(markerPath, { bigint: true }).mtimeNs;
+
+    const response = await client.callTool('tim_read_project', { label: 'P8102' });
+
+    expect(response.result?.isError).toBeFalsy();
+    expect(fs.readFileSync(markerPath)).toEqual(beforeBytes);
+    expect(fs.statSync(markerPath, { bigint: true }).mtimeNs).toBe(beforeMtime);
   });
 
   it('bind:false then bind:true works — read does not consume the gate', async () => {

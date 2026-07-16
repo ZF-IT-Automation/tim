@@ -12,12 +12,14 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { spawn, type ChildProcess } from 'node:child_process';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
+import { childServerCwd, isolateChildServerCwd } from './helpers/child-server-workspace.js';
 import { TimStore } from 'tim-store';
 import {
   resetSyncCooldowns,
   _peekCooldown,
 } from 'tim-sync-client';
 import * as syncClient from 'tim-sync-client';
+isolateChildServerCwd();
 
 const SERVER_PATH = path.resolve(__dirname, '..', '..', 'dist', 'server.js');
 
@@ -40,6 +42,7 @@ class McpClient {
       throw new Error(`Server dist not found: ${SERVER_PATH}. Run "npm run build" first.`);
     }
     this.proc = spawn('node', [SERVER_PATH], {
+      cwd: childServerCwd(),
       env: { ...process.env, TIM_DB_PATH: dbPath, ...extraEnv },
       stdio: ['pipe', 'pipe', 'pipe'],
     });

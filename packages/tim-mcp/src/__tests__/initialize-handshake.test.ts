@@ -2,7 +2,9 @@ import { describe, it, expect } from 'vitest';
 import { spawn, type ChildProcess } from 'node:child_process';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
+import { childServerCwd, childServerDbPath, isolateChildServerCwd } from './helpers/child-server-workspace.js';
 import { SUPPORTED_PROTOCOL_VERSIONS } from '@modelcontextprotocol/sdk/types.js';
+isolateChildServerCwd();
 
 const SERVER_PATH = path.resolve(__dirname, '..', '..', 'dist', 'server.js');
 
@@ -29,7 +31,8 @@ async function waitForJsonRpcId(proc: ChildProcess, id: number): Promise<Record<
 describe('MCP initialize handshake', () => {
   it('negotiates supported protocol version via SDK handler', async () => {
     const proc = spawn('node', [SERVER_PATH], {
-      env: { ...process.env, TIM_DB_PATH: ':memory:' },
+      cwd: childServerCwd(),
+      env: { ...process.env, TIM_DB_PATH: childServerDbPath() },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     try {

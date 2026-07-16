@@ -2936,7 +2936,7 @@ export async function createMcpServer(
             }
           }
 
-          if (cwd) {
+          if (bind && cwd) {
             try {
               syncNearestProjectMarker(cwd, projectLabel, { sessionId });
             } catch {
