@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import * as crypto from 'node:crypto';
 import { LOCK_TTL_MS } from './constants.js';
 import type { TimStore } from 'tim-store';
 import { deriveCounters } from 'tim-store';
@@ -241,6 +242,42 @@ export function writeMarkerAtomic(filePath: string, content: string): void {
   const tmp = `${filePath}.tmp.${process.pid}`;
   fs.writeFileSync(tmp, content);
   fs.renameSync(tmp, filePath);
+}
+
+export class ExclusiveMarkerConflictError extends Error {
+  constructor(public readonly filePath: string) {
+    super(`Local marker already exists: ${filePath}`);
+    this.name = 'ExclusiveMarkerConflictError';
+  }
+}
+
+/** Publish a marker only when no local marker exists already. */
+export function writeMarkerExclusive(cwd: string, marker: ProjectMarkerInput): ProjectMarker {
+  if (!validateProjectLabel(marker.project)) {
+    throw new Error(
+      `[tim-hooks] writeMarkerExclusive: refusing to write invalid project label "${marker.project}" — ` +
+        `expected ^[PLEN]\\d{4}$ (P0062, L0042, …). Marker not written.`,
+    );
+  }
+
+  const filePath = markerPath(cwd);
+  const tmp = `${filePath}.tmp.${process.pid}.${crypto.randomUUID()}`;
+  const complete: ProjectMarker = { ...marker, version: MARKER_VERSION };
+
+  try {
+    fs.writeFileSync(tmp, JSON.stringify(complete, null, 2), { flag: 'wx' });
+    try {
+      fs.linkSync(tmp, filePath);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'EEXIST') {
+        throw new ExclusiveMarkerConflictError(filePath);
+      }
+      throw err;
+    }
+    return complete;
+  } finally {
+    fs.rmSync(tmp, { force: true });
+  }
 }
 
 /** Write a project marker file. Always emits the current schema version:

@@ -41,6 +41,8 @@ export {
   readMarker,
   writeMarker,
   writeMarkerAtomic,
+  writeMarkerExclusive,
+  ExclusiveMarkerConflictError,
   rotateMarkerSession,
   detectProject,
   discoverMarker,

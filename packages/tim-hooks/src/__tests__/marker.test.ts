@@ -5,6 +5,8 @@ import {
   readMarker,
   writeMarker,
   writeMarkerAtomic,
+  writeMarkerExclusive,
+  ExclusiveMarkerConflictError,
   rotateMarkerSession,
   detectProject,
   discoverMarker,
@@ -728,6 +730,49 @@ describe('marker atomic writes', () => {
       const raw = fs.readFileSync(p, 'utf8');
       expect(() => JSON.parse(raw)).not.toThrow();
     }
+  });
+
+  it('writeMarkerExclusive publishes a complete v2 marker without temp residue', () => {
+    const marker = writeMarkerExclusive(dir, {
+      project: 'P0042',
+      session: 'exclusive-session',
+      exchanges: 3,
+      batch_size: 5,
+      batches_summarized: 1,
+    });
+
+    expect(marker).toEqual({
+      version: 2,
+      project: 'P0042',
+      session: 'exclusive-session',
+      exchanges: 3,
+      batch_size: 5,
+      batches_summarized: 1,
+    });
+    expect(readMarker(dir)).toEqual(marker);
+    expect(fs.readdirSync(dir).filter((name) => name.includes('.tmp.'))).toEqual([]);
+  });
+
+  it('writeMarkerExclusive preserves an existing winner and removes its temp file', () => {
+    writeMarkerExclusive(dir, {
+      project: 'P0043',
+      session: 'winner-session',
+      exchanges: 7,
+      batch_size: 5,
+      batches_summarized: 1,
+    });
+    const markerFile = path.join(dir, '.tim-project');
+    const winnerBytes = fs.readFileSync(markerFile);
+
+    expect(() => writeMarkerExclusive(dir, {
+      project: 'P0042',
+      session: 'loser-session',
+      exchanges: 0,
+      batch_size: 5,
+      batches_summarized: 0,
+    })).toThrow(ExclusiveMarkerConflictError);
+    expect(fs.readFileSync(markerFile)).toEqual(winnerBytes);
+    expect(fs.readdirSync(dir).filter((name) => name.includes('.tmp.'))).toEqual([]);
   });
 
   it('rotateMarkerSession updates session id atomically', () => {
