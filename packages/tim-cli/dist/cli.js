@@ -167,11 +167,7 @@ async function cmdInit() {
     if (installed.length === 0) {
         const mcpConfig = {
             mcpServers: {
-                tim: {
-                    command: 'npx',
-                    args: ['tim-mcp'],
-                    env: { TIM_DB_PATH: dbPath },
-                },
+                tim: (0, install_js_1.buildTimMcpEntry)(dbPath),
             },
         };
         fs.writeFileSync(path.join(timDir, 'mcp.json'), JSON.stringify(mcpConfig, null, 2));

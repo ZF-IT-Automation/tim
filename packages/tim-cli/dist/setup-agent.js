@@ -36,6 +36,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.buildSetupAgentPlan = buildSetupAgentPlan;
 exports.buildCodexMcpConfig = buildCodexMcpConfig;
 exports.replaceCodexTimMcpBlock = replaceCodexTimMcpBlock;
+exports.installCodexMcpConfig = installCodexMcpConfig;
 exports.cmdSetupAgent = cmdSetupAgent;
 const fs = __importStar(require("node:fs"));
 const os = __importStar(require("node:os"));
@@ -87,8 +88,8 @@ function hostTool(host) {
 function tomlString(value) {
     return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 }
-function buildCodexMcpConfig(dbPath) {
-    const entry = (0, install_js_1.buildTimMcpEntry)(dbPath);
+function buildCodexMcpConfig(dbPath, options = {}) {
+    const entry = (0, install_js_1.buildTimMcpEntry)(dbPath, options);
     return [
         '[mcp_servers.tim]',
         `command = ${tomlString(entry.command)}`,
@@ -131,9 +132,10 @@ function replaceCodexTimMcpBlock(existing, block) {
     }
     return out.join('\n').replace(/\n{3,}/g, '\n\n').trimEnd() + '\n';
 }
-function installCodexMcpConfig(dbPath, configPath = path.join(os.homedir(), '.codex', 'config.toml')) {
+function installCodexMcpConfig(dbPath, configPath = path.join(os.homedir(), '.codex', 'config.toml'), options = {}) {
+    const block = buildCodexMcpConfig(dbPath, options);
     const existing = fs.existsSync(configPath) ? fs.readFileSync(configPath, 'utf8') : '';
-    const next = replaceCodexTimMcpBlock(existing, buildCodexMcpConfig(dbPath));
+    const next = replaceCodexTimMcpBlock(existing, block);
     fs.mkdirSync(path.dirname(configPath), { recursive: true });
     if (fs.existsSync(configPath)) {
         fs.copyFileSync(configPath, `${configPath}.backup.${Date.now()}`);

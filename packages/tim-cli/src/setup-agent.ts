@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import { loadConfig, type TimConfigFile } from 'tim-core';
 import { TimStore } from 'tim-store';
 import { HOST_TOOLS, buildTimMcpEntry, installMcpForHostTool, type HostTool } from './install.js';
+import type { TimMcpServerOptions } from './mcp-command.js';
 import { updateSkillsForHost } from './update-skills.js';
 import { installHermesStatusline } from './hermes-statusline-install.js';
 
@@ -60,8 +61,11 @@ function tomlString(value: string): string {
   return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 }
 
-export function buildCodexMcpConfig(dbPath: string): string {
-  const entry = buildTimMcpEntry(dbPath);
+export function buildCodexMcpConfig(
+  dbPath: string,
+  options: TimMcpServerOptions = {},
+): string {
+  const entry = buildTimMcpEntry(dbPath, options);
   return [
     '[mcp_servers.tim]',
     `command = ${tomlString(entry.command)}`,
@@ -108,9 +112,14 @@ export function replaceCodexTimMcpBlock(existing: string, block: string): string
   return out.join('\n').replace(/\n{3,}/g, '\n\n').trimEnd() + '\n';
 }
 
-function installCodexMcpConfig(dbPath: string, configPath = path.join(os.homedir(), '.codex', 'config.toml')) {
+export function installCodexMcpConfig(
+  dbPath: string,
+  configPath = path.join(os.homedir(), '.codex', 'config.toml'),
+  options: TimMcpServerOptions = {},
+) {
+  const block = buildCodexMcpConfig(dbPath, options);
   const existing = fs.existsSync(configPath) ? fs.readFileSync(configPath, 'utf8') : '';
-  const next = replaceCodexTimMcpBlock(existing, buildCodexMcpConfig(dbPath));
+  const next = replaceCodexTimMcpBlock(existing, block);
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
   if (fs.existsSync(configPath)) {
     fs.copyFileSync(configPath, `${configPath}.backup.${Date.now()}`);

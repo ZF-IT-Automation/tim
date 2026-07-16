@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { resolveTimMcpServerPath, type TimMcpServerOptions } from './mcp-command.js';
 
 function homeDir(): string {
   return os.homedir();
@@ -67,10 +68,13 @@ export interface McpServerEntry {
   env?: Record<string, string>;
 }
 
-export function buildTimMcpEntry(dbPath: string): McpServerEntry {
+export function buildTimMcpEntry(
+  dbPath: string,
+  options: TimMcpServerOptions = {},
+): McpServerEntry {
   return {
-    command: 'npx',
-    args: ['tim-mcp'],
+    command: process.execPath,
+    args: [resolveTimMcpServerPath(options)],
     env: { TIM_DB_PATH: dbPath },
   };
 }
@@ -103,11 +107,13 @@ export function mergeMcpConfig(
 export function installMcpForHosts(
   dbPath: string,
   global = true,
+  options: TimMcpServerOptions = {},
 ): { installed: { tool: string; path: string }[]; skipped: { tool: string; path: string; reason: string }[] } {
+  const entry = buildTimMcpEntry(dbPath, options);
   const installed: { tool: string; path: string }[] = [];
   const skipped: { tool: string; path: string; reason: string }[] = [];
   for (const tool of detectInstalledHosts()) {
-    const result = installMcpForHostTool(tool, dbPath, global);
+    const result = installMcpForHostToolWithEntry(tool, entry, global);
     installed.push(...result.installed);
     skipped.push(...result.skipped);
   }
@@ -118,6 +124,16 @@ export function installMcpForHostTool(
   tool: HostTool,
   dbPath: string,
   global = true,
+  options: TimMcpServerOptions = {},
+): { installed: { tool: string; path: string }[]; skipped: { tool: string; path: string; reason: string }[] } {
+  const entry = buildTimMcpEntry(dbPath, options);
+  return installMcpForHostToolWithEntry(tool, entry, global);
+}
+
+function installMcpForHostToolWithEntry(
+  tool: HostTool,
+  entry: McpServerEntry,
+  global: boolean,
 ): { installed: { tool: string; path: string }[]; skipped: { tool: string; path: string; reason: string }[] } {
   const configPath = tool.mcpConfigPath(global);
   const dir = path.dirname(configPath);
@@ -134,7 +150,7 @@ export function installMcpForHostTool(
     }
     fs.copyFileSync(configPath, `${configPath}.backup.${Date.now()}`);
   }
-  const merged = mergeMcpConfig(existing, buildTimMcpEntry(dbPath), tool.format);
+  const merged = mergeMcpConfig(existing, entry, tool.format);
   fs.writeFileSync(configPath, JSON.stringify(merged, null, 2));
   return { installed: [{ tool: tool.name, path: configPath }], skipped: [] };
 }

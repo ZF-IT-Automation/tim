@@ -18,7 +18,7 @@ import {
   afterExchangeLogged,
   type ProjectMarker,
 } from 'tim-hooks';
-import { installMcpForHosts } from './install.js';
+import { buildTimMcpEntry, installMcpForHosts } from './install.js';
 import { cmdUserInit, cmdUserProfile, cmdUpdateSkills } from './user.js';
 import { tim_export, tim_import, repairImportFlags, repairProjectKind, exportToMarkdown, migrateTagsToTypes } from 'tim-migrate';
 import { cmdSync } from './sync-cli.js';
@@ -160,11 +160,7 @@ async function cmdInit() {
   if (installed.length === 0) {
     const mcpConfig = {
       mcpServers: {
-        tim: {
-          command: 'npx',
-          args: ['tim-mcp'],
-          env: { TIM_DB_PATH: dbPath },
-        },
+        tim: buildTimMcpEntry(dbPath),
       },
     };
     fs.writeFileSync(

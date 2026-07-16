@@ -42,6 +42,7 @@ exports.installMcpForHostTool = installMcpForHostTool;
 const fs = __importStar(require("node:fs"));
 const os = __importStar(require("node:os"));
 const path = __importStar(require("node:path"));
+const mcp_command_js_1 = require("./mcp-command.js");
 function homeDir() {
     return os.homedir();
 }
@@ -85,10 +86,10 @@ exports.HOST_TOOLS = [
 function detectInstalledHosts() {
     return exports.HOST_TOOLS.filter(t => t.detect());
 }
-function buildTimMcpEntry(dbPath) {
+function buildTimMcpEntry(dbPath, options = {}) {
     return {
-        command: 'npx',
-        args: ['tim-mcp'],
+        command: process.execPath,
+        args: [(0, mcp_command_js_1.resolveTimMcpServerPath)(options)],
         env: { TIM_DB_PATH: dbPath },
     };
 }
@@ -112,17 +113,22 @@ function mergeMcpConfig(existing, entry, format) {
         },
     };
 }
-function installMcpForHosts(dbPath, global = true) {
+function installMcpForHosts(dbPath, global = true, options = {}) {
+    const entry = buildTimMcpEntry(dbPath, options);
     const installed = [];
     const skipped = [];
     for (const tool of detectInstalledHosts()) {
-        const result = installMcpForHostTool(tool, dbPath, global);
+        const result = installMcpForHostToolWithEntry(tool, entry, global);
         installed.push(...result.installed);
         skipped.push(...result.skipped);
     }
     return { installed, skipped };
 }
-function installMcpForHostTool(tool, dbPath, global = true) {
+function installMcpForHostTool(tool, dbPath, global = true, options = {}) {
+    const entry = buildTimMcpEntry(dbPath, options);
+    return installMcpForHostToolWithEntry(tool, entry, global);
+}
+function installMcpForHostToolWithEntry(tool, entry, global) {
     const configPath = tool.mcpConfigPath(global);
     const dir = path.dirname(configPath);
     if (!fs.existsSync(dir))
@@ -140,7 +146,7 @@ function installMcpForHostTool(tool, dbPath, global = true) {
         }
         fs.copyFileSync(configPath, `${configPath}.backup.${Date.now()}`);
     }
-    const merged = mergeMcpConfig(existing, buildTimMcpEntry(dbPath), tool.format);
+    const merged = mergeMcpConfig(existing, entry, tool.format);
     fs.writeFileSync(configPath, JSON.stringify(merged, null, 2));
     return { installed: [{ tool: tool.name, path: configPath }], skipped: [] };
 }
