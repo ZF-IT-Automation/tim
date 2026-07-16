@@ -9,13 +9,31 @@ import {
   createProjectCoordinated,
   preflightProjectDirectory,
   validateMode,
+  type ProjectCreationArgs,
 } from '../project-creation.js';
+
+const preflightIo = vi.hoisted(() => ({ removeProbeAfterWrite: false }));
+
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  return {
+    ...actual,
+    writeFileSync: (...args: Parameters<typeof actual.writeFileSync>) => {
+      const result = actual.writeFileSync(...args);
+      if (preflightIo.removeProbeAfterWrite && String(args[0]).split('/').pop()?.startsWith('.tim-write-probe.')) {
+        actual.rmSync(args[0], { force: true });
+      }
+      return result;
+    },
+  };
+});
 
 describe('project creation', () => {
   let dir: string;
   let store: TimStore;
 
   beforeEach(() => {
+    preflightIo.removeProbeAfterWrite = false;
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tim-project-creation-'));
     store = new TimStore(path.join(dir, 'tim.db'));
   });
@@ -41,15 +59,31 @@ describe('project creation', () => {
     expect(await store.loadProject('P1001')).toBeNull();
   });
 
+  it('rejects an empty path as a missing creation mode', async () => {
+    const args = { label: 'P1001', path: '' };
+    expect(() => validateMode(args)).toThrow(MODE_ERROR);
+    await expect(createProjectCoordinated(store, args)).rejects.toThrow(MODE_ERROR);
+    expect(await store.loadProject('P1001')).toBeNull();
+  });
+
   it.each([
-    ['a relative path', 'workspace'],
     ['home shorthand', '~/workspace'],
     ['environment shorthand', '$HOME/workspace'],
+    ['braced environment shorthand', '${HOME}/workspace'],
+    ['Windows environment shorthand in an absolute path', '/tmp/%HOME%/workspace'],
   ])('rejects %s before creating a project', async (_name, projectPath) => {
     await expect(createProjectCoordinated(store, {
       label: 'P1002',
       path: projectPath,
     })).rejects.toThrow();
+    expect(await store.loadProject('P1002')).toBeNull();
+  });
+
+  it('gives actionable guidance for a relative path', async () => {
+    await expect(createProjectCoordinated(store, {
+      label: 'P1002',
+      path: 'workspace',
+    })).rejects.toThrow(/Pass an absolute project path/);
     expect(await store.loadProject('P1002')).toBeNull();
   });
 
@@ -82,12 +116,16 @@ describe('project creation', () => {
   });
 
   it('creates an intentional memory-only project and preserves normal entry fields', async () => {
-    const result = await createProjectCoordinated(store, {
+    const metadata: Record<string, unknown> = { name: 'Demo' };
+    const args: ProjectCreationArgs = {
       label: 'P1006',
       content: 'Project body',
-      metadata: { name: 'Demo' },
+      metadata,
       aliases: ['Demo Alias'],
       memoryOnly: true,
+    };
+    const result = await createProjectCoordinated(store, {
+      ...args,
     });
 
     expect(result).toMatchObject({
@@ -115,10 +153,23 @@ describe('project creation', () => {
     expect(canonicalDirectory(link)).toBe(fs.realpathSync(target));
   });
 
+  it('allows a literal dollar in an absolute directory name', () => {
+    const target = path.join(dir, 'cash$money');
+    fs.mkdirSync(target);
+
+    expect(canonicalDirectory(target)).toBe(fs.realpathSync(target));
+  });
+
   it('preflights writability without leaving its unique probe behind', () => {
     preflightProjectDirectory(dir);
 
     expect(fs.readdirSync(dir).filter(name => name.startsWith('.tim-write-probe.'))).toEqual([]);
+  });
+
+  it('tolerates a probe that is concurrently absent during cleanup', () => {
+    preflightIo.removeProbeAfterWrite = true;
+
+    expect(() => preflightProjectDirectory(dir)).not.toThrow();
   });
 
   it('rejects a target-local marker before preflight', async () => {

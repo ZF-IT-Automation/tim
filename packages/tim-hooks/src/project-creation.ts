@@ -2,7 +2,7 @@ import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import type { Entry, EntryMetadata } from 'tim-core';
+import type { Entry } from 'tim-core';
 import { TimStore } from 'tim-store';
 import {
   markerPath as projectMarkerPath,
@@ -14,7 +14,7 @@ export const MODE_ERROR = 'Exactly one creation mode is required. Pass an absolu
 export interface ProjectCreationArgs {
   label: string;
   content?: string;
-  metadata?: EntryMetadata;
+  metadata?: Record<string, unknown>;
   aliases?: string[];
   path?: string;
   memoryOnly?: boolean;
@@ -47,7 +47,7 @@ const DEFAULT_DEPS: ProjectCreationDeps = {
 };
 
 export function validateMode(args: ProjectCreationArgs): 'bound' | 'memory-only' {
-  const hasPath = args.path !== undefined;
+  const hasPath = typeof args.path === 'string' && args.path.length > 0;
   const isMemoryOnly = args.memoryOnly === true;
 
   if (hasPath === isMemoryOnly) {
@@ -58,11 +58,12 @@ export function validateMode(args: ProjectCreationArgs): 'bound' | 'memory-only'
 }
 
 export function canonicalDirectory(directory: string): string {
-  if (directory.startsWith('~') || directory.includes('$')) {
+  const shorthand = /(^|[\\/])(?:~(?=[\\/]|$)|\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[A-Za-z_][A-Za-z0-9_]*\})(?=[\\/]|$)|%[A-Za-z_][A-Za-z0-9_]*%(?=[\\/]|$))/;
+  if (shorthand.test(directory)) {
     throw new Error(`Project path must not use home or environment shorthand: ${directory}`);
   }
   if (!path.isAbsolute(directory)) {
-    throw new Error(`Project path must be absolute: ${directory}`);
+    throw new Error(`Pass an absolute project path; received: ${directory}`);
   }
 
   const canonical = fs.realpathSync(directory);
@@ -78,12 +79,10 @@ export function canonicalDirectory(directory: string): string {
 
 export function preflightProjectDirectory(directory: string): void {
   const probe = path.join(directory, `.tim-write-probe.${process.pid}.${crypto.randomUUID()}`);
-  let created = false;
   try {
     fs.writeFileSync(probe, '', { flag: 'wx' });
-    created = true;
   } finally {
-    if (created) fs.rmSync(probe);
+    fs.rmSync(probe, { force: true });
   }
 }
 
