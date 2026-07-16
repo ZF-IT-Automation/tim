@@ -432,13 +432,17 @@ def discover_projects(client: McpClient, logger: logging.Logger) -> list[str]:
     labels: set[str] = set()
     for query in ("P0", "P00", "project"):
         try:
-            results = client.call_tool(
+            response = client.call_tool(
                 "tim_search",
-                {"query": query, "root": "all", "topK": 1000},
+                {"query": query, "root": "all", "topK": 100},
             )
         except McpError as exc:
             logger.debug("search %r failed: %s", query, exc)
             continue
+        if isinstance(response, dict):
+            results = response.get("results")
+        else:
+            results = response
         if not isinstance(results, list):
             continue
         for entry in results:

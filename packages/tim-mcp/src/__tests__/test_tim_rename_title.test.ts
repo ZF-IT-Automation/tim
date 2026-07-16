@@ -132,8 +132,8 @@ describe('tim_update (renamed entry title)', () => {
     expect(renamed.title).toBe('Renamed');
 
     const searchResp = await client.callTool('tim_search', { query: 'Renamed' });
-    const results = JSON.parse(searchResp.result!.content[0].text);
-    expect(results.some((r: { id: string }) => r.id === written.id)).toBe(true);
+    const response = JSON.parse(searchResp.result!.content[0].text);
+    expect(response.results.some((r: { id: string }) => r.id === written.id)).toBe(true);
   });
 
   it('tim_rename_title is removed — call returns Unknown tool error', async () => {

@@ -171,11 +171,12 @@ describe('MCP tool response JSON safety (BUG 2)', () => {
     const resp = await client.callTool('tim_search', { query: 'searchable' });
     expect(resp.error).toBeUndefined();
     const text = resp.result!.content[0].text;
-    const results = JSON.parse(text);
-    expect(Array.isArray(results)).toBe(true);
-    if (results.length > 0) {
+    const response = JSON.parse(text);
+    expect(Array.isArray(response.results)).toBe(true);
+    expect(response.returned).toBe(response.results.length);
+    if (response.results.length > 0) {
       // The # should be inside a string, not breaking the JSON.
-      expect(typeof results[0].tags).toBe('object'); // array
+      expect(typeof response.results[0].tags).toBe('object'); // array
     }
   });
 

@@ -52,6 +52,7 @@ import { runAutoInit } from './auto-init.js';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { buildBoundedSearchResponse } from './search-response.js';
 
 /**
  * Format a tool response payload to JSON.
@@ -147,6 +148,8 @@ const TimWriteSchema = z.object({
 const TimSearchSchema = z.object({
   query: z.string().describe('FTS5 search query'),
   topK: z.number().min(1).max(100).optional().default(10),
+  excerptChars: z.number().int().min(0).max(2000).optional().default(500)
+    .describe('Maximum Unicode code points per result excerpt'),
   searchType: z.enum(['fts', 'vector', 'hybrid']).optional().default('fts'),
   root: z.string().optional().describe('Scope to project (label/alias/name)'),
   type: z.string().optional().describe('Filter metadata.type'),
@@ -2026,7 +2029,7 @@ export async function createMcpServer(
         }
 
         case 'tim_search': {
-          const { query, topK, root, type, tag, status } = TimSearchSchema.parse(args);
+          const { query, topK, excerptChars, root, type, tag, status } = TimSearchSchema.parse(args);
           const hasFilters = Boolean(root || type || tag || status);
           let results = await s.search({ query, topK: hasFilters ? 1000 : topK });
           if (root) {
@@ -2054,10 +2057,11 @@ export async function createMcpServer(
           if (hasFilters) {
             results = results.slice(0, topK);
           }
+          const response = buildBoundedSearchResponse(results, excerptChars);
           bestEffortTelemetry('recordRead', () =>
-            s.recordRead(results.map(e => e.id), usageSessionId()));
+            s.recordRead(response.results.map(e => e.id), usageSessionId()));
           return {
-            content: [{ type: 'text', text: formatToolResponse(results) }],
+            content: [{ type: 'text', text: JSON.stringify(response) }],
           };
         }
 

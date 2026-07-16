@@ -64,6 +64,7 @@ const auto_init_js_1 = require("./auto-init.js");
 const fs = __importStar(require("fs"));
 const os = __importStar(require("os"));
 const path = __importStar(require("path"));
+const search_response_js_1 = require("./search-response.js");
 /**
  * Format a tool response payload to JSON.
  * Uses compact format (no whitespace) for payloads over COMPACT_THRESHOLD bytes
@@ -147,6 +148,8 @@ const TimWriteSchema = zod_1.z.object({
 const TimSearchSchema = zod_1.z.object({
     query: zod_1.z.string().describe('FTS5 search query'),
     topK: zod_1.z.number().min(1).max(100).optional().default(10),
+    excerptChars: zod_1.z.number().int().min(0).max(2000).optional().default(500)
+        .describe('Maximum Unicode code points per result excerpt'),
     searchType: zod_1.z.enum(['fts', 'vector', 'hybrid']).optional().default('fts'),
     root: zod_1.z.string().optional().describe('Scope to project (label/alias/name)'),
     type: zod_1.z.string().optional().describe('Filter metadata.type'),
@@ -1836,7 +1839,7 @@ async function createMcpServer(options = {}) {
                     };
                 }
                 case 'tim_search': {
-                    const { query, topK, root, type, tag, status } = TimSearchSchema.parse(args);
+                    const { query, topK, excerptChars, root, type, tag, status } = TimSearchSchema.parse(args);
                     const hasFilters = Boolean(root || type || tag || status);
                     let results = await s.search({ query, topK: hasFilters ? 1000 : topK });
                     if (root) {
@@ -1862,9 +1865,10 @@ async function createMcpServer(options = {}) {
                     if (hasFilters) {
                         results = results.slice(0, topK);
                     }
-                    bestEffortTelemetry('recordRead', () => s.recordRead(results.map(e => e.id), usageSessionId()));
+                    const response = (0, search_response_js_1.buildBoundedSearchResponse)(results, excerptChars);
+                    bestEffortTelemetry('recordRead', () => s.recordRead(response.results.map(e => e.id), usageSessionId()));
                     return {
-                        content: [{ type: 'text', text: formatToolResponse(results) }],
+                        content: [{ type: 'text', text: JSON.stringify(response) }],
                     };
                 }
                 case 'tim_guard': {
