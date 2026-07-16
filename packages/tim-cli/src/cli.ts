@@ -18,7 +18,7 @@ import {
   afterExchangeLogged,
   type ProjectMarker,
 } from 'tim-hooks';
-import { buildTimMcpEntry, installMcpForHosts } from './install.js';
+import { buildTimMcpEntry, installMcpEntryForHosts } from './install.js';
 import { cmdUserInit, cmdUserProfile, cmdUpdateSkills } from './user.js';
 import { tim_export, tim_import, repairImportFlags, repairProjectKind, exportToMarkdown, migrateTagsToTypes } from 'tim-migrate';
 import { cmdSync } from './sync-cli.js';
@@ -137,10 +137,11 @@ function printCommandHelp(cmd: string): void {
 
 async function cmdInit() {
   const timDir = getTimDir();
-  ensureDir(timDir);
-
   const config = loadConfig();
   const dbPath = getDbPath(config);
+  const mcpEntry = buildTimMcpEntry(dbPath);
+
+  ensureDir(timDir);
   const store = new TimStore(dbPath);
 
   try {
@@ -148,7 +149,7 @@ async function cmdInit() {
     console.log('✓ Agent registered: "default"');
   } catch {}
 
-  const { installed, skipped } = installMcpForHosts(dbPath, true);
+  const { installed, skipped } = installMcpEntryForHosts(mcpEntry, true);
   if (installed.length > 0) {
     for (const i of installed) {
       console.log(`✓ MCP config: ${i.tool} → ${i.path}`);
@@ -160,7 +161,7 @@ async function cmdInit() {
   if (installed.length === 0) {
     const mcpConfig = {
       mcpServers: {
-        tim: buildTimMcpEntry(dbPath),
+        tim: mcpEntry,
       },
     };
     fs.writeFileSync(

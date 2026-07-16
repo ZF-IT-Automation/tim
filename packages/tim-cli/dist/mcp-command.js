@@ -36,6 +36,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.resolveTimMcpServerPath = resolveTimMcpServerPath;
 const fs = __importStar(require("node:fs"));
 const path = __importStar(require("node:path"));
+const node_module_1 = require("node:module");
 function isFile(candidate) {
     try {
         return fs.statSync(candidate).isFile();
@@ -54,12 +55,18 @@ function resolveTimMcpServerPath(options = {}) {
         }
         return resolved;
     }
-    // This layout is shared by the monorepo and installed sibling packages:
-    // packages/tim-cli/dist -> packages/tim-mcp/dist
-    // node_modules/tim-cli/dist -> node_modules/tim-mcp/dist
+    let packaged;
+    try {
+        packaged = (0, node_module_1.createRequire)(__filename).resolve('tim-mcp/dist/server.js');
+    }
+    catch {
+        // Fall through to the sibling layout used by workspace/package installs.
+    }
     const sibling = path.resolve(__dirname, '..', '..', 'tim-mcp', 'dist', 'server.js');
-    if (isFile(sibling))
-        return sibling;
-    throw new Error(`TIM MCP server artifact not found: ${sibling}. Build or install tim-mcp, or set TIM_MCP_SERVER.`);
+    const candidates = [packaged, sibling].filter((candidate) => Boolean(candidate));
+    const found = candidates.find(isFile);
+    if (found)
+        return path.resolve(found);
+    throw new Error(`TIM MCP server artifact not found: ${candidates.join(', ')}. Build or install tim-mcp, or set TIM_MCP_SERVER.`);
 }
 //# sourceMappingURL=mcp-command.js.map

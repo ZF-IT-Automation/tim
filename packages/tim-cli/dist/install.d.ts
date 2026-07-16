@@ -26,6 +26,17 @@ export declare function installMcpForHosts(dbPath: string, global?: boolean, opt
         reason: string;
     }[];
 };
+export declare function installMcpEntryForHosts(entry: McpServerEntry, global?: boolean): {
+    installed: {
+        tool: string;
+        path: string;
+    }[];
+    skipped: {
+        tool: string;
+        path: string;
+        reason: string;
+    }[];
+};
 export declare function installMcpForHostTool(tool: HostTool, dbPath: string, global?: boolean, options?: TimMcpServerOptions): {
     installed: {
         tool: string;

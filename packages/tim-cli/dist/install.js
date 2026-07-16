@@ -38,6 +38,7 @@ exports.detectInstalledHosts = detectInstalledHosts;
 exports.buildTimMcpEntry = buildTimMcpEntry;
 exports.mergeMcpConfig = mergeMcpConfig;
 exports.installMcpForHosts = installMcpForHosts;
+exports.installMcpEntryForHosts = installMcpEntryForHosts;
 exports.installMcpForHostTool = installMcpForHostTool;
 const fs = __importStar(require("node:fs"));
 const os = __importStar(require("node:os"));
@@ -115,6 +116,9 @@ function mergeMcpConfig(existing, entry, format) {
 }
 function installMcpForHosts(dbPath, global = true, options = {}) {
     const entry = buildTimMcpEntry(dbPath, options);
+    return installMcpEntryForHosts(entry, global);
+}
+function installMcpEntryForHosts(entry, global = true) {
     const installed = [];
     const skipped = [];
     for (const tool of detectInstalledHosts()) {

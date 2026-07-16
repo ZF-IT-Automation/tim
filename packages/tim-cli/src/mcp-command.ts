@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { createRequire } from 'node:module';
 
 export interface TimMcpServerOptions {
   override?: string;
@@ -24,13 +25,19 @@ export function resolveTimMcpServerPath(options: TimMcpServerOptions = {}): stri
     return resolved;
   }
 
-  // This layout is shared by the monorepo and installed sibling packages:
-  // packages/tim-cli/dist -> packages/tim-mcp/dist
-  // node_modules/tim-cli/dist -> node_modules/tim-mcp/dist
+  let packaged: string | undefined;
+  try {
+    packaged = createRequire(__filename).resolve('tim-mcp/dist/server.js');
+  } catch {
+    // Fall through to the sibling layout used by workspace/package installs.
+  }
+
   const sibling = path.resolve(__dirname, '..', '..', 'tim-mcp', 'dist', 'server.js');
-  if (isFile(sibling)) return sibling;
+  const candidates = [packaged, sibling].filter((candidate): candidate is string => Boolean(candidate));
+  const found = candidates.find(isFile);
+  if (found) return path.resolve(found);
 
   throw new Error(
-    `TIM MCP server artifact not found: ${sibling}. Build or install tim-mcp, or set TIM_MCP_SERVER.`,
+    `TIM MCP server artifact not found: ${candidates.join(', ')}. Build or install tim-mcp, or set TIM_MCP_SERVER.`,
   );
 }

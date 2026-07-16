@@ -146,16 +146,17 @@ function printCommandHelp(cmd) {
 }
 async function cmdInit() {
     const timDir = (0, tim_core_1.getTimDir)();
-    ensureDir(timDir);
     const config = (0, tim_core_1.loadConfig)();
     const dbPath = getDbPath(config);
+    const mcpEntry = (0, install_js_1.buildTimMcpEntry)(dbPath);
+    ensureDir(timDir);
     const store = new tim_store_1.TimStore(dbPath);
     try {
         await store.registerAgent('Default Agent', 'default');
         console.log('✓ Agent registered: "default"');
     }
     catch { }
-    const { installed, skipped } = (0, install_js_1.installMcpForHosts)(dbPath, true);
+    const { installed, skipped } = (0, install_js_1.installMcpEntryForHosts)(mcpEntry, true);
     if (installed.length > 0) {
         for (const i of installed) {
             console.log(`✓ MCP config: ${i.tool} → ${i.path}`);
@@ -167,7 +168,7 @@ async function cmdInit() {
     if (installed.length === 0) {
         const mcpConfig = {
             mcpServers: {
-                tim: (0, install_js_1.buildTimMcpEntry)(dbPath),
+                tim: mcpEntry,
             },
         };
         fs.writeFileSync(path.join(timDir, 'mcp.json'), JSON.stringify(mcpConfig, null, 2));

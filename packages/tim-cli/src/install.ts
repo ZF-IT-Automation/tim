@@ -110,6 +110,13 @@ export function installMcpForHosts(
   options: TimMcpServerOptions = {},
 ): { installed: { tool: string; path: string }[]; skipped: { tool: string; path: string; reason: string }[] } {
   const entry = buildTimMcpEntry(dbPath, options);
+  return installMcpEntryForHosts(entry, global);
+}
+
+export function installMcpEntryForHosts(
+  entry: McpServerEntry,
+  global = true,
+): { installed: { tool: string; path: string }[]; skipped: { tool: string; path: string; reason: string }[] } {
   const installed: { tool: string; path: string }[] = [];
   const skipped: { tool: string; path: string; reason: string }[] = [];
   for (const tool of detectInstalledHosts()) {

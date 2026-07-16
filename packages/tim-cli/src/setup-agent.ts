@@ -58,7 +58,7 @@ function hostTool(host: AgentHost): HostTool | null {
 }
 
 function tomlString(value: string): string {
-  return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+  return JSON.stringify(value).replace(/\u007f/g, '\\u007F');
 }
 
 export function buildCodexMcpConfig(
@@ -83,18 +83,17 @@ export function replaceCodexTimMcpBlock(existing: string, block: string): string
 
   for (let i = 0; i < lines.length;) {
     const trimmed = lines[i].trim();
-    if (trimmed === '[mcp_servers.tim]') {
-      if (out.length > 0 && out[out.length - 1] !== '') out.push('');
-      out.push(...block.split('\n'));
-      replaced = true;
+    if (trimmed === '[mcp_servers.tim]' || trimmed === '[mcp_servers.tim.env]') {
+      if (!replaced) {
+        if (out.length > 0 && out[out.length - 1] !== '') out.push('');
+        out.push(...block.split('\n'));
+        replaced = true;
+      }
       i++;
 
       while (i < lines.length) {
         const t = lines[i].trim();
-        if (t.startsWith('[') && t !== '[mcp_servers.tim]' && t !== '[mcp_servers.tim.env]') {
-          if (out[out.length - 1] !== '') out.push('');
-          break;
-        }
+        if (t.startsWith('[')) break;
         i++;
       }
       continue;

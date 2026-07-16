@@ -1,5 +1,5 @@
 import { afterEach, describe, it, expect } from 'vitest';
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -13,6 +13,9 @@ import {
 import { resolveTimMcpServerPath } from '../mcp-command.js';
 
 const SERVER_PATH = path.resolve(__dirname, '..', '..', '..', 'tim-mcp', 'dist', 'server.js');
+const CLI_PATH = path.resolve(__dirname, '..', '..', 'dist', 'cli.js');
+const MCP_COMMAND_PATH = path.resolve(__dirname, '..', '..', 'dist', 'mcp-command.js');
+const CLI_PACKAGE_PATH = path.resolve(__dirname, '..', '..', 'package.json');
 
 interface JsonRpcResponse {
   id: number;
@@ -72,6 +75,41 @@ afterEach(() => {
 });
 
 describe('multi-host installer', () => {
+  it('declares tim-mcp as a direct runtime dependency', () => {
+    const pkg = JSON.parse(fs.readFileSync(CLI_PACKAGE_PATH, 'utf8')) as {
+      dependencies?: Record<string, string>;
+    };
+    expect(pkg.dependencies?.['tim-mcp']).toBe('*');
+  });
+
+  it('resolves tim-mcp from a nested installed-package dependency', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tim-installed-layout-'));
+    const cliDist = path.join(tmp, 'node_modules', 'tim-cli', 'dist');
+    const mcpPackage = path.join(tmp, 'node_modules', 'tim-cli', 'node_modules', 'tim-mcp');
+    const nestedServer = path.join(mcpPackage, 'dist', 'server.js');
+    fs.mkdirSync(cliDist, { recursive: true });
+    fs.mkdirSync(path.dirname(nestedServer), { recursive: true });
+    fs.copyFileSync(MCP_COMMAND_PATH, path.join(cliDist, 'mcp-command.js'));
+    fs.writeFileSync(path.join(mcpPackage, 'package.json'), JSON.stringify({ name: 'tim-mcp' }));
+    fs.writeFileSync(nestedServer, '// installed fixture\n');
+
+    try {
+      const fixtureModule = path.join(cliDist, 'mcp-command.js');
+      const result = spawnSync(process.execPath, [
+        '-e',
+        `process.stdout.write(require(${JSON.stringify(fixtureModule)}).resolveTimMcpServerPath())`,
+      ], {
+        encoding: 'utf8',
+        env: { ...process.env, TIM_MCP_SERVER: '' },
+      });
+      expect(result.stderr).toBe('');
+      expect(result.status).toBe(0);
+      expect(result.stdout).toBe(nestedServer);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it('resolves an absolute verified server and builds a node entry', () => {
     const entry = buildTimMcpEntry('/tmp/tim.db', { override: SERVER_PATH });
     expect(entry).toEqual({
@@ -218,6 +256,36 @@ describe('multi-host installer', () => {
     )).toThrow(/TIM MCP server artifact not found/);
     expect(fs.existsSync(path.dirname(absentConfigPath))).toBe(false);
     fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it('init verifies the MCP server before any home, database, agent, or config mutation', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tim-init-no-mutation-'));
+    const configPath = path.join(tmp, '.claude.json');
+    const originalConfig = '{"mcpServers":{"keep":{"command":"keep"}}}\n';
+    fs.mkdirSync(path.join(tmp, '.claude'));
+    fs.writeFileSync(configPath, originalConfig);
+    const before = fs.readdirSync(tmp).sort();
+
+    try {
+      const result = spawnSync(process.execPath, [CLI_PATH, 'init'], {
+        cwd: tmp,
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          HOME: tmp,
+          TIM_DB_PATH: path.join(tmp, '.tim', 'tim.db'),
+          TIM_MCP_SERVER: path.join(tmp, 'missing-server.js'),
+        },
+      });
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain('TIM MCP server artifact not found');
+      expect(fs.readdirSync(tmp).sort()).toEqual(before);
+      expect(fs.readFileSync(configPath, 'utf8')).toBe(originalConfig);
+      expect(fs.existsSync(path.join(tmp, '.tim'))).toBe(false);
+      expect(fs.readdirSync(tmp).some(name => name.includes('.backup.'))).toBe(false);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it('generated command initializes MCP and serves tim_stats', async () => {

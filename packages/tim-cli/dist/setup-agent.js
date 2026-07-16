@@ -86,7 +86,7 @@ function hostTool(host) {
     return id ? (install_js_1.HOST_TOOLS.find(tool => tool.id === id) ?? null) : null;
 }
 function tomlString(value) {
-    return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+    return JSON.stringify(value).replace(/\u007f/g, '\\u007F');
 }
 function buildCodexMcpConfig(dbPath, options = {}) {
     const entry = (0, install_js_1.buildTimMcpEntry)(dbPath, options);
@@ -105,19 +105,18 @@ function replaceCodexTimMcpBlock(existing, block) {
     let replaced = false;
     for (let i = 0; i < lines.length;) {
         const trimmed = lines[i].trim();
-        if (trimmed === '[mcp_servers.tim]') {
-            if (out.length > 0 && out[out.length - 1] !== '')
-                out.push('');
-            out.push(...block.split('\n'));
-            replaced = true;
+        if (trimmed === '[mcp_servers.tim]' || trimmed === '[mcp_servers.tim.env]') {
+            if (!replaced) {
+                if (out.length > 0 && out[out.length - 1] !== '')
+                    out.push('');
+                out.push(...block.split('\n'));
+                replaced = true;
+            }
             i++;
             while (i < lines.length) {
                 const t = lines[i].trim();
-                if (t.startsWith('[') && t !== '[mcp_servers.tim]' && t !== '[mcp_servers.tim.env]') {
-                    if (out[out.length - 1] !== '')
-                        out.push('');
+                if (t.startsWith('['))
                     break;
-                }
                 i++;
             }
             continue;

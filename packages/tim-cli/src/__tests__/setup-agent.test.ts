@@ -39,6 +39,16 @@ describe('setup-agent planner', () => {
     expect(config).toContain('TIM_DB_PATH = "C:\\\\Users\\\\Agent\\\\\\"tim\\".db"');
   });
 
+  it('escapes newlines and control characters without injecting TOML tables', () => {
+    const dbPath = '/tmp/tim.db"\n[mcp_servers.evil]\ncommand = "owned"\u0001\u007f';
+    const config = buildCodexMcpConfig(dbPath, { override: SERVER_PATH });
+    expect(config).not.toContain('\n[mcp_servers.evil]\n');
+    expect(config).toContain('\\n[mcp_servers.evil]\\n');
+    expect(config).toContain('\\u0001');
+    expect(config).toContain('\\u007F');
+    expect(config).not.toContain('\u007f');
+  });
+
   it('replaces existing codex TIM MCP block without dropping unrelated sections', () => {
     const existing = [
       'model = "gpt-5.5"',
@@ -60,6 +70,34 @@ describe('setup-agent planner', () => {
     expect(updated).toContain(`command = "${process.execPath}"`);
     expect(updated).toContain('TIM_DB_PATH = "/tmp/tim.db"');
     expect(updated).toContain('[hooks.state]');
+    expect(updated).not.toContain('/old.db');
+  });
+
+  it('removes separated TIM tables while preserving intervening unrelated tables', () => {
+    const existing = [
+      'model = "gpt-5.5"',
+      '[mcp_servers.tim]',
+      'command = "old"',
+      '',
+      '[hooks.state]',
+      'enabled = true',
+      '',
+      '[mcp_servers.tim.env]',
+      'TIM_DB_PATH = "/old.db"',
+      '',
+      '[features]',
+      'safe = true',
+      '',
+    ].join('\n');
+
+    const updated = replaceCodexTimMcpBlock(
+      existing,
+      buildCodexMcpConfig('/tmp/new.db', { override: SERVER_PATH }),
+    );
+    expect(updated.match(/\[mcp_servers\.tim\]/g)).toHaveLength(1);
+    expect(updated.match(/\[mcp_servers\.tim\.env\]/g)).toHaveLength(1);
+    expect(updated).toContain('[hooks.state]\nenabled = true');
+    expect(updated).toContain('[features]\nsafe = true');
     expect(updated).not.toContain('/old.db');
   });
 
