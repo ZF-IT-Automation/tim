@@ -53,6 +53,7 @@ describe('buildBoundedSearchResponse', () => {
         task: {
           status: '😀'.repeat(1_000),
           priority: 'high',
+          completion_evidence: 'verified by focused regression',
           unbounded: 'must not be returned',
         },
       },
@@ -65,11 +66,26 @@ describe('buildBoundedSearchResponse', () => {
     expect(result.metadata.task).toEqual({
       status: expect.any(String),
       priority: 'high',
+      completion_evidence: 'verified by focused regression',
     });
     expect([...(result.metadata.task as { status: string }).status]).toHaveLength(
       MAX_SEARCH_METADATA_STRING_CODE_POINTS,
     );
     expect(Buffer.byteLength(JSON.stringify(response), 'utf8')).toBeLessThan(24 * 1024);
+  });
+
+  it.each([
+    ['title', { title: 'x'.repeat(MAX_SEARCH_TITLE_CODE_POINTS + 1) }],
+    ['tag', { tags: ['x'.repeat(MAX_SEARCH_TAG_CODE_POINTS + 1)] }],
+    ['task metadata', {
+      metadata: { task: { status: 'x'.repeat(MAX_SEARCH_METADATA_STRING_CODE_POINTS + 1) } },
+    }],
+  ] as Array<[string, Partial<Entry>]>)('marks a bounded %s as truncated', (_field, overrides) => {
+    const response = buildBoundedSearchResponse([entry(overrides)]);
+
+    expect(response.returned).toBe(1);
+    expect(response.omitted).toBe(0);
+    expect(response.truncated).toBe(true);
   });
 
   it('returns only a ranked prefix when the next bounded hit cannot fit', () => {

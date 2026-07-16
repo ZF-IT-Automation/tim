@@ -51,6 +51,16 @@ class TestDiscoverProjectsSearchResponse(unittest.TestCase):
     def test_keeps_legacy_array_compatibility(self):
         self.assertEqual(discover_projects(FakeClient(self.entries), self.logger), ["P0042"])
 
+    def test_accepts_complete_results_with_bounded_fields(self):
+        response = {
+            "results": self.entries,
+            "returned": 2,
+            "omitted": 0,
+            "truncated": True,
+        }
+
+        self.assertEqual(discover_projects(FakeClient(response), self.logger), ["P0042"])
+
     def test_refuses_partial_project_discovery_from_truncated_searches(self):
         response = {
             "results": self.entries[:1],

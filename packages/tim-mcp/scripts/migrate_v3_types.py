@@ -442,9 +442,7 @@ def discover_projects(client: McpClient, logger: logging.Logger) -> list[str]:
             continue
         if isinstance(response, dict):
             omitted = response.get("omitted", 0)
-            if response.get("truncated") is True or (
-                isinstance(omitted, (int, float)) and omitted > 0
-            ):
+            if isinstance(omitted, (int, float)) and omitted > 0:
                 incomplete_queries.append(query)
                 logger.warning(
                     "Ignoring incomplete tim_search project discovery for %r "
@@ -473,7 +471,7 @@ def discover_projects(client: McpClient, logger: logging.Logger) -> list[str]:
 
     if incomplete_queries:
         raise McpError(
-            "Project discovery incomplete: tim_search returned truncated results for "
+            "Project discovery incomplete: tim_search omitted results for "
             + ", ".join(repr(query) for query in incomplete_queries)
         )
 

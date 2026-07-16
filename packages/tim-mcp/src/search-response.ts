@@ -15,6 +15,7 @@ const SEARCH_TASK_KEYS = [
   'due_date',
   'assignee',
   'order',
+  'completion_evidence',
 ] as const;
 
 const SEARCH_METADATA_KEYS = [
@@ -57,42 +58,61 @@ function unicodeExcerpt(
   return { excerpt: points.join(''), truncated: false };
 }
 
-function boundedScalar(value: unknown): string | number | boolean | null | undefined {
-  if (typeof value === 'string') {
-    return unicodeExcerpt(value, MAX_SEARCH_METADATA_STRING_CODE_POINTS).excerpt;
-  }
-  if (typeof value === 'number') return Number.isFinite(value) ? value : undefined;
-  if (typeof value === 'boolean' || value === null) return value;
-  return undefined;
+interface BoundedValue<T> {
+  value: T | undefined;
+  truncated: boolean;
 }
 
-function boundedTask(value: unknown): unknown {
-  const scalar = boundedScalar(value);
-  if (scalar !== undefined) return scalar;
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
+function boundedScalar(
+  value: unknown,
+): BoundedValue<string | number | boolean | null> {
+  if (typeof value === 'string') {
+    const bounded = unicodeExcerpt(value, MAX_SEARCH_METADATA_STRING_CODE_POINTS);
+    return { value: bounded.excerpt, truncated: bounded.truncated };
+  }
+  if (typeof value === 'number') {
+    return { value: Number.isFinite(value) ? value : undefined, truncated: !Number.isFinite(value) };
+  }
+  if (typeof value === 'boolean' || value === null) return { value, truncated: false };
+  return { value: undefined, truncated: value !== undefined };
+}
+
+function boundedTask(value: unknown): BoundedValue<unknown> {
+  if (typeof value !== 'object' || value === null) return boundedScalar(value);
+  if (Array.isArray(value)) return { value: undefined, truncated: true };
 
   const task = value as Record<string, unknown>;
   const selected: Record<string, string | number | boolean | null> = {};
+  let truncated = Object.keys(task).some(
+    key => !(SEARCH_TASK_KEYS as readonly string[]).includes(key),
+  );
   for (const key of SEARCH_TASK_KEYS) {
     const field = boundedScalar(task[key]);
-    if (field !== undefined) selected[key] = field;
+    truncated ||= field.truncated;
+    if (field.value !== undefined) selected[key] = field.value;
   }
-  return selected;
+  return { value: selected, truncated };
 }
 
-function selectMetadata(metadata: Record<string, unknown>): Record<string, unknown> {
+function selectMetadata(metadata: Record<string, unknown>): BoundedValue<Record<string, unknown>> {
   const selected: Record<string, unknown> = {};
+  let truncated = false;
   for (const key of SEARCH_METADATA_KEYS) {
     const value = key === 'task' ? boundedTask(metadata[key]) : boundedScalar(metadata[key]);
-    if (value !== undefined) selected[key] = value;
+    truncated ||= value.truncated;
+    if (value.value !== undefined) selected[key] = value.value;
   }
-  return selected;
+  return { value: selected, truncated };
 }
 
-function boundedTags(tags: string[]): string[] {
-  return tags.slice(0, MAX_SEARCH_TAGS).map(
-    tag => unicodeExcerpt(tag, MAX_SEARCH_TAG_CODE_POINTS).excerpt,
-  );
+function boundedTags(tags: string[]): BoundedValue<string[]> {
+  let truncated = tags.length > MAX_SEARCH_TAGS;
+  const value = tags.slice(0, MAX_SEARCH_TAGS).map(tag => {
+    const bounded = unicodeExcerpt(tag, MAX_SEARCH_TAG_CODE_POINTS);
+    truncated ||= bounded.truncated;
+    return bounded.excerpt;
+  });
+  return { value, truncated };
 }
 
 function boundedMaxBytes(maxBytes: number): number {
@@ -128,29 +148,34 @@ export function buildBoundedSearchResponse(
     DEFAULT_SEARCH_EXCERPT_CODE_POINTS,
   );
   const effectiveMaxBytes = boundedMaxBytes(maxBytes);
-  let excerptTruncated = false;
+  let resultTruncated = false;
 
   for (const entry of entries) {
     const excerpt = unicodeExcerpt(entry.content, boundedExcerptCodePoints);
+    const title = unicodeExcerpt(entry.title, MAX_SEARCH_TITLE_CODE_POINTS);
+    const tags = boundedTags(entry.tags);
+    const metadata = selectMetadata(entry.metadata);
+    const candidateTruncated =
+      excerpt.truncated || title.truncated || tags.truncated || metadata.truncated;
     const candidate: BoundedSearchResult = {
       id: entry.id,
-      title: unicodeExcerpt(entry.title, MAX_SEARCH_TITLE_CODE_POINTS).excerpt,
+      title: title.excerpt,
       excerpt: excerpt.excerpt,
-      tags: boundedTags(entry.tags),
-      metadata: selectMetadata(entry.metadata),
+      tags: tags.value ?? [],
+      metadata: metadata.value ?? {},
     };
     const proposed = responseFor(
       [...accepted, candidate],
       entries.length,
-      excerptTruncated || excerpt.truncated,
+      resultTruncated || candidateTruncated,
     );
     if (Buffer.byteLength(JSON.stringify(proposed), 'utf8') <= effectiveMaxBytes) {
       accepted.push(candidate);
-      excerptTruncated ||= excerpt.truncated;
+      resultTruncated ||= candidateTruncated;
     } else {
       break;
     }
   }
 
-  return responseFor(accepted, entries.length, excerptTruncated);
+  return responseFor(accepted, entries.length, resultTruncated);
 }
