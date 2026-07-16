@@ -98,18 +98,20 @@ export function encryptSecretPayload(
 ): string {
   const payload = JSON.parse(payloadJson) as Record<string, unknown>;
   const metaRaw = payload.metadata;
-  const meta =
-    typeof metaRaw === 'string'
-      ? (JSON.parse(metaRaw) as Record<string, unknown>)
-      : { ...(metaRaw as Record<string, unknown>) };
-
-  const encMeta = secretEncrypt(JSON.stringify(meta));
+  const rawMetadata = typeof payload.metadata_raw === 'string'
+    ? payload.metadata_raw
+    : typeof metaRaw === 'string'
+      ? metaRaw
+      : JSON.stringify(metaRaw ?? {});
+  const encMeta = secretEncrypt(rawMetadata);
+  const encryptedMetadata = JSON.stringify({ secret: true, _enc: encMeta });
 
   const encrypted = {
     ...payload,
     title: secretEncrypt(String(payload.title ?? '')),
     content: secretEncrypt(String(payload.content ?? '')),
-    metadata: JSON.stringify({ secret: true, _enc: encMeta }),
+    metadata: encryptedMetadata,
+    metadata_raw: encryptedMetadata,
   };
 
   return JSON.stringify(encrypted);
@@ -134,13 +136,15 @@ export function decryptSecretPayload(
       enc = (metaRaw as { _enc?: unknown })._enc;
     }
 
+    const placeholderMetadata = JSON.stringify(
+      enc !== undefined ? { secret: true, _enc: enc } : { secret: true },
+    );
     const placeholder = {
       ...payload,
       title: '🔒 [secret]',
       content: '',
-      metadata: JSON.stringify(
-        enc !== undefined ? { secret: true, _enc: enc } : { secret: true },
-      ),
+      metadata: placeholderMetadata,
+      metadata_raw: placeholderMetadata,
     };
     return JSON.stringify(placeholder);
   }
@@ -153,13 +157,14 @@ export function decryptSecretPayload(
     encBlob = (metaRaw as { _enc?: string })._enc;
   }
 
-  const fullMeta = encBlob ? JSON.parse(secretDecrypt(encBlob)) : { secret: true };
+  const fullMetadata = encBlob ? secretDecrypt(encBlob) : JSON.stringify({ secret: true });
 
   const decrypted = {
     ...payload,
     title: secretDecrypt(String(payload.title ?? '')),
     content: secretDecrypt(String(payload.content ?? '')),
-    metadata: JSON.stringify(fullMeta),
+    metadata: fullMetadata,
+    metadata_raw: fullMetadata,
   };
 
   return JSON.stringify(decrypted);

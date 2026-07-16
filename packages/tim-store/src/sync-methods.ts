@@ -125,15 +125,21 @@ export function applyRemoteEntry(
     irrelevant: number;
     favorite?: number;
     tombstoned_at: string | null;
-    metadata: string;
+    metadata: string | Record<string, unknown>;
+    metadata_raw?: string;
   };
 
-  const coercedMetadata = JSON.stringify(parseAndCoerceMetadata(entry.metadata));
+  const legacyMetadata = typeof entry.metadata === 'string'
+    ? entry.metadata
+    : JSON.stringify(entry.metadata ?? {});
+  const replicatedMetadata = typeof entry.metadata_raw === 'string'
+    ? entry.metadata_raw
+    : JSON.stringify(parseAndCoerceMetadata(legacyMetadata));
 
   // Slot-collision guard: batch-summaries share a UNIQUE slot on (parent_id, batch_index).
   // A remote entry with a different id but same slot must LWW-resolve against the local occupant.
-  if (entry.metadata) {
-    const meta = typeof entry.metadata === 'string' ? JSON.parse(entry.metadata) : entry.metadata;
+  if (replicatedMetadata) {
+    const meta = JSON.parse(replicatedMetadata) as Record<string, unknown>;
     if (meta.kind === 'batch-summary' && meta.batch_index !== undefined && entry.parent_id) {
       const slotOccupant = db.prepare(
         `SELECT id, updated_at, created_at, tombstoned_at, confidence, lww_device
@@ -201,7 +207,7 @@ export function applyRemoteEntry(
     entry.irrelevant,
     entry.favorite ?? 0,
     entry.tombstoned_at,
-    coercedMetadata,
+    replicatedMetadata,
     lwwDevice,
   );
   return true;

@@ -1697,7 +1697,7 @@ class TimStore {
     insertStagingSync(entry, timestamp, confidence) {
         this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
       lww_timestamp, lww_device, lww_confidence)
-      VALUES (?, 'entry', 'upsert', ?, ?, ?, ?)`).run(entry.id, JSON.stringify(entry), timestamp, this.deviceId, confidence);
+      VALUES (?, 'entry', 'upsert', ?, ?, ?, ?)`).run(entry.id, JSON.stringify({ ...entry, metadata_raw: entry.metadata }), timestamp, this.deviceId, confidence);
     }
     /** Atomically insert entry + staging row (rollback on either failure). */
     writeEntryWithStaging(entry, timestamp, confidence) {

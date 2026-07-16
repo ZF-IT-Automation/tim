@@ -56,6 +56,17 @@ export function stagingToEnvelope(row: StagingRow | StagingRecord): TimEnvelope 
     device = row.lww_device;
   }
   const deleted = operation === 'delete';
+  let payload = row.payload;
+  if (entityType === 'entry' && !deleted) {
+    try {
+      const parsed = JSON.parse(payload) as Record<string, unknown>;
+      if (typeof parsed.metadata_raw !== 'string' && typeof parsed.metadata === 'string') {
+        payload = JSON.stringify({ ...parsed, metadata_raw: parsed.metadata });
+      }
+    } catch {
+      // Keep malformed legacy payloads unchanged; the receiver rejects them.
+    }
+  }
 
   return {
     v: 1,
@@ -63,7 +74,7 @@ export function stagingToEnvelope(row: StagingRow | StagingRecord): TimEnvelope 
     key,
     lww: new Date(lwwTs).toISOString(),
     deleted,
-    payload: row.payload,
+    payload,
     ...(device ? { device } : {}),
   };
 }
