@@ -1,0 +1,1 @@
+{"version":3,"file":"project-path.js","sourceRoot":"","sources":["../src/project-path.ts"],"names":[],"mappings":";;AAOA,4DAOC;AAdD,yCAA+D;AAE/D;;;;GAIG;AACH,SAAgB,wBAAwB,CACtC,MAAe,EACf,MAAc,OAAO,CAAC,GAAG,EAAE,EAC3B,aAAiC;IAEjC,IAAI,MAAM;QAAE,OAAO,SAAS,CAAC;IAC7B,OAAO,IAAA,sBAAU,EAAC,GAAG,EAAE,EAAE,MAAM,EAAE,IAAI,EAAE,GAAG,aAAa,EAAE,CAAC,EAAE,GAAG,IAAI,GAAG,CAAC;AACzE,CAAC"}

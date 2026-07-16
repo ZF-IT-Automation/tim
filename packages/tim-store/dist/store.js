@@ -1288,6 +1288,39 @@ class TimStore {
     runExclusive(fn) {
         return this.db.transaction(fn)();
     }
+    /**
+     * If metadata has idea.status=planned, promote in-place and retarget parent
+     * to the project's Tasks section (same end state as update-path promote).
+     */
+    applyWritePromote(entry, now) {
+        const metadata = JSON.parse(entry.metadata || '{}');
+        const promote = (0, idea_promote_js_1.applyIdeaPromote)(metadata, now);
+        if (promote.error) {
+            throw new Error(promote.error);
+        }
+        if (!promote.didPromote) {
+            return entry;
+        }
+        let parentId = entry.parent_id;
+        let depth = entry.depth;
+        const projectLabel = this.findProjectLabelForParent(entry.parent_id);
+        if (!projectLabel) {
+            throw new Error(`Cannot promote entry ${entry.id}: no project ancestor found`);
+        }
+        const tasksSectionId = this.resolveSectionIdByTitleSync(projectLabel, 'Tasks');
+        if (tasksSectionId !== entry.parent_id) {
+            const parentRow = this.db.prepare('SELECT depth FROM entries WHERE id = ?')
+                .get(tasksSectionId);
+            parentId = tasksSectionId;
+            depth = Math.min((parentRow?.depth ?? 0) + 1, 5);
+        }
+        return {
+            ...entry,
+            parent_id: parentId,
+            depth,
+            metadata: JSON.stringify(promote.metadata),
+        };
+    }
     /** Synchronous write for use inside `runExclusive` transactions. */
     writeSync(content, options = {}) {
         if (options.parentId && (0, secret_js_1.parentIsSecret)(this.db, options.parentId)) {
@@ -1296,11 +1329,12 @@ class TimStore {
                 metadata: { ...(options.metadata ?? {}), secret: true },
             };
         }
-        const { entry, now, timestamp } = this.buildEntryRow(content, options);
+        const built = this.buildEntryRow(content, options);
+        const entry = this.applyWritePromote(built.entry, built.now);
         this.insertEntrySync(entry);
-        this.insertStagingSync(entry, timestamp, options.confidence ?? 1.0);
+        this.insertStagingSync(entry, built.timestamp, options.confidence ?? 1.0);
         const result = rowToEntry(entry);
-        this.emit('memory:written', { entry: result, agentId: this.agentId, timestamp: now });
+        this.emit('memory:written', { entry: result, agentId: this.agentId, timestamp: built.now });
         return result;
     }
     getChildByKindSync(parentId, kind) {
@@ -1418,7 +1452,9 @@ class TimStore {
                     };
                 }
                 const merged = { ...existingMeta, ...patchMeta };
-                const promote = (0, idea_promote_js_1.applyIdeaPromote)(merged, now);
+                const promote = (0, idea_promote_js_1.applyIdeaPromote)(merged, now, {
+                    hadIdeaMarker: (0, metadata_coerce_js_1.isIdeaMarker)(existingMeta.idea),
+                });
                 if (promote.error) {
                     throw new Error(promote.error);
                 }
@@ -1580,15 +1616,16 @@ class TimStore {
                 metadata: { ...(options.metadata ?? {}), secret: true },
             };
         }
-        const { entry, now, timestamp } = this.buildEntryRow(content, options);
-        this.writeEntryWithStaging(entry, timestamp, options.confidence ?? 1.0);
+        const built = this.buildEntryRow(content, options);
+        const entry = this.applyWritePromote(built.entry, built.now);
+        this.writeEntryWithStaging(entry, built.timestamp, options.confidence ?? 1.0);
         if (options.edges) {
             for (const edge of options.edges) {
                 await this.link(entry.id, edge.targetId, edge.type, edge.weight, edge.metadata);
             }
         }
         const result = rowToEntry(entry);
-        this.emit('memory:written', { entry: result, agentId: this.agentId, timestamp: now });
+        this.emit('memory:written', { entry: result, agentId: this.agentId, timestamp: built.now });
         return result;
     }
     async update(id, patch, options) {

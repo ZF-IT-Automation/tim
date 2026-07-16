@@ -184,6 +184,74 @@ describe('appendTaskStatus', () => {
     expect(result.error).toBeUndefined();
     expect(result.task.status).toBe('done');
   });
+
+  it('rejects in_progress when current status is done', () => {
+    const task = {
+      status: 'done',
+      history: [
+        { status: 'todo', at: T0 },
+        { status: 'done', at: T1 },
+      ],
+    };
+    const result = appendTaskStatus(task, 'in_progress', { at: T2 });
+    expect(result.error).toMatch(/in_progress/i);
+    expect(result.task).toBe(task);
+  });
+
+  it('rejects in_progress when current status is cancelled', () => {
+    const task = {
+      status: 'cancelled',
+      history: [
+        { status: 'todo', at: T0 },
+        { status: 'cancelled', at: T1 },
+      ],
+    };
+    const result = appendTaskStatus(task, 'in_progress', { at: T2 });
+    expect(result.error).toMatch(/in_progress/i);
+  });
+
+  it('rejects duplicate cancelled', () => {
+    const task = {
+      status: 'cancelled',
+      history: [
+        { status: 'todo', at: T0 },
+        { status: 'cancelled', at: T1 },
+      ],
+    };
+    const result = appendTaskStatus(task, 'cancelled', { at: T2 });
+    expect(result.error).toMatch(/cancelled/i);
+    expect(result.task).toBe(task);
+  });
+
+  it('rejects pushed when vcs is not git or commits empty', () => {
+    const noGit = {
+      subtype: 'coding',
+      vcs: 'none',
+      commits: ['abc'],
+      history: [{ status: 'todo', at: T0 }],
+    };
+    expect(appendTaskStatus(noGit, 'pushed', { at: T1 }).error).toMatch(/pushed/i);
+
+    const noCommits = {
+      subtype: 'coding',
+      vcs: 'git',
+      commits: [],
+      history: [{ status: 'todo', at: T0 }],
+    };
+    expect(appendTaskStatus(noCommits, 'pushed', { at: T1 }).error).toMatch(/commit/i);
+  });
+
+  it('allows pushed when vcs is git and commits exist', () => {
+    const task = {
+      subtype: 'coding',
+      vcs: 'git',
+      commits: ['abc123'],
+      history: [{ status: 'in_progress', at: T0 }],
+    };
+    const result = appendTaskStatus(task, 'pushed', { at: T1 });
+    expect(result.error).toBeUndefined();
+    expect(result.task.status).toBe('pushed');
+  });
 });
 
 describe('deriveStartedAt / deriveFinishedAt', () => {

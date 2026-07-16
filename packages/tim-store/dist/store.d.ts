@@ -240,6 +240,11 @@ export declare class TimStore implements MemoryInterface {
     getDb(): Database.Database;
     /** Run `fn` inside a single exclusive DB transaction (serializes concurrent callers). */
     runExclusive<T>(fn: () => T): T;
+    /**
+     * If metadata has idea.status=planned, promote in-place and retarget parent
+     * to the project's Tasks section (same end state as update-path promote).
+     */
+    private applyWritePromote;
     /** Synchronous write for use inside `runExclusive` transactions. */
     writeSync(content: string, options?: WriteOptions): Entry;
     getChildByKindSync(parentId: string, kind: string): Entry[];

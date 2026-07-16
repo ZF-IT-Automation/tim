@@ -2,7 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.applyIdeaPromote = applyIdeaPromote;
 const metadata_coerce_js_1 = require("./metadata-coerce.js");
-function applyIdeaPromote(metadata, nowIso = new Date().toISOString()) {
+function applyIdeaPromote(metadata, nowIso = new Date().toISOString(), opts = {}) {
     const idea = metadata.idea;
     if (idea !== undefined && !(0, metadata_coerce_js_1.isIdeaMarker)(idea)) {
         if (idea === 'planned' || idea === true) {
@@ -16,6 +16,13 @@ function applyIdeaPromote(metadata, nowIso = new Date().toISOString()) {
     const ideaObj = idea;
     if (ideaObj.status !== 'planned') {
         return { metadata, didPromote: false };
+    }
+    if (opts.hadIdeaMarker === false) {
+        return {
+            metadata,
+            didPromote: false,
+            error: 'Cannot promote: entry is not an idea (missing metadata.idea before patch)',
+        };
     }
     if ((0, metadata_coerce_js_1.isTaskMarker)(metadata.task)) {
         return { metadata, didPromote: false, error: 'Cannot promote: entry is already a task' };

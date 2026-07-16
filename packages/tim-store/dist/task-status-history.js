@@ -84,6 +84,38 @@ function codingDoneGateError(task, history) {
     }
     return undefined;
 }
+function currentTaskStatus(task, history) {
+    if (history.length > 0)
+        return history[history.length - 1].status;
+    return typeof task.status === 'string' ? task.status : undefined;
+}
+/** Transition rules beyond the coding done-gate (spec v1). */
+function transitionError(task, history, status) {
+    const current = currentTaskStatus(task, history);
+    if (status === 'in_progress' && (current === 'done' || current === 'cancelled')) {
+        return `Cannot append "in_progress" from "${current}".`;
+    }
+    if (status === 'cancelled' && current === 'cancelled') {
+        return 'Cannot append "cancelled": already cancelled.';
+    }
+    if (status === 'pushed') {
+        if (task.vcs !== 'git') {
+            return 'Cannot append "pushed": vcs is not "git".';
+        }
+        const commits = task.commits;
+        const commitCount = Array.isArray(commits) ? commits.length : 0;
+        if (commitCount < 1) {
+            return 'Cannot append "pushed": no commits recorded.';
+        }
+    }
+    if (status === 'done') {
+        const isCoding = task.subtype === 'coding';
+        if (isCoding) {
+            return codingDoneGateError(task, history);
+        }
+    }
+    return undefined;
+}
 /**
  * Appends a status event to the task's history, validating transitions.
  * Returns the updated task (with `history` and cached `status`), or an
@@ -93,14 +125,9 @@ function appendTaskStatus(task, status, opts = {}) {
     const t = getTaskObject(task);
     const history = getTaskHistory(t);
     const at = opts.at ?? new Date().toISOString();
-    if (status === 'done') {
-        const isCoding = t.subtype === 'coding';
-        if (isCoding) {
-            const gateError = codingDoneGateError(t, history);
-            if (gateError) {
-                return { task, error: gateError };
-            }
-        }
+    const gateError = transitionError(t, history, status);
+    if (gateError) {
+        return { task, error: gateError };
     }
     const event = { status, at };
     if (opts.by !== undefined)

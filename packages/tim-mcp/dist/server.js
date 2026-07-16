@@ -52,6 +52,7 @@ const project_output_js_1 = require("./project-output.js");
 const tim_core_1 = require("tim-core");
 const trust_js_1 = require("./trust.js");
 const provenance_js_1 = require("./provenance.js");
+const project_path_js_1 = require("./project-path.js");
 const task_status_js_1 = require("./task-status.js");
 const tim_hooks_1 = require("tim-hooks");
 const tim_migrate_1 = require("tim-migrate");
@@ -1825,7 +1826,10 @@ async function createMcpServer(options = {}) {
                             }
                         }
                     }
-                    const entry = await s.write(opts.content, writeOpts);
+                    const entry = await s.write(opts.content, {
+                        ...writeOpts,
+                        projectPath: (0, project_path_js_1.resolveCallerProjectPath)(isHttp),
+                    });
                     const usageSid = usageSessionId();
                     if (usageSid) {
                         const readIds = s.getSessionReadIds(usageSid);
@@ -2020,18 +2024,19 @@ async function createMcpServer(options = {}) {
                     const resolved = await s.read(id, { showIrrelevant: true, includeChildren: false });
                     if (!resolved)
                         return errorResult(`Entry not found: ${id}`);
+                    const projectPath = (0, project_path_js_1.resolveCallerProjectPath)(isHttp);
                     if (patch.tags !== undefined) {
                         const tagWarnings = (0, tim_store_1.validateTagsDeprecated)(patch.tags);
                         const { clean: cleanTags } = (0, tim_core_1.stripDeprecatedTags)(patch.tags);
                         patch.tags = cleanTags;
-                        const entry = await s.update(resolved.id, patch);
+                        const entry = await s.update(resolved.id, patch, { projectPath });
                         bestEffortTelemetry('markReferenced', () => s.markReferenced([entry.id], usageSessionId()));
                         const payload = tagWarnings.length > 0 ? { entry, warnings: tagWarnings } : entry;
                         return {
                             content: [{ type: 'text', text: formatToolResponse(payload) }],
                         };
                     }
-                    const entry = await s.update(resolved.id, patch);
+                    const entry = await s.update(resolved.id, patch, { projectPath });
                     bestEffortTelemetry('markReferenced', () => s.markReferenced([entry.id], usageSessionId()));
                     return {
                         content: [{ type: 'text', text: formatToolResponse(entry) }],

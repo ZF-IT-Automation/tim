@@ -6,9 +6,19 @@ export interface PromoteResult {
   error?: string;
 }
 
+export interface PromoteOptions {
+  /**
+   * When false, refuse to promote even if merged metadata contains
+   * `idea.status: planned` — the entry was not an idea before the patch.
+   * Omit on write (creating with planned is allowed).
+   */
+  hadIdeaMarker?: boolean;
+}
+
 export function applyIdeaPromote(
   metadata: Record<string, unknown>,
   nowIso: string = new Date().toISOString(),
+  opts: PromoteOptions = {},
 ): PromoteResult {
   const idea = metadata.idea;
 
@@ -26,6 +36,14 @@ export function applyIdeaPromote(
   const ideaObj = idea as Record<string, unknown>;
   if (ideaObj.status !== 'planned') {
     return { metadata, didPromote: false };
+  }
+
+  if (opts.hadIdeaMarker === false) {
+    return {
+      metadata,
+      didPromote: false,
+      error: 'Cannot promote: entry is not an idea (missing metadata.idea before patch)',
+    };
   }
 
   if (isTaskMarker(metadata.task)) {

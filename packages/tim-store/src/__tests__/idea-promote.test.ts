@@ -67,4 +67,22 @@ describe('applyIdeaPromote', () => {
     expect(task.priority).toBe('high');
     expect(task.history[0].status).toBe('todo');
   });
+
+  it('errors when hadIdeaMarker is false even if merged metadata has idea.planned', () => {
+    const metadata = { idea: { status: 'planned' }, type: 'note' };
+    const result = applyIdeaPromote(metadata, nowIso, { hadIdeaMarker: false });
+
+    expect(result.didPromote).toBe(false);
+    expect(result.error).toMatch(/not an idea|missing.*idea/i);
+    expect(result.metadata).toBe(metadata);
+  });
+
+  it('promotes when hadIdeaMarker is true', () => {
+    const result = applyIdeaPromote(
+      { idea: { status: 'planned' }, type: 'idea' },
+      nowIso,
+      { hadIdeaMarker: true },
+    );
+    expect(result.didPromote).toBe(true);
+  });
 });
