@@ -227,6 +227,7 @@ export function replaceCodexTimMcpBlock(existing: string, block: string): string
   const scanState: TomlScanState = { multiline: null };
   let atTopLevel = true;
   let inTimTable = false;
+  let currentTable: string[] | null = null;
   let droppingTimMultiline = false;
 
   for (const line of lines) {
@@ -243,6 +244,7 @@ export function replaceCodexTimMcpBlock(existing: string, block: string): string
     const header = tomlHeaderPath(scanned.structural);
     if (header) {
       atTopLevel = false;
+      currentTable = header;
       inTimTable = isTimTable(header);
       if (!inTimTable) out.push(line);
       continue;
@@ -251,8 +253,17 @@ export function replaceCodexTimMcpBlock(existing: string, block: string): string
       if (line.trim() === '' || line.trimStart().startsWith('#')) out.push(line);
       continue;
     }
+    const assignment = tomlAssignmentPath(scanned.structural);
+    if (
+      currentTable?.length === 1 &&
+      currentTable[0] === 'mcp_servers' &&
+      assignment?.[0] === 'tim'
+    ) {
+      throw new Error(
+        'Unsupported relative tim assignment under [mcp_servers]; cannot safely merge TIM MCP configuration.',
+      );
+    }
     if (atTopLevel) {
-      const assignment = tomlAssignmentPath(scanned.structural);
       if (assignment?.length === 1 && assignment[0] === 'mcp_servers') {
         throw new Error(
           'Unsupported top-level mcp_servers assignment; cannot safely merge TIM MCP configuration.',

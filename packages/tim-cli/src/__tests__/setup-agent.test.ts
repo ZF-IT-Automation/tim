@@ -203,6 +203,34 @@ describe('setup-agent planner', () => {
     }
   });
 
+  it.each(['tim', '"tim"'])(
+    'rejects relative %s assignments under [mcp_servers] atomically',
+    (timKey) => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tim-codex-relative-'));
+      const configPath = path.join(tmp, 'config.toml');
+      const original = [
+        '# preserve server table',
+        '[mcp_servers]',
+        `${timKey} = { command = "old" }`,
+        'other = { command = "keep" }',
+        '',
+      ].join('\n');
+      fs.writeFileSync(configPath, original);
+
+      try {
+        expect(() => installCodexMcpConfig(
+          '/tmp/tim.db',
+          configPath,
+          { override: SERVER_PATH },
+        )).toThrow(/unsupported relative tim assignment under \[mcp_servers\]/i);
+        expect(fs.readFileSync(configPath, 'utf8')).toBe(original);
+        expect(fs.readdirSync(tmp)).toEqual(['config.toml']);
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    },
+  );
+
   it('installs Codex with the shared executable entry and preserves unrelated TOML', () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tim codex config '));
     const configPath = path.join(tmp, 'config.toml');
