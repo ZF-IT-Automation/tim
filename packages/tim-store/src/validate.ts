@@ -19,6 +19,24 @@ export function validateTaskMetadata(metadata: Record<string, unknown>): string[
       if (taskObj.status === 'done' && !taskObj.completion_evidence) {
         warnings.push('completion_evidence recommended for done tasks');
       }
+      if (taskObj.subtype === 'coding') {
+        if (taskObj.status === 'done' && taskObj.reviewed !== true) {
+          warnings.push('reviewed=true recommended before marking coding tasks done');
+        }
+        if (
+          taskObj.status === 'done' &&
+          (!Array.isArray(taskObj.commits) || taskObj.commits.length === 0)
+        ) {
+          warnings.push('commits recommended for done coding tasks');
+        }
+      } else {
+        if (taskObj.commits !== undefined || taskObj.reviewed !== undefined) {
+          warnings.push('commits/reviewed are for subtype=coding');
+        }
+        if (taskObj.status === 'changes_pending') {
+          warnings.push('changes_pending is intended for subtype=coding');
+        }
+      }
     }
   }
 
@@ -42,6 +60,19 @@ export function validateRuleMetadata(metadata: Record<string, unknown>): string[
       if (typeof action !== 'string' || !action.trim()) {
         warnings.push('action recommended');
       }
+    }
+  }
+
+  return warnings;
+}
+
+export function validateIdeaMetadata(metadata: Record<string, unknown>): string[] {
+  const warnings: string[] = [];
+
+  if (metadata.type === 'idea') {
+    const idea = metadata.idea;
+    if (!idea || typeof idea !== 'object' || Array.isArray(idea)) {
+      warnings.push('idea metadata missing');
     }
   }
 

@@ -93,6 +93,7 @@ export {
   validateTaskMetadata,
   validateRuleMetadata,
   validateBugMetadata,
+  validateIdeaMetadata,
   validateTagsDeprecated,
 } from './validate.js';
 export { ErrorLogger, type ErrorLogEntry, type ErrorStats } from './error-log.js';
