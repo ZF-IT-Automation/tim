@@ -12,16 +12,26 @@
   "task_annotation": {
     "description": "When a node has task: true in metadata, it behaves as a task with additional rendering and sorting rules.",
     "fields": {
-      "status":  { "type": "enum",   "values": ["todo", "in_progress", "done", "cancelled"], "default": "todo" },
+      "status":  { "type": "enum",   "values": ["todo", "in_progress", "done", "cancelled", "changes_pending"], "default": "todo" },
       "priority": { "type": "enum",   "values": ["high", "medium", "low"], "default": "medium" },
       "due":      { "type": "date",   "optional": true, "description": "ISO 8601 date" },
-      "done_at":  { "type": "datetime","automatic": true, "description": "Set automatically when status → done" }
+      "done_at":  { "type": "datetime","automatic": true, "description": "Set automatically when status → done" },
+      "subtype":  { "type": "enum",   "values": ["coding"], "optional": true },
+      "commits":  { "type": "array",  "items": "string", "optional": true },
+      "reviewed": { "type": "boolean", "optional": true, "default": false }
     },
     "render_rules": {
-      "todo":        "Prominent in Next Steps, sorted by priority (high first), overdue due dates in red",
-      "in_progress": "Highlighted, sorted above todo with same priority",
-      "done":        "Collapsed under Previous Steps, sorted by done_at descending",
-      "cancelled":   "Collapsed under Previous Steps, greyed out, below done items"
+      "todo":             "Prominent in Next Steps, sorted by priority (high first), overdue due dates in red",
+      "in_progress":      "Highlighted, sorted above todo with same priority",
+      "changes_pending":  "Highlighted in Next Steps (post-review rework), same sort bucket as in_progress",
+      "done":             "Collapsed under Previous Steps, sorted by done_at descending",
+      "cancelled":        "Collapsed under Previous Steps, greyed out, below done items"
+    }
+  },
+  "idea_annotation": {
+    "description": "metadata.idea marks an Idea. status=planned promotes in-place to a Task under Tasks.",
+    "fields": {
+      "status": { "type": "enum", "values": ["new", "planned", "parked", "rejected"], "default": "new" }
     }
   },
   "sections": [
