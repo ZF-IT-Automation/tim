@@ -110,3 +110,11 @@ export {
   type RecoverProjectBindingArgs,
   type RecoverProjectBindingResult,
 } from './project-creation.js';
+
+export {
+  repairPhantomProjectBinding,
+  formatUnboundProjectLabel as formatUnboundProjectLabelFromRecovery,
+  stripUnboundProjectSuffix,
+  isUnboundProjectLabel,
+  markerWithRepairedProject,
+} from './phantom-recovery.js';

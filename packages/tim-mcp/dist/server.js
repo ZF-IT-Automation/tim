@@ -78,6 +78,11 @@ function formatToolResponse(payload) {
     }
     return compact;
 }
+function isCreateProjectLabelConflict(err) {
+    if (!(err instanceof Error))
+        return false;
+    return /^Project label P\d{4} (?:already exists|already resolves to project \S+|has an ambiguous project-label conflict)$/i.test(err.message);
+}
 // ─── CLI ────────────────────────────────────────────────
 function parseCliArgs() {
     const argv = process.argv.slice(2);
@@ -2630,11 +2635,31 @@ async function createMcpServer(options = {}) {
                     };
                 }
                 case 'tim_create_project': {
-                    const input = TimCreateProjectSchema.parse(args);
-                    const entry = await (0, tim_hooks_1.createProjectCoordinated)(s, input);
-                    return {
-                        content: [{ type: 'text', text: formatToolResponse(entry) }],
-                    };
+                    let input = TimCreateProjectSchema.parse(args);
+                    if (!isHttp && !input.path && input.memoryOnly == null) {
+                        const cwd = process.cwd();
+                        const resolved = path.resolve(cwd);
+                        if (path.isAbsolute(resolved) && resolved !== path.resolve(os.homedir())) {
+                            input = { ...input, path: resolved };
+                        }
+                    }
+                    let label = input.label;
+                    for (let attempt = 0; attempt < 10; attempt++) {
+                        try {
+                            const entry = await (0, tim_hooks_1.createProjectCoordinated)(s, { ...input, label });
+                            return {
+                                content: [{ type: 'text', text: formatToolResponse(entry) }],
+                            };
+                        }
+                        catch (err) {
+                            if (isCreateProjectLabelConflict(err) && attempt < 9) {
+                                label = s.allocateNextProjectLabel();
+                                continue;
+                            }
+                            throw err;
+                        }
+                    }
+                    throw new Error(`Could not allocate project label after 10 collisions starting at ${input.label}`);
                 }
                 case 'tim_load_project': {
                     const { label, depth, budget, sections, sessionId: sessionIdArg, bind } = TimLoadProjectSchema.parse(args);

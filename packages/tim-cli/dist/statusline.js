@@ -40,6 +40,7 @@ exports.summaryIn = summaryIn;
 exports.formatTimStatusLine = formatTimStatusLine;
 exports.formatNoProjectStatusLine = formatNoProjectStatusLine;
 exports.formatHermesStatus = formatHermesStatus;
+exports.formatUnboundProjectLabel = formatUnboundProjectLabel;
 exports.statuslineFromCwd = statuslineFromCwd;
 exports.hermesStatusFromCwd = hermesStatusFromCwd;
 exports.readStatuslineInputSync = readStatuslineInputSync;
@@ -135,12 +136,31 @@ function formatHermesStatus(marker, projectName) {
         counter: `${inBatch}/${batchSize} · Σ${k}`,
     };
 }
+function formatUnboundProjectLabel(label) {
+    return label.endsWith('?') ? label : `${label}?`;
+}
+function stripUnboundProjectSuffix(label) {
+    return label.endsWith('?') ? label.slice(0, -1) : label;
+}
+function isUnboundProjectLabel(label) {
+    return label.endsWith('?');
+}
+async function projectNameForStatusline(store, marker) {
+    if (isUnboundProjectLabel(marker.project)) {
+        return formatUnboundProjectLabel(stripUnboundProjectSuffix(marker.project));
+    }
+    return (0, tim_store_1.resolveProjectDisplayName)(store, marker.project);
+}
 async function resolveStatuslineMarker(cwd, _sessionIdArg, options, store) {
     const located = (0, tim_hooks_1.findMarker)(cwd, { walkUp: true, ...options });
     if (!located)
         return null;
-    // Project label comes from .tim-project only; DB may refresh exchange counters.
-    return reconcileMarkerCounters(store, located.marker);
+    const validated = await (0, tim_hooks_1.validateMarkerAgainstStore)(located.marker, store);
+    const marker = validated ?? {
+        ...located.marker,
+        project: formatUnboundProjectLabel(located.marker.project),
+    };
+    return reconcileMarkerCounters(store, marker);
 }
 async function statuslineFromCwd(cwd, options, sessionIdArg) {
     const store = new tim_store_1.TimStore(dbPath());
@@ -148,7 +168,7 @@ async function statuslineFromCwd(cwd, options, sessionIdArg) {
         const marker = await resolveStatuslineMarker(cwd, sessionIdArg, options, store);
         if (!marker)
             return formatNoProjectStatusLine();
-        const name = await (0, tim_store_1.resolveProjectDisplayName)(store, marker.project);
+        const name = await projectNameForStatusline(store, marker);
         return formatTimStatusLine(marker, name);
     }
     finally {
@@ -161,7 +181,7 @@ async function hermesStatusFromCwd(cwd, options, sessionIdArg) {
         const marker = await resolveStatuslineMarker(cwd, sessionIdArg, options, store);
         if (!marker)
             return formatHermesStatus(null);
-        const name = await (0, tim_store_1.resolveProjectDisplayName)(store, marker.project);
+        const name = await projectNameForStatusline(store, marker);
         return formatHermesStatus(marker, name);
     }
     finally {
@@ -189,9 +209,7 @@ async function runStatusline(opts = {}) {
     const store = new tim_store_1.TimStore(dbPath());
     try {
         const marker = await resolveStatuslineMarker(cwd, opts.sessionId?.trim(), findOpts, store);
-        const projectName = marker
-            ? await (0, tim_store_1.resolveProjectDisplayName)(store, marker.project)
-            : undefined;
+        const projectName = marker ? await projectNameForStatusline(store, marker) : undefined;
         const format = opts.format ?? 'text';
         if (format === 'hermes') {
             process.stdout.write(`${JSON.stringify(formatHermesStatus(marker, projectName))}\n`);

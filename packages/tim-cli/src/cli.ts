@@ -14,6 +14,9 @@ import {
   recoverProjectBinding,
   rebalanceBatch,
   afterExchangeLogged,
+  validateMarkerAgainstStore,
+  repairPhantomProjectBinding,
+  writeMarker,
 } from 'tim-hooks';
 import { installMcpForHosts } from './install.js';
 import { cmdUserInit, cmdUserProfile, cmdUpdateSkills } from './user.js';
@@ -239,9 +242,21 @@ async function cmdResolveProject(args: string[]) {
   const config = loadConfig();
   const store = new TimStore(getDbPath(config));
   try {
+    const validated = await validateMarkerAgainstStore(marker, store);
+    let projectLabel = validated?.project ?? null;
+
+    if (!projectLabel && format === 'directive') {
+      const recovered = await repairPhantomProjectBinding(store, dir);
+      if (recovered) {
+        writeMarker(dir, { ...marker, project: recovered });
+        projectLabel = recovered;
+      }
+    }
+
     if (format === 'directive') {
-      const binding = await resolveProjectBindingLabel(store, marker.project);
-      process.stdout.write(buildLoadDirective(marker.project, dir, binding));
+      if (!projectLabel) return;
+      const binding = await resolveProjectBindingLabel(store, projectLabel);
+      process.stdout.write(buildLoadDirective(projectLabel, dir, binding));
     } else {
       process.stdout.write(marker.project);
     }

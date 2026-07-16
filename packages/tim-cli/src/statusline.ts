@@ -4,7 +4,11 @@ import * as path from 'path';
 import { loadConfig } from 'tim-core';
 import { TimStore, deriveCounters, resolveProjectDisplayName } from 'tim-store';
 import type { FindMarkerOptions, ProjectMarker, ProjectMarkerInput } from 'tim-hooks';
-import { findMarker, findMarkerOptionsFromEnv } from 'tim-hooks';
+import {
+  findMarker,
+  findMarkerOptionsFromEnv,
+  validateMarkerAgainstStore,
+} from 'tim-hooks';
 
 const RECONCILE_TTL_MS = 5_000;
 const reconcileCache = new Map<
@@ -120,6 +124,28 @@ export function formatHermesStatus(
   };
 }
 
+export function formatUnboundProjectLabel(label: string): string {
+  return label.endsWith('?') ? label : `${label}?`;
+}
+
+function stripUnboundProjectSuffix(label: string): string {
+  return label.endsWith('?') ? label.slice(0, -1) : label;
+}
+
+function isUnboundProjectLabel(label: string): boolean {
+  return label.endsWith('?');
+}
+
+async function projectNameForStatusline(
+  store: TimStore,
+  marker: ProjectMarker,
+): Promise<string> {
+  if (isUnboundProjectLabel(marker.project)) {
+    return formatUnboundProjectLabel(stripUnboundProjectSuffix(marker.project));
+  }
+  return resolveProjectDisplayName(store, marker.project);
+}
+
 async function resolveStatuslineMarker(
   cwd: string,
   _sessionIdArg: string | undefined,
@@ -128,8 +154,13 @@ async function resolveStatuslineMarker(
 ): Promise<ProjectMarker | null> {
   const located = findMarker(cwd, { walkUp: true, ...options });
   if (!located) return null;
-  // Project label comes from .tim-project only; DB may refresh exchange counters.
-  return reconcileMarkerCounters(store, located.marker);
+
+  const validated = await validateMarkerAgainstStore(located.marker, store);
+  const marker = validated ?? {
+    ...located.marker,
+    project: formatUnboundProjectLabel(located.marker.project),
+  };
+  return reconcileMarkerCounters(store, marker);
 }
 
 export async function statuslineFromCwd(
@@ -141,7 +172,7 @@ export async function statuslineFromCwd(
   try {
     const marker = await resolveStatuslineMarker(cwd, sessionIdArg, options, store);
     if (!marker) return formatNoProjectStatusLine();
-    const name = await resolveProjectDisplayName(store, marker.project);
+    const name = await projectNameForStatusline(store, marker);
     return formatTimStatusLine(marker, name);
   } finally {
     store.close();
@@ -157,7 +188,7 @@ export async function hermesStatusFromCwd(
   try {
     const marker = await resolveStatuslineMarker(cwd, sessionIdArg, options, store);
     if (!marker) return formatHermesStatus(null);
-    const name = await resolveProjectDisplayName(store, marker.project);
+    const name = await projectNameForStatusline(store, marker);
     return formatHermesStatus(marker, name);
   } finally {
     store.close();
@@ -189,9 +220,7 @@ export async function runStatusline(opts: StatuslineCliOptions = {}): Promise<vo
   const store = new TimStore(dbPath());
   try {
     const marker = await resolveStatuslineMarker(cwd, opts.sessionId?.trim(), findOpts, store);
-    const projectName = marker
-      ? await resolveProjectDisplayName(store, marker.project)
-      : undefined;
+    const projectName = marker ? await projectNameForStatusline(store, marker) : undefined;
 
     const format = opts.format ?? 'text';
     if (format === 'hermes') {

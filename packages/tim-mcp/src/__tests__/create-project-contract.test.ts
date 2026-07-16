@@ -170,14 +170,36 @@ describe('tim_create_project explicit mode contract', () => {
     expect(tool?.inputSchema.properties?.aliases?.description).toBeUndefined();
   });
 
-  it('rejects a label-only call with actionable mode guidance and creates no project', async () => {
-    const response = await client.createProject({ label: 'P1200' });
-    const result = resultOf(response);
+  it('binds a label-only stdio call to the server cwd', async () => {
+    const payload = payloadOf(await client.createProject({
+      label: 'P1200',
+      content: 'Cwd-bound project',
+      metadata: { name: 'CwdBound' },
+    }));
 
-    expect(result.isError).toBe(true);
-    expect(result.content[0].text).toMatch(/absolute project path/i);
-    expect(result.content[0].text).toMatch(/memoryOnly:\s*true/i);
-    await expectNoProject('P1200');
+    expect(payload).toMatchObject({
+      mode: 'bound',
+      projectPath: fs.realpathSync(serverCwd),
+      metadata: { label: 'P1200', name: 'CwdBound' },
+    });
+    expect(readMarker(serverCwd)?.project).toBe('P1200');
+  });
+
+  it('retries with a fresh label when the requested label already exists', async () => {
+    const preload = path.join(root, 'tim.db');
+    const seedStore = new TimStore(preload);
+    await seedStore.createProject('P1205', { content: 'Taken' });
+    seedStore.close();
+
+    client.close();
+    client = new StdioMcpClient(preload, serverCwd);
+    const payload = payloadOf(await client.createProject({
+      label: 'P1205',
+      content: 'Retried project',
+    }));
+
+    expect(payload.metadata).toMatchObject({ label: 'P1206' });
+    expect(readMarker(serverCwd)?.project).toBe('P1206');
   });
 
   it('creates an intentional memory-only entry without a server-cwd marker', async () => {

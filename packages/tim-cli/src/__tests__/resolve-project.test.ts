@@ -96,6 +96,32 @@ describe('tim resolve-project / bind-project', () => {
     expect(fs.existsSync(path.join(dir, '.tim-project'))).toBe(false);
   });
 
+  it('resolve-project --format directive emits nothing for phantom marker', () => {
+    fs.writeFileSync(path.join(dir, '.tim-project'),
+      JSON.stringify({ project: 'P0888', session: 's', exchanges: 0, batch_size: 5, batches_summarized: 0 }));
+    const out = run(['resolve-project', '--cwd', dir, '--format', 'directive'], {
+      TIM_MARKER_MAX_ROOT: dir,
+      TIM_DB_PATH: dbPath,
+    });
+    expect(out.trim()).toBe('');
+  });
+
+  it('resolve-project --format directive recovers phantom marker via alias', async () => {
+    const alias = path.basename(dir).toLowerCase();
+    await store.createProject('P0200', { content: 'Recovered', aliases: [alias] });
+    fs.writeFileSync(path.join(dir, '.tim-project'),
+      JSON.stringify({ version: 2, project: 'P0888', session: 's', exchanges: 3, batch_size: 5, batches_summarized: 1 }));
+
+    const out = run(['resolve-project', '--cwd', dir, '--format', 'directive'], {
+      TIM_MARKER_MAX_ROOT: dir,
+      TIM_DB_PATH: dbPath,
+    });
+    expect(out).toContain('tim_load_project(label="P0200")');
+    const marker = JSON.parse(fs.readFileSync(path.join(dir, '.tim-project'), 'utf8'));
+    expect(marker.project).toBe('P0200');
+    expect(marker.exchanges).toBe(3);
+  });
+
   it('bind-project preserves an existing winner instead of overwriting it', async () => {
     await store.createProject('P0102');
     fs.writeFileSync(path.join(dir, '.tim-project'),

@@ -36,6 +36,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.SessionManager = void 0;
 exports.ensureProjectForPath = ensureProjectForPath;
 const tim_core_1 = require("tim-core");
+const fs = __importStar(require("fs"));
 const os = __importStar(require("os"));
 const path = __importStar(require("path"));
 const session_tree_js_1 = require("./session-tree.js");
@@ -866,6 +867,39 @@ async function ensureProjectForPath(store, cwd) {
         return { label, entry: byPath, created: false };
     }
     const alias = dirName.toLowerCase();
+    const byAlias = await store.resolveProjectLabel(alias);
+    if (byAlias.status === 'found') {
+        const entry = await store.read(byAlias.label);
+        if (entry && entry.metadata.kind === 'project' && !entry.irrelevant) {
+            const existingPath = typeof entry.metadata.path === 'string' ? entry.metadata.path : '';
+            if (!existingPath) {
+                await store.update(entry.id, {
+                    metadata: { ...entry.metadata, path: resolvedPath },
+                });
+            }
+            return { label: byAlias.label, entry, created: false };
+        }
+    }
+    const timJsonPath = path.join(resolvedPath, 'tim.json');
+    if (fs.existsSync(timJsonPath)) {
+        try {
+            const raw = JSON.parse(fs.readFileSync(timJsonPath, 'utf8'));
+            const label = raw.project;
+            if (typeof label === 'string') {
+                const resolved = await store.resolveProjectLabel(label);
+                if (resolved.status === 'found') {
+                    const entry = await store.read(resolved.label);
+                    if (entry && entry.metadata.kind === 'project' && !entry.irrelevant) {
+                        return { label: resolved.label, entry, created: false };
+                    }
+                }
+            }
+        }
+        catch {
+            // ignore malformed tim.json
+        }
+    }
+    const aliasForCreate = dirName.toLowerCase();
     const maxAttempts = 3;
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
         const label = await nextAutoProjectLabel(store);
@@ -873,7 +907,7 @@ async function ensureProjectForPath(store, cwd) {
             const entry = await store.createProject(label, {
                 content: `${dirName} | Active`,
                 metadata: { name: dirName, path: resolvedPath, auto_created: true },
-                aliases: [alias],
+                aliases: [aliasForCreate],
             });
             for (const section of AUTO_PROJECT_SECTIONS) {
                 await store.write(section.content, {

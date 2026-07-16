@@ -141,25 +141,6 @@ function isDupProjectError(err) {
     return /^Project label already exists: P\d{4}(?: \([^)]+\))?$/i.test(err.message) ||
         /^Project label P\d{4} (?:already exists|already resolves to project \S+|has an ambiguous project-label conflict)$/i.test(err.message);
 }
-function incrementLabel(label) {
-    const num = parseInt(label.slice(1), 10);
-    return `P${String(num + 1).padStart(4, '0')}`;
-}
-async function getNextProjectLabel(store) {
-    const projects = await store.listProjects();
-    let maxNum = 0;
-    for (const p of projects) {
-        const match = /^P(\d{4})$/.exec(p.label);
-        if (!match)
-            continue;
-        const num = parseInt(match[1], 10);
-        if (p.label === 'P0000' || p.label === 'P9999')
-            continue;
-        if (num > maxNum)
-            maxNum = num;
-    }
-    return `P${String(maxNum + 1).padStart(4, '0')}`;
-}
 function countDirEntries(dir) {
     try {
         return fs.readdirSync(dir).filter(name => name !== '.git').length;
@@ -198,7 +179,7 @@ async function createProjectWithRetry(store, startLabel, name, targetPath, deps)
         }
         catch (err) {
             if (isDupProjectError(err)) {
-                label = incrementLabel(label);
+                label = store.allocateNextProjectLabel();
                 continue;
             }
             throw err;
@@ -262,7 +243,7 @@ Create a new TIM project, register it in the database, write .tim-project, and i
     const store = new tim_store_1.TimStore(dbPath);
     let result;
     try {
-        const startLabel = await getNextProjectLabel(store);
+        const startLabel = store.allocateNextProjectLabel();
         result = await createProjectWithRetry(store, startLabel, name.trim(), requestedPath, deps);
     }
     catch (err) {

@@ -1,6 +1,7 @@
 import type { Entry } from 'tim-core';
 import { loadConfig } from 'tim-core';
 import type { TimStore } from './store.js';
+import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import {
@@ -1093,6 +1094,40 @@ export async function ensureProjectForPath(
   }
 
   const alias = dirName.toLowerCase();
+  const byAlias = await store.resolveProjectLabel(alias);
+  if (byAlias.status === 'found') {
+    const entry = await store.read(byAlias.label);
+    if (entry && entry.metadata.kind === 'project' && !entry.irrelevant) {
+      const existingPath = typeof entry.metadata.path === 'string' ? entry.metadata.path : '';
+      if (!existingPath) {
+        await store.update(entry.id, {
+          metadata: { ...entry.metadata, path: resolvedPath },
+        });
+      }
+      return { label: byAlias.label, entry, created: false };
+    }
+  }
+
+  const timJsonPath = path.join(resolvedPath, 'tim.json');
+  if (fs.existsSync(timJsonPath)) {
+    try {
+      const raw = JSON.parse(fs.readFileSync(timJsonPath, 'utf8')) as Record<string, unknown>;
+      const label = raw.project;
+      if (typeof label === 'string') {
+        const resolved = await store.resolveProjectLabel(label);
+        if (resolved.status === 'found') {
+          const entry = await store.read(resolved.label);
+          if (entry && entry.metadata.kind === 'project' && !entry.irrelevant) {
+            return { label: resolved.label, entry, created: false };
+          }
+        }
+      }
+    } catch {
+      // ignore malformed tim.json
+    }
+  }
+
+  const aliasForCreate = dirName.toLowerCase();
   const maxAttempts = 3;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const label = await nextAutoProjectLabel(store);
@@ -1100,7 +1135,7 @@ export async function ensureProjectForPath(
       const entry = await store.createProject(label, {
         content: `${dirName} | Active`,
         metadata: { name: dirName, path: resolvedPath, auto_created: true },
-        aliases: [alias],
+        aliases: [aliasForCreate],
       });
 
       for (const section of AUTO_PROJECT_SECTIONS) {

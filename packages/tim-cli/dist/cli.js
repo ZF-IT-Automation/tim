@@ -239,9 +239,20 @@ async function cmdResolveProject(args) {
     const config = (0, tim_core_1.loadConfig)();
     const store = new tim_store_1.TimStore(getDbPath(config));
     try {
+        const validated = await (0, tim_hooks_1.validateMarkerAgainstStore)(marker, store);
+        let projectLabel = validated?.project ?? null;
+        if (!projectLabel && format === 'directive') {
+            const recovered = await (0, tim_hooks_1.repairPhantomProjectBinding)(store, dir);
+            if (recovered) {
+                (0, tim_hooks_1.writeMarker)(dir, { ...marker, project: recovered });
+                projectLabel = recovered;
+            }
+        }
         if (format === 'directive') {
-            const binding = await (0, tim_store_1.resolveProjectBindingLabel)(store, marker.project);
-            process.stdout.write((0, tim_hooks_1.buildLoadDirective)(marker.project, dir, binding));
+            if (!projectLabel)
+                return;
+            const binding = await (0, tim_store_1.resolveProjectBindingLabel)(store, projectLabel);
+            process.stdout.write((0, tim_hooks_1.buildLoadDirective)(projectLabel, dir, binding));
         }
         else {
             process.stdout.write(marker.project);
