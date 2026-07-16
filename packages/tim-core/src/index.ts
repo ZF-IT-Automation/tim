@@ -22,6 +22,7 @@ export {
   type TaskMetadata,
   type RuleMetadata,
   type BugMetadata,
+  type IdeaMetadata,
   type HealthSeverity,
   type HealthReport,
   isBuiltinMetadataType,
