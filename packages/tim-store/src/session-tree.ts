@@ -220,7 +220,7 @@ export async function ensureInboxProject(store: TimStore): Promise<Entry> {
 
     if (valid) return existing;
 
-    const repaired = store.updateSync(existing.id, {
+    const repaired = store.repairSystemEntrySync(existing.id, {
       title,
       content,
       irrelevant: false,

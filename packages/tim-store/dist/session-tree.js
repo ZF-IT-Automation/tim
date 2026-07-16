@@ -177,7 +177,7 @@ async function ensureInboxProject(store) {
             INBOX_PROJECT_TAGS.every(tag => existing.tags.includes(tag));
         if (valid)
             return existing;
-        const repaired = store.updateSync(existing.id, {
+        const repaired = store.repairSystemEntrySync(existing.id, {
             title,
             content,
             irrelevant: false,

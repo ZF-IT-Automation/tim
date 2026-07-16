@@ -259,6 +259,11 @@ export declare class TimStore implements MemoryInterface {
     /** Emit the syncable state transition for physical-id rewrites after the target is final. */
     stageEntryIdRewritesSync(targetId: string, rewrites: EntryIdRewrite[]): void;
     private repointEntryReferencesSync;
+    /**
+     * Persist a reserved system-entry repair without normalizing legacy user data.
+     * Callers must supply the complete preserved title, tags, and metadata payload.
+     */
+    repairSystemEntrySync(id: string, patch: Pick<Entry, 'title' | 'content' | 'tags' | 'metadata' | 'irrelevant' | 'tombstonedAt'>): Entry;
     /** Synchronous update for use inside `runExclusive` transactions. */
     updateSync(id: string, patch: Partial<Entry>): Entry;
     /** Entries whose metadata JSON has non-boolean values for known boolean keys (legacy 1/0/"true"/"false"). */

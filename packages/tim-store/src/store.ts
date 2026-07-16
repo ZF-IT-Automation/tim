@@ -1653,6 +1653,54 @@ export class TimStore implements MemoryInterface {
     };
   }
 
+  /**
+   * Persist a reserved system-entry repair without normalizing legacy user data.
+   * Callers must supply the complete preserved title, tags, and metadata payload.
+   */
+  repairSystemEntrySync(
+    id: string,
+    patch: Pick<Entry, 'title' | 'content' | 'tags' | 'metadata' | 'irrelevant' | 'tombstonedAt'>,
+  ): Entry {
+    const existing = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(id) as RowEntry | undefined;
+    if (!existing) throw new Error(`Entry not found: ${id}`);
+
+    const now = new Date().toISOString();
+    const timestamp = Date.now();
+    const updated: RowEntry = {
+      ...existing,
+      title: patch.title,
+      content: patch.content,
+      tags: JSON.stringify(patch.tags),
+      irrelevant: patch.irrelevant ? 1 : 0,
+      tombstoned_at: patch.tombstonedAt,
+      metadata: JSON.stringify(patch.metadata),
+      accessed_at: now,
+      updated_at: now,
+      lww_device: this.deviceId,
+    };
+
+    this.db.transaction(() => {
+      this.db.prepare(`UPDATE entries
+        SET title = ?, content = ?, tags = ?, irrelevant = ?, tombstoned_at = ?, metadata = ?,
+            accessed_at = ?, updated_at = ?, lww_device = ?
+        WHERE id = ?`).run(
+        updated.title,
+        updated.content,
+        updated.tags,
+        updated.irrelevant,
+        updated.tombstoned_at,
+        updated.metadata,
+        updated.accessed_at,
+        updated.updated_at,
+        updated.lww_device,
+        id,
+      );
+      this.insertStagingSync(updated, timestamp, updated.confidence);
+    })();
+
+    return rowToEntry(updated);
+  }
+
   /** Synchronous update for use inside `runExclusive` transactions. */
   updateSync(id: string, patch: Partial<Entry>): Entry {
     const existing = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(id) as RowEntry | undefined;

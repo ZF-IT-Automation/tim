@@ -369,6 +369,49 @@ describe('SessionManager', () => {
       expect(rowCount.count).toBe(1);
     });
 
+    it('preserves legacy Inbox title bytes and arbitrary tags in the staged repair', async () => {
+      await store.write('Placeholder\nKeep this content', {
+        id: 'P0000',
+        metadata: { kind: 'note', label: 'N0000' },
+      });
+      const legacyTitle = '  Custom Inbox title  ';
+      const legacyTags = ['#custom', '#todo', '#priority-high'];
+      store.getDb().prepare(
+        `UPDATE entries
+         SET title = ?, tags = ?, updated_at = ?, lww_device = ?
+         WHERE id = 'P0000'`,
+      ).run(
+        legacyTitle,
+        JSON.stringify(legacyTags),
+        '2000-01-01T00:00:00.000Z',
+        'legacy-device',
+      );
+      store.getDb().prepare('DELETE FROM staging').run();
+
+      const repaired = await ensureInboxProject(store);
+
+      expect(repaired.title).toBe(legacyTitle);
+      expect(repaired.tags).toEqual([
+        ...legacyTags,
+        '#project',
+        '#inbox',
+        '#system',
+      ]);
+      expect(repaired.updatedAt).not.toBe('2000-01-01T00:00:00.000Z');
+      const staging = await store.getStaging();
+      expect(staging).toHaveLength(1);
+      const payload = JSON.parse(staging[0]!.payload) as {
+        title: string;
+        tags: string;
+        updated_at: string;
+        lww_device: string;
+      };
+      expect(payload.title).toBe(legacyTitle);
+      expect(JSON.parse(payload.tags)).toEqual(repaired.tags);
+      expect(payload.updated_at).toBe(repaired.updatedAt);
+      expect(payload.lww_device).not.toBe('legacy-device');
+    });
+
     it('canonicalizes a logical P0000 stored under a different id without losing data or edges', async () => {
       const legacy = await store.write('Legacy Inbox\nPreserve this body', {
         id: 'LEGACY-INBOX-ID',
