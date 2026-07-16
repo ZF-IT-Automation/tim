@@ -2,6 +2,7 @@ import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { parseArgs, valueOptionsFor } from './args.js';
 
 const CACHE_HOOK = 'tim-hermes-session-cache.sh';
 const STATUSLINE_HOOK = 'tim-hermes-statusline.sh';
@@ -475,8 +476,11 @@ export function printHermesInstallReport(report: HermesInstallReport): void {
 }
 
 export async function cmdSetupHermesStatusline(args: string[]): Promise<void> {
-  const dryRun = args.includes('--dry-run');
-  const skipBuild = args.includes('--skip-build');
+  const { flags } = parseArgs(args, {
+    valueOptions: valueOptionsFor('setup-hermes-statusline'),
+  });
+  const dryRun = flags['dry-run'] === 'true';
+  const skipBuild = flags['skip-build'] === 'true';
   const hermesAgentDir = process.env.HERMES_AGENT_DIR?.trim();
   const report = await installHermesStatusline({
     dryRun,

@@ -87,6 +87,14 @@ describe('tim new-project', () => {
     expect(result.stdout).toContain('✓ Created project P0001');
   });
 
+  it('supports equals syntax through the shared parser', () => {
+    const target = path.join(workDir, 'equals-syntax');
+    const result = run(['new-project', `--path=${target}`, '--name=Equals Syntax'], env);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('✓ Created project P0001 "Equals Syntax"');
+    expect(fs.existsSync(path.join(target, '.tim-project'))).toBe(true);
+  });
+
   it('prompts on non-empty directory with TTY', async () => {
     const target = path.join(workDir, 'nonempty-tty');
     fs.mkdirSync(target);

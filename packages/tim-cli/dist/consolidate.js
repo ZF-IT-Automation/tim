@@ -39,24 +39,7 @@ const path = __importStar(require("path"));
 const tim_core_1 = require("tim-core");
 const tim_store_1 = require("tim-store");
 const tim_summarizer_1 = require("tim-summarizer");
-function parseArgs(args) {
-    const parsed = {};
-    for (let i = 0; i < args.length; i++) {
-        const arg = args[i];
-        if (arg.startsWith('--')) {
-            const key = arg.slice(2);
-            const next = args[i + 1];
-            if (next && !next.startsWith('--')) {
-                parsed[key] = next;
-                i++;
-            }
-            else {
-                parsed[key] = 'true';
-            }
-        }
-    }
-    return parsed;
-}
+const args_js_1 = require("./args.js");
 function resolveDbPath() {
     if (process.env.TIM_DB_PATH)
         return process.env.TIM_DB_PATH;
@@ -76,7 +59,7 @@ Usage:
 async function cmdConsolidate(args) {
     const sub = args[0];
     const rest = sub ? args.slice(1) : args;
-    const flags = parseArgs(rest);
+    const { flags } = (0, args_js_1.parseArgs)(rest, { valueOptions: (0, args_js_1.valueOptionsFor)('consolidate', sub) });
     const project = flags.project;
     if (!sub || sub === 'help' || sub === '--help') {
         printHelp();

@@ -291,7 +291,7 @@ function installCodexMcpConfig(dbPath, configPath = path.join(os.homedir(), '.co
     return { installed: [{ tool: 'Codex', path: configPath }], skipped: [] };
 }
 async function cmdSetupAgent(args) {
-    const { flags } = (0, args_js_1.parseArgs)(args, { valueOptions: new Set(['host']) });
+    const { flags } = (0, args_js_1.parseArgs)(args, { valueOptions: (0, args_js_1.valueOptionsFor)('setup-agent') });
     const host = flags.host;
     if (!host) {
         console.error('Usage: tim setup-agent --host claude|codex|cursor|hermes [--dry-run]');

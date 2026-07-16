@@ -22,28 +22,11 @@ import {
   startDevServer,
 } from 'tim-sync-client';
 import { loadConfig as loadTimConfig, getTimDir } from 'tim-core';
+import { parseArgs, valueOptionsFor } from './args.js';
 
 function getDbPath(): string {
   const config = loadTimConfig();
   return process.env.TIM_DB_PATH || config.dbPath || `${process.env.HOME}/.tim/tim.db`;
-}
-
-function parseSyncArgs(args: string[]): Record<string, string> {
-  const parsed: Record<string, string> = {};
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
-    if (arg.startsWith('--')) {
-      const key = arg.slice(2);
-      const next = args[i + 1];
-      if (next && !next.startsWith('--')) {
-        parsed[key] = next;
-        i++;
-      } else {
-        parsed[key] = 'true';
-      }
-    }
-  }
-  return parsed;
 }
 
 async function promptHidden(rl: readline.Interface, label: string): Promise<string> {
@@ -51,7 +34,7 @@ async function promptHidden(rl: readline.Interface, label: string): Promise<stri
 }
 
 export async function cmdSyncConnect(args: string[]): Promise<void> {
-  const flags = parseSyncArgs(args);
+  const { flags } = parseArgs(args, { valueOptions: valueOptionsFor('sync', 'connect') });
   const rl = readline.createInterface({ input, output });
 
   try {
@@ -141,7 +124,7 @@ function requirePassphrase(flags: Record<string, string>): string {
 }
 
 export async function cmdSyncPush(args: string[]): Promise<void> {
-  const flags = parseSyncArgs(args);
+  const { flags } = parseArgs(args, { valueOptions: valueOptionsFor('sync', 'push') });
   const config = loadConfig();
   if (!config) {
     console.error('Not connected. Run: tim sync connect');
@@ -160,7 +143,7 @@ export async function cmdSyncPush(args: string[]): Promise<void> {
 }
 
 export async function cmdSyncPull(args: string[]): Promise<void> {
-  const flags = parseSyncArgs(args);
+  const { flags } = parseArgs(args, { valueOptions: valueOptionsFor('sync', 'pull') });
   const config = loadConfig();
   if (!config) {
     console.error('Not connected. Run: tim sync connect');
@@ -237,7 +220,7 @@ export function cmdSyncDisconnect(): void {
 }
 
 export async function cmdSyncDev(args: string[]): Promise<void> {
-  const flags = parseSyncArgs(args);
+  const { flags } = parseArgs(args, { valueOptions: valueOptionsFor('sync', 'dev') });
   const port = parseInt(flags.port ?? '3100', 10);
   startDevServer(port);
 }

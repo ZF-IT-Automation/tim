@@ -49,4 +49,10 @@ describe('cmdConsolidate', () => {
     expect(out.project).toBe('P0500');
     expect(out.count).toBeGreaterThanOrEqual(1);
   });
+
+  it('accepts equals syntax through the shared parser', async () => {
+    await cmdConsolidate(['find-duplicates', '--project=P0500']);
+    const out = JSON.parse(logs.join('\n'));
+    expect(out.project).toBe('P0500');
+  });
 });

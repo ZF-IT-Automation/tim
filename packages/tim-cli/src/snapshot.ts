@@ -14,6 +14,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { parseArgs, valueOptionsFor } from './args.js';
 
 const DEFAULT_SNAPSHOT_DIR = '/tmp/tim-snapshots';
 const DEFAULT_PRUNE_HOURS = 48;
@@ -29,23 +30,6 @@ function ts(): string {
     pad(d.getHours()) +
     pad(d.getMinutes())
   );
-}
-
-function parseFlags(args: string[]): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i];
-    if (!a.startsWith('--')) continue;
-    const k = a.slice(2);
-    const v = args[i + 1];
-    if (v && !v.startsWith('--')) {
-      out[k] = v;
-      i++;
-    } else {
-      out[k] = 'true';
-    }
-  }
-  return out;
 }
 
 export function resolveDbPath(): string {
@@ -188,7 +172,7 @@ export async function runSnapshot(opts: {
 }
 
 export async function cmdSnapshot(args: string[]): Promise<void> {
-  const flags = parseFlags(args);
+  const { flags } = parseArgs(args, { valueOptions: valueOptionsFor('snapshot') });
   const result = await runSnapshot({
     dbPath: flags.db || undefined,
     snapshotDir: flags.out ? path.dirname(flags.out) : undefined,

@@ -22,4 +22,21 @@ describe('parseArgs', () => {
       positional: [],
     });
   });
+
+  it('does not let boolean flags consume the following positional argument', () => {
+    expect(parseArgs(['--dry-run', 'archive.hmem'])).toEqual({
+      flags: { 'dry-run': 'true' },
+      positional: ['archive.hmem'],
+    });
+  });
+
+  it('supports declared short aliases with the same value semantics', () => {
+    expect(parseArgs(['-p', '/tmp/project', '-n=Project', '-h'], {
+      valueOptions: new Set(['path', 'name']),
+      aliases: { p: 'path', n: 'name', h: 'help' },
+    })).toEqual({
+      flags: { path: '/tmp/project', name: 'Project', help: 'true' },
+      positional: [],
+    });
+  });
 });

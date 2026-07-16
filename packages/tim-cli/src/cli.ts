@@ -37,7 +37,7 @@ import { cmdSecret } from './secret.js';
 import { runReleaseCheck } from './release-check.js';
 import { cmdMigrateFromHmem } from './migrate-from-hmem.js';
 import { cmdSetupAgent } from './setup-agent.js';
-import { parseArgs } from './args.js';
+import { NEW_PROJECT_ALIASES, parseArgs, valueOptionsFor } from './args.js';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -60,12 +60,14 @@ function buildStaleMarkerDirective(projectLabel: string, markerDir: string): str
   ].join('\n');
 }
 
-function hasHelpFlag(args: string[]): boolean {
-  for (const arg of args) {
-    if (arg === '--') return false;
-    if (arg === '-h' || arg === '--help') return true;
-  }
-  return false;
+const HELP_ALIASES: Readonly<Record<string, string>> = { h: 'help' };
+
+function hasHelpFlag(args: string[], command: string, subcommand?: string): boolean {
+  const { flags } = parseArgs(args, {
+    valueOptions: valueOptionsFor(command, subcommand),
+    aliases: command === 'new-project' ? NEW_PROJECT_ALIASES : HELP_ALIASES,
+  });
+  return flags.help === 'true';
 }
 
 const COMMAND_HELP: Record<string, string> = {
@@ -278,7 +280,7 @@ async function cmdStats() {
 }
 
 async function cmdResolveProject(args: string[]) {
-  const { flags } = parseArgs(args, { valueOptions: new Set(['cwd', 'format']) });
+  const { flags } = parseArgs(args, { valueOptions: valueOptionsFor('resolve-project') });
   const cwd = flags.cwd ?? process.cwd();
   const format = flags.format ?? 'label';
 
@@ -315,7 +317,7 @@ async function cmdResolveProject(args: string[]) {
 
 async function cmdResolveSession(args: string[]) {
   const { flags } = parseArgs(args, {
-    valueOptions: new Set(['session', 'cwd', 'format']),
+    valueOptions: valueOptionsFor('resolve-session'),
   });
   const sessionId = flags.session?.trim();
   if (!sessionId) {
@@ -349,7 +351,7 @@ async function cmdResolveSession(args: string[]) {
 
 async function cmdBindProject(args: string[]) {
   const { flags } = parseArgs(args, {
-    valueOptions: new Set(['label', 'cwd', 'session']),
+    valueOptions: valueOptionsFor('bind-project'),
   });
   const cwd = flags.cwd ?? process.cwd();
   const label = flags.label;
@@ -373,17 +375,7 @@ async function cmdBindProject(args: string[]) {
 async function cmdHook(args: string[]) {
   const sub = args[0];
   const { flags } = parseArgs(args.slice(1), {
-    valueOptions: new Set([
-      'session',
-      'agent',
-      'cwd',
-      'harness',
-      'project',
-      'tool',
-      'model',
-      'task-summary',
-      'user',
-    ]),
+    valueOptions: valueOptionsFor('hook', sub),
   });
   const config = loadConfig();
   const store = new TimStore(getDbPath(config));
@@ -466,7 +458,7 @@ async function cmdHook(args: string[]) {
 }
 
 async function cmdRebalance(args: string[]) {
-  const { flags } = parseArgs(args, { valueOptions: new Set(['session', 'cwd']) });
+  const { flags } = parseArgs(args, { valueOptions: valueOptionsFor('rebalance') });
   const sessionId = flags.session;
 
   if (!sessionId) {
@@ -489,7 +481,7 @@ async function cmdRebalance(args: string[]) {
 
 async function cmdCheckpoint(args: string[]) {
   const { flags } = parseArgs(args, {
-    valueOptions: new Set(['session', 'handoff-note']),
+    valueOptions: valueOptionsFor('checkpoint'),
   });
   const sessionId = flags.session;
 
@@ -512,7 +504,7 @@ async function cmdCheckpoint(args: string[]) {
 }
 
 async function cmdExport(args: string[]) {
-  const { flags, positional } = parseArgs(args, { valueOptions: new Set(['format']) });
+  const { flags, positional } = parseArgs(args, { valueOptions: valueOptionsFor('export') });
   const targetPath = positional[0];
   const format = flags.format === 'text' ? 'text' : 'hmem';
 
@@ -581,7 +573,9 @@ async function cmdImport(args: string[]) {
 }
 
 async function cmdMigrateTagsToTypes(args: string[]) {
-  const { flags } = parseArgs(args, { valueOptions: new Set(['sample-limit']) });
+  const { flags } = parseArgs(args, {
+    valueOptions: valueOptionsFor('migrate', 'tags-to-types'),
+  });
   const dryRun = flags['dry-run'] === 'true';
   const sampleLimit = flags['sample-limit'] ? parseInt(flags['sample-limit'], 10) : 20;
 
@@ -631,7 +625,7 @@ async function cmdMigrateProjectKind(args: string[]) {
 
 async function cmdRootEntries(args: string[]) {
   const { flags } = parseArgs(args, {
-    valueOptions: new Set(['type', 'tag', 'format']),
+    valueOptions: valueOptionsFor('root-entries'),
   });
   const type = flags.type;
   const tag = flags.tag;
@@ -692,7 +686,7 @@ async function cmdRootEntries(args: string[]) {
 }
 
 async function cmdReleaseCheck(args: string[]) {
-  const { flags } = parseArgs(args, { valueOptions: new Set(['skip-tests']) });
+  const { flags } = parseArgs(args, { valueOptions: valueOptionsFor('release-check') });
   const summary = await runReleaseCheck({
     beta: flags.beta === 'true',
     skipTests: flags['skip-tests'] === 'true',
@@ -721,7 +715,7 @@ async function main() {
   const cmd = process.argv[2] || 'init';
   const rest = process.argv.slice(3);
 
-  if (hasHelpFlag(rest)) {
+  if (hasHelpFlag(rest, cmd, rest[0])) {
     printCommandHelp(cmd, rest[0]);
     return;
   }
@@ -762,7 +756,7 @@ async function main() {
       break;
     case 'statusline': {
       const { flags } = parseArgs(rest, {
-        valueOptions: new Set(['cwd', 'session', 'format']),
+        valueOptions: valueOptionsFor('statusline'),
       });
       await runStatusline({
         cwd: flags.cwd,

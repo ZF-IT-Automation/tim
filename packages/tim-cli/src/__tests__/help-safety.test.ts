@@ -129,4 +129,30 @@ describe('tim CLI help safety', () => {
       });
     }
   }
+
+  it('treats --help as data when an explicit value option consumes it', () => {
+    const target = path.join(caseRoot, 'help-named-project');
+    const validDbPath = path.join(caseRoot, 'help-value.db');
+    const result = spawnSync('node', [
+      CLI,
+      'new-project',
+      '--path', target,
+      '--name', '--help',
+      '--no-git',
+    ], {
+      cwd,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        HOME: homeDir,
+        TIM_DB_PATH: validDbPath,
+        TIM_MARKER_MAX_ROOT: caseRoot,
+      },
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).not.toContain('Usage:');
+    expect(result.stdout).toContain('Created project P0001 "--help"');
+    expect(fs.existsSync(path.join(target, '.tim-project'))).toBe(true);
+  });
 });

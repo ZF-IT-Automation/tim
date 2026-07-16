@@ -7,7 +7,7 @@ import { HOST_TOOLS, buildTimMcpEntry, installMcpForHostTool, type HostTool } fr
 import type { TimMcpServerOptions } from './mcp-command.js';
 import { updateSkillsForHost } from './update-skills.js';
 import { installHermesStatusline } from './hermes-statusline-install.js';
-import { parseArgs } from './args.js';
+import { parseArgs, valueOptionsFor } from './args.js';
 
 export type AgentHost = 'claude' | 'codex' | 'cursor' | 'hermes';
 
@@ -282,7 +282,7 @@ export function installCodexMcpConfig(
 }
 
 export async function cmdSetupAgent(args: string[]): Promise<void> {
-  const { flags } = parseArgs(args, { valueOptions: new Set(['host']) });
+  const { flags } = parseArgs(args, { valueOptions: valueOptionsFor('setup-agent') });
   const host = flags.host;
   if (!host) {
     console.error('Usage: tim setup-agent --host claude|codex|cursor|hermes [--dry-run]');

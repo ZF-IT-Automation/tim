@@ -66,6 +66,21 @@ describe('tim record-commit', () => {
     store.close();
   });
 
+  it('supports equals syntax and values beginning with --', () => {
+    const out = run(
+      [
+        'record-commit',
+        `--cwd=${dir}`,
+        '--hash=leading-dash',
+        '--message', '--fix parser',
+      ],
+      { TIM_DB_PATH: dbPath },
+    );
+    const entry = JSON.parse(out);
+    expect(entry.title).toBe('leading-dash');
+    expect(entry.content).toContain('--fix parser');
+  });
+
   it('is idempotent for the same hash', async () => {
     const env = { TIM_DB_PATH: dbPath };
     run(

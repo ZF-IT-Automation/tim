@@ -73,14 +73,13 @@ function buildStaleMarkerDirective(projectLabel, markerDir) {
             `or remove ${path.join(markerDir, '.tim-project')} explicitly.`,
     ].join('\n');
 }
-function hasHelpFlag(args) {
-    for (const arg of args) {
-        if (arg === '--')
-            return false;
-        if (arg === '-h' || arg === '--help')
-            return true;
-    }
-    return false;
+const HELP_ALIASES = { h: 'help' };
+function hasHelpFlag(args, command, subcommand) {
+    const { flags } = (0, args_js_1.parseArgs)(args, {
+        valueOptions: (0, args_js_1.valueOptionsFor)(command, subcommand),
+        aliases: command === 'new-project' ? args_js_1.NEW_PROJECT_ALIASES : HELP_ALIASES,
+    });
+    return flags.help === 'true';
 }
 const COMMAND_HELP = {
     init: 'Usage: tim init',
@@ -260,7 +259,7 @@ async function cmdStats() {
     store.close();
 }
 async function cmdResolveProject(args) {
-    const { flags } = (0, args_js_1.parseArgs)(args, { valueOptions: new Set(['cwd', 'format']) });
+    const { flags } = (0, args_js_1.parseArgs)(args, { valueOptions: (0, args_js_1.valueOptionsFor)('resolve-project') });
     const cwd = flags.cwd ?? process.cwd();
     const format = flags.format ?? 'label';
     const envOpts = (0, tim_hooks_1.findMarkerOptionsFromEnv)() ?? {};
@@ -295,7 +294,7 @@ async function cmdResolveProject(args) {
 }
 async function cmdResolveSession(args) {
     const { flags } = (0, args_js_1.parseArgs)(args, {
-        valueOptions: new Set(['session', 'cwd', 'format']),
+        valueOptions: (0, args_js_1.valueOptionsFor)('resolve-session'),
     });
     const sessionId = flags.session?.trim();
     if (!sessionId) {
@@ -330,7 +329,7 @@ async function cmdResolveSession(args) {
 }
 async function cmdBindProject(args) {
     const { flags } = (0, args_js_1.parseArgs)(args, {
-        valueOptions: new Set(['label', 'cwd', 'session']),
+        valueOptions: (0, args_js_1.valueOptionsFor)('bind-project'),
     });
     const cwd = flags.cwd ?? process.cwd();
     const label = flags.label;
@@ -353,17 +352,7 @@ async function cmdBindProject(args) {
 async function cmdHook(args) {
     const sub = args[0];
     const { flags } = (0, args_js_1.parseArgs)(args.slice(1), {
-        valueOptions: new Set([
-            'session',
-            'agent',
-            'cwd',
-            'harness',
-            'project',
-            'tool',
-            'model',
-            'task-summary',
-            'user',
-        ]),
+        valueOptions: (0, args_js_1.valueOptionsFor)('hook', sub),
     });
     const config = (0, tim_core_1.loadConfig)();
     const store = new tim_store_1.TimStore(getDbPath(config));
@@ -437,7 +426,7 @@ async function cmdHook(args) {
     }
 }
 async function cmdRebalance(args) {
-    const { flags } = (0, args_js_1.parseArgs)(args, { valueOptions: new Set(['session', 'cwd']) });
+    const { flags } = (0, args_js_1.parseArgs)(args, { valueOptions: (0, args_js_1.valueOptionsFor)('rebalance') });
     const sessionId = flags.session;
     if (!sessionId) {
         console.error('Usage: tim rebalance --session <id>');
@@ -457,7 +446,7 @@ async function cmdRebalance(args) {
 }
 async function cmdCheckpoint(args) {
     const { flags } = (0, args_js_1.parseArgs)(args, {
-        valueOptions: new Set(['session', 'handoff-note']),
+        valueOptions: (0, args_js_1.valueOptionsFor)('checkpoint'),
     });
     const sessionId = flags.session;
     if (!sessionId) {
@@ -477,7 +466,7 @@ async function cmdCheckpoint(args) {
     }
 }
 async function cmdExport(args) {
-    const { flags, positional } = (0, args_js_1.parseArgs)(args, { valueOptions: new Set(['format']) });
+    const { flags, positional } = (0, args_js_1.parseArgs)(args, { valueOptions: (0, args_js_1.valueOptionsFor)('export') });
     const targetPath = positional[0];
     const format = flags.format === 'text' ? 'text' : 'hmem';
     const config = (0, tim_core_1.loadConfig)();
@@ -532,7 +521,9 @@ async function cmdImport(args) {
     }
 }
 async function cmdMigrateTagsToTypes(args) {
-    const { flags } = (0, args_js_1.parseArgs)(args, { valueOptions: new Set(['sample-limit']) });
+    const { flags } = (0, args_js_1.parseArgs)(args, {
+        valueOptions: (0, args_js_1.valueOptionsFor)('migrate', 'tags-to-types'),
+    });
     const dryRun = flags['dry-run'] === 'true';
     const sampleLimit = flags['sample-limit'] ? parseInt(flags['sample-limit'], 10) : 20;
     const config = (0, tim_core_1.loadConfig)();
@@ -572,7 +563,7 @@ async function cmdMigrateProjectKind(args) {
 }
 async function cmdRootEntries(args) {
     const { flags } = (0, args_js_1.parseArgs)(args, {
-        valueOptions: new Set(['type', 'tag', 'format']),
+        valueOptions: (0, args_js_1.valueOptionsFor)('root-entries'),
     });
     const type = flags.type;
     const tag = flags.tag;
@@ -626,7 +617,7 @@ async function cmdRootEntries(args) {
     }
 }
 async function cmdReleaseCheck(args) {
-    const { flags } = (0, args_js_1.parseArgs)(args, { valueOptions: new Set(['skip-tests']) });
+    const { flags } = (0, args_js_1.parseArgs)(args, { valueOptions: (0, args_js_1.valueOptionsFor)('release-check') });
     const summary = await (0, release_check_js_1.runReleaseCheck)({
         beta: flags.beta === 'true',
         skipTests: flags['skip-tests'] === 'true',
@@ -652,7 +643,7 @@ async function cmdReleaseCheck(args) {
 async function main() {
     const cmd = process.argv[2] || 'init';
     const rest = process.argv.slice(3);
-    if (hasHelpFlag(rest)) {
+    if (hasHelpFlag(rest, cmd, rest[0])) {
         printCommandHelp(cmd, rest[0]);
         return;
     }
@@ -692,7 +683,7 @@ async function main() {
             break;
         case 'statusline': {
             const { flags } = (0, args_js_1.parseArgs)(rest, {
-                valueOptions: new Set(['cwd', 'session', 'format']),
+                valueOptions: (0, args_js_1.valueOptionsFor)('statusline'),
             });
             await (0, statusline_js_1.runStatusline)({
                 cwd: flags.cwd,
