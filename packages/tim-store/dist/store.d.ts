@@ -79,6 +79,12 @@ export interface GetBugsOptions {
 export interface GetTasksOptions {
     status?: string;
 }
+interface EntryIdRewrite {
+    sourceId: string;
+    targetId: string;
+    entryIds: string[];
+    edgeIds: string[];
+}
 export declare class TimStore implements MemoryInterface {
     private db;
     private emitter?;
@@ -244,9 +250,15 @@ export declare class TimStore implements MemoryInterface {
      * Canonicalize a physical entry id without changing its payload. Must be called
      * inside runExclusive; rewrites all local references before removing oldId.
      */
-    canonicalizeEntryIdSync(oldId: string, newId: string): Entry;
+    canonicalizeEntryIdSync(oldId: string, newId: string): {
+        entry: Entry;
+        rewrite: EntryIdRewrite | null;
+    };
     /** Repoint every structural reference to targetId, then remove sourceId without staging. */
-    mergeEntryReferencesAndDeleteSync(sourceId: string, targetId: string): void;
+    mergeEntryReferencesAndDeleteSync(sourceId: string, targetId: string): EntryIdRewrite | null;
+    /** Emit the syncable state transition for physical-id rewrites after the target is final. */
+    stageEntryIdRewritesSync(targetId: string, rewrites: EntryIdRewrite[]): void;
+    private repointEntryReferencesSync;
     /** Synchronous update for use inside `runExclusive` transactions. */
     updateSync(id: string, patch: Partial<Entry>): Entry;
     /** Entries whose metadata JSON has non-boolean values for known boolean keys (legacy 1/0/"true"/"false"). */
@@ -398,4 +410,5 @@ export declare function splitTitleBody(content: string, explicitTitle?: string):
 };
 /** Cosine similarity between two same-length vectors. Range: [-1, 1]. */
 export declare function cosineSimilarity(a: Float32Array, b: Float32Array): number;
+export {};
 //# sourceMappingURL=store.d.ts.map

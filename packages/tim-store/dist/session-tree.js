@@ -100,12 +100,16 @@ const INBOX_PROJECT_TAGS = ['#project', '#inbox', '#system'];
 /** Create or repair the reserved P0000 Inbox project atomically. */
 async function ensureInboxProject(store) {
     return store.runExclusive(() => {
+        const rewrites = [];
         let existing = store.readIncludingTombstoneSync(exports.INBOX_PROJECT_LABEL);
         if (!existing) {
             const logical = store.findByMetadataLabelIncludingTombstoneSync(exports.INBOX_PROJECT_LABEL)
                 .find(entry => entry.id !== exports.INBOX_PROJECT_LABEL);
             if (logical) {
-                existing = store.canonicalizeEntryIdSync(logical.id, exports.INBOX_PROJECT_LABEL);
+                const canonicalized = store.canonicalizeEntryIdSync(logical.id, exports.INBOX_PROJECT_LABEL);
+                existing = canonicalized.entry;
+                if (canonicalized.rewrite)
+                    rewrites.push(canonicalized.rewrite);
             }
         }
         if (!existing) {
@@ -157,10 +161,13 @@ async function ensureInboxProject(store) {
                         .join('\n\n');
                 }
             }
-            store.mergeEntryReferencesAndDeleteSync(duplicate.id, exports.INBOX_PROJECT_LABEL);
+            const rewrite = store.mergeEntryReferencesAndDeleteSync(duplicate.id, exports.INBOX_PROJECT_LABEL);
+            if (rewrite)
+                rewrites.push(rewrite);
             mergedDuplicate = true;
         }
         const valid = !mergedDuplicate &&
+            rewrites.length === 0 &&
             existing.metadata.kind === 'project' &&
             existing.metadata.label === exports.INBOX_PROJECT_LABEL &&
             existing.metadata.is_system === true &&
@@ -170,7 +177,7 @@ async function ensureInboxProject(store) {
             INBOX_PROJECT_TAGS.every(tag => existing.tags.includes(tag));
         if (valid)
             return existing;
-        return store.updateSync(existing.id, {
+        const repaired = store.updateSync(existing.id, {
             title,
             content,
             irrelevant: false,
@@ -184,6 +191,8 @@ async function ensureInboxProject(store) {
                 render_depth: 1,
             },
         });
+        store.stageEntryIdRewritesSync(exports.INBOX_PROJECT_LABEL, rewrites);
+        return repaired;
     });
 }
 //# sourceMappingURL=session-tree.js.map

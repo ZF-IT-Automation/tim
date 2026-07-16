@@ -141,12 +141,15 @@ const INBOX_PROJECT_TAGS = ['#project', '#inbox', '#system'] as const;
 /** Create or repair the reserved P0000 Inbox project atomically. */
 export async function ensureInboxProject(store: TimStore): Promise<Entry> {
   return store.runExclusive(() => {
+    const rewrites: Parameters<TimStore['stageEntryIdRewritesSync']>[1] = [];
     let existing = store.readIncludingTombstoneSync(INBOX_PROJECT_LABEL);
     if (!existing) {
       const logical = store.findByMetadataLabelIncludingTombstoneSync(INBOX_PROJECT_LABEL)
         .find(entry => entry.id !== INBOX_PROJECT_LABEL);
       if (logical) {
-        existing = store.canonicalizeEntryIdSync(logical.id, INBOX_PROJECT_LABEL);
+        const canonicalized = store.canonicalizeEntryIdSync(logical.id, INBOX_PROJECT_LABEL);
+        existing = canonicalized.entry;
+        if (canonicalized.rewrite) rewrites.push(canonicalized.rewrite);
       }
     }
     if (!existing) {
@@ -199,12 +202,14 @@ export async function ensureInboxProject(store: TimStore): Promise<Entry> {
             .join('\n\n');
         }
       }
-      store.mergeEntryReferencesAndDeleteSync(duplicate.id, INBOX_PROJECT_LABEL);
+      const rewrite = store.mergeEntryReferencesAndDeleteSync(duplicate.id, INBOX_PROJECT_LABEL);
+      if (rewrite) rewrites.push(rewrite);
       mergedDuplicate = true;
     }
 
     const valid =
       !mergedDuplicate &&
+      rewrites.length === 0 &&
       existing.metadata.kind === 'project' &&
       existing.metadata.label === INBOX_PROJECT_LABEL &&
       existing.metadata.is_system === true &&
@@ -215,7 +220,7 @@ export async function ensureInboxProject(store: TimStore): Promise<Entry> {
 
     if (valid) return existing;
 
-    return store.updateSync(existing.id, {
+    const repaired = store.updateSync(existing.id, {
       title,
       content,
       irrelevant: false,
@@ -229,5 +234,7 @@ export async function ensureInboxProject(store: TimStore): Promise<Entry> {
         render_depth: 1,
       },
     });
+    store.stageEntryIdRewritesSync(INBOX_PROJECT_LABEL, rewrites);
+    return repaired;
   });
 }

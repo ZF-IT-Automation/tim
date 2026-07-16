@@ -410,7 +410,127 @@ describe('SessionManager', () => {
         `SELECT id FROM entries WHERE json_extract(metadata, '$.label') = 'P0000'`,
       ).all() as Array<{ id: string }>;
       expect(logicalRows).toEqual([{ id: 'P0000' }]);
-      expect(await store.getStaging()).toHaveLength(1);
+      expect(await store.getStaging()).toEqual(expect.arrayContaining([
+        expect.objectContaining({ key: 'P0000', entityType: 'entry', operation: 'upsert' }),
+        expect.objectContaining({
+          key: 'LEGACY-INBOX-ID', entityType: 'entry', operation: 'delete',
+        }),
+        expect.objectContaining({ key: child.id, entityType: 'entry', operation: 'upsert' }),
+        expect.objectContaining({
+          key: `P0000|${target.id}|relates`, entityType: 'edge', operation: 'upsert',
+        }),
+      ]));
+    });
+
+    it('rewrites only exact structural ID references during Inbox canonicalization', async () => {
+      const legacyId = 'LEGACY-INBOX-ID';
+      const embeddedText = `prefix-${legacyId}-suffix`;
+      const legacy = await store.write('Legacy Inbox', {
+        id: legacyId,
+        metadata: {
+          kind: 'project',
+          label: 'P0000',
+          exact_ref: legacyId,
+          custom_text: embeddedText,
+        },
+      });
+      const child = await store.write('Legacy child', {
+        parentId: legacy.id,
+        metadata: { exact_ref: legacyId, custom_text: embeddedText },
+      });
+      const target = await store.write('Edge target');
+      await store.link(legacy.id, target.id, 'relates', 1, {
+        exact_ref: legacyId,
+        custom_text: embeddedText,
+      });
+
+      await ensureInboxProject(store);
+
+      expect((await store.read('P0000'))?.metadata).toMatchObject({
+        exact_ref: 'P0000',
+        custom_text: embeddedText,
+      });
+      expect((await store.read(child.id))?.metadata).toEqual({
+        exact_ref: 'P0000',
+        custom_text: embeddedText,
+        order: 0,
+      });
+      expect((await store.getEdges('P0000', 'outgoing'))[0]?.metadata).toEqual({
+        exact_ref: 'P0000',
+        custom_text: embeddedText,
+      });
+    });
+
+    it('stages a canonical Inbox rewrite so a previously synced replica converges', async () => {
+      const replica = new TimStore(':memory:', { deviceId: 'replica' });
+      const legacyId = 'LEGACY-INBOX-ID';
+      try {
+        const legacy = await store.write('Legacy Inbox', {
+          id: legacyId,
+          metadata: { kind: 'project', label: 'P0000' },
+        });
+        const child = await store.write('Legacy child', {
+          parentId: legacy.id,
+          metadata: { project_ref: legacyId },
+        });
+        const target = await store.write('Edge target');
+        const edge = await store.link(legacy.id, target.id, 'relates', 0.75, {
+          project_ref: legacyId,
+        });
+        const beforeRepair = await store.getStaging();
+        await replica.applyStaging(beforeRepair);
+
+        await ensureInboxProject(store);
+        const records = await store.getStaging();
+
+        const canonicalUpserts = records.filter(record =>
+          record.entityType === 'entry' &&
+          record.operation === 'upsert' &&
+          record.key === 'P0000'
+        );
+        expect(canonicalUpserts).toHaveLength(1);
+        expect(records.filter(record =>
+          record.entityType === 'entry' &&
+          record.operation === 'upsert' &&
+          record.key === legacyId
+        )).toHaveLength(1);
+        expect(records).toEqual(expect.arrayContaining([
+          expect.objectContaining({
+            key: legacyId,
+            entityType: 'entry',
+            operation: 'delete',
+          }),
+          expect.objectContaining({
+            key: child.id,
+            entityType: 'entry',
+            operation: 'upsert',
+          }),
+          expect.objectContaining({
+            key: `P0000|${target.id}|relates`,
+            entityType: 'edge',
+            operation: 'upsert',
+          }),
+        ]));
+        await replica.applyStaging(records);
+
+        expect(await replica.read(legacyId)).toBeNull();
+        expect((await replica.read('P0000'))?.metadata).toMatchObject({
+          kind: 'project',
+          label: 'P0000',
+          is_system: true,
+        });
+        expect((await replica.read(child.id))?.parentId).toBe('P0000');
+        expect((await replica.read(child.id))?.metadata.project_ref).toBe('P0000');
+        expect(await replica.getEdges('P0000', 'outgoing')).toEqual([
+          expect.objectContaining({
+            id: edge.id,
+            targetId: target.id,
+            metadata: { project_ref: 'P0000' },
+          }),
+        ]);
+      } finally {
+        replica.close();
+      }
     });
 
     it('merges a duplicate logical Inbox into an existing physical P0000', async () => {
@@ -456,7 +576,15 @@ describe('SessionManager', () => {
         `SELECT id FROM entries WHERE json_extract(metadata, '$.label') = 'P0000'`,
       ).all() as Array<{ id: string }>;
       expect(logicalRows).toEqual([{ id: 'P0000' }]);
-      expect(await store.getStaging()).toHaveLength(1);
+      expect(await store.getStaging()).toEqual(expect.arrayContaining([
+        expect.objectContaining({ key: 'P0000', entityType: 'entry', operation: 'upsert' }),
+        expect.objectContaining({
+          key: 'LEGACY-INBOX-DUPLICATE', entityType: 'entry', operation: 'delete',
+        }),
+        expect.objectContaining({
+          key: `P0000|${target.id}|relates`, entityType: 'edge', operation: 'upsert',
+        }),
+      ]));
     });
 
     it('rolls back a repair when sync staging fails', async () => {

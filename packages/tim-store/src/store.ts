@@ -156,6 +156,39 @@ export interface GetTasksOptions {
   status?: string;
 }
 
+interface EntryIdRewrite {
+  sourceId: string;
+  targetId: string;
+  entryIds: string[];
+  edgeIds: string[];
+}
+
+function rewriteExactJsonReferences(raw: string, sourceId: string, targetId: string): string {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return raw;
+  }
+
+  let changed = false;
+  const visit = (value: unknown): unknown => {
+    if (value === sourceId) {
+      changed = true;
+      return targetId;
+    }
+    if (Array.isArray(value)) return value.map(visit);
+    if (value && typeof value === 'object') {
+      return Object.fromEntries(
+        Object.entries(value as Record<string, unknown>).map(([key, child]) => [key, visit(child)]),
+      );
+    }
+    return value;
+  };
+  const rewritten = visit(parsed);
+  return changed ? JSON.stringify(rewritten) : raw;
+}
+
 export class TimStore implements MemoryInterface {
   private db: Database.Database;
   private emitter?: Pick<EventBus, 'emit'>;
@@ -1469,11 +1502,14 @@ export class TimStore implements MemoryInterface {
    * Canonicalize a physical entry id without changing its payload. Must be called
    * inside runExclusive; rewrites all local references before removing oldId.
    */
-  canonicalizeEntryIdSync(oldId: string, newId: string): Entry {
+  canonicalizeEntryIdSync(oldId: string, newId: string): {
+    entry: Entry;
+    rewrite: EntryIdRewrite | null;
+  } {
     if (oldId === newId) {
       const existing = this.readIncludingTombstoneSync(oldId);
       if (!existing) throw new Error(`Entry not found: ${oldId}`);
-      return existing;
+      return { entry: existing, rewrite: null };
     }
     const existing = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(oldId) as RowEntry | undefined;
     if (!existing) throw new Error(`Entry not found: ${oldId}`);
@@ -1491,42 +1527,17 @@ export class TimStore implements MemoryInterface {
       FROM entries WHERE id = ?
     `).run(newId, oldId);
 
-    this.db.prepare('UPDATE edges SET source_id = ? WHERE source_id = ?').run(newId, oldId);
-    this.db.prepare('UPDATE edges SET target_id = ? WHERE target_id = ?').run(newId, oldId);
-    this.db.prepare('UPDATE entries SET parent_id = ? WHERE parent_id = ?').run(newId, oldId);
+    const rewrite = this.repointEntryReferencesSync(oldId, newId);
     this.db.prepare('UPDATE entry_usage SET entry_id = ? WHERE entry_id = ?').run(newId, oldId);
     this.db.prepare('UPDATE entry_vectors SET entry_id = ? WHERE entry_id = ?').run(newId, oldId);
 
-    const replaceReferences = (table: 'entries' | 'edges' | 'staging', column: string): void => {
-      const idColumn = table === 'staging' ? 'rowid' : 'id';
-      const rows = this.db.prepare(
-        `SELECT ${idColumn} AS row_id, ${column} AS value FROM ${table}
-         WHERE ${column} LIKE '%' || ? || '%'`,
-      ).all(oldId) as Array<{ row_id: string | number; value: string }>;
-      const update = this.db.prepare(`UPDATE ${table} SET ${column} = ? WHERE ${idColumn} = ?`);
-      for (const row of rows) {
-        update.run(row.value.split(oldId).join(newId), row.row_id);
-      }
-    };
-    this.db.prepare('UPDATE staging SET key = ? WHERE key = ?').run(newId, oldId);
-    replaceReferences('staging', 'payload');
-    replaceReferences('entries', 'metadata');
-    replaceReferences('edges', 'metadata');
-    this.db.prepare(
-      `UPDATE suppressed SET pattern = replace(pattern, ?, ?) WHERE pattern LIKE '%' || ? || '%'`,
-    ).run(oldId, newId, oldId);
-    this.db.prepare(
-      `UPDATE suppressed SET suppressed_by = replace(suppressed_by, ?, ?)
-       WHERE suppressed_by LIKE '%' || ? || '%'`,
-    ).run(oldId, newId, oldId);
-
     this.db.prepare('DELETE FROM entries WHERE id = ?').run(oldId);
-    return this.readIncludingTombstoneSync(newId)!;
+    return { entry: this.readIncludingTombstoneSync(newId)!, rewrite };
   }
 
   /** Repoint every structural reference to targetId, then remove sourceId without staging. */
-  mergeEntryReferencesAndDeleteSync(sourceId: string, targetId: string): void {
-    if (sourceId === targetId) return;
+  mergeEntryReferencesAndDeleteSync(sourceId: string, targetId: string): EntryIdRewrite | null {
+    if (sourceId === targetId) return null;
     if (!this.db.prepare('SELECT 1 FROM entries WHERE id = ?').get(sourceId)) {
       throw new Error(`Entry not found: ${sourceId}`);
     }
@@ -1534,35 +1545,112 @@ export class TimStore implements MemoryInterface {
       throw new Error(`Entry not found: ${targetId}`);
     }
 
+    const rewrite = this.repointEntryReferencesSync(sourceId, targetId);
+    this.db.prepare('UPDATE entry_usage SET entry_id = ? WHERE entry_id = ?').run(targetId, sourceId);
+    this.db.prepare('DELETE FROM entry_vectors WHERE entry_id = ?').run(sourceId);
+    this.db.prepare('DELETE FROM entries WHERE id = ?').run(sourceId);
+    return rewrite;
+  }
+
+  /** Emit the syncable state transition for physical-id rewrites after the target is final. */
+  stageEntryIdRewritesSync(targetId: string, rewrites: EntryIdRewrite[]): void {
+    if (rewrites.length === 0) return;
+    const target = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(targetId) as RowEntry | undefined;
+    if (!target) throw new Error(`Entry not found: ${targetId}`);
+
+    const maxTimestamp = this.db.prepare(
+      'SELECT COALESCE(MAX(lww_timestamp), 0) AS value FROM staging',
+    ).get() as { value: number };
+    let timestamp = Math.max(Date.now(), maxTimestamp.value + 1);
+
+    this.db.prepare(
+      `DELETE FROM staging
+       WHERE acked = 0 AND key = ? AND entity_type = 'entry' AND operation = 'upsert'`,
+    ).run(targetId);
+    this.insertStagingSync(target, timestamp++, target.confidence);
+
+    const entryIds = new Set<string>();
+    const edgeIds = new Set<string>();
+    for (const rewrite of rewrites) {
+      const deletedAt = new Date(timestamp).toISOString();
+      this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
+        lww_timestamp, lww_device, lww_confidence)
+        VALUES (?, 'entry', 'delete', ?, ?, ?, 1.0)`).run(
+        rewrite.sourceId,
+        JSON.stringify({
+          id: rewrite.sourceId,
+          tombstoned_at: deletedAt,
+          lww_device: this.deviceId,
+        }),
+        timestamp++,
+        this.deviceId,
+      );
+      rewrite.entryIds.forEach(id => entryIds.add(id));
+      rewrite.edgeIds.forEach(id => edgeIds.add(id));
+    }
+
+    for (const id of entryIds) {
+      const entry = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(id) as RowEntry | undefined;
+      if (entry) this.insertStagingSync(entry, timestamp++, entry.confidence);
+    }
+    for (const id of edgeIds) {
+      const edge = this.db.prepare('SELECT * FROM edges WHERE id = ?').get(id) as RowEdge | undefined;
+      if (!edge) continue;
+      const key = `${edge.source_id}|${edge.target_id}|${edge.type}`;
+      this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
+        lww_timestamp, lww_device, lww_confidence)
+        VALUES (?, 'edge', 'upsert', ?, ?, ?, 1.0)`).run(
+        key, JSON.stringify(edge), timestamp++, this.deviceId,
+      );
+    }
+  }
+
+  private repointEntryReferencesSync(sourceId: string, targetId: string): EntryIdRewrite {
+    const entryIds = new Set(
+      (this.db.prepare('SELECT id FROM entries WHERE parent_id = ?').all(sourceId) as Array<{ id: string }>)
+        .map(row => row.id),
+    );
+    const edgeIds = new Set(
+      (this.db.prepare(
+        'SELECT id FROM edges WHERE source_id = ? OR target_id = ?',
+      ).all(sourceId, sourceId) as Array<{ id: string }>).map(row => row.id),
+    );
+
     this.db.prepare('UPDATE edges SET source_id = ? WHERE source_id = ?').run(targetId, sourceId);
     this.db.prepare('UPDATE edges SET target_id = ? WHERE target_id = ?').run(targetId, sourceId);
     this.db.prepare('UPDATE entries SET parent_id = ? WHERE parent_id = ?').run(targetId, sourceId);
-    this.db.prepare('UPDATE entry_usage SET entry_id = ? WHERE entry_id = ?').run(targetId, sourceId);
-    this.db.prepare('DELETE FROM entry_vectors WHERE entry_id = ?').run(sourceId);
-    this.db.prepare('DELETE FROM staging WHERE key = ?').run(sourceId);
 
-    const replaceReferences = (table: 'entries' | 'edges' | 'staging', column: string): void => {
-      const idColumn = table === 'staging' ? 'rowid' : 'id';
+    const rewriteJsonColumn = (
+      table: 'entries' | 'edges',
+      column: 'metadata',
+      affected: Set<string>,
+    ): void => {
       const rows = this.db.prepare(
-        `SELECT ${idColumn} AS row_id, ${column} AS value FROM ${table}
-         WHERE ${column} LIKE '%' || ? || '%'`,
-      ).all(sourceId) as Array<{ row_id: string | number; value: string }>;
-      const update = this.db.prepare(`UPDATE ${table} SET ${column} = ? WHERE ${idColumn} = ?`);
+        `SELECT id, ${column} AS value FROM ${table} WHERE ${column} LIKE '%' || ? || '%'`,
+      ).all(sourceId) as Array<{ id: string; value: string }>;
+      const update = this.db.prepare(`UPDATE ${table} SET ${column} = ? WHERE id = ?`);
       for (const row of rows) {
-        update.run(row.value.split(sourceId).join(targetId), row.row_id);
+        const rewritten = rewriteExactJsonReferences(row.value, sourceId, targetId);
+        if (rewritten === row.value) continue;
+        update.run(rewritten, row.id);
+        affected.add(row.id);
       }
     };
-    replaceReferences('staging', 'payload');
-    replaceReferences('entries', 'metadata');
-    replaceReferences('edges', 'metadata');
-    this.db.prepare(
-      `UPDATE suppressed SET pattern = replace(pattern, ?, ?) WHERE pattern LIKE '%' || ? || '%'`,
-    ).run(sourceId, targetId, sourceId);
-    this.db.prepare(
-      `UPDATE suppressed SET suppressed_by = replace(suppressed_by, ?, ?)
-       WHERE suppressed_by LIKE '%' || ? || '%'`,
-    ).run(sourceId, targetId, sourceId);
-    this.db.prepare('DELETE FROM entries WHERE id = ?').run(sourceId);
+    rewriteJsonColumn('entries', 'metadata', entryIds);
+    rewriteJsonColumn('edges', 'metadata', edgeIds);
+    entryIds.delete(sourceId);
+    entryIds.delete(targetId);
+
+    this.db.prepare('UPDATE suppressed SET pattern = ? WHERE pattern = ?').run(targetId, sourceId);
+    this.db.prepare('UPDATE suppressed SET suppressed_by = ? WHERE suppressed_by = ?')
+      .run(targetId, sourceId);
+
+    return {
+      sourceId,
+      targetId,
+      entryIds: [...entryIds],
+      edgeIds: [...edgeIds],
+    };
   }
 
   /** Synchronous update for use inside `runExclusive` transactions. */
