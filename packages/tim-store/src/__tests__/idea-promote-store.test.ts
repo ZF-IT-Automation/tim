@@ -82,6 +82,26 @@ describe('idea promote wired into updateSync', () => {
     expect(created.parentId).toBe(tasksSectionId);
   });
 
+  it('createProject with planned idea metadata does not run promote', async () => {
+    const project = await store.createProject('P0099', {
+      metadata: { idea: { status: 'planned' } },
+    });
+    expect(project.metadata.kind).toBe('project');
+    expect(project.metadata.task).toBeUndefined();
+    expect(project.metadata.idea).toMatchObject({ status: 'planned' });
+  });
+
+  it('promote-at-write recomputes order against the Tasks section', async () => {
+    await store.write('T1', { parentId: tasksSectionId, metadata: { type: 'task' } });
+    await store.write('T2', { parentId: tasksSectionId, metadata: { type: 'task' } });
+    const created = await store.write('Promoted', {
+      parentId: ideasSectionId,
+      metadata: { type: 'idea', idea: { status: 'planned' } },
+    });
+    expect(created.parentId).toBe(tasksSectionId);
+    expect(created.metadata.order).toBe(2);
+  });
+
   it('latent planned idea does not promote on unrelated tag-only update after write-reject path', async () => {
     // Write as new (not planned), then ensure a non-idea patch cannot invent planned promote.
     const idea = await store.write('Latent', {

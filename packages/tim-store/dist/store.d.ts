@@ -270,6 +270,8 @@ export declare class TimStore implements MemoryInterface {
         skipped: number;
     }>;
     private buildEntryRow;
+    /** Next free `metadata.order` under a parent (MAX + 1, ignoring irrelevant rows). */
+    private nextOrderFor;
     private insertEntrySync;
     private insertStagingSync;
     /** Atomically insert entry + staging row (rollback on either failure). */

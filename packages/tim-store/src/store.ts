@@ -18,7 +18,7 @@ import { runMigrations, createTriggers, getCurrentVersion } from './schema.js';
 import { CurateManager } from './curate.js';
 import { ConsolidationManager } from './consolidate.js';
 import { metadataNeedsCoercion, parseAndCoerceMetadata, isIdeaMarker } from './metadata-coerce.js';
-import { applyIdeaPromote } from './idea-promote.js';
+import { applyIdeaPromote, type PromoteResult } from './idea-promote.js';
 import { isCodingNeedsReview, migrateTaskHistory, appendTaskStatus } from './task-status-history.js';
 import { detectProjectVcs } from './vcs.js';
 import { recordFromPayload, entryLocalLwwTimestamp, edgeLocalLwwTimestamp } from './sync-methods.js';
@@ -1756,16 +1756,16 @@ export class TimStore implements MemoryInterface {
       }
       metadata.task = taskObj;
     }
-    if (parentId && metadata.order === undefined) {
-      const maxRow = this.db.prepare(`
-        SELECT MAX(CAST(json_extract(metadata, '$.order') AS INTEGER)) AS max_order
-        FROM entries WHERE parent_id = ? AND irrelevant = 0
-      `).get(parentId) as { max_order: number | null };
-      metadata.order = (maxRow.max_order ?? -1) + 1;
+    const explicitOrder = metadata.order !== undefined;
+    if (parentId && !explicitOrder) {
+      metadata.order = this.nextOrderFor(parentId);
     }
 
     // Promote on the object before serialize — avoids JSON roundtrip on every write.
-    const promote = applyIdeaPromote(metadata, now);
+    // Projects never promote (createProject routes through here and has no project ancestor).
+    const promote: PromoteResult = metadata.kind === 'project'
+      ? { metadata, didPromote: false }
+      : applyIdeaPromote(metadata, now);
     if (promote.error) {
       throw new Error(promote.error);
     }
@@ -1775,6 +1775,8 @@ export class TimStore implements MemoryInterface {
       if (retarget) {
         parentId = retarget.parentId;
         depth = retarget.depth;
+        // Order was computed against the old parent — recompute under Tasks.
+        if (!explicitOrder) finalMeta.order = this.nextOrderFor(parentId);
       }
     }
 
@@ -1800,6 +1802,15 @@ export class TimStore implements MemoryInterface {
     };
 
     return { entry, now, timestamp };
+  }
+
+  /** Next free `metadata.order` under a parent (MAX + 1, ignoring irrelevant rows). */
+  private nextOrderFor(parentId: string): number {
+    const maxRow = this.db.prepare(`
+      SELECT MAX(CAST(json_extract(metadata, '$.order') AS INTEGER)) AS max_order
+      FROM entries WHERE parent_id = ? AND irrelevant = 0
+    `).get(parentId) as { max_order: number | null };
+    return (maxRow.max_order ?? -1) + 1;
   }
 
   private insertEntrySync(entry: RowEntry): void {

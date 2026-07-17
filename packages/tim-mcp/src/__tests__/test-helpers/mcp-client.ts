@@ -108,7 +108,7 @@ export class McpClient {
   kill(): void {
     this.proc.kill('SIGTERM');
     setTimeout(() => {
-      if (!this.proc.killed) this.proc.kill('SIGKILL');
-    }, 100);
+      if (this.proc.exitCode === null) this.proc.kill('SIGKILL');
+    }, 100).unref();
   }
 }

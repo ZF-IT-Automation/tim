@@ -1539,15 +1539,15 @@ class TimStore {
             }
             metadata.task = taskObj;
         }
-        if (parentId && metadata.order === undefined) {
-            const maxRow = this.db.prepare(`
-        SELECT MAX(CAST(json_extract(metadata, '$.order') AS INTEGER)) AS max_order
-        FROM entries WHERE parent_id = ? AND irrelevant = 0
-      `).get(parentId);
-            metadata.order = (maxRow.max_order ?? -1) + 1;
+        const explicitOrder = metadata.order !== undefined;
+        if (parentId && !explicitOrder) {
+            metadata.order = this.nextOrderFor(parentId);
         }
         // Promote on the object before serialize — avoids JSON roundtrip on every write.
-        const promote = (0, idea_promote_js_1.applyIdeaPromote)(metadata, now);
+        // Projects never promote (createProject routes through here and has no project ancestor).
+        const promote = metadata.kind === 'project'
+            ? { metadata, didPromote: false }
+            : (0, idea_promote_js_1.applyIdeaPromote)(metadata, now);
         if (promote.error) {
             throw new Error(promote.error);
         }
@@ -1557,6 +1557,9 @@ class TimStore {
             if (retarget) {
                 parentId = retarget.parentId;
                 depth = retarget.depth;
+                // Order was computed against the old parent — recompute under Tasks.
+                if (!explicitOrder)
+                    finalMeta.order = this.nextOrderFor(parentId);
             }
         }
         const entry = {
@@ -1580,6 +1583,14 @@ class TimStore {
             lww_device: this.deviceId,
         };
         return { entry, now, timestamp };
+    }
+    /** Next free `metadata.order` under a parent (MAX + 1, ignoring irrelevant rows). */
+    nextOrderFor(parentId) {
+        const maxRow = this.db.prepare(`
+      SELECT MAX(CAST(json_extract(metadata, '$.order') AS INTEGER)) AS max_order
+      FROM entries WHERE parent_id = ? AND irrelevant = 0
+    `).get(parentId);
+        return (maxRow.max_order ?? -1) + 1;
     }
     insertEntrySync(entry) {
         this.db.prepare(`INSERT INTO entries (id, parent_id, title, content, content_type, depth,
