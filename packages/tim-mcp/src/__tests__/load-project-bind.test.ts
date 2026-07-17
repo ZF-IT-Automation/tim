@@ -2,6 +2,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { spawn, type ChildProcess } from 'node:child_process';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
 import { isolatedCwd } from './test-helpers/mcp-client.js';
@@ -21,13 +22,13 @@ class McpClient {
   private buffer = '';
   private ready = false;
 
-  constructor(dbPath: string) {
+  constructor(dbPath: string, cwd: string = isolatedCwd()) {
     if (!fs.existsSync(SERVER_PATH)) {
       throw new Error(`Server dist not found: ${SERVER_PATH}. Run "npm run build" first.`);
     }
     this.proc = spawn('node', [SERVER_PATH], {
       // Never inherit the runner cwd — the server syncs .tim-project markers there.
-      cwd: isolatedCwd(),
+      cwd,
       env: { ...process.env, TIM_DB_PATH: dbPath },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
@@ -97,11 +98,15 @@ class McpClient {
 describe('tim_load_project bind:false', () => {
   let client: McpClient;
   let dbPath: string;
+  let cwdDir: string;
+  let markerPath: string;
 
   beforeEach(async () => {
     dbPath = `/tmp/tim-bind-${Date.now()}-${Math.random().toString(36).slice(2)}.db`;
     if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath);
-    client = new McpClient(dbPath);
+    cwdDir = isolatedCwd();
+    markerPath = path.join(cwdDir, '.tim-project');
+    client = new McpClient(dbPath, cwdDir);
     await client.init();
 
     // Seed two projects.
@@ -112,6 +117,7 @@ describe('tim_load_project bind:false', () => {
   afterEach(() => {
     client.kill();
     if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath);
+    fs.rmSync(cwdDir, { recursive: true, force: true });
   });
 
   it('does not bind the session and can be called for multiple projects', async () => {
@@ -137,6 +143,33 @@ describe('tim_load_project bind:false', () => {
     const bind = await client.callTool('tim_load_project', { label: 'P8102' });
     expect(bind.error).toBeUndefined();
     expect(bind.result!.isError).toBeFalsy();
+  });
+
+  it('bind:false leaves a pre-existing .tim-project byte-identical', async () => {
+    const before = fs.readFileSync(markerPath, 'utf8');
+    const read = await client.callTool('tim_load_project', { label: 'P8101', bind: false });
+    expect(read.result!.isError).toBeFalsy();
+    expect(fs.readFileSync(markerPath, 'utf8')).toBe(before);
+  });
+
+  it('bind:false creates no .tim-project when the cwd has none', async () => {
+    const bareDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tim-bind-bare-'));
+    const bare = new McpClient(dbPath, bareDir);
+    try {
+      const read = await bare.callTool('tim_load_project', { label: 'P8101', bind: false });
+      expect(read.result!.isError).toBeFalsy();
+      expect(fs.existsSync(path.join(bareDir, '.tim-project'))).toBe(false);
+    } finally {
+      bare.kill();
+      fs.rmSync(bareDir, { recursive: true, force: true });
+    }
+  });
+
+  it('bind:true syncs the cwd marker to the loaded project', async () => {
+    const bind = await client.callTool('tim_load_project', { label: 'P8102' });
+    expect(bind.result!.isError).toBeFalsy();
+    const marker = JSON.parse(fs.readFileSync(markerPath, 'utf8')) as { project: string };
+    expect(marker.project).toBe('P8102');
   });
 
   it('tim_read_project still works as a deprecated alias for bind:false', async () => {

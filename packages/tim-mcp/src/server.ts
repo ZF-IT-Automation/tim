@@ -2955,7 +2955,9 @@ export async function createMcpServer(
             }
           }
 
-          if (cwd) {
+          // Only a real bind may touch the marker — bind:false is a read-only
+          // cross-project load and must never rewrite .tim-project.
+          if (bind && cwd) {
             try {
               syncNearestProjectMarker(cwd, projectLabel, { sessionId });
             } catch {
