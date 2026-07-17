@@ -54,6 +54,7 @@ export {
   syncNearestProjectMarker,
   validateMarkerAgainstStore,
   validateProjectLabel,
+  isUnsafeMarkerDir,
   INBOX_LABEL,
   acquireLock,
   releaseLock,

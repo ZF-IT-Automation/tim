@@ -39,6 +39,7 @@ exports.canonicalProjectPath = canonicalProjectPath;
 exports.validateProjectLabel = validateProjectLabel;
 exports.readMarker = readMarker;
 exports.validateMarkerAgainstStore = validateMarkerAgainstStore;
+exports.isUnsafeMarkerDir = isUnsafeMarkerDir;
 exports.writeMarkerAtomic = writeMarkerAtomic;
 exports.writeMarker = writeMarker;
 exports.rotateMarkerSession = rotateMarkerSession;
@@ -243,6 +244,27 @@ async function validateMarkerAgainstStore(marker, store) {
         `but no matching entry exists in the DB. Treating as corrupt.`);
     return null;
 }
+/**
+ * Shared/system directories where a `.tim-project` must never live: every
+ * process can have them as cwd, so a marker there leaks into unrelated
+ * sessions via walk-up (observed: a cron with cwd=/tmp wrote /tmp/.tim-project
+ * and every process under /tmp inherited it). v1 unsafe set — deliberately
+ * minimal and explicit: os.tmpdir() itself and the filesystem root.
+ * Subdirectories of tmpdir (mkdtemp scratch dirs) are private and stay legal.
+ */
+function isUnsafeMarkerDir(dir) {
+    let resolved = path.resolve(dir);
+    try {
+        resolved = fs.realpathSync(resolved);
+    }
+    catch { /* nonexistent — compare as-is */ }
+    let tmp = path.resolve(os.tmpdir());
+    try {
+        tmp = fs.realpathSync(tmp);
+    }
+    catch { /* keep resolved */ }
+    return resolved === tmp || resolved === path.parse(resolved).root;
+}
 /** Atomically write JSON to `filePath` (tmp + rename — no torn reads on POSIX). */
 function writeMarkerAtomic(filePath, content) {
     const tmp = `${filePath}.tmp.${process.pid}`;
@@ -253,6 +275,11 @@ function writeMarkerAtomic(filePath, content) {
  *  the on-disk file becomes v2 on first write, regardless of the caller's
  *  input. This is the auto-upgrade path for v1 files. */
 function writeMarker(cwd, marker) {
+    if (isUnsafeMarkerDir(cwd)) {
+        console.warn(`[tim-hooks] writeMarker: refusing to write ${exports.MARKER_FILENAME} in shared directory ` +
+            `"${cwd}" (tmpdir / filesystem root). Marker not written — running markerless.`);
+        return;
+    }
     if (!validateProjectLabel(marker.project)) {
         console.warn(`[tim-hooks] writeMarker: refusing to write invalid project label "${marker.project}" — ` +
             `expected ^[PLEN]\\d{4}$ (P0062, L0042, …). Marker not written.`);
@@ -267,6 +294,11 @@ function writeMarker(cwd, marker) {
  * Used by tim-session-start.sh — must not interpolate paths into JS source.
  */
 function rotateMarkerSession(cwd, sessionId) {
+    if (isUnsafeMarkerDir(cwd)) {
+        console.warn(`[tim-hooks] rotateMarkerSession: refusing to touch ${exports.MARKER_FILENAME} in shared ` +
+            `directory "${cwd}" (tmpdir / filesystem root). Running markerless.`);
+        return;
+    }
     const p = markerPath(cwd);
     if (!fs.existsSync(p))
         return;
@@ -403,6 +435,10 @@ function pickMarkerLocation(candidates) {
     return candidates.reduce((best, cur) => path.resolve(cur.dir).length > path.resolve(best.dir).length ? cur : best);
 }
 function scanDirForMarker(dir) {
+    // Markers in shared directories (tmpdir, /) are never trusted — treat the
+    // dir as marker-free and keep walking, same as any dir without a marker.
+    if (isUnsafeMarkerDir(dir))
+        return null;
     if (fs.existsSync(markerPath(dir))) {
         const marker = readMarker(dir);
         if (!marker)

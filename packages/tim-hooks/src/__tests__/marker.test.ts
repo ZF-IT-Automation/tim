@@ -18,6 +18,7 @@ import {
   releaseLock,
   validateMarkerAgainstStore,
   validateProjectLabel,
+  isUnsafeMarkerDir,
   INBOX_LABEL,
 } from '../marker.js';
 import { TimStore, SessionManager } from 'tim-store';
@@ -734,5 +735,68 @@ describe('marker atomic writes', () => {
     writeMarker(dir, { project: 'P0001', session: 'old', exchanges: 0, batch_size: 5, batches_summarized: 0 });
     rotateMarkerSession(dir, 'new-session');
     expect(readMarker(dir)?.session).toBe('new-session');
+  });
+});
+
+describe('unsafe marker directories (tmpdir / filesystem root)', () => {
+  const MARKER = {
+    project: 'P0001',
+    session: 's1',
+    exchanges: 0,
+    batch_size: 5,
+    batches_summarized: 0,
+  };
+  let fakeTmp: string;
+  const origTmpdir = process.env.TMPDIR;
+
+  beforeEach(() => {
+    fs.mkdirSync(TEST_ROOT, { recursive: true });
+    // Fake tmpdir via TMPDIR so tests never touch a real /tmp/.tim-project.
+    fakeTmp = fs.mkdtempSync(path.join(TEST_ROOT, 'fake-tmp-'));
+    process.env.TMPDIR = fakeTmp;
+  });
+
+  afterEach(() => {
+    if (origTmpdir === undefined) delete process.env.TMPDIR;
+    else process.env.TMPDIR = origTmpdir;
+    fs.rmSync(fakeTmp, { recursive: true, force: true });
+  });
+
+  it('isUnsafeMarkerDir flags tmpdir and root, not tmpdir subdirs', () => {
+    expect(isUnsafeMarkerDir(fakeTmp)).toBe(true);
+    expect(isUnsafeMarkerDir('/')).toBe(true);
+    expect(isUnsafeMarkerDir(path.join(fakeTmp, 'scratch'))).toBe(false);
+  });
+
+  it('writeMarker refuses tmpdir and filesystem root', () => {
+    writeMarker(fakeTmp, MARKER);
+    expect(fs.existsSync(path.join(fakeTmp, '.tim-project'))).toBe(false);
+    expect(() => writeMarker('/', MARKER)).not.toThrow();
+    expect(fs.existsSync('/.tim-project')).toBe(false);
+  });
+
+  it('rotateMarkerSession leaves a tmpdir marker untouched', () => {
+    const p = path.join(fakeTmp, '.tim-project');
+    writeMarkerAtomic(p, JSON.stringify({ version: 2, ...MARKER }));
+    rotateMarkerSession(fakeTmp, 'hijack');
+    expect((JSON.parse(fs.readFileSync(p, 'utf8')) as { session: string }).session).toBe('s1');
+  });
+
+  it('findMarker walk-up skips a tmpdir marker — markerless fallback', () => {
+    writeMarkerAtomic(path.join(fakeTmp, '.tim-project'), JSON.stringify({ version: 2, ...MARKER }));
+    const sub = path.join(fakeTmp, 'a', 'b');
+    fs.mkdirSync(sub, { recursive: true });
+    expect(findMarker(sub, { walkUp: true, maxRoot: fakeTmp })).toBeNull();
+    expect(detectProject(fakeTmp)).toBeNull();
+  });
+
+  it('walk-up still finds a legit marker in a tmpdir subdirectory', () => {
+    writeMarkerAtomic(path.join(fakeTmp, '.tim-project'), JSON.stringify({ version: 2, ...MARKER }));
+    const proj = path.join(fakeTmp, 'proj');
+    fs.mkdirSync(path.join(proj, 'src'), { recursive: true });
+    writeMarkerAtomic(path.join(proj, '.tim-project'), JSON.stringify({ version: 2, ...MARKER, project: 'P0002' }));
+    const found = findMarker(path.join(proj, 'src'), { walkUp: true, maxRoot: fakeTmp });
+    expect(found?.marker.project).toBe('P0002');
+    expect(found?.dir).toBe(proj);
   });
 });

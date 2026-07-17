@@ -93,6 +93,15 @@ export declare function readMarker(cwd: string): ProjectMarker | null;
  * malformed labels — we just skip the existence confirmation.
  */
 export declare function validateMarkerAgainstStore(marker: ProjectMarker, store: Pick<TimStore, 'resolveProjectLabel'>): Promise<ProjectMarker | null>;
+/**
+ * Shared/system directories where a `.tim-project` must never live: every
+ * process can have them as cwd, so a marker there leaks into unrelated
+ * sessions via walk-up (observed: a cron with cwd=/tmp wrote /tmp/.tim-project
+ * and every process under /tmp inherited it). v1 unsafe set — deliberately
+ * minimal and explicit: os.tmpdir() itself and the filesystem root.
+ * Subdirectories of tmpdir (mkdtemp scratch dirs) are private and stay legal.
+ */
+export declare function isUnsafeMarkerDir(dir: string): boolean;
 /** Atomically write JSON to `filePath` (tmp + rename — no torn reads on POSIX). */
 export declare function writeMarkerAtomic(filePath: string, content: string): void;
 /** Write a project marker file. Always emits the current schema version:
