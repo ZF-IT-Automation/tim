@@ -181,4 +181,47 @@ describe('task.vcs auto-detection from projectPath', () => {
     const taskMeta = task.metadata.task as { vcs?: string };
     expect(taskMeta.vcs).toBeUndefined();
   });
+
+  it('first update directly to pushed with projectPath in git sets vcs:git', async () => {
+    const task = await store.write('Coding task, no vcs', {
+      parentId: tasksSectionId,
+      metadata: {
+        type: 'task',
+        task: { status: 'todo', subtype: 'coding', commits: ['abc123'] },
+      },
+    });
+
+    const updated = await store.update(
+      task.id,
+      { metadata: { task: { status: 'pushed' } } },
+      { projectPath: repoRoot },
+    );
+
+    const taskMeta = updated.metadata.task as { vcs?: string; status?: string };
+    expect(taskMeta.vcs).toBe('git');
+    expect(taskMeta.status).toBe('pushed');
+  });
+
+  it('first update directly to pushed with projectPath outside git still fails', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tim-vcs-pushed-'));
+    try {
+      const task = await store.write('Coding task, no vcs', {
+        parentId: tasksSectionId,
+        metadata: {
+          type: 'task',
+          task: { status: 'todo', subtype: 'coding', commits: ['abc123'] },
+        },
+      });
+
+      await expect(
+        store.update(
+          task.id,
+          { metadata: { task: { status: 'pushed' } } },
+          { projectPath: dir },
+        ),
+      ).rejects.toThrow(/vcs is not "git"/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

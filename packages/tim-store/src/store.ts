@@ -1459,38 +1459,27 @@ export class TimStore implements MemoryInterface {
   }
 
   /**
-   * If metadata has idea.status=planned, promote in-place and retarget parent
-   * to the project's Tasks section (same end state as update-path promote).
+   * Move an entry under the project's Tasks section (same depth math as
+   * update-path / write-path promote). Throws if no project ancestor.
+   * Returns null when already under Tasks (caller keeps parent/depth).
    */
-  private applyWritePromote(entry: RowEntry, now: string): RowEntry {
-    const metadata = JSON.parse(entry.metadata || '{}') as Record<string, unknown>;
-    const promote = applyIdeaPromote(metadata, now);
-    if (promote.error) {
-      throw new Error(promote.error);
-    }
-    if (!promote.didPromote) {
-      return entry;
-    }
-
-    let parentId = entry.parent_id;
-    let depth = entry.depth;
-    const projectLabel = this.findProjectLabelForParent(entry.parent_id);
+  private retargetToTasksSection(
+    entryId: string,
+    currentParentId: string | null,
+  ): { parentId: string; depth: number } | null {
+    const projectLabel = this.findProjectLabelForParent(currentParentId);
     if (!projectLabel) {
-      throw new Error(`Cannot promote entry ${entry.id}: no project ancestor found`);
+      throw new Error(`Cannot promote entry ${entryId}: no project ancestor found`);
     }
     const tasksSectionId = this.resolveSectionIdByTitleSync(projectLabel, 'Tasks');
-    if (tasksSectionId !== entry.parent_id) {
-      const parentRow = this.db.prepare('SELECT depth FROM entries WHERE id = ?')
-        .get(tasksSectionId) as { depth: number } | undefined;
-      parentId = tasksSectionId;
-      depth = Math.min((parentRow?.depth ?? 0) + 1, 5);
+    if (tasksSectionId === currentParentId) {
+      return null;
     }
-
+    const parentRow = this.db.prepare('SELECT depth FROM entries WHERE id = ?')
+      .get(tasksSectionId) as { depth: number } | undefined;
     return {
-      ...entry,
-      parent_id: parentId,
-      depth,
-      metadata: JSON.stringify(promote.metadata),
+      parentId: tasksSectionId,
+      depth: Math.min((parentRow?.depth ?? 0) + 1, 5),
     };
   }
 
@@ -1503,10 +1492,9 @@ export class TimStore implements MemoryInterface {
       };
     }
     const built = this.buildEntryRow(content, options);
-    const entry = this.applyWritePromote(built.entry, built.now);
-    this.insertEntrySync(entry);
-    this.insertStagingSync(entry, built.timestamp, options.confidence ?? 1.0);
-    const result = rowToEntry(entry);
+    this.insertEntrySync(built.entry);
+    this.insertStagingSync(built.entry, built.timestamp, options.confidence ?? 1.0);
+    const result = rowToEntry(built.entry);
     this.emit('memory:written', { entry: result, agentId: this.agentId, timestamp: built.now });
     return result;
   }
@@ -1616,18 +1604,18 @@ export class TimStore implements MemoryInterface {
           const { status: patchStatus, history: _ignoredPatchHistory, ...patchTaskRest } = rawPatchTask;
           taskObj = { ...taskObj, ...patchTaskRest };
 
-          // 3. A status change becomes an append, never an overwrite.
+          // 3. Auto-detect vcs before status append — pushed-gate needs vcs:git.
+          if (taskObj.subtype === 'coding' && !taskObj.vcs && options?.projectPath) {
+            taskObj.vcs = detectProjectVcs(options.projectPath);
+          }
+
+          // 4. A status change becomes an append, never an overwrite.
           if (typeof patchStatus === 'string' && patchStatus !== taskObj.status) {
             const result = appendTaskStatus(taskObj, patchStatus as TaskStatusValue, { at: now });
             if (result.error) {
               throw new Error(result.error);
             }
             taskObj = result.task;
-          }
-
-          // 4. Auto-detect vcs once for coding tasks when the caller told us where the project lives.
-          if (taskObj.subtype === 'coding' && !taskObj.vcs && options?.projectPath) {
-            taskObj.vcs = detectProjectVcs(options.projectPath);
           }
 
           patchMeta.task = taskObj;
@@ -1669,16 +1657,10 @@ export class TimStore implements MemoryInterface {
     };
 
     if (didPromote) {
-      const projectLabel = this.findProjectLabelForParent(existing.parent_id);
-      if (!projectLabel) {
-        throw new Error(`Cannot promote entry ${id}: no project ancestor found`);
-      }
-      const tasksSectionId = this.resolveSectionIdByTitleSync(projectLabel, 'Tasks');
-      if (tasksSectionId !== existing.parent_id) {
-        const parentRow = this.db.prepare('SELECT depth FROM entries WHERE id = ?')
-          .get(tasksSectionId) as { depth: number } | undefined;
-        updated.parent_id = tasksSectionId;
-        updated.depth = Math.min((parentRow?.depth ?? 0) + 1, 5);
+      const retarget = this.retargetToTasksSection(id, existing.parent_id);
+      if (retarget) {
+        updated.parent_id = retarget.parentId;
+        updated.depth = retarget.depth;
       }
     }
 
@@ -1759,7 +1741,7 @@ export class TimStore implements MemoryInterface {
     const { title, body } = splitTitleBody(content, options.title);
 
     let depth = 1;
-    const parentId = options.parentId ?? null;
+    let parentId = options.parentId ?? null;
     if (parentId) {
       const parent = this.db.prepare('SELECT depth FROM entries WHERE id = ?').get(parentId) as
         { depth: number } | undefined;
@@ -1782,6 +1764,20 @@ export class TimStore implements MemoryInterface {
       metadata.order = (maxRow.max_order ?? -1) + 1;
     }
 
+    // Promote on the object before serialize — avoids JSON roundtrip on every write.
+    const promote = applyIdeaPromote(metadata, now);
+    if (promote.error) {
+      throw new Error(promote.error);
+    }
+    const finalMeta = promote.didPromote ? promote.metadata : metadata;
+    if (promote.didPromote) {
+      const retarget = this.retargetToTasksSection(id, parentId);
+      if (retarget) {
+        parentId = retarget.parentId;
+        depth = retarget.depth;
+      }
+    }
+
     const entry: RowEntry = {
       id,
       parent_id: parentId,
@@ -1799,7 +1795,7 @@ export class TimStore implements MemoryInterface {
       irrelevant: 0,
       favorite: 0,
       tombstoned_at: null,
-      metadata: JSON.stringify(metadata),
+      metadata: JSON.stringify(finalMeta),
       lww_device: this.deviceId,
     };
 
@@ -1848,16 +1844,15 @@ export class TimStore implements MemoryInterface {
     }
 
     const built = this.buildEntryRow(content, options);
-    const entry = this.applyWritePromote(built.entry, built.now);
-    this.writeEntryWithStaging(entry, built.timestamp, options.confidence ?? 1.0);
+    this.writeEntryWithStaging(built.entry, built.timestamp, options.confidence ?? 1.0);
 
     if (options.edges) {
       for (const edge of options.edges) {
-        await this.link(entry.id, edge.targetId, edge.type, edge.weight, edge.metadata);
+        await this.link(built.entry.id, edge.targetId, edge.type, edge.weight, edge.metadata);
       }
     }
 
-    const result = rowToEntry(entry);
+    const result = rowToEntry(built.entry);
     this.emit('memory:written', { entry: result, agentId: this.agentId, timestamp: built.now });
     return result;
   }

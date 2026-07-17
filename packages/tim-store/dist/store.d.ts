@@ -241,10 +241,11 @@ export declare class TimStore implements MemoryInterface {
     /** Run `fn` inside a single exclusive DB transaction (serializes concurrent callers). */
     runExclusive<T>(fn: () => T): T;
     /**
-     * If metadata has idea.status=planned, promote in-place and retarget parent
-     * to the project's Tasks section (same end state as update-path promote).
+     * Move an entry under the project's Tasks section (same depth math as
+     * update-path / write-path promote). Throws if no project ancestor.
+     * Returns null when already under Tasks (caller keeps parent/depth).
      */
-    private applyWritePromote;
+    private retargetToTasksSection;
     /** Synchronous write for use inside `runExclusive` transactions. */
     writeSync(content: string, options?: WriteOptions): Entry;
     getChildByKindSync(parentId: string, kind: string): Entry[];

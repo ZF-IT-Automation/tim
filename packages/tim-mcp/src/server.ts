@@ -1607,6 +1607,9 @@ export async function createMcpServer(
     }
   );
 
+  // Resolve once per server instance — cwd / isHttp do not change for the process.
+  const callerProjectPath = resolveCallerProjectPath(isHttp);
+
   // ─── Tool Registration ──────────────────────────────
 
   // Consistent error contract: every failure path returns isError:true with a
@@ -2016,7 +2019,7 @@ export async function createMcpServer(
 
           const entry = await s.write(opts.content, {
             ...writeOpts,
-            projectPath: resolveCallerProjectPath(isHttp),
+            projectPath: callerProjectPath,
           });
           const usageSid = usageSessionId();
           if (usageSid) {
@@ -2222,7 +2225,7 @@ export async function createMcpServer(
           const { id, ...patch } = TimUpdateSchema.parse(args);
           const resolved = await s.read(id, { showIrrelevant: true, includeChildren: false });
           if (!resolved) return errorResult(`Entry not found: ${id}`);
-          const projectPath = resolveCallerProjectPath(isHttp);
+          const projectPath = callerProjectPath;
           if (patch.tags !== undefined) {
             const tagWarnings = validateTagsDeprecated(patch.tags);
             const { clean: cleanTags } = stripDeprecatedTags(patch.tags);
