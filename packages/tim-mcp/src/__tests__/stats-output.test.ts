@@ -23,6 +23,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { spawn, type ChildProcess } from 'node:child_process';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
+import { isolatedCwd } from './test-helpers/mcp-client.js';
 
 const SERVER_PATH = path.resolve(
   __dirname, '..', '..', 'dist', 'server.js',
@@ -46,6 +47,8 @@ class McpClient {
       throw new Error(`Server dist not found: ${SERVER_PATH}. Run "npm run build" first.`);
     }
     this.proc = spawn('node', [SERVER_PATH], {
+      // Never inherit the runner cwd — the server syncs .tim-project markers there.
+      cwd: isolatedCwd(),
       env: { ...process.env, TIM_DB_PATH: dbPath },
       stdio: ['pipe', 'pipe', 'pipe'],
     });

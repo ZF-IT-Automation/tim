@@ -3,6 +3,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { spawn, type ChildProcess } from 'node:child_process';
 import * as path from 'node:path';
+import { isolatedCwd } from './test-helpers/mcp-client.js';
 import * as fs from 'node:fs';
 
 const SERVER_PATH = path.resolve(__dirname, '..', '..', 'dist', 'server.js');
@@ -20,11 +21,13 @@ class McpClient {
   private buffer = '';
   private ready = false;
 
-  constructor(dbPath: string) {
+  constructor(dbPath: string, cwd?: string) {
     if (!fs.existsSync(SERVER_PATH)) {
       throw new Error(`Server dist not found: ${SERVER_PATH}. Run "npm run build" first.`);
     }
     this.proc = spawn('node', [SERVER_PATH], {
+      // Never inherit the runner cwd — the server syncs .tim-project markers there.
+      cwd: cwd ?? isolatedCwd(),
       env: { ...process.env, TIM_DB_PATH: dbPath },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
@@ -98,17 +101,22 @@ function getText(resp: JsonRpcResp): string {
 describe('error contract', () => {
   let client: McpClient;
   let dbPath: string;
+  let cwdDir: string;
 
   beforeEach(async () => {
     dbPath = `/tmp/tim-err-contract-${Date.now()}-${Math.random().toString(36).slice(2)}.db`;
     if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath);
-    client = new McpClient(dbPath);
+    // Self-contained marker cwd: the load-gate needs a session id resolvable
+    // from the server cwd — never depend on a repo-checkout .tim-project.
+    cwdDir = isolatedCwd({ session: 'err-contract-session' });
+    client = new McpClient(dbPath, cwdDir);
     await client.init();
   });
 
   afterEach(() => {
     client.kill();
     if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath);
+    fs.rmSync(cwdDir, { recursive: true, force: true });
   });
 
   it('tim_read of a missing id returns isError with a helpful message, not "null"', async () => {

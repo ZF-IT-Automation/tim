@@ -1,8 +1,29 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 
 const DEFAULT_SERVER_PATH = path.resolve(__dirname, '..', '..', '..', 'dist', 'server.js');
+
+/**
+ * Fresh temp cwd seeded with a neutral `.tim-project`. The server resolves and
+ * syncs the nearest marker by walking up from its cwd — seeding one here keeps
+ * discovery inside the temp dir, so tests never read or rewrite a marker in
+ * the repo checkout (or a live one in /tmp).
+ */
+export function isolatedCwd(marker: Record<string, unknown> = {}): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tim-mcp-cwd-'));
+  fs.writeFileSync(path.join(dir, '.tim-project'), JSON.stringify({
+    version: 2,
+    project: 'P0001',
+    session: '',
+    exchanges: 0,
+    batch_size: 5,
+    batches_summarized: 0,
+    ...marker,
+  }));
+  return dir;
+}
 
 export interface JsonRpcResp {
   id: number;
@@ -40,7 +61,8 @@ export class McpClient {
     this.timeoutMs = options.timeoutMs ?? 15000;
     this.clientInfo = options.clientInfo ?? { name: 'tim-mcp-test', version: '0.0.1' };
     this.proc = spawn('node', [serverPath], {
-      cwd: options.cwd,
+      // Never inherit the runner cwd — the server syncs .tim-project markers there.
+      cwd: options.cwd ?? isolatedCwd(),
       env: {
         ...process.env,
         TIM_DB_PATH: options.dbPath,
