@@ -3,7 +3,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import type { Server } from 'node:http';
-import { TimStore } from 'tim-store';
+import { ensureInboxProject, TimStore } from 'tim-store';
 import { getUnackedStaging } from 'tim-store';
 import {
   TimSyncClient,
@@ -96,5 +96,68 @@ describe('sync integration', () => {
     expect(stats.totalEntries).toBeGreaterThan(0);
     store2.close();
     fs.unlinkSync(dbPath2);
+  });
+
+  it('preserves raw metadata tokens through push, pull, and remote apply', async () => {
+    const rawFileId = `${fileId}-raw-metadata`;
+    const client = new TimSyncClient(`http://127.0.0.1:${port}`, 'test-token');
+    await client.createFile(rawFileId, salt);
+
+    const sourcePath = `${dbPath}.raw-source`;
+    const destinationPath = `${dbPath}.raw-destination`;
+    const source = new TimStore(sourcePath);
+    await source.write('Raw metadata Inbox', {
+      id: 'P0000',
+      metadata: { kind: 'note', label: 'N0000' },
+    });
+    source.getDb().prepare(`UPDATE entries SET metadata = ? WHERE id = 'P0000'`).run(
+      '{"kind":"note","label":"N0000","pinned":1,"custom":{"big":9007199254740993,"negative_zero":-0}}',
+    );
+    source.getDb().prepare('DELETE FROM staging').run();
+    await ensureInboxProject(source);
+
+    const expectedMetadata =
+      '{"kind":"project","label":"P0000","pinned":1,"custom":{"big":9007199254740993,"negative_zero":-0},"is_system":true,"render_depth":1}';
+    const staged = getUnackedStaging(source.getDb());
+    const stagedPayload = JSON.parse(staged[0]!.payload) as { metadata_raw?: string };
+    const sourceContext = buildSyncContext(
+      source,
+      {
+        serverUrl: `http://127.0.0.1:${port}`,
+        token: 'test-token',
+        salt,
+        fileId: rawFileId,
+      },
+      passphrase,
+      'raw-source-device',
+    );
+    await runPush(sourceContext);
+    source.close();
+
+    const destination = new TimStore(destinationPath);
+    const destinationContext = buildSyncContext(
+      destination,
+      {
+        serverUrl: `http://127.0.0.1:${port}`,
+        token: 'test-token',
+        salt,
+        fileId: rawFileId,
+      },
+      passphrase,
+      'raw-destination-device',
+    );
+    destinationContext.state.cursor = null;
+    const { pulled } = await runPull(destinationContext);
+    expect(pulled).toBeGreaterThan(0);
+
+    const stored = destination.getDb().prepare(
+      `SELECT metadata FROM entries WHERE id = 'P0000'`,
+    ).get() as { metadata: string };
+    expect(stored.metadata).toBe(expectedMetadata);
+    expect(stagedPayload.metadata_raw).toBe(expectedMetadata);
+
+    destination.close();
+    fs.rmSync(sourcePath, { force: true });
+    fs.rmSync(destinationPath, { force: true });
   });
 });

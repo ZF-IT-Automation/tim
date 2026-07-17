@@ -23,7 +23,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { spawn, type ChildProcess } from 'node:child_process';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
-import { isolatedCwd } from './test-helpers/mcp-client.js';
+import { childServerCwd, isolateChildServerCwd } from './helpers/child-server-workspace.js';
+isolateChildServerCwd();
 
 const SERVER_PATH = path.resolve(
   __dirname, '..', '..', 'dist', 'server.js',
@@ -47,8 +48,7 @@ class McpClient {
       throw new Error(`Server dist not found: ${SERVER_PATH}. Run "npm run build" first.`);
     }
     this.proc = spawn('node', [SERVER_PATH], {
-      // Never inherit the runner cwd — the server syncs .tim-project markers there.
-      cwd: isolatedCwd(),
+      cwd: childServerCwd(),
       env: { ...process.env, TIM_DB_PATH: dbPath },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
@@ -171,11 +171,12 @@ describe('MCP tool response JSON safety (BUG 2)', () => {
     const resp = await client.callTool('tim_search', { query: 'searchable' });
     expect(resp.error).toBeUndefined();
     const text = resp.result!.content[0].text;
-    const results = JSON.parse(text);
-    expect(Array.isArray(results)).toBe(true);
-    if (results.length > 0) {
+    const response = JSON.parse(text);
+    expect(Array.isArray(response.results)).toBe(true);
+    expect(response.returned).toBe(response.results.length);
+    if (response.results.length > 0) {
       // The # should be inside a string, not breaking the JSON.
-      expect(typeof results[0].tags).toBe('object'); // array
+      expect(typeof response.results[0].tags).toBe('object'); // array
     }
   });
 
@@ -186,7 +187,7 @@ describe('MCP tool response JSON safety (BUG 2)', () => {
     // substrings of the formatted text.
     //
     // Create a project first, then load it.
-    await client.callTool('tim_create_project', { label: 'P9999', aliases: ['bug2-test'] });
+    await client.callTool('tim_create_project', { label: 'P9999', aliases: ['bug2-test'], memoryOnly: true });
     const loadResp = await client.callTool('tim_load_project', { label: 'P9999' });
     expect(loadResp.error).toBeUndefined();
     const text = loadResp.result!.content[0].text;

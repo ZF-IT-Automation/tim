@@ -312,6 +312,431 @@ describe('SessionManager', () => {
       expect(first.title).toBe('Inbox');
       expect(second.id).toBe(first.id);
     });
+
+    it.each([
+      { shape: 'missing kind', metadata: { label: 'N0000' } },
+      { shape: 'wrong kind and label', metadata: { kind: 'note', label: 'N0000' } },
+    ])('repairs P0000 with $shape without losing user data and stages once', async ({ metadata }) => {
+      await store.write('Custom Inbox\nKeep this content', {
+        id: 'P0000',
+        tags: ['#custom', '#project'],
+        metadata: {
+          ...metadata,
+          custom: 'preserved',
+          is_system: false,
+          render_depth: 4,
+        },
+      });
+      store.getDb().prepare(
+        `UPDATE entries SET irrelevant = 1, tombstoned_at = '2026-01-01T00:00:00.000Z'
+         WHERE id = 'P0000'`,
+      ).run();
+      store.getDb().prepare('DELETE FROM staging').run();
+
+      const repaired = await ensureInboxProject(store);
+      const repeated = await ensureInboxProject(store);
+
+      expect(repaired).toMatchObject({
+        id: 'P0000',
+        title: 'Custom Inbox',
+        content: 'Keep this content',
+        irrelevant: false,
+        tombstonedAt: null,
+      });
+      expect(repaired.metadata).toMatchObject({
+        kind: 'project',
+        label: 'P0000',
+        is_system: true,
+        render_depth: 1,
+        custom: 'preserved',
+      });
+      expect(repaired.tags).toEqual(expect.arrayContaining([
+        '#custom', '#project', '#inbox', '#system',
+      ]));
+      expect(repeated).toEqual(repaired);
+      expect(await store.getStaging()).toHaveLength(1);
+      const session = await sessions.startProjectSession({
+        sessionId: 'inbox-repair-session',
+        projectId: 'P0000',
+        agentName: 'test',
+        cwd: '/tmp',
+        harness: 'test',
+      });
+      expect(session.metadata.project_ref).toBe('P0000');
+      const rowCount = store.getDb().prepare(
+        `SELECT COUNT(*) AS count FROM entries WHERE id = 'P0000'`,
+      ).get() as { count: number };
+      expect(rowCount.count).toBe(1);
+    });
+
+    it('preserves legacy Inbox title bytes and arbitrary tags in the staged repair', async () => {
+      await store.write('Placeholder\nKeep this content', {
+        id: 'P0000',
+        metadata: { kind: 'note', label: 'N0000' },
+      });
+      const legacyTitle = '  Custom Inbox title  ';
+      const legacyTags = ['#custom', '#todo', '#priority-high'];
+      store.getDb().prepare(
+        `UPDATE entries
+         SET title = ?, tags = ?, updated_at = ?, lww_device = ?
+         WHERE id = 'P0000'`,
+      ).run(
+        legacyTitle,
+        JSON.stringify(legacyTags),
+        '2000-01-01T00:00:00.000Z',
+        'legacy-device',
+      );
+      store.getDb().prepare('DELETE FROM staging').run();
+
+      const repaired = await ensureInboxProject(store);
+
+      expect(repaired.title).toBe(legacyTitle);
+      expect(repaired.tags).toEqual([
+        ...legacyTags,
+        '#project',
+        '#inbox',
+        '#system',
+      ]);
+      expect(repaired.updatedAt).not.toBe('2000-01-01T00:00:00.000Z');
+      const staging = await store.getStaging();
+      expect(staging).toHaveLength(1);
+      const payload = JSON.parse(staging[0]!.payload) as {
+        title: string;
+        tags: string;
+        updated_at: string;
+        lww_device: string;
+      };
+      expect(payload.title).toBe(legacyTitle);
+      expect(JSON.parse(payload.tags)).toEqual(repaired.tags);
+      expect(payload.updated_at).toBe(repaired.updatedAt);
+      expect(payload.lww_device).not.toBe('legacy-device');
+    });
+
+    it('preserves raw custom numeric tokens during Inbox repair', async () => {
+      await store.write('Raw metadata Inbox', {
+        id: 'P0000',
+        metadata: { kind: 'note', label: 'N0000' },
+      });
+      const rawMetadata =
+        '{"kind":"note","label":"N0000","custom":{"pinned":1,"big":9007199254740993,"negative_zero":-0}}';
+      store.getDb().prepare(
+        `UPDATE entries SET metadata = ? WHERE id = 'P0000'`,
+      ).run(rawMetadata);
+      store.getDb().prepare('DELETE FROM staging').run();
+
+      await ensureInboxProject(store);
+
+      const row = store.getDb().prepare(
+        `SELECT metadata FROM entries WHERE id = 'P0000'`,
+      ).get() as { metadata: string };
+      expect(row.metadata).toBe(
+        '{"kind":"project","label":"P0000","custom":{"pinned":1,"big":9007199254740993,"negative_zero":-0},"is_system":true,"render_depth":1}',
+      );
+      const staging = await store.getStaging();
+      const payload = JSON.parse(staging[0]!.payload) as { metadata: string };
+      expect(payload.metadata).toBe(row.metadata);
+    });
+
+    it('canonicalizes a logical P0000 stored under a different id without losing data or edges', async () => {
+      const legacy = await store.write('Legacy Inbox\nPreserve this body', {
+        id: 'LEGACY-INBOX-ID',
+        tags: ['#custom'],
+        metadata: {
+          kind: 'project',
+          label: 'P0000',
+          custom: { owner: 'user' },
+        },
+      });
+      const child = await store.write('Legacy child', { parentId: legacy.id });
+      const target = await store.write('Edge target');
+      await store.link(legacy.id, target.id, 'relates', 0.75, { custom: 'edge' });
+      store.getDb().prepare('DELETE FROM staging').run();
+
+      const repaired = await ensureInboxProject(store);
+
+      expect(repaired).toMatchObject({
+        id: 'P0000',
+        title: 'Legacy Inbox',
+        content: 'Preserve this body',
+      });
+      expect(repaired.metadata).toMatchObject({
+        kind: 'project',
+        label: 'P0000',
+        is_system: true,
+        render_depth: 1,
+        custom: { owner: 'user' },
+      });
+      expect(repaired.tags).toEqual(expect.arrayContaining([
+        '#custom', '#project', '#inbox', '#system',
+      ]));
+      expect(await store.read('LEGACY-INBOX-ID')).toBeNull();
+      expect((await store.read(child.id))?.parentId).toBe('P0000');
+      expect(await store.getEdges('P0000', 'outgoing')).toEqual([
+        expect.objectContaining({ targetId: target.id, weight: 0.75, metadata: { custom: 'edge' } }),
+      ]);
+      const logicalRows = store.getDb().prepare(
+        `SELECT id FROM entries WHERE json_extract(metadata, '$.label') = 'P0000'`,
+      ).all() as Array<{ id: string }>;
+      expect(logicalRows).toEqual([{ id: 'P0000' }]);
+      expect(await store.getStaging()).toEqual(expect.arrayContaining([
+        expect.objectContaining({ key: 'P0000', entityType: 'entry', operation: 'upsert' }),
+        expect.objectContaining({
+          key: 'LEGACY-INBOX-ID', entityType: 'entry', operation: 'delete',
+        }),
+        expect.objectContaining({ key: child.id, entityType: 'entry', operation: 'upsert' }),
+        expect.objectContaining({
+          key: `P0000|${target.id}|relates`, entityType: 'edge', operation: 'upsert',
+        }),
+      ]));
+    });
+
+    it('rewrites only exact structural ID references during Inbox canonicalization', async () => {
+      const legacyId = 'LEGACY-INBOX-ID';
+      const embeddedText = `prefix-${legacyId}-suffix`;
+      const legacy = await store.write('Legacy Inbox', {
+        id: legacyId,
+        metadata: {
+          kind: 'project',
+          label: 'P0000',
+          exact_ref: legacyId,
+          custom_text: embeddedText,
+        },
+      });
+      store.getDb().prepare('UPDATE entries SET metadata = ? WHERE id = ?').run(
+        `{"kind":"project","label":"P0000","exact_ref":"${legacyId}","custom_text":"${embeddedText}","custom":{"big":9007199254740993,"negative_zero":-0}}`,
+        legacy.id,
+      );
+      const child = await store.write('Legacy child', {
+        parentId: legacy.id,
+        metadata: { exact_ref: legacyId, custom_text: embeddedText },
+      });
+      const target = await store.write('Edge target');
+      await store.link(legacy.id, target.id, 'relates', 1, {
+        exact_ref: legacyId,
+        custom_text: embeddedText,
+      });
+
+      await ensureInboxProject(store);
+
+      expect((await store.read('P0000'))?.metadata).toMatchObject({
+        exact_ref: 'P0000',
+        custom_text: embeddedText,
+      });
+      expect((await store.read(child.id))?.metadata).toEqual({
+        exact_ref: 'P0000',
+        custom_text: embeddedText,
+        order: 0,
+      });
+      expect((await store.getEdges('P0000', 'outgoing'))[0]?.metadata).toEqual({
+        exact_ref: 'P0000',
+        custom_text: embeddedText,
+      });
+      const canonicalRaw = store.getDb().prepare(
+        `SELECT metadata FROM entries WHERE id = 'P0000'`,
+      ).get() as { metadata: string };
+      expect(canonicalRaw.metadata).toBe(
+        `{"kind":"project","label":"P0000","exact_ref":"P0000","custom_text":"${embeddedText}","custom":{"big":9007199254740993,"negative_zero":-0},"is_system":true,"render_depth":1}`,
+      );
+    });
+
+    it('stages a canonical Inbox rewrite so a previously synced replica converges', async () => {
+      const replica = new TimStore(':memory:', { deviceId: 'replica' });
+      const legacyId = 'LEGACY-INBOX-ID';
+      try {
+        const legacy = await store.write('Legacy Inbox', {
+          id: legacyId,
+          metadata: { kind: 'project', label: 'P0000' },
+        });
+        const child = await store.write('Legacy child', {
+          parentId: legacy.id,
+          metadata: { project_ref: legacyId },
+        });
+        const target = await store.write('Edge target');
+        const edge = await store.link(legacy.id, target.id, 'relates', 0.75, {
+          project_ref: legacyId,
+        });
+        const beforeRepair = await store.getStaging();
+        await replica.applyStaging(beforeRepair);
+
+        const replicaOnlyTarget = await replica.write('Replica-only edge target');
+        await replica.write('Existing canonical Inbox', {
+          id: 'P0000',
+          metadata: { kind: 'project', label: 'P0000' },
+        });
+        const replicaOnlyEdge = await replica.link(
+          'P0000',
+          replicaOnlyTarget.id,
+          'blocks',
+          0.5,
+          { custom: 'replica-only' },
+        );
+        replica.getDb().prepare(
+          `UPDATE entries
+           SET created_at = '2000-01-01T00:00:00.000Z',
+               updated_at = '2000-01-01T00:00:00.000Z'
+           WHERE id = 'P0000'`,
+        ).run();
+
+        await ensureInboxProject(store);
+        const records = await store.getStaging();
+
+        const canonicalUpserts = records.filter(record =>
+          record.entityType === 'entry' &&
+          record.operation === 'upsert' &&
+          record.key === 'P0000'
+        );
+        expect(canonicalUpserts).toHaveLength(1);
+        expect(records.filter(record =>
+          record.entityType === 'entry' &&
+          record.operation === 'upsert' &&
+          record.key === legacyId
+        )).toHaveLength(1);
+        expect(records).toEqual(expect.arrayContaining([
+          expect.objectContaining({
+            key: legacyId,
+            entityType: 'entry',
+            operation: 'delete',
+          }),
+          expect.objectContaining({
+            key: child.id,
+            entityType: 'entry',
+            operation: 'upsert',
+          }),
+          expect.objectContaining({
+            key: `P0000|${target.id}|relates`,
+            entityType: 'edge',
+            operation: 'upsert',
+          }),
+        ]));
+        await replica.applyStaging(records);
+
+        expect(await replica.read(legacyId)).toBeNull();
+        expect((await replica.read('P0000'))?.metadata).toMatchObject({
+          kind: 'project',
+          label: 'P0000',
+          is_system: true,
+        });
+        expect((await replica.read(child.id))?.parentId).toBe('P0000');
+        expect((await replica.read(child.id))?.metadata.project_ref).toBe('P0000');
+        expect(await replica.getEdges('P0000', 'outgoing')).toEqual([
+          expect.objectContaining({
+            id: replicaOnlyEdge.id,
+            targetId: replicaOnlyTarget.id,
+            metadata: { custom: 'replica-only' },
+          }),
+          expect.objectContaining({
+            id: edge.id,
+            targetId: target.id,
+            metadata: { project_ref: 'P0000' },
+          }),
+        ]);
+      } finally {
+        replica.close();
+      }
+    });
+
+    it('merges a duplicate logical Inbox into an existing physical P0000', async () => {
+      await store.write('Canonical Inbox\nCanonical body', {
+        id: 'P0000',
+        tags: ['#canonical'],
+        metadata: {
+          kind: 'note',
+          label: 'WRONG',
+          canonical_custom: true,
+          project_ref: 'LEGACY-INBOX-DUPLICATE',
+        },
+      });
+      const duplicate = await store.write('Duplicate Inbox\nDuplicate body', {
+        id: 'LEGACY-INBOX-DUPLICATE',
+        tags: ['#legacy'],
+        metadata: {
+          kind: 'project',
+          label: 'P0000',
+          legacy_custom: { keep: true },
+          duplicate_ref: 'LEGACY-INBOX-DUPLICATE',
+        },
+      });
+      const target = await store.write('Edge target');
+      await store.link(duplicate.id, target.id, 'relates');
+      store.getDb().prepare('DELETE FROM staging').run();
+
+      const repaired = await ensureInboxProject(store);
+
+      expect(repaired.id).toBe('P0000');
+      expect(repaired.content).toContain('Canonical body');
+      expect(repaired.content).toContain('Duplicate body');
+      expect(repaired.metadata).toMatchObject({
+        kind: 'project',
+        label: 'P0000',
+        canonical_custom: true,
+        legacy_custom: { keep: true },
+        project_ref: 'P0000',
+        duplicate_ref: 'P0000',
+      });
+      expect(repaired.metadata.merged_inbox_entries).toEqual([
+        expect.objectContaining({
+          id: 'LEGACY-INBOX-DUPLICATE',
+          title: 'Duplicate Inbox',
+          content: 'Duplicate body',
+          metadata: expect.objectContaining({ legacy_custom: { keep: true } }),
+        }),
+      ]);
+      expect(repaired.tags).toEqual(expect.arrayContaining(['#canonical', '#legacy']));
+      expect(await store.read('LEGACY-INBOX-DUPLICATE')).toBeNull();
+      expect(await store.getEdges('P0000', 'outgoing')).toEqual([
+        expect.objectContaining({ targetId: target.id }),
+      ]);
+      const logicalRows = store.getDb().prepare(
+        `SELECT id FROM entries WHERE json_extract(metadata, '$.label') = 'P0000'`,
+      ).all() as Array<{ id: string }>;
+      expect(logicalRows).toEqual([{ id: 'P0000' }]);
+      expect(await store.getStaging()).toEqual(expect.arrayContaining([
+        expect.objectContaining({ key: 'P0000', entityType: 'entry', operation: 'upsert' }),
+        expect.objectContaining({
+          key: 'LEGACY-INBOX-DUPLICATE', entityType: 'entry', operation: 'delete',
+        }),
+        expect.objectContaining({
+          key: `P0000|${target.id}|relates`, entityType: 'edge', operation: 'upsert',
+        }),
+      ]));
+    });
+
+    it('rolls back a repair when sync staging fails', async () => {
+      await store.write('User Inbox\nDo not lose', {
+        id: 'P0000',
+        tags: ['#custom'],
+        metadata: { kind: 'note', label: 'N0000', custom: 'preserved' },
+      });
+      store.getDb().prepare(
+        `UPDATE entries SET irrelevant = 1, tombstoned_at = '2026-01-01T00:00:00.000Z'
+         WHERE id = 'P0000'`,
+      ).run();
+      store.getDb().prepare('DELETE FROM staging').run();
+
+      const internals = store as unknown as {
+        insertStagingSync: (...args: unknown[]) => void;
+      };
+      const original = internals.insertStagingSync.bind(store);
+      internals.insertStagingSync = () => { throw new Error('staging boom'); };
+
+      await expect(ensureInboxProject(store)).rejects.toThrow('staging boom');
+      internals.insertStagingSync = original;
+
+      const row = store.getDb().prepare(
+        `SELECT title, content, tags, irrelevant, tombstoned_at, metadata
+         FROM entries WHERE id = 'P0000'`,
+      ).get() as Record<string, unknown>;
+      expect(row).toMatchObject({
+        title: 'User Inbox',
+        content: 'Do not lose',
+        irrelevant: 1,
+        tombstoned_at: '2026-01-01T00:00:00.000Z',
+      });
+      expect(JSON.parse(row.metadata as string)).toMatchObject({
+        kind: 'note', label: 'N0000', custom: 'preserved',
+      });
+      expect(await store.getStaging()).toHaveLength(0);
+    });
   });
 
   describe('startProjectSession', () => {

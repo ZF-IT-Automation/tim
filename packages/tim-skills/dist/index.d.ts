@@ -9,6 +9,7 @@ export { TIM_PROJECT_CURATE_SKILL } from './tim-project-curate.js';
 export { TIM_SYNC_TRIAGE_SKILL } from './tim-sync-triage.js';
 export { TIM_SECRET_AUDIT_SKILL } from './tim-secret-audit.js';
 export { TIM_MCP_SMOKE_SKILL } from './tim-mcp-smoke.js';
+export { TIM_NEW_PROJECT_SKILL } from './tim-new-project.js';
 export interface TimSkill {
     name: string;
     description: string;

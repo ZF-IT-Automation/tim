@@ -21,6 +21,10 @@ import { getDeltaBriefing } from './delta.js';
 import { getUpdateCheckLineBriefing } from './update-check.js';
 import { discoverMarker, CWD_ONLY_MARKER_DISCOVERY_POLICY, readMarker, writeMarker, validateMarkerAgainstStore } from './marker.js';
 import {
+  repairPhantomProjectBinding,
+  markerWithRepairedProject,
+} from './phantom-recovery.js';
+import {
   onSessionStop,
   maybeSpawnProjectSummary,
   DEFAULT_PROJECT_SUMMARY_THRESHOLD,
@@ -112,8 +116,26 @@ async function resolveSessionProjectId(
     }
     return explicitProjectId;
   }
-  const cwdLabel = await resolveActiveProjectFromCwd(cwd, store);
-  if (cwdLabel) return cwdLabel;
+
+  const located = discoverMarker(cwd, CWD_ONLY_MARKER_DISCOVERY_POLICY);
+  if (located) {
+    const validated = await validateMarkerAgainstStore(located.marker, store);
+    if (validated) return validated.project;
+
+    const recovered = await repairPhantomProjectBinding(store, located.dir);
+    if (recovered) {
+      if (store.getDatabasePath() !== ':memory:') {
+        writeMarker(
+          located.dir,
+          markerWithRepairedProject(located.marker, recovered),
+        );
+      }
+      return recovered;
+    }
+
+    await ensureInboxProject(store);
+    return INBOX_PROJECT_LABEL;
+  }
 
   const active = getActiveProjectLabel();
   if (active) {
@@ -174,16 +196,18 @@ export async function runSessionStart(
     batchSize: params.batchSize,
   });
 
-  writeMarker(params.cwd, {
-    project: projectId,
-    session: params.sessionId,
-    exchanges: 0,
-    batch_size: typeof session.metadata.batch_size === 'number'
-      ? session.metadata.batch_size
-      : 5,
-    batches_summarized: 0,
-    version: 2,
-  });
+  if (store.getDatabasePath() !== ':memory:') {
+    writeMarker(params.cwd, {
+      project: projectId,
+      session: params.sessionId,
+      exchanges: 0,
+      batch_size: typeof session.metadata.batch_size === 'number'
+        ? session.metadata.batch_size
+        : 5,
+      batches_summarized: 0,
+      version: 2,
+    });
+  }
 
   await runConfiguredHooks('sessionStart', params.hooksConfig, {
     TIM_SESSION_ID: params.sessionId,

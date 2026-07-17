@@ -1,10 +1,12 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import {
   readMarker,
   writeMarker,
   writeMarkerAtomic,
+  writeMarkerExclusive,
+  ExclusiveMarkerConflictError,
   rotateMarkerSession,
   detectProject,
   discoverMarker,
@@ -22,6 +24,37 @@ import {
   INBOX_LABEL,
 } from '../marker.js';
 import { TimStore, SessionManager } from 'tim-store';
+
+const markerIoFaults = vi.hoisted(() => ({
+  uuid: null as string | null,
+  linkError: null as Error | null,
+  cleanupError: null as Error | null,
+}));
+
+vi.mock('node:crypto', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:crypto')>();
+  return {
+    ...actual,
+    randomUUID: () => markerIoFaults.uuid ?? actual.randomUUID(),
+  };
+});
+
+vi.mock('fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('fs')>();
+  return {
+    ...actual,
+    linkSync: (...args: Parameters<typeof actual.linkSync>) => {
+      if (markerIoFaults.linkError) throw markerIoFaults.linkError;
+      return actual.linkSync(...args);
+    },
+    rmSync: (...args: Parameters<typeof actual.rmSync>) => {
+      if (markerIoFaults.cleanupError && String(args[0]).includes('.tim-project.tmp.')) {
+        throw markerIoFaults.cleanupError;
+      }
+      return actual.rmSync(...args);
+    },
+  };
+});
 
 /** Outside ~ so findMarker walk-up does not hit real ~/.tim-project */
 const TEST_ROOT = '/tmp/tim-test-runs';
@@ -706,11 +739,17 @@ describe('marker atomic writes', () => {
   let dir: string;
 
   beforeEach(() => {
+    markerIoFaults.uuid = null;
+    markerIoFaults.linkError = null;
+    markerIoFaults.cleanupError = null;
     fs.mkdirSync(TEST_ROOT, { recursive: true });
     dir = fs.mkdtempSync(path.join(TEST_ROOT, 'atomic-'));
   });
 
   afterEach(() => {
+    markerIoFaults.uuid = null;
+    markerIoFaults.linkError = null;
+    markerIoFaults.cleanupError = null;
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
@@ -729,6 +768,101 @@ describe('marker atomic writes', () => {
       const raw = fs.readFileSync(p, 'utf8');
       expect(() => JSON.parse(raw)).not.toThrow();
     }
+  });
+
+  it('writeMarkerExclusive publishes a complete v2 marker without temp residue', () => {
+    const marker = writeMarkerExclusive(dir, {
+      project: 'P0042',
+      session: 'exclusive-session',
+      exchanges: 3,
+      batch_size: 5,
+      batches_summarized: 1,
+    });
+
+    expect(marker).toEqual({
+      version: 2,
+      project: 'P0042',
+      session: 'exclusive-session',
+      exchanges: 3,
+      batch_size: 5,
+      batches_summarized: 1,
+    });
+    expect(readMarker(dir)).toEqual(marker);
+    expect(fs.readdirSync(dir).filter((name) => name.includes('.tmp.'))).toEqual([]);
+  });
+
+  it('writeMarkerExclusive preserves an existing winner and removes its temp file', () => {
+    writeMarkerExclusive(dir, {
+      project: 'P0043',
+      session: 'winner-session',
+      exchanges: 7,
+      batch_size: 5,
+      batches_summarized: 1,
+    });
+    const markerFile = path.join(dir, '.tim-project');
+    const winnerBytes = fs.readFileSync(markerFile);
+
+    expect(() => writeMarkerExclusive(dir, {
+      project: 'P0042',
+      session: 'loser-session',
+      exchanges: 0,
+      batch_size: 5,
+      batches_summarized: 0,
+    })).toThrow(ExclusiveMarkerConflictError);
+    expect(fs.readFileSync(markerFile)).toEqual(winnerBytes);
+    expect(fs.readdirSync(dir).filter((name) => name.includes('.tmp.'))).toEqual([]);
+  });
+
+  it('writeMarkerExclusive preserves a colliding temp file it did not create', () => {
+    markerIoFaults.uuid = '00000000-0000-4000-8000-000000000042';
+    const markerFile = path.join(dir, '.tim-project');
+    const tempFile = `${markerFile}.tmp.${process.pid}.${markerIoFaults.uuid}`;
+    const collisionBytes = Buffer.from('owned by another publisher');
+    fs.writeFileSync(tempFile, collisionBytes);
+
+    expect(() => writeMarkerExclusive(dir, {
+      project: 'P0042',
+      session: 'collision-session',
+      exchanges: 0,
+      batch_size: 5,
+      batches_summarized: 0,
+    })).toThrow(expect.objectContaining({ code: 'EEXIST' }));
+    expect(fs.readFileSync(tempFile)).toEqual(collisionBytes);
+    expect(fs.existsSync(markerFile)).toBe(false);
+  });
+
+  it('writeMarkerExclusive rethrows a non-EEXIST link error and removes its temp file', () => {
+    markerIoFaults.uuid = '00000000-0000-4000-8000-000000000043';
+    const linkError = Object.assign(new Error('link denied'), { code: 'EPERM' });
+    markerIoFaults.linkError = linkError;
+    const markerFile = path.join(dir, '.tim-project');
+    const tempFile = `${markerFile}.tmp.${process.pid}.${markerIoFaults.uuid}`;
+
+    expect(() => writeMarkerExclusive(dir, {
+      project: 'P0042',
+      session: 'link-error-session',
+      exchanges: 0,
+      batch_size: 5,
+      batches_summarized: 0,
+    })).toThrow(linkError);
+    expect(fs.existsSync(tempFile)).toBe(false);
+    expect(fs.existsSync(markerFile)).toBe(false);
+  });
+
+  it('writeMarkerExclusive cleanup failure does not mask a publication error', () => {
+    markerIoFaults.uuid = '00000000-0000-4000-8000-000000000044';
+    const linkError = Object.assign(new Error('link failed'), { code: 'EACCES' });
+    markerIoFaults.linkError = linkError;
+    markerIoFaults.cleanupError = new Error('cleanup failed');
+
+    expect(() => writeMarkerExclusive(dir, {
+      project: 'P0042',
+      session: 'cleanup-error-session',
+      exchanges: 0,
+      batch_size: 5,
+      batches_summarized: 0,
+    })).toThrow(linkError);
+    expect(fs.existsSync(path.join(dir, '.tim-project'))).toBe(false);
   });
 
   it('rotateMarkerSession updates session id atomically', () => {

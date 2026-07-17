@@ -16,4 +16,14 @@ describe('MCP tool guidance', () => {
     expect(desc('tim_update')).toContain('tim_read first');
     expect(desc('tim_move_entry')).toContain('Preview with tim_dry_run_move');
   });
+
+  it('documents the bounded tim_search response contract', () => {
+    const search = TOOL_DEFS.find(definition => definition.name === 'tim_search')!;
+
+    expect(search.description).toContain('{results, returned, omitted, truncated}');
+    expect(search.description).toContain('bounded excerpts');
+    expect(search.description).toContain('tim_read');
+    expect(search.description).toContain('full body');
+    expect(search.schema.description).toContain('{results, returned, omitted, truncated}');
+  });
 });

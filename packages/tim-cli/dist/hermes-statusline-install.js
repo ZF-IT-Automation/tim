@@ -48,6 +48,7 @@ const child_process_1 = require("child_process");
 const fs = __importStar(require("fs"));
 const os = __importStar(require("os"));
 const path = __importStar(require("path"));
+const args_js_1 = require("./args.js");
 const CACHE_HOOK = 'tim-hermes-session-cache.sh';
 const STATUSLINE_HOOK = 'tim-hermes-statusline.sh';
 const SCRIPT_NAMES = [CACHE_HOOK, STATUSLINE_HOOK];
@@ -449,8 +450,11 @@ function printHermesInstallReport(report) {
     }
 }
 async function cmdSetupHermesStatusline(args) {
-    const dryRun = args.includes('--dry-run');
-    const skipBuild = args.includes('--skip-build');
+    const { flags } = (0, args_js_1.parseArgs)(args, {
+        valueOptions: (0, args_js_1.valueOptionsFor)('setup-hermes-statusline'),
+    });
+    const dryRun = flags['dry-run'] === 'true';
+    const skipBuild = flags['skip-build'] === 'true';
     const hermesAgentDir = process.env.HERMES_AGENT_DIR?.trim();
     const report = await installHermesStatusline({
         dryRun,

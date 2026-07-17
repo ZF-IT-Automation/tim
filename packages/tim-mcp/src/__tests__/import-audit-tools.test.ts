@@ -2,8 +2,10 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { spawn, type ChildProcess } from 'node:child_process';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
+import { childServerCwd, isolateChildServerCwd } from './helpers/child-server-workspace.js';
 import * as os from 'node:os';
 import { createV2HmemDatabase } from 'tim-migrate';
+isolateChildServerCwd();
 
 const SERVER_PATH = path.resolve(__dirname, '..', '..', 'dist', 'server.js');
 
@@ -25,6 +27,7 @@ class McpClient {
       throw new Error(`Server dist not found: ${SERVER_PATH}. Run "npm run build" first.`);
     }
     this.proc = spawn('node', [SERVER_PATH], {
+      cwd: childServerCwd(),
       env: { ...process.env, TIM_DB_PATH: dbPath },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
@@ -167,7 +170,7 @@ describe('hmem import audit MCP tools', () => {
   });
 
   it('tim_repair_section creates sections and can move children safely', async () => {
-    const project = parsePayload(await client.callTool('tim_create_project', { label: 'P0200', content: 'Manual Project' }));
+    const project = parsePayload(await client.callTool('tim_create_project', { label: 'P0200', content: 'Manual Project', memoryOnly: true }));
     const loose = parsePayload(await client.callTool('tim_write', {
       parentId: project.id,
       content: 'Loose child',
@@ -197,7 +200,7 @@ describe('hmem import audit MCP tools', () => {
   });
 
   it('tim_dry_run_move reports move impact without writing', async () => {
-    parsePayload(await client.callTool('tim_create_project', { label: 'P0300', content: 'Move Project' }));
+    parsePayload(await client.callTool('tim_create_project', { label: 'P0300', content: 'Move Project', memoryOnly: true }));
     const section = parsePayload(await client.callTool('tim_repair_section', {
       project: 'P0300',
       title: 'Tasks',

@@ -17,8 +17,16 @@
 
 set -euo pipefail
 
-TIM_CLI="${TIM_CLI:-/home/bbbee/projects/tim/packages/tim-cli/dist/cli.js}"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_PATH="${BASH_SOURCE[0]}"
+while [[ -L "$SCRIPT_PATH" ]]; do
+  SCRIPT_LINK_DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" && pwd)"
+  SCRIPT_PATH="$(readlink "$SCRIPT_PATH")"
+  [[ "$SCRIPT_PATH" == /* ]] || SCRIPT_PATH="$SCRIPT_LINK_DIR/$SCRIPT_PATH"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" && pwd)"
+unset SCRIPT_PATH SCRIPT_LINK_DIR
+# shellcheck source=lib/resolve-tim-cli.sh
+source "$SCRIPT_DIR/lib/resolve-tim-cli.sh"
 TIM_HOOKS_MARKER="${TIM_MARKER_MODULE:-${SCRIPT_DIR}/../dist/marker.js}"
 
 # Read stdin once (some harnesses pass payload, some pass nothing)
@@ -46,7 +54,7 @@ fi
 hook_session=$(printf '%s' "$payload" | jq -r '.session_id // empty' 2>/dev/null || true)
 
 # --- Resolve project marker ---
-directive=$(node "$TIM_CLI" resolve-project --walk-up --cwd "$cwd" --format directive 2>/dev/null || true)
+directive=$(run_tim_cli resolve-project --walk-up --cwd "$cwd" --format directive 2>/dev/null || true)
 if [[ -z "$directive" ]]; then
   # No .tim-project marker found — silent skip (exit 0)
   exit 0
@@ -67,9 +75,11 @@ fi
 
 # --- Detect harness and format output ---
 
-# Claude Code sends payload with .hookSpecificOutput (its own hook envelope)
-if printf '%s' "$payload" | jq -e '.hookSpecificOutput // empty' >/dev/null 2>&1; then
-  # Claude Code / Hermes format
+# Claude Code sends hook_event_name in hook input. Keep accepting the older
+# hookSpecificOutput-shaped payload used by existing integrations/tests.
+if printf '%s' "$payload" | jq -e \
+  '(.hook_event_name == "SessionStart") or (.hookSpecificOutput // false)' >/dev/null 2>&1; then
+  # Claude Code format
   exec jq -n --arg ctx "$directive" \
     '{hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: $ctx}}'
 fi

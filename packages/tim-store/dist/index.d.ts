@@ -1,4 +1,4 @@
-export { TimStore, splitTitleBody, titleSimilarity, cosineSimilarity, runBenchmark, type GoldenQuery, type BenchmarkResult, type TimStoreOptions, type CreateProjectOptions, type LoadProjectOptions, type LoadProjectResult, type TaskRecord, type GetTasksOptions, type RuleRecord, } from './store.js';
+export { TimStore, splitTitleBody, titleSimilarity, cosineSimilarity, runBenchmark, isProjectLabelConflictError, incrementProjectLabel, nextLabelAfterProjectLabelConflict, type GoldenQuery, type BenchmarkResult, type TimStoreOptions, type CreateProjectOptions, type LoadProjectOptions, type LoadProjectResult, type TaskRecord, type GetTasksOptions, type RuleRecord, } from './store.js';
 export type { ResolveProjectResult } from 'tim-core';
 export { cropDisplayName, projectDisplayNameFromEntry, resolveProjectDisplayName, resolveProjectBindingLabel, } from './project-display.js';
 export { runMigrations, getCurrentVersion, MIGRATIONS } from './schema.js';

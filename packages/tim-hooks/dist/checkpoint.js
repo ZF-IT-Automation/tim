@@ -48,6 +48,7 @@ const hooks_js_1 = require("./hooks.js");
 const delta_js_1 = require("./delta.js");
 const update_check_js_1 = require("./update-check.js");
 const marker_js_1 = require("./marker.js");
+const phantom_recovery_js_1 = require("./phantom-recovery.js");
 const session_hooks_js_1 = require("./session-hooks.js");
 /** Resolve active project label from TIM_PROJECT env or ~/.tim/active-project. */
 function getActiveProjectLabel() {
@@ -111,9 +112,21 @@ async function resolveSessionProjectId(store, cwd, explicitProjectId) {
         }
         return explicitProjectId;
     }
-    const cwdLabel = await resolveActiveProjectFromCwd(cwd, store);
-    if (cwdLabel)
-        return cwdLabel;
+    const located = (0, marker_js_1.discoverMarker)(cwd, marker_js_1.CWD_ONLY_MARKER_DISCOVERY_POLICY);
+    if (located) {
+        const validated = await (0, marker_js_1.validateMarkerAgainstStore)(located.marker, store);
+        if (validated)
+            return validated.project;
+        const recovered = await (0, phantom_recovery_js_1.repairPhantomProjectBinding)(store, located.dir);
+        if (recovered) {
+            if (store.getDatabasePath() !== ':memory:') {
+                (0, marker_js_1.writeMarker)(located.dir, (0, phantom_recovery_js_1.markerWithRepairedProject)(located.marker, recovered));
+            }
+            return recovered;
+        }
+        await (0, tim_store_1.ensureInboxProject)(store);
+        return tim_store_1.INBOX_PROJECT_LABEL;
+    }
     const active = getActiveProjectLabel();
     if (active) {
         const validated = await (0, marker_js_1.validateMarkerAgainstStore)({
@@ -148,16 +161,18 @@ async function runSessionStart(store, params) {
         harness: params.harness,
         batchSize: params.batchSize,
     });
-    (0, marker_js_1.writeMarker)(params.cwd, {
-        project: projectId,
-        session: params.sessionId,
-        exchanges: 0,
-        batch_size: typeof session.metadata.batch_size === 'number'
-            ? session.metadata.batch_size
-            : 5,
-        batches_summarized: 0,
-        version: 2,
-    });
+    if (store.getDatabasePath() !== ':memory:') {
+        (0, marker_js_1.writeMarker)(params.cwd, {
+            project: projectId,
+            session: params.sessionId,
+            exchanges: 0,
+            batch_size: typeof session.metadata.batch_size === 'number'
+                ? session.metadata.batch_size
+                : 5,
+            batches_summarized: 0,
+            version: 2,
+        });
+    }
     await (0, hooks_js_1.runConfiguredHooks)('sessionStart', params.hooksConfig, {
         TIM_SESSION_ID: params.sessionId,
         TIM_CWD: params.cwd,

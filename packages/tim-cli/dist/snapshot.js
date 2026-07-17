@@ -51,6 +51,7 @@ exports.cmdSnapshot = cmdSnapshot;
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
 const os = __importStar(require("os"));
+const args_js_1 = require("./args.js");
 const DEFAULT_SNAPSHOT_DIR = '/tmp/tim-snapshots';
 const DEFAULT_PRUNE_HOURS = 48;
 function ts() {
@@ -62,24 +63,6 @@ function ts() {
         '-' +
         pad(d.getHours()) +
         pad(d.getMinutes()));
-}
-function parseFlags(args) {
-    const out = {};
-    for (let i = 0; i < args.length; i++) {
-        const a = args[i];
-        if (!a.startsWith('--'))
-            continue;
-        const k = a.slice(2);
-        const v = args[i + 1];
-        if (v && !v.startsWith('--')) {
-            out[k] = v;
-            i++;
-        }
-        else {
-            out[k] = 'true';
-        }
-    }
-    return out;
 }
 function resolveDbPath() {
     return (process.env.TIM_DB_PATH ||
@@ -207,7 +190,7 @@ async function runSnapshot(opts = {}) {
     }
 }
 async function cmdSnapshot(args) {
-    const flags = parseFlags(args);
+    const { flags } = (0, args_js_1.parseArgs)(args, { valueOptions: (0, args_js_1.valueOptionsFor)('snapshot') });
     const result = await runSnapshot({
         dbPath: flags.db || undefined,
         snapshotDir: flags.out ? path.dirname(flags.out) : undefined,

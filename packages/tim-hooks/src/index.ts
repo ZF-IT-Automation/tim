@@ -38,9 +38,20 @@ export {
 } from './prompt-submit.js';
 
 export {
+  runClaudeStop,
+  readLastExchange,
+  MAX_TRANSCRIPT_BYTES,
+  MAX_EXCHANGE_CHARS,
+  type ClaudeStopPayload,
+  type ClaudeStopResult,
+} from './claude-stop.js';
+
+export {
   readMarker,
   writeMarker,
   writeMarkerAtomic,
+  writeMarkerExclusive,
+  ExclusiveMarkerConflictError,
   rotateMarkerSession,
   detectProject,
   discoverMarker,
@@ -93,3 +104,27 @@ export {
   type SessionStopReason,
   type MaybeSpawnSummarizerOptions,
 } from './session-hooks.js';
+
+export {
+  MODE_ERROR,
+  validateMode,
+  canonicalDirectory,
+  createProjectCoordinated,
+  recoverProjectBinding,
+  ProjectCreationPartialFailureError,
+  type ProjectCreationArgs,
+  type MemoryOnlyProjectCreationResult,
+  type BoundProjectCreationResult,
+  type ProjectCreationResult,
+  type ProjectCreationDeps,
+  type RecoverProjectBindingArgs,
+  type RecoverProjectBindingResult,
+} from './project-creation.js';
+
+export {
+  repairPhantomProjectBinding,
+  formatUnboundProjectLabel,
+  stripUnboundProjectSuffix,
+  isUnboundProjectLabel,
+  markerWithRepairedProject,
+} from './phantom-recovery.js';

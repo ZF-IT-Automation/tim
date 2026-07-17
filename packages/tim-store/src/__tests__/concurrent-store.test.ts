@@ -3,8 +3,31 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { fork, type ChildProcess } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { TimStore } from '../index.js';
 import type { Entry } from 'tim-core';
+
+const ENSURE_INBOX_WORKER = fileURLToPath(
+  new URL('./helpers/ensure-inbox-worker.mjs', import.meta.url),
+);
+
+function waitForMessage(
+  child: ChildProcess,
+  type: 'ready' | 'result' | 'error',
+): Promise<{ type: string; id?: string; error?: string }> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`worker timeout waiting for ${type}`)), 10_000);
+    const onMessage = (message: { type?: string; id?: string; error?: string }) => {
+      if (message.type !== type && message.type !== 'error') return;
+      clearTimeout(timer);
+      child.off('message', onMessage);
+      resolve(message as { type: string; id?: string; error?: string });
+    };
+    child.on('message', onMessage);
+    child.once('error', reject);
+  });
+}
 
 describe('concurrent TimStore', () => {
   let dbPath: string;
@@ -82,4 +105,43 @@ describe('concurrent TimStore', () => {
       store2.close();
     }
   });
+
+  it('overlapping child processes converge on one Inbox row and one staging write', async () => {
+    const bootstrap = new TimStore(dbPath);
+    bootstrap.close();
+    const workers = [1, 2].map(() => {
+      const child = fork(ENSURE_INBOX_WORKER, [], {
+        env: { ...process.env, TIM_DB_PATH: dbPath },
+        stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
+      });
+      return { child, ready: waitForMessage(child, 'ready') };
+    });
+    const children = workers.map(worker => worker.child);
+    try {
+      await Promise.all(workers.map(worker => worker.ready));
+      const results = children.map(child => {
+        const result = waitForMessage(child, 'result');
+        child.send('go');
+        return result;
+      });
+      const messages = await Promise.all(results);
+      expect(messages).toEqual([
+        { type: 'result', id: 'P0000' },
+        { type: 'result', id: 'P0000' },
+      ]);
+
+      const verifier = new TimStore(dbPath);
+      const row = verifier.getDb().prepare(
+        `SELECT COUNT(*) AS count FROM entries WHERE id = 'P0000'`,
+      ).get() as { count: number };
+      const staging = verifier.getDb().prepare(
+        `SELECT COUNT(*) AS count FROM staging WHERE key = 'P0000'`,
+      ).get() as { count: number };
+      expect(row.count).toBe(1);
+      expect(staging.count).toBe(1);
+      verifier.close();
+    } finally {
+      for (const child of children) child.kill('SIGTERM');
+    }
+  }, 15_000);
 });

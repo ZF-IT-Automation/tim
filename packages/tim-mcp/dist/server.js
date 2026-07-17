@@ -65,6 +65,7 @@ const auto_init_js_1 = require("./auto-init.js");
 const fs = __importStar(require("fs"));
 const os = __importStar(require("os"));
 const path = __importStar(require("path"));
+const search_response_js_1 = require("./search-response.js");
 /**
  * Format a tool response payload to JSON.
  * Uses compact format (no whitespace) for payloads over COMPACT_THRESHOLD bytes
@@ -78,6 +79,12 @@ function formatToolResponse(payload) {
         return JSON.stringify(payload, null, 2);
     }
     return compact;
+}
+function findConfiguredMarker(cwd) {
+    return (0, tim_hooks_1.findMarker)(cwd, {
+        walkUp: true,
+        ...((0, tim_hooks_1.findMarkerOptionsFromEnv)() ?? {}),
+    });
 }
 // ─── CLI ────────────────────────────────────────────────
 function parseCliArgs() {
@@ -142,12 +149,15 @@ const TimWriteSchema = zod_1.z.object({
 const TimSearchSchema = zod_1.z.object({
     query: zod_1.z.string().describe('FTS5 search query'),
     topK: zod_1.z.number().min(1).max(100).optional().default(10),
+    excerptChars: zod_1.z.number().int().min(0).max(500).optional().default(500)
+        .describe('Maximum Unicode code points per result excerpt'),
     searchType: zod_1.z.enum(['fts', 'vector', 'hybrid']).optional().default('fts'),
     root: zod_1.z.string().optional().describe('Scope to project (label/alias/name)'),
     type: zod_1.z.string().optional().describe('Filter metadata.type'),
     tag: zod_1.z.string().optional().describe('Filter exact tag'),
     status: zod_1.z.string().optional().describe('Filter metadata.status'),
-});
+}).describe('Returns {results, returned, omitted, truncated}. Results contain bounded excerpts; ' +
+    'use tim_read for the full body.');
 const TimGuardSchema = zod_1.z.object({
     action: zod_1.z.string().min(3)
         .describe('The planned action, in plain words — e.g. "upload PDF via rmapi"'),
@@ -373,7 +383,11 @@ const TimCreateProjectSchema = zod_1.z.object({
     label: zod_1.z.string().describe('Project label, e.g. P0062'),
     metadata: zod_1.z.record(zod_1.z.unknown()).optional().default({}),
     content: zod_1.z.string().optional(),
-    aliases: zod_1.z.array(zod_1.z.string()).optional().describe('Short names for tim_load_project, e.g. ["o9k", "hmem"]'),
+    aliases: zod_1.z.array(zod_1.z.string()).optional(),
+    path: zod_1.z.string().optional()
+        .describe('Absolute directory for every project representing files on disk'),
+    memoryOnly: zod_1.z.boolean().optional()
+        .describe('Must be true, and only for an intentional database-only project; mutually exclusive with path'),
 });
 const TimLoadProjectSchema = zod_1.z.object({
     label: zod_1.z.string().describe('Project label, e.g. P0062'),
@@ -445,7 +459,8 @@ exports.TOOL_DEFS = [
         name: 'tim_search',
         description: 'Search TIM entries using FTS5 full-text search: keywords, "quoted phrases", ' +
             'prefix*. NOT SQL — no column filters. For vague/associative queries use tim_remember; ' +
-            'for a known label use tim_read directly.',
+            'for a known label use tim_read directly. Returns {results, returned, omitted, truncated}; ' +
+            'results contain bounded excerpts. Use tim_read for the full body.',
         schema: TimSearchSchema,
     },
     {
@@ -665,7 +680,7 @@ exports.TOOL_DEFS = [
     },
     {
         name: 'tim_create_project',
-        description: 'Register a project entry so load_project can find it later.',
+        description: 'Create a project in exactly one mode. Every project representing files on disk MUST pass its absolute path; memoryOnly:true is only for an intentionally virtual/database-only project and is never a shortcut for an unknown cwd.',
         schema: TimCreateProjectSchema,
     },
     {
@@ -977,7 +992,7 @@ async function formatTasksOutput(store, tasks) {
 async function resolveRoots(store, root) {
     if (root === undefined) {
         if (!transportIsHttp) {
-            const marker = (0, tim_hooks_1.findMarker)(process.cwd(), { walkUp: true });
+            const marker = findConfiguredMarker(process.cwd());
             if (marker)
                 return { labels: [marker.marker.project] };
         }
@@ -1423,7 +1438,7 @@ function usageSessionId() {
         return (0, tim_core_1.resolveActiveSessionId)({
             markerSession: transportIsHttp
                 ? undefined
-                : (0, tim_hooks_1.findMarker)(process.cwd(), { walkUp: true })?.marker.session,
+                : findConfiguredMarker(process.cwd())?.marker.session,
             useSessionCache: !transportIsHttp,
             useEnv: !transportIsHttp,
         }) ?? null;
@@ -1846,7 +1861,7 @@ async function createMcpServer(options = {}) {
                     };
                 }
                 case 'tim_search': {
-                    const { query, topK, root, type, tag, status } = TimSearchSchema.parse(args);
+                    const { query, topK, excerptChars, root, type, tag, status } = TimSearchSchema.parse(args);
                     const hasFilters = Boolean(root || type || tag || status);
                     let results = await s.search({ query, topK: hasFilters ? 1000 : topK });
                     if (root) {
@@ -1872,9 +1887,10 @@ async function createMcpServer(options = {}) {
                     if (hasFilters) {
                         results = results.slice(0, topK);
                     }
-                    bestEffortTelemetry('recordRead', () => s.recordRead(results.map(e => e.id), usageSessionId()));
+                    const response = (0, search_response_js_1.buildBoundedSearchResponse)(results, excerptChars);
+                    bestEffortTelemetry('recordRead', () => s.recordRead(response.results.map(e => e.id), usageSessionId()));
                     return {
-                        content: [{ type: 'text', text: formatToolResponse(results) }],
+                        content: [{ type: 'text', text: JSON.stringify(response) }],
                     };
                 }
                 case 'tim_guard': {
@@ -1945,7 +1961,7 @@ async function createMcpServer(options = {}) {
                     let baseline = 'explicit since argument';
                     if (!cutoff) {
                         const currentSession = (0, tim_core_1.resolveActiveSessionId)({
-                            markerSession: isHttp ? undefined : (0, tim_hooks_1.findMarker)(process.cwd(), { walkUp: true })?.marker.session,
+                            markerSession: isHttp ? undefined : findConfiguredMarker(process.cwd())?.marker.session,
                             useSessionCache: !isHttp,
                             useEnv: !isHttp,
                         });
@@ -2403,7 +2419,7 @@ async function createMcpServer(options = {}) {
                     const errorStats = getErrorLogger().getStats({ hours: 24, limit: 5 });
                     const representedIssues = new Set([...report.blockers, ...report.warnings]);
                     const text = [
-                        `TIM Doctor — ${DB_PATH}`,
+                        `TIM Doctor — ${s.getDatabasePath()}`,
                         `Entries: ${stats.totalEntries} | Edges: ${stats.totalEdges}`,
                         `Status: ${report.status}`,
                         `Broken links: ${report.brokenLinks} | Orphans: ${report.orphanEntries}`,
@@ -2470,7 +2486,7 @@ async function createMcpServer(options = {}) {
                     const { sessionId, rawCount } = TimSessionResumeSchema.parse(args);
                     const cwd = isHttp ? undefined : process.cwd();
                     const newHarnessId = (0, tim_core_1.resolveActiveSessionId)({
-                        markerSession: cwd ? (0, tim_hooks_1.findMarker)(cwd, { walkUp: true })?.marker.session : undefined,
+                        markerSession: cwd ? findConfiguredMarker(cwd)?.marker.session : undefined,
                         useSessionCache: !isHttp,
                         useEnv: !isHttp,
                     });
@@ -2643,11 +2659,31 @@ async function createMcpServer(options = {}) {
                     };
                 }
                 case 'tim_create_project': {
-                    const { label, metadata, content, aliases } = TimCreateProjectSchema.parse(args);
-                    const entry = await s.createProject(label, { metadata, content, aliases });
-                    return {
-                        content: [{ type: 'text', text: formatToolResponse(entry) }],
-                    };
+                    let input = TimCreateProjectSchema.parse(args);
+                    if (!isHttp && !input.path && input.memoryOnly == null) {
+                        const cwd = process.cwd();
+                        const resolved = path.resolve(cwd);
+                        if (path.isAbsolute(resolved) && resolved !== path.resolve(os.homedir())) {
+                            input = { ...input, path: resolved };
+                        }
+                    }
+                    let label = input.label;
+                    for (let attempt = 0; attempt < 10; attempt++) {
+                        try {
+                            const entry = await (0, tim_hooks_1.createProjectCoordinated)(s, { ...input, label });
+                            return {
+                                content: [{ type: 'text', text: formatToolResponse(entry) }],
+                            };
+                        }
+                        catch (err) {
+                            if ((0, tim_store_1.isProjectLabelConflictError)(err) && attempt < 9) {
+                                label = (0, tim_store_1.nextLabelAfterProjectLabelConflict)(s, label);
+                                continue;
+                            }
+                            throw err;
+                        }
+                    }
+                    throw new Error(`Could not allocate project label after 10 collisions starting at ${input.label}`);
                 }
                 case 'tim_load_project': {
                     const { label, depth, budget, sections, sessionId: sessionIdArg, bind } = TimLoadProjectSchema.parse(args);
@@ -2663,7 +2699,7 @@ async function createMcpServer(options = {}) {
                     const sessionId = (0, tim_core_1.resolveActiveSessionId)({
                         sessionIdArg: sessionIdArg,
                         markerSession: cwd
-                            ? (0, tim_hooks_1.findMarker)(cwd, { walkUp: true })?.marker.session
+                            ? findConfiguredMarker(cwd)?.marker.session
                             : undefined,
                         useSessionCache: !isHttp,
                         useEnv: !isHttp,
@@ -2702,7 +2738,10 @@ async function createMcpServer(options = {}) {
                     // cross-project load and must never rewrite .tim-project.
                     if (bind && cwd) {
                         try {
-                            (0, tim_hooks_1.syncNearestProjectMarker)(cwd, projectLabel, { sessionId });
+                            (0, tim_hooks_1.syncNearestProjectMarker)(cwd, projectLabel, {
+                                sessionId,
+                                findOptions: (0, tim_hooks_1.findMarkerOptionsFromEnv)(),
+                            });
                         }
                         catch {
                             // Non-critical — brief still returned

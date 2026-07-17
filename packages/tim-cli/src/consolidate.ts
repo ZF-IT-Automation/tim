@@ -3,24 +3,7 @@ import * as path from 'path';
 import { loadConfig } from 'tim-core';
 import { TimStore } from 'tim-store';
 import { processCurationQueue } from 'tim-summarizer';
-
-function parseArgs(args: string[]): Record<string, string> {
-  const parsed: Record<string, string> = {};
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i]!;
-    if (arg.startsWith('--')) {
-      const key = arg.slice(2);
-      const next = args[i + 1];
-      if (next && !next.startsWith('--')) {
-        parsed[key] = next;
-        i++;
-      } else {
-        parsed[key] = 'true';
-      }
-    }
-  }
-  return parsed;
-}
+import { parseArgs, valueOptionsFor } from './args.js';
 
 function resolveDbPath(): string {
   if (process.env.TIM_DB_PATH) return process.env.TIM_DB_PATH;
@@ -42,7 +25,7 @@ Usage:
 export async function cmdConsolidate(args: string[]): Promise<void> {
   const sub = args[0];
   const rest = sub ? args.slice(1) : args;
-  const flags = parseArgs(rest);
+  const { flags } = parseArgs(rest, { valueOptions: valueOptionsFor('consolidate', sub) });
   const project = flags.project;
 
   if (!sub || sub === 'help' || sub === '--help') {

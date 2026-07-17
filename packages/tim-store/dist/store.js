@@ -42,9 +42,13 @@ exports.TimStore = void 0;
 exports.sanitizeFtsQuery = sanitizeFtsQuery;
 exports.titleSimilarity = titleSimilarity;
 exports.runBenchmark = runBenchmark;
+exports.isProjectLabelConflictError = isProjectLabelConflictError;
+exports.incrementProjectLabel = incrementProjectLabel;
+exports.nextLabelAfterProjectLabelConflict = nextLabelAfterProjectLabelConflict;
 exports.splitTitleBody = splitTitleBody;
 exports.cosineSimilarity = cosineSimilarity;
 const better_sqlite3_1 = __importDefault(require("better-sqlite3"));
+const fs = __importStar(require("node:fs"));
 const path = __importStar(require("node:path"));
 const ulid_1 = require("ulid");
 const entry_id_js_1 = require("./entry-id.js");
@@ -131,13 +135,45 @@ function titleSimilarity(a, b) {
             intersection++;
     return intersection / (ta.size + tb.size - intersection);
 }
+function rewriteExactJsonReferences(db, raw, sourceId, targetId) {
+    try {
+        const paths = db.prepare(`SELECT fullkey
+       FROM json_tree(?)
+       WHERE type = 'text' AND atom = ?`).all(raw, sourceId);
+        if (paths.length === 0)
+            return raw;
+        const replaceAtPath = db.prepare('SELECT json_set(?, ?, ?) AS value');
+        let rewritten = raw;
+        for (const { fullkey } of paths) {
+            rewritten = replaceAtPath.get(rewritten, fullkey, targetId).value;
+        }
+        return rewritten;
+    }
+    catch {
+        return raw;
+    }
+}
+function mergeMissingTopLevelJson(db, source, target) {
+    const missingPaths = db.prepare(`SELECT source.fullkey
+     FROM json_tree(?) AS source
+     WHERE source.parent = 0
+       AND json_type(?, source.fullkey) IS NULL`).all(source, target);
+    const copyAtPath = db.prepare('SELECT json_set(?, ?, json(? -> ?)) AS value');
+    let merged = target;
+    for (const { fullkey } of missingPaths) {
+        merged = copyAtPath.get(merged, fullkey, source, fullkey).value;
+    }
+    return merged;
+}
 class TimStore {
     db;
+    databasePath;
     emitter;
     agentId;
     deviceId;
     constructor(dbPath, options = {}) {
         this.db = new better_sqlite3_1.default(dbPath);
+        this.databasePath = this.db.memory ? ':memory:' : fs.realpathSync(this.db.name);
         this.emitter = options.emitter;
         this.agentId = options.agentId ?? 'system';
         this.deviceId = options.deviceId ?? 'local';
@@ -1284,9 +1320,13 @@ class TimStore {
     getDb() {
         return this.db;
     }
+    /** Canonical identity of the SQLite database opened by this store. */
+    getDatabasePath() {
+        return this.databasePath;
+    }
     /** Run `fn` inside a single exclusive DB transaction (serializes concurrent callers). */
     runExclusive(fn) {
-        return this.db.transaction(fn)();
+        return this.db.transaction(fn).exclusive();
     }
     /**
      * Move an entry under the project's Tasks section (same depth math as
@@ -1351,6 +1391,210 @@ class TimStore {
     readSync(id) {
         const row = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(id);
         return row && !row.tombstoned_at ? rowToEntry(row) : null;
+    }
+    /** Synchronous raw-id read for repair paths; includes irrelevant and tombstoned rows. */
+    readIncludingTombstoneSync(id) {
+        const row = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(id);
+        return row ? rowToEntry(row) : null;
+    }
+    /** Raw metadata read reserved for system repair; bypasses public boolean coercion. */
+    readSystemRepairEntrySync(id) {
+        const row = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(id);
+        return row ? rowToSystemRepairEntry(row) : null;
+    }
+    /** Find every physical row carrying a logical metadata label, including suppressed rows. */
+    findByMetadataLabelIncludingTombstoneSync(label) {
+        const rows = this.db.prepare(`SELECT * FROM entries
+       WHERE json_extract(metadata, '$.label') = ?
+       ORDER BY created_at ASC, rowid ASC`).all(label);
+        return rows.map(rowToEntry);
+    }
+    /** Raw metadata label scan reserved for system repair. */
+    findSystemRepairEntriesByLabelSync(label) {
+        const rows = this.db.prepare(`SELECT * FROM entries
+       WHERE json_extract(metadata, '$.label') = ?
+       ORDER BY created_at ASC, rowid ASC`).all(label);
+        return rows.map(rowToSystemRepairEntry);
+    }
+    /**
+     * Canonicalize a physical entry id without changing its payload. Must be called
+     * inside runExclusive; rewrites all local references before removing oldId.
+     */
+    canonicalizeEntryIdSync(oldId, newId) {
+        if (oldId === newId) {
+            const existing = this.readSystemRepairEntrySync(oldId);
+            if (!existing)
+                throw new Error(`Entry not found: ${oldId}`);
+            return { entry: existing, rewrite: null };
+        }
+        const existing = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(oldId);
+        if (!existing)
+            throw new Error(`Entry not found: ${oldId}`);
+        if (this.db.prepare('SELECT 1 FROM entries WHERE id = ?').get(newId)) {
+            throw new Error(`Entry already exists: ${newId}`);
+        }
+        this.db.prepare(`
+      INSERT INTO entries (id, parent_id, title, content, content_type, depth, confidence,
+        created_at, accessed_at, updated_at, decay_rate, visibility, tags, irrelevant, favorite,
+        tombstoned_at, metadata, lww_device)
+      SELECT ?, parent_id, title, content, content_type, depth, confidence,
+        created_at, accessed_at, updated_at, decay_rate, visibility, tags, irrelevant, favorite,
+        tombstoned_at, metadata, lww_device
+      FROM entries WHERE id = ?
+    `).run(newId, oldId);
+        const rewrite = this.repointEntryReferencesSync(oldId, newId);
+        this.db.prepare('UPDATE entry_usage SET entry_id = ? WHERE entry_id = ?').run(newId, oldId);
+        this.db.prepare('UPDATE entry_vectors SET entry_id = ? WHERE entry_id = ?').run(newId, oldId);
+        this.db.prepare('DELETE FROM entries WHERE id = ?').run(oldId);
+        return { entry: this.readSystemRepairEntrySync(newId), rewrite };
+    }
+    /**
+     * Merge a duplicate system entry's metadata into the canonical row, repoint
+     * structural references, preserve a recovery snapshot, then remove the duplicate.
+     */
+    mergeSystemRepairEntrySync(sourceId, targetId) {
+        if (sourceId === targetId)
+            return null;
+        const source = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(sourceId);
+        if (!source) {
+            throw new Error(`Entry not found: ${sourceId}`);
+        }
+        const target = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(targetId);
+        if (!target) {
+            throw new Error(`Entry not found: ${targetId}`);
+        }
+        const mergedMetadata = mergeMissingTopLevelJson(this.db, source.metadata, target.metadata);
+        const snapshot = this.db.prepare(`SELECT json_object(
+         'id', ?,
+         'title', ?,
+         'content', ?,
+         'metadata', json(?),
+         'tags', json(?)
+       ) AS value`).get(source.id, source.title, source.content, source.metadata, source.tags);
+        this.db.prepare('UPDATE entries SET metadata = ? WHERE id = ?')
+            .run(mergedMetadata, targetId);
+        const rewrite = this.repointEntryReferencesSync(sourceId, targetId);
+        const rewrittenTarget = this.db.prepare('SELECT metadata FROM entries WHERE id = ?')
+            .get(targetId);
+        const withSnapshot = this.db.prepare(`SELECT json_set(
+         ?, '$.merged_inbox_entries',
+         json_insert(
+           CASE WHEN json_type(?, '$.merged_inbox_entries') = 'array'
+             THEN json_extract(?, '$.merged_inbox_entries')
+             ELSE json('[]') END,
+           '$[#]', json(?)
+         )
+       ) AS value`).get(rewrittenTarget.metadata, rewrittenTarget.metadata, rewrittenTarget.metadata, snapshot.value);
+        this.db.prepare('UPDATE entries SET metadata = ? WHERE id = ?')
+            .run(withSnapshot.value, targetId);
+        this.db.prepare('UPDATE entry_usage SET entry_id = ? WHERE entry_id = ?').run(targetId, sourceId);
+        this.db.prepare('DELETE FROM entry_vectors WHERE entry_id = ?').run(sourceId);
+        this.db.prepare('DELETE FROM entries WHERE id = ?').run(sourceId);
+        return rewrite;
+    }
+    /** Emit the syncable state transition for physical-id rewrites after the target is final. */
+    stageEntryIdRewritesSync(targetId, rewrites) {
+        if (rewrites.length === 0)
+            return;
+        const target = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(targetId);
+        if (!target)
+            throw new Error(`Entry not found: ${targetId}`);
+        const maxTimestamp = this.db.prepare('SELECT COALESCE(MAX(lww_timestamp), 0) AS value FROM staging').get();
+        let timestamp = Math.max(Date.now(), maxTimestamp.value + 1);
+        this.db.prepare(`DELETE FROM staging
+       WHERE acked = 0 AND key = ? AND entity_type = 'entry' AND operation = 'upsert'`).run(targetId);
+        this.insertStagingSync(target, timestamp++, target.confidence);
+        const entryIds = new Set();
+        const edgeIds = new Set();
+        for (const rewrite of rewrites) {
+            const deletedAt = new Date(timestamp).toISOString();
+            this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
+        lww_timestamp, lww_device, lww_confidence)
+        VALUES (?, 'entry', 'delete', ?, ?, ?, 1.0)`).run(rewrite.sourceId, JSON.stringify({
+                id: rewrite.sourceId,
+                tombstoned_at: deletedAt,
+                lww_device: this.deviceId,
+            }), timestamp++, this.deviceId);
+            rewrite.entryIds.forEach(id => entryIds.add(id));
+            rewrite.edgeIds.forEach(id => edgeIds.add(id));
+        }
+        for (const id of entryIds) {
+            const entry = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(id);
+            if (entry)
+                this.insertStagingSync(entry, timestamp++, entry.confidence);
+        }
+        for (const id of edgeIds) {
+            const edge = this.db.prepare('SELECT * FROM edges WHERE id = ?').get(id);
+            if (!edge)
+                continue;
+            const key = `${edge.source_id}|${edge.target_id}|${edge.type}`;
+            this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
+        lww_timestamp, lww_device, lww_confidence)
+        VALUES (?, 'edge', 'upsert', ?, ?, ?, 1.0)`).run(key, JSON.stringify(edge), timestamp++, this.deviceId);
+        }
+    }
+    repointEntryReferencesSync(sourceId, targetId) {
+        const entryIds = new Set(this.db.prepare('SELECT id FROM entries WHERE parent_id = ?').all(sourceId)
+            .map(row => row.id));
+        const edgeIds = new Set(this.db.prepare('SELECT id FROM edges WHERE source_id = ? OR target_id = ?').all(sourceId, sourceId).map(row => row.id));
+        this.db.prepare('UPDATE edges SET source_id = ? WHERE source_id = ?').run(targetId, sourceId);
+        this.db.prepare('UPDATE edges SET target_id = ? WHERE target_id = ?').run(targetId, sourceId);
+        this.db.prepare('UPDATE entries SET parent_id = ? WHERE parent_id = ?').run(targetId, sourceId);
+        const rewriteJsonColumn = (table, column, affected) => {
+            const rows = this.db.prepare(`SELECT id, ${column} AS value FROM ${table} WHERE ${column} LIKE '%' || ? || '%'`).all(sourceId);
+            const update = this.db.prepare(`UPDATE ${table} SET ${column} = ? WHERE id = ?`);
+            for (const row of rows) {
+                const rewritten = rewriteExactJsonReferences(this.db, row.value, sourceId, targetId);
+                if (rewritten === row.value)
+                    continue;
+                update.run(rewritten, row.id);
+                affected.add(row.id);
+            }
+        };
+        rewriteJsonColumn('entries', 'metadata', entryIds);
+        rewriteJsonColumn('edges', 'metadata', edgeIds);
+        entryIds.delete(sourceId);
+        entryIds.delete(targetId);
+        this.db.prepare('UPDATE suppressed SET pattern = ? WHERE pattern = ?').run(targetId, sourceId);
+        this.db.prepare('UPDATE suppressed SET suppressed_by = ? WHERE suppressed_by = ?')
+            .run(targetId, sourceId);
+        return {
+            sourceId,
+            targetId,
+            entryIds: [...entryIds],
+            edgeIds: [...edgeIds],
+        };
+    }
+    /**
+     * Persist a reserved system-entry repair without normalizing legacy user data.
+     * Callers must supply the complete preserved title, tags, and metadata payload.
+     */
+    repairSystemEntrySync(id, patch) {
+        const existing = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(id);
+        if (!existing)
+            throw new Error(`Entry not found: ${id}`);
+        const now = new Date().toISOString();
+        const timestamp = Date.now();
+        const updated = {
+            ...existing,
+            title: patch.title,
+            content: patch.content,
+            tags: JSON.stringify(patch.tags),
+            irrelevant: patch.irrelevant ? 1 : 0,
+            tombstoned_at: patch.tombstonedAt,
+            metadata: this.db.prepare('SELECT json_patch(json(?), json(?)) AS value').get(existing.metadata, JSON.stringify(patch.metadata)).value,
+            accessed_at: now,
+            updated_at: now,
+            lww_device: this.deviceId,
+        };
+        this.db.transaction(() => {
+            this.db.prepare(`UPDATE entries
+        SET title = ?, content = ?, tags = ?, irrelevant = ?, tombstoned_at = ?, metadata = ?,
+            accessed_at = ?, updated_at = ?, lww_device = ?
+        WHERE id = ?`).run(updated.title, updated.content, updated.tags, updated.irrelevant, updated.tombstoned_at, updated.metadata, updated.accessed_at, updated.updated_at, updated.lww_device, id);
+            this.insertStagingSync(updated, timestamp, updated.confidence);
+        })();
+        return rowToEntry(updated);
     }
     /** Synchronous update for use inside `runExclusive` transactions. */
     updateSync(id, patch, options) {
@@ -1600,7 +1844,7 @@ class TimStore {
     insertStagingSync(entry, timestamp, confidence) {
         this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
       lww_timestamp, lww_device, lww_confidence)
-      VALUES (?, 'entry', 'upsert', ?, ?, ?, ?)`).run(entry.id, JSON.stringify(entry), timestamp, this.deviceId, confidence);
+      VALUES (?, 'entry', 'upsert', ?, ?, ?, ?)`).run(entry.id, JSON.stringify({ ...entry, metadata_raw: entry.metadata }), timestamp, this.deviceId, confidence);
     }
     /** Atomically insert entry + staging row (rollback on either failure). */
     writeEntryWithStaging(entry, timestamp, confidence) {
@@ -2131,10 +2375,28 @@ class TimStore {
         return rows.map(rowToStaging);
     }
     async applyStaging(records) {
-        const upsertEntry = this.db.prepare(`INSERT OR REPLACE INTO entries
+        const upsertEntry = this.db.prepare(`INSERT INTO entries
       (id, parent_id, title, content, content_type, depth, confidence, created_at,
        accessed_at, updated_at, decay_rate, visibility, tags, irrelevant, favorite, tombstoned_at, metadata, lww_device)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        parent_id = excluded.parent_id,
+        title = excluded.title,
+        content = excluded.content,
+        content_type = excluded.content_type,
+        depth = excluded.depth,
+        confidence = excluded.confidence,
+        created_at = excluded.created_at,
+        accessed_at = excluded.accessed_at,
+        updated_at = excluded.updated_at,
+        decay_rate = excluded.decay_rate,
+        visibility = excluded.visibility,
+        tags = excluded.tags,
+        irrelevant = excluded.irrelevant,
+        favorite = excluded.favorite,
+        tombstoned_at = excluded.tombstoned_at,
+        metadata = excluded.metadata,
+        lww_device = excluded.lww_device`);
         const upsertEdge = this.db.prepare(`INSERT OR REPLACE INTO edges
       (id, source_id, target_id, type, weight, metadata, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?)`);
@@ -2625,6 +2887,27 @@ async function runBenchmark(store, queries) {
     }
     return results;
 }
+// ─── Project Label Collision Helpers ────────────────────
+/** True if `err` reports a project-label collision from createProject/allocateNextProjectLabel callers. */
+function isProjectLabelConflictError(err) {
+    if (!(err instanceof Error))
+        return false;
+    return /^Project label already exists: P\d{4}(?: \([^)]+\))?$/i.test(err.message) ||
+        /^Project label P\d{4} (?:already exists|already resolves to project \S+|has an ambiguous project-label conflict)$/i.test(err.message);
+}
+/** Increment a P-label numerically, e.g. P0104 -> P0105. */
+function incrementProjectLabel(label) {
+    const num = parseInt(label.slice(1), 10);
+    return `P${String(num + 1).padStart(4, '0')}`;
+}
+/** Advance past a failed label — allocateNextProjectLabel alone can stick if the collision never persisted. */
+function nextLabelAfterProjectLabelConflict(store, failedLabel) {
+    const incremented = incrementProjectLabel(failedLabel);
+    const allocated = store.allocateNextProjectLabel();
+    const incNum = parseInt(incremented.slice(1), 10);
+    const allocNum = parseInt(allocated.slice(1), 10);
+    return Number.isFinite(allocNum) && allocNum > incNum ? allocated : incremented;
+}
 // ─── Row → Domain Mappers ───────────────────────────────
 function normalizeProjectAliases(aliases) {
     if (!aliases?.length)
@@ -2662,6 +2945,12 @@ function cosineSimilarity(a, b) {
     return denom === 0 ? 0 : dot / denom;
 }
 function rowToEntry(row) {
+    return rowToEntryWithMetadata(row, (0, metadata_coerce_js_1.parseAndCoerceMetadata)(row.metadata));
+}
+function rowToSystemRepairEntry(row) {
+    return rowToEntryWithMetadata(row, JSON.parse(row.metadata));
+}
+function rowToEntryWithMetadata(row, metadata) {
     return {
         id: row.id,
         parentId: row.parent_id,
@@ -2679,7 +2968,7 @@ function rowToEntry(row) {
         irrelevant: row.irrelevant === 1,
         favorite: row.favorite === 1,
         tombstonedAt: row.tombstoned_at,
-        metadata: (0, metadata_coerce_js_1.parseAndCoerceMetadata)(row.metadata),
+        metadata,
     };
 }
 function rowToEdge(row) {

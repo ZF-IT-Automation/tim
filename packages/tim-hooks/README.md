@@ -19,3 +19,13 @@ Session hooks, checkpoint logic, and `.tim-project` marker handling for TIM.
 Create `.tim-project` in the repo root (or any ancestor of your cwd). Session start will refresh it. To change the team default for new clones, edit committed `tim.json` instead.
 
 `validateMarkerAgainstStore` still rejects pattern-valid labels that do not exist in the TIM DB (defense against bogus labels like `P9999`).
+
+## Hook CLI resolution
+
+Hook entrypoints are relocatable. They resolve the TIM CLI in this order:
+
+1. `TIM_CLI` override.
+2. A `tim` executable on `PATH`.
+3. The sibling installed package at `tim-cli/dist/cli.js`.
+
+For example, run `bash packages/tim-hooks/scripts/tim-statusline.sh` from a source checkout, or copy/symlink the packaged scripts from any installation prefix. No repository-specific absolute path is required.

@@ -4,7 +4,9 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { spawn, type ChildProcess } from 'node:child_process';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
+import { childServerCwd, isolateChildServerCwd } from './helpers/child-server-workspace.js';
 import { TimStore } from 'tim-store';
+isolateChildServerCwd();
 
 const SERVER_PATH = path.resolve(__dirname, '..', '..', 'dist', 'server.js');
 
@@ -26,6 +28,7 @@ class McpClient {
       throw new Error(`Server dist not found: ${SERVER_PATH}. Run "npm run build" first.`);
     }
     this.proc = spawn('node', [SERVER_PATH], {
+      cwd: childServerCwd(),
       env: { ...process.env, TIM_DB_PATH: dbPath },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
@@ -269,6 +272,7 @@ describe('tim_section_children', () => {
     const project = parseResult(await client.callTool('tim_create_project', {
       label: 'P7701',
       content: 'Section Test Project',
+      memoryOnly: true,
     })) as { id: string };
     const section = parseResult(await client.callTool('tim_write', {
       content: 'Tasks',
@@ -304,6 +308,7 @@ describe('tim_section_children', () => {
     const project = parseResult(await client.callTool('tim_create_project', {
       label: 'P7702',
       content: 'Resolve Project',
+      memoryOnly: true,
     })) as { id: string };
     await client.callTool('tim_write', {
       content: 'Ideas',
@@ -325,7 +330,7 @@ describe('tim_section_children', () => {
   });
 
   it('returns empty when section not found', async () => {
-    await client.callTool('tim_create_project', { label: 'P7703', content: 'Empty' });
+    await client.callTool('tim_create_project', { label: 'P7703', content: 'Empty', memoryOnly: true });
     const result = parseResult(await client.callTool('tim_section_children', {
       parentLabel: 'P7703',
       sectionTitle: 'Missing',
@@ -338,6 +343,7 @@ describe('tim_section_children', () => {
     const project = parseResult(await client.callTool('tim_create_project', {
       label: 'P7704',
       content: 'Filter Project',
+      memoryOnly: true,
     })) as { id: string };
     const section = parseResult(await client.callTool('tim_write', {
       content: 'Mixed',

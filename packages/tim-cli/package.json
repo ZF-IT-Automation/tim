@@ -16,6 +16,7 @@
     "tim-sync-client": "*",
     "tim-hooks": "*",
     "tim-migrate": "*",
+    "tim-mcp": "*",
     "tim-summarizer": "*",
     "tim-skills": "*",
     "better-sqlite3": "^11.7.0"
@@ -23,7 +24,7 @@
   "scripts": {
     "build": "tsc",
     "pretest": "npm --prefix ../.. run build",
-    "test": "vitest run",
+    "test": "vitest run --root ../.. packages/tim-cli/src/__tests__",
     "postinstall": "node -e \"try{require('./dist/update-skills.js').updateSkills()}catch(e){}\""
   }
 }

@@ -29,7 +29,7 @@ node packages/tim-cli/dist/cli.js statusline
 
 ---
 
-## Command Overview (28 commands)
+## Command Overview (36 commands)
 
 ### Top-Level Summary
 
@@ -40,29 +40,37 @@ node packages/tim-cli/dist/cli.js statusline
 | 3 | `tim stats` | Show memory statistics — counts, depth distribution, top tags |
 | 4 | `tim resolve-project` | Print bound project from nearest `.tim-project` marker |
 | 5 | `tim resolve-session` | Print project_ref for a TIM session |
-| 6 | `tim bind-project` | Write/refresh `.tim-project` for a directory |
-| 7 | `tim record-commit` | Record a git commit to the project's Commits section |
-| 8 | `tim hook session-start` | Start a new session |
-| 9 | `tim hook session-end` | End a session and run checkpoint |
-| 10 | `tim checkpoint` | Manual checkpoint for a session |
-| 11 | `tim rebalance` | Rebalance exchange batches at boundaries |
-| 12 | `tim statusline` | Status text or Hermes JSON for UI display |
-| 13 | `tim setup-hermes-statusline` | Install Hermes TUI status bar integration |
-| 14 | `tim export` | Export TIM DB to `.hmem` or text format |
-| 15 | `tim import` | Import from `.hmem` file |
-| 16 | `tim migrate-from-hmem` | Guided hmem-to-TIM migration with dry-run, snapshot, import, audit handoff |
-| 17 | `tim migrate tags-to-types` | Convert legacy `#rule` / `#human` tags to `metadata.type` |
-| 18 | `tim snapshot` | Snapshot live DB to `/tmp/tim-snapshots/` (SQLite backup) |
-| 19 | `tim restore` | Restore DB from a snapshot |
-| 20 | `tim release-check` | Verify release gates, beta smoke checks, and packaging safety |
-| 21 | `tim setup-agent` | Install TIM MCP, skills, hooks, and smoke guidance for one agent host |
-| 22 | `tim sync connect` | Connect to o9k-sync server |
-| 23 | `tim sync push` | Push unacked staging to server |
-| 24 | `tim sync pull` | Pull remote changes |
-| 25 | `tim sync status` | Show sync configuration and health |
-| 26 | `tim sync dev` | Start local dev sync server (port 3100) |
-| 27 | `tim --help` | Show top-level help |
-| 28 | `tim hook log` | Log a single exchange to a session |
+| 6 | `tim bind-project` | Safely recover a missing `.tim-project` for an existing project |
+| 7 | `tim new-project` | Create a path-bound project with coordinated label allocation and marker publication |
+| 8 | `tim record-commit` | Record a git commit to the project's Commits section |
+| 9 | `tim hook session-start` | Start a new session |
+| 10 | `tim hook session-end` | End a session and run checkpoint |
+| 11 | `tim hook log` | Log a single exchange to a session |
+| 12 | `tim checkpoint` | Manual checkpoint for a session |
+| 13 | `tim rebalance` | Rebalance exchange batches at boundaries |
+| 14 | `tim statusline` | Status text or Hermes JSON for UI display |
+| 15 | `tim setup-hermes-statusline` | Install Hermes TUI status bar integration |
+| 16 | `tim export` | Export TIM DB to `.hmem` or text format |
+| 17 | `tim import` | Import from `.hmem` file |
+| 18 | `tim migrate-from-hmem` | Guided hmem-to-TIM migration with dry-run, snapshot, import, audit handoff |
+| 19 | `tim migrate` | Convert legacy `#rule` / `#human` tags to `metadata.type` (`migrate tags-to-types`) |
+| 20 | `tim snapshot` | Snapshot live DB to `/tmp/tim-snapshots/` (SQLite backup) |
+| 21 | `tim restore` | Restore DB from a snapshot |
+| 22 | `tim release-check` | Verify release gates, beta smoke checks, and packaging safety |
+| 23 | `tim setup-agent` | Install TIM MCP, skills, hooks, and smoke guidance for one agent host |
+| 24 | `tim sync connect` | Connect to o9k-sync server |
+| 25 | `tim sync disconnect` | Remove local sync configuration |
+| 26 | `tim sync push` | Push unacked staging to server |
+| 27 | `tim sync pull` | Pull remote changes |
+| 28 | `tim sync status` | Show sync configuration and health |
+| 29 | `tim sync dev` | Start local dev sync server (port 3100) |
+| 30 | `tim user init` | Create the human profile scaffold |
+| 31 | `tim user profile` | Show the human profile tree summary |
+| 32 | `tim update-skills` | Copy bundled TIM skills to detected agent hosts |
+| 33 | `tim root-entries` | List root entries |
+| 34 | `tim consolidate` | Run memory consolidation |
+| 35 | `tim secret` | Manage secret entry metadata |
+| 36 | `tim --help` | Show top-level help |
 
 ---
 
@@ -74,11 +82,11 @@ Initialize TIM (create DB, create tables, register agents, write MCP config).
 **Idempotent-safe** — if DB exists, it validates health instead of re-creating.
 
 ```
-✓ Database created: /home/bbbee/.tim/tim.db
-✓ MCP config written: /home/bbbee/.tim/mcp.json
+✓ Database created: <home>/.tim/tim.db
+✓ MCP config written: <home>/.tim/mcp.json
 ✓ Health: 2750 entries, FTS5=OK
 
-TIM ready. Connect your MCP client to /home/bbbee/.tim/mcp.json
+TIM ready. Connect your MCP client to <home>/.tim/mcp.json
 ```
 
 **Note:** `tim init --help` prints usage and exits before any DB work.
@@ -90,7 +98,7 @@ TIM ready. Connect your MCP client to /home/bbbee/.tim/mcp.json
     "tim": {
       "command": "npx",
       "args": ["tim-mcp"],
-      "env": { "TIM_DB_PATH": "/home/bbbee/.tim/tim.db" }
+      "env": { "TIM_DB_PATH": "<home>/.tim/tim.db" }
     }
   }
 }
@@ -109,7 +117,7 @@ top tags, and whether Hermes statusline integration is installed.
 **Full output** (`samples/tim-doctor.txt`):
 ```
 ═══ TIM Doctor ═══
-DB: /home/bbbee/.tim/tim.db
+DB: <home>/.tim/tim.db
 Entries: 2750 | Edges: 10451
 Confidence avg: 1.00
 Broken links: 2
@@ -213,8 +221,10 @@ Usage: tim resolve-session --session <id> [--cwd <dir>] [--format label|directiv
 
 ### 6. `tim bind-project --label <P00XX> [--cwd <dir>] [--session <id>]`
 
-Write or refresh a `.tim-project` marker file in a directory.
-This is how you **switch projects** — change which project TIM considers active.
+Safely recover a missing `.tim-project` marker for an existing project. The command
+resolves the exact `P` label in the selected database before it writes anything. It
+writes only when no target-local marker exists, is idempotent for the same label, and
+never overwrites a marker owned by a different project.
 
 ```
 Usage: tim bind-project --label <P00XX> [--cwd <dir>] [--session <id>]
@@ -223,11 +233,47 @@ Usage: tim bind-project --label <P00XX> [--cwd <dir>] [--session <id>]
 **Example:**
 ```bash
 tim bind-project --label P0062 --cwd ~/projects/tim
+
+# Select the exact database named by a partial-creation error:
+TIM_DB_PATH='/exact/path/to/tim.db' tim bind-project --label P0062 --cwd ~/projects/tim
 ```
+
+Project creation coordinates a database write with local marker publication, but it is
+not cross-database/filesystem atomic. If creation reports a partial marker-publication
+failure, use only its returned shell-quoted `tim bind-project` command with the same
+configured database. A different existing local marker requires explicit reconciliation;
+do not overwrite it.
 
 ---
 
-### 7. `tim record-commit --cwd <dir> --hash <sha> --message <msg> [--diff <path>]`
+### 7. `tim new-project --path <absolute-dir> --name <name>`
+
+Preferred flow for creating a disk-backed TIM project. The command allocates a live
+non-conflicting `P` label (retrying bounded concurrent collisions), creates the database
+project, publishes `.tim-project`, initializes standard sections, and optionally runs
+`git init`.
+
+```bash
+tim new-project --path /absolute/path/to/repository --name "Project name"
+tim new-project -p /absolute/path/to/repository -n "Project name" --no-git --confirm
+```
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--path <dir>`, `-p <dir>` | Yes | Repository/workspace path; `--path` must be absolute and cannot be the home directory or use shell shorthand |
+| `--name <name>`, `-n <name>` | Yes | Non-empty project display name |
+| `--no-git` | No | Do not initialize a Git repository |
+| `--confirm` | No | Allow a non-empty directory without an interactive prompt |
+
+Creation is coordinated, not a cross-database/filesystem transaction: the database
+commit can succeed before local marker publication fails. In that case, run only the
+exact returned recovery command. It includes a shell-quoted `TIM_DB_PATH` selecting the
+same database used for creation. If a different marker already exists, reconcile it
+explicitly; neither `new-project` nor recovery-only `bind-project` overwrites it.
+
+---
+
+### 8. `tim record-commit --cwd <dir> --hash <sha> --message <msg> [--diff <path>]`
 
 Record a git commit to a project's Commits section in the TIM tree.
 **WRITES to the DB** — `--help` prints usage and exits; run it only when you intend to record a real commit.
@@ -250,7 +296,7 @@ when run from a directory whose .tim-project points to a missing/unknown project
 
 ---
 
-### 8-9. `tim hook session-start` / `tim hook session-end`
+### 9-11. `tim hook session-start` / `tim hook session-end` / `tim hook log`
 
 Session lifecycle hooks for tracking agent work sessions in TIM.
 
@@ -280,7 +326,7 @@ tim hook session-end --session $SESSION_ID
 
 ---
 
-### 10. `tim checkpoint --session <id>`
+### 12. `tim checkpoint --session <id>`
 
 Manually trigger a checkpoint for a session — summarizes exchange batches.
 
@@ -290,7 +336,7 @@ Usage: tim checkpoint --session <id>
 
 ---
 
-### 11. `tim rebalance --session <id>`
+### 13. `tim rebalance --session <id>`
 
 Rebalance exchange batches at boundary points — re-groups exchanges into
 optimized batch sizes.
@@ -301,7 +347,7 @@ Usage: tim rebalance --session <id>
 
 ---
 
-### 12. `tim statusline [--cwd <dir>] [--session <id>] [--format text|hermes]`
+### 14. `tim statusline [--cwd <dir>] [--session <id>] [--format text|hermes]`
 
 Short status string for shell prompts or Hermes TUI status bar.
 
@@ -317,13 +363,13 @@ P9999 · 0/5 exchanges · summary in 5
 
 ---
 
-### 13. `tim setup-hermes-statusline [--dry-run] [--skip-build]`
+### 15. `tim setup-hermes-statusline [--dry-run] [--skip-build]`
 
 Install the Hermes TUI status bar integration. Symlinks hooks, patches `cli.py`,
 builds TypeScript, and verifies the integration.
 
 ```
-✓ scripts: /home/bbbee/projects/tim/packages/tim-hooks/scripts
+✓ scripts: <tim-repo>/packages/tim-hooks/scripts
 ○ symlink:tim-hermes-session-cache.sh: already linked
 ○ symlink:tim-hermes-statusline.sh: already linked
 ○ config.yaml: tim-hermes-session-cache.sh already registered
@@ -337,7 +383,7 @@ Test: bash ~/.hermes/agent-hooks/tim-hermes-statusline.sh | jq .
 
 ---
 
-### 14. `tim export <path> [--format hmem|text]`
+### 16. `tim export <path> [--format hmem|text]`
 
 Export database to `.hmem` or plain text format.
 
@@ -347,7 +393,7 @@ Usage: tim export <path.hmem> [--format hmem|text]
 
 ---
 
-### 15. `tim import <path> [--dry-run] [--deduplicate] [--repair-flags] [--no-snapshot-check]`
+### 17. `tim import <path> [--dry-run] [--deduplicate] [--repair-flags] [--no-snapshot-check]`
 
 Import from a `.hmem` file into the live database.
 
@@ -370,7 +416,7 @@ the live TIM database.
 
 ---
 
-### 16. `tim migrate-from-hmem <path.hmem> [--deduplicate] [--no-deduplicate] [--dry-run]`
+### 18. `tim migrate-from-hmem <path.hmem> [--deduplicate] [--no-deduplicate] [--dry-run]`
 
 Guided hmem-to-TIM migration for agents. It inspects the source, performs a dry
 run, snapshots the TIM database before writing, imports, runs a health check,
@@ -394,7 +440,7 @@ for focused repair or lower-level migration work.
 
 ---
 
-### 17. `tim migrate tags-to-types [--dry-run] [--sample-limit N]`
+### 19. `tim migrate tags-to-types [--dry-run] [--sample-limit N]`
 
 One-time migration: convert legacy `#rule` and `#human` tags into `metadata.type`
 fields. Uses heuristics to detect the correct type.
@@ -419,7 +465,7 @@ tim migrate tags-to-types --dry-run --sample-limit 3
 
 ---
 
-### 18. `tim snapshot`
+### 20. `tim snapshot`
 
 Create a safe backup of the live TIM database to `/tmp/tim-snapshots/`.
 Uses SQLite backup API (safe for live DB — no corruption risk).
@@ -439,14 +485,14 @@ snapshot: /tmp/tim-snapshots/tim-20260617-0956.db (67072000 bytes, 141ms)
 
 ---
 
-### 19. `tim restore [--from <path>] [--list] [--dry-run] [--force]`
+### 21. `tim restore [--from <path>] [--list] [--dry-run] [--force]`
 
 Restore TIM DB from a snapshot. Has a safety guard — refuses to overwrite a DB
 modified within the last 60 minutes unless `--force` is passed.
 
 ```
 restore: refusing to overwrite DB modified 38m ago (safety threshold 60m)
-current db: /home/bbbee/.tim/tim.db
+current db: <home>/.tim/tim.db
 use --force to override (NOT recommended unless you know what you are doing)
 ```
 
@@ -461,7 +507,7 @@ use --force to override (NOT recommended unless you know what you are doing)
 
 ---
 
-### 20. `tim release-check [--beta] [--json] [--skip-tests true]`
+### 22. `tim release-check [--beta] [--json] [--skip-tests true]`
 
 Run the release gate sequence before tagging or packaging.
 
@@ -491,7 +537,7 @@ when you already ran it.
 
 ---
 
-### 21. `tim setup-agent --host claude|codex|cursor|hermes [--dry-run]`
+### 23. `tim setup-agent --host claude|codex|cursor|hermes [--dry-run]`
 
 Install TIM for one agent host. The command prints a JSON report covering MCP
 config, copied skills, host hooks, and a doctor-style smoke status.
@@ -515,7 +561,7 @@ open or create the TIM DB.
 
 ---
 
-### 22-25. `tim sync` Subcommands
+### 24-29. `tim sync` Subcommands
 
 Distributed sync for multi-device TIM setups.
 
@@ -524,6 +570,10 @@ Connects to an o9k-sync server (prompts for URL).
 ```
 Sync server URL [http://localhost:3100]:
 ```
+
+**`tim sync disconnect`**
+Remove the local `sync.json` and sync-state configuration. This disconnects the
+device locally; it does not delete remote data.
 
 **`tim sync push`**
 Push unacknowledged staging changes to the server.
@@ -545,12 +595,48 @@ Unacked staging: 7281
 Last push: 2026-06-17T07:35:19.297Z
 Last pull: 2026-06-17T07:35:19.338Z
 Cursor: 1
-Config: /home/bbbee/.tim/sync.json
+Config: <home>/.tim/sync.json
 ```
 
 **`tim sync dev`**
 Start a local dev sync server on port 3100.
 Fails with `EADDRINUSE` if one is already running.
+
+---
+
+### 30. `tim user init`
+
+Create or repair the `H0000` human-profile scaffold in the selected TIM database.
+This writes to the database and then prints the canonical profile sections.
+
+### 31. `tim user profile`
+
+Read and print the human-profile tree summary from the selected TIM database.
+
+### 32. `tim update-skills`
+
+Copy bundled TIM skills to detected agent-host skill directories. This mutates host
+configuration directories; use `tim setup-agent --host <host> --dry-run` when you need
+a non-mutating installation preview.
+
+### 33. `tim root-entries [--type <type>] [--tag '#tag'] [--format json|text]`
+
+List root/top-level entries filtered by `metadata.type` (preferred) or a legacy
+`#type` tag (deprecated alias, auto-normalized with a warning).
+
+### 34. `tim consolidate <find-duplicates|find-decay|...> --project <P00XX>`
+
+Run a memory-consolidation subcommand (duplicate/decay candidate discovery, etc.)
+against one project's entries.
+
+### 35. `tim secret <set|status|...> <id>`
+
+Manage the `metadata.secret` marker on an entry subtree — set/unset the secret
+boundary and check whether an entry inherits secrecy from an ancestor.
+
+### 36. `tim --help`
+
+Print the top-level command inventory without opening the TIM database.
 
 ---
 
@@ -613,18 +699,19 @@ tim resolve-project --walk-up
 The project marker file `.tim-project` contains a single line like `P9999`.
 TIM walks up from your current directory looking for this file.
 
-### How to switch projects
+### How to recover a missing project marker
 
 ```bash
-# Bind current directory to a different project
+# Recover the marker for an exact live project label
 tim bind-project --label P0062 --cwd ~/projects/tim
 
 # Or with a session
 tim bind-project --label P0062 --session <session-id>
 ```
 
-This writes/refreshes the `.tim-project` file in the specified directory.
-After binding, all TIM commands run from that directory will target the new project.
+This resolves the exact label in the selected database and writes `.tim-project` only
+when the directory has no marker. Repeating it for the same label is idempotent. It
+never replaces a different local marker; reconcile that conflict explicitly instead.
 
 ### How to read a specific entry
 
@@ -637,7 +724,7 @@ Configure your MCP client with `~/.tim/mcp.json`:
     "tim": {
       "command": "npx",
       "args": ["tim-mcp"],
-      "env": { "TIM_DB_PATH": "/home/bbbee/.tim/tim.db" }
+      "env": { "TIM_DB_PATH": "<home>/.tim/tim.db" }
     }
   }
 }

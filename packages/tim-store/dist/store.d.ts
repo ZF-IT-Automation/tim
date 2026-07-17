@@ -81,8 +81,15 @@ export interface GetTasksOptions {
     subtype?: string;
     needs_review?: boolean;
 }
+interface EntryIdRewrite {
+    sourceId: string;
+    targetId: string;
+    entryIds: string[];
+    edgeIds: string[];
+}
 export declare class TimStore implements MemoryInterface {
     private db;
+    private readonly databasePath;
     private emitter?;
     private agentId;
     private deviceId;
@@ -238,6 +245,8 @@ export declare class TimStore implements MemoryInterface {
     consolidate(): ConsolidationManager;
     /** @internal Exposed for tests */
     getDb(): Database.Database;
+    /** Canonical identity of the SQLite database opened by this store. */
+    getDatabasePath(): string;
     /** Run `fn` inside a single exclusive DB transaction (serializes concurrent callers). */
     runExclusive<T>(fn: () => T): T;
     /**
@@ -251,6 +260,35 @@ export declare class TimStore implements MemoryInterface {
     getChildByKindSync(parentId: string, kind: string): Entry[];
     getChildrenBySeqSync(parentId: string): Entry[];
     readSync(id: string): Entry | null;
+    /** Synchronous raw-id read for repair paths; includes irrelevant and tombstoned rows. */
+    readIncludingTombstoneSync(id: string): Entry | null;
+    /** Raw metadata read reserved for system repair; bypasses public boolean coercion. */
+    readSystemRepairEntrySync(id: string): Entry | null;
+    /** Find every physical row carrying a logical metadata label, including suppressed rows. */
+    findByMetadataLabelIncludingTombstoneSync(label: string): Entry[];
+    /** Raw metadata label scan reserved for system repair. */
+    findSystemRepairEntriesByLabelSync(label: string): Entry[];
+    /**
+     * Canonicalize a physical entry id without changing its payload. Must be called
+     * inside runExclusive; rewrites all local references before removing oldId.
+     */
+    canonicalizeEntryIdSync(oldId: string, newId: string): {
+        entry: Entry;
+        rewrite: EntryIdRewrite | null;
+    };
+    /**
+     * Merge a duplicate system entry's metadata into the canonical row, repoint
+     * structural references, preserve a recovery snapshot, then remove the duplicate.
+     */
+    mergeSystemRepairEntrySync(sourceId: string, targetId: string): EntryIdRewrite | null;
+    /** Emit the syncable state transition for physical-id rewrites after the target is final. */
+    stageEntryIdRewritesSync(targetId: string, rewrites: EntryIdRewrite[]): void;
+    private repointEntryReferencesSync;
+    /**
+     * Persist a reserved system-entry repair without normalizing legacy user data.
+     * Callers must supply the complete preserved title, tags, and metadata payload.
+     */
+    repairSystemEntrySync(id: string, patch: Pick<Entry, 'title' | 'content' | 'tags' | 'metadata' | 'irrelevant' | 'tombstonedAt'>): Entry;
     /** Synchronous update for use inside `runExclusive` transactions. */
     updateSync(id: string, patch: Partial<Entry>, options?: UpdateOptions): Entry;
     /** Entries whose metadata JSON has non-boolean values for known boolean keys (legacy 1/0/"true"/"false"). */
@@ -398,10 +436,19 @@ export interface BenchmarkResult {
     missing: string[];
 }
 export declare function runBenchmark(store: TimStore, queries: GoldenQuery[]): Promise<BenchmarkResult[]>;
+/** True if `err` reports a project-label collision from createProject/allocateNextProjectLabel callers. */
+export declare function isProjectLabelConflictError(err: unknown): boolean;
+/** Increment a P-label numerically, e.g. P0104 -> P0105. */
+export declare function incrementProjectLabel(label: string): string;
+/** Advance past a failed label — allocateNextProjectLabel alone can stick if the collision never persisted. */
+export declare function nextLabelAfterProjectLabelConflict(store: {
+    allocateNextProjectLabel(): string;
+}, failedLabel: string): string;
 export declare function splitTitleBody(content: string, explicitTitle?: string): {
     title: string;
     body: string;
 };
 /** Cosine similarity between two same-length vectors. Range: [-1, 1]. */
 export declare function cosineSimilarity(a: Float32Array, b: Float32Array): number;
+export {};
 //# sourceMappingURL=store.d.ts.map

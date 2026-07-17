@@ -4,6 +4,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { spawn, type ChildProcess } from 'node:child_process';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
+import { childServerCwd, isolateChildServerCwd } from './helpers/child-server-workspace.js';
+isolateChildServerCwd();
 
 const SERVER_PATH = path.resolve(__dirname, '..', '..', 'dist', 'server.js');
 
@@ -25,6 +27,7 @@ class McpClient {
       throw new Error(`Server dist not found: ${SERVER_PATH}. Run "npm run build" first.`);
     }
     this.proc = spawn('node', [SERVER_PATH], {
+      cwd: childServerCwd(),
       env: { ...process.env, TIM_DB_PATH: dbPath, ...extraEnv },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
@@ -99,7 +102,7 @@ async function seedProjectWithTask(
   taskMeta: { status?: string; priority?: string } = {},
   taskTags: string[] = ['#task', '#tim'],
 ): Promise<void> {
-  const proj = await client.callTool('tim_create_project', { label, content: title });
+  const proj = await client.callTool('tim_create_project', { label, content: title, memoryOnly: true });
   expect(proj.error).toBeUndefined();
   const project = JSON.parse(proj.result!.content[0].text);
 
@@ -170,7 +173,7 @@ describe('tim_show', () => {
   });
 
   it('what:bugs returns only #bug tagged entries', async () => {
-    const proj = await client.callTool('tim_create_project', { label: 'P0440', content: 'Bug Proj' });
+    const proj = await client.callTool('tim_create_project', { label: 'P0440', content: 'Bug Proj', memoryOnly: true });
     const project = JSON.parse(proj.result!.content[0].text);
     const section = await client.callTool('tim_write', {
       content: 'Tasks',
@@ -198,7 +201,7 @@ describe('tim_show', () => {
   });
 
   it('what:errors unions type=error and #error tag deduped', async () => {
-    const proj = await client.callTool('tim_create_project', { label: 'P0441', content: 'Error Proj' });
+    const proj = await client.callTool('tim_create_project', { label: 'P0441', content: 'Error Proj', memoryOnly: true });
     const project = JSON.parse(proj.result!.content[0].text);
     const section = await client.callTool('tim_write', {
       content: 'Errors',
@@ -236,6 +239,7 @@ describe('tim_show', () => {
     const proj = await client.callTool('tim_create_project', {
       label: 'P0420',
       content: 'Ideas Project',
+      memoryOnly: true,
     });
     const project = JSON.parse(proj.result!.content[0].text);
 
@@ -264,7 +268,7 @@ describe('tim_show', () => {
   });
 
   it('with:open excludes done and cancelled tasks', async () => {
-    const proj = await client.callTool('tim_create_project', { label: 'P0450', content: 'Filter Proj' });
+    const proj = await client.callTool('tim_create_project', { label: 'P0450', content: 'Filter Proj', memoryOnly: true });
     const project = JSON.parse(proj.result!.content[0].text);
     const section = await client.callTool('tim_write', {
       content: 'Tasks',
@@ -309,7 +313,7 @@ describe('tim_show', () => {
   });
 
   it('with:urgent returns only #urgent entries', async () => {
-    const proj = await client.callTool('tim_create_project', { label: 'P0453', content: 'Urgent Proj' });
+    const proj = await client.callTool('tim_create_project', { label: 'P0453', content: 'Urgent Proj', memoryOnly: true });
     const project = JSON.parse(proj.result!.content[0].text);
     const section = await client.callTool('tim_write', {
       content: 'Tasks',
@@ -364,7 +368,7 @@ describe('tim_show', () => {
   });
 
   it('limit applied after scope not before', async () => {
-    const proj = await client.callTool('tim_create_project', { label: 'P0460', content: 'Limit Proj' });
+    const proj = await client.callTool('tim_create_project', { label: 'P0460', content: 'Limit Proj', memoryOnly: true });
     const project = JSON.parse(proj.result!.content[0].text);
     const section = await client.callTool('tim_write', {
       content: 'Tasks',
@@ -420,10 +424,13 @@ describe('tim_show', () => {
     });
     const sec = JSON.parse(section.result!.content[0].text);
 
+    // Explicit vcs:'git' — MCP auto-detects vcs from cwd; temp test dirs are
+    // non-git (vcs:none), and isCodingNeedsReview treats vcs:none as reviewable
+    // even with zero commits. Pin git so "No commits yet" stays excluded.
     for (const [content, taskMeta] of [
-      ['Needs review task', { subtype: 'coding', commits: ['abc123'], status: 'in_progress' }],
-      ['Already reviewed', { subtype: 'coding', commits: ['def456'], status: 'reviewed' }],
-      ['No commits yet', { subtype: 'coding', commits: [], status: 'in_progress' }],
+      ['Needs review task', { subtype: 'coding', vcs: 'git', commits: ['abc123'], status: 'in_progress' }],
+      ['Already reviewed', { subtype: 'coding', vcs: 'git', commits: ['def456'], status: 'reviewed' }],
+      ['No commits yet', { subtype: 'coding', vcs: 'git', commits: [], status: 'in_progress' }],
       ['Plain task', { status: 'todo' }],
     ] as const) {
       await client.callTool('tim_write', {

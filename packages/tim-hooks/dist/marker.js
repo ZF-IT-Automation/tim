@@ -33,7 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.CWD_ONLY_MARKER_DISCOVERY_POLICY = exports.DEFAULT_MARKER_DISCOVERY_POLICY = exports.LOCK_TTL_MS = exports.INBOX_LABEL = exports.MARKER_VERSION = exports.CANONICAL_PROJECT_FILENAME = exports.MARKER_LOCK = exports.MARKER_FILENAME = void 0;
+exports.CWD_ONLY_MARKER_DISCOVERY_POLICY = exports.DEFAULT_MARKER_DISCOVERY_POLICY = exports.LOCK_TTL_MS = exports.ExclusiveMarkerConflictError = exports.INBOX_LABEL = exports.MARKER_VERSION = exports.CANONICAL_PROJECT_FILENAME = exports.MARKER_LOCK = exports.MARKER_FILENAME = void 0;
 exports.markerPath = markerPath;
 exports.canonicalProjectPath = canonicalProjectPath;
 exports.validateProjectLabel = validateProjectLabel;
@@ -41,6 +41,7 @@ exports.readMarker = readMarker;
 exports.validateMarkerAgainstStore = validateMarkerAgainstStore;
 exports.isUnsafeMarkerDir = isUnsafeMarkerDir;
 exports.writeMarkerAtomic = writeMarkerAtomic;
+exports.writeMarkerExclusive = writeMarkerExclusive;
 exports.writeMarker = writeMarker;
 exports.rotateMarkerSession = rotateMarkerSession;
 exports.syncNearestProjectMarker = syncNearestProjectMarker;
@@ -57,6 +58,7 @@ exports.buildSessionDirective = buildSessionDirective;
 const fs = __importStar(require("fs"));
 const os = __importStar(require("os"));
 const path = __importStar(require("path"));
+const crypto = __importStar(require("node:crypto"));
 const constants_js_1 = require("./constants.js");
 const tim_store_1 = require("tim-store");
 exports.MARKER_FILENAME = '.tim-project';
@@ -270,6 +272,50 @@ function writeMarkerAtomic(filePath, content) {
     const tmp = `${filePath}.tmp.${process.pid}`;
     fs.writeFileSync(tmp, content);
     fs.renameSync(tmp, filePath);
+}
+class ExclusiveMarkerConflictError extends Error {
+    filePath;
+    constructor(filePath) {
+        super(`Local marker already exists: ${filePath}`);
+        this.filePath = filePath;
+        this.name = 'ExclusiveMarkerConflictError';
+    }
+}
+exports.ExclusiveMarkerConflictError = ExclusiveMarkerConflictError;
+/** Publish a marker only when no local marker exists already. */
+function writeMarkerExclusive(cwd, marker) {
+    if (!validateProjectLabel(marker.project)) {
+        throw new Error(`[tim-hooks] writeMarkerExclusive: refusing to write invalid project label "${marker.project}" — ` +
+            `expected ^[PLEN]\\d{4}$ (P0062, L0042, …). Marker not written.`);
+    }
+    const filePath = markerPath(cwd);
+    const tmp = `${filePath}.tmp.${process.pid}.${crypto.randomUUID()}`;
+    const complete = { ...marker, version: exports.MARKER_VERSION };
+    let ownsTemp = false;
+    try {
+        fs.writeFileSync(tmp, JSON.stringify(complete, null, 2), { flag: 'wx' });
+        ownsTemp = true;
+        try {
+            fs.linkSync(tmp, filePath);
+        }
+        catch (err) {
+            if (err.code === 'EEXIST') {
+                throw new ExclusiveMarkerConflictError(filePath);
+            }
+            throw err;
+        }
+        return complete;
+    }
+    finally {
+        if (ownsTemp) {
+            try {
+                fs.rmSync(tmp, { force: true });
+            }
+            catch {
+                // Publication success or failure is authoritative; cleanup is best-effort.
+            }
+        }
+    }
 }
 /** Write a project marker file. Always emits the current schema version:
  *  the on-disk file becomes v2 on first write, regardless of the caller's
@@ -521,7 +567,7 @@ function buildLoadDirective(projectLabel, markerDir, bindingLabel) {
         `This session is bound to TIM project ${display}.`,
         ``,
         `ACTION: call tim_load_project(label="${projectLabel}") now to load the project ` +
-            `brief from the TIM store, then run the o9k-session-start skill. STEP 1 ` +
+            `brief from the TIM store, then run the tim-session-start skill. STEP 1 ` +
             `(project binding) is already decided by this marker — do NOT ask which ` +
             `project, and do NOT run any hmem/active-project cwd→project resolution. ` +
             `The TIM marker is authoritative for this turn.`,
@@ -535,7 +581,7 @@ function buildSessionDirective(projectLabel, cwd, bindingLabel) {
         `This session is bound to TIM project ${display}.`,
         ``,
         `ACTION: call tim_load_project(label="${projectLabel}") now to load the project ` +
-            `brief from the TIM store, then run the o9k-session-start skill. STEP 1 ` +
+            `brief from the TIM store, then run the tim-session-start skill. STEP 1 ` +
             `is already decided by this TIM session — do NOT ask which project, and do NOT ` +
             `run any hmem/active-project cwd→project resolution. The TIM binding is authoritative ` +
             `for this turn.`,

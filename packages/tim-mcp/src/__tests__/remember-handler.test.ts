@@ -37,10 +37,12 @@ function successRerank(ranked: RankedCandidate[]): RerankResult {
   };
 }
 
-function countNewLogLines(beforeSize: number): number {
+function countLogLinesForQuery(query: string): number {
   if (!fs.existsSync(rememberLogPath)) return 0;
-  const content = fs.readFileSync(rememberLogPath, 'utf8').slice(beforeSize);
-  return content.split('\n').filter((line) => line.trim().length > 0).length;
+  return fs
+    .readFileSync(rememberLogPath, 'utf8')
+    .split('\n')
+    .filter((line) => line.includes(`query="${query}"`)).length;
 }
 
 async function seedProjectEntries(
@@ -478,8 +480,8 @@ describe('handleTimRemember', () => {
   });
 
   it('audit_log_written_per_call (P8)', async () => {
-    await seedProjectEntries('P0909', 2, 'auditterm');
-    const beforeSize = fs.existsSync(rememberLogPath) ? fs.statSync(rememberLogPath).size : 0;
+    const query = `auditterm${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+    await seedProjectEntries('P0909', 2, query);
 
     spawnMock.mockResolvedValue({
       ranked: null,
@@ -490,7 +492,7 @@ describe('handleTimRemember', () => {
     });
 
     await handleTimRemember(store, {
-      query: 'auditterm',
+      query,
       topK: 5,
       minConfidence: 0.3,
       includeBatchSummaries: false,
@@ -498,9 +500,9 @@ describe('handleTimRemember', () => {
     });
 
     expect(fs.existsSync(rememberLogPath)).toBe(true);
-    expect(countNewLogLines(beforeSize)).toBe(1);
-    const logTail = fs.readFileSync(rememberLogPath, 'utf8').slice(beforeSize);
-    expect(logTail).toContain('query="auditterm"');
+    expect(countLogLinesForQuery(query)).toBe(1);
+    const logTail = fs.readFileSync(rememberLogPath, 'utf8');
+    expect(logTail).toContain(`query="${query}"`);
     expect(logTail).toMatch(/latency_ms=\d+/);
   });
 });

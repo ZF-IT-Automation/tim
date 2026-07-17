@@ -5,6 +5,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as readline from 'readline';
 import { TimStore } from 'tim-store';
+import { createProjectCoordinated, ProjectCreationPartialFailureError } from 'tim-hooks';
 import { cmdNewProject } from '../new-project.js';
 
 const CLI = path.resolve(__dirname, '../../dist/cli.js');
@@ -62,7 +63,9 @@ describe('tim new-project', () => {
   beforeEach(() => {
     fs.mkdirSync(TEST_ROOT, { recursive: true });
     workDir = fs.mkdtempSync(path.join(TEST_ROOT, 'case-'));
-    dbPath = path.join(workDir, 'test.db');
+    const dbDir = path.join(workDir, "database dir's");
+    fs.mkdirSync(dbDir);
+    dbPath = path.join(dbDir, 'custom tim.db');
     env = { TIM_DB_PATH: dbPath, TIM_MARKER_MAX_ROOT: workDir };
   });
 
@@ -85,6 +88,24 @@ describe('tim new-project', () => {
     const result = run(['new-project', '--path', target, '--name', 'Empty Dir'], env);
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('✓ Created project P0001');
+  });
+
+  it('supports equals syntax through the shared parser', () => {
+    const target = path.join(workDir, 'equals-syntax');
+    const result = run(['new-project', `--path=${target}`, '--name=Equals Syntax'], env);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('✓ Created project P0001 "Equals Syntax"');
+    expect(fs.existsSync(path.join(target, '.tim-project'))).toBe(true);
+  });
+
+  it('rejects a missing option value before creating files or database state', () => {
+    const target = path.join(workDir, 'missing-name-value');
+    const result = run(['new-project', '--path', target, '--name'], env);
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('Missing value for --name');
+    expect(fs.existsSync(target)).toBe(false);
+    expect(fs.existsSync(dbPath)).toBe(false);
   });
 
   it('prompts on non-empty directory with TTY', async () => {
@@ -150,7 +171,8 @@ describe('tim new-project', () => {
     const result = run(['new-project', '-p', target, '-n', 'Blocked'], env);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('Path already bound to P0042');
-    expect(result.stderr).toContain('bind-project');
+    expect(result.stderr).toMatch(/reconcil/i);
+    expect(result.stderr).not.toContain('to rebind');
     expect(fs.readFileSync(path.join(target, '.tim-project'), 'utf8')).toBe(markerContent);
     expect(fs.existsSync(path.join(target, '.tim-project.bak'))).toBe(false);
 
@@ -181,32 +203,144 @@ describe('tim new-project', () => {
   it('retries on label collision', async () => {
     const target = path.join(workDir, 'collision');
     await seedProject(dbPath, 'P0001');
-
-    const original = TimStore.prototype.createProject;
-    let calls = 0;
-    vi.spyOn(TimStore.prototype, 'createProject').mockImplementation(async function (
-      this: TimStore,
-      label: string,
-      options?: Parameters<typeof original>[1],
-    ) {
-      calls++;
-      if (calls === 1 && label === 'P0002') {
+    const labels: string[] = [];
+    const createProject: typeof createProjectCoordinated = async (store, args) => {
+      labels.push(args.label);
+      expect(fs.existsSync(path.join(target, '.tim-project'))).toBe(false);
+      if (args.label === 'P0002') {
         throw new Error('Project label already exists: P0002 (dup-id)');
       }
-      return original.call(this, label, options);
-    });
+      return createProjectCoordinated(store, args);
+    };
 
     const prevDb = process.env.TIM_DB_PATH;
     process.env.TIM_DB_PATH = dbPath;
-    await cmdNewProject(['--path', target, '--name', 'Collision Test']);
+    await cmdNewProject(['--path', target, '--name', 'Collision Test'], { createProject });
     if (prevDb === undefined) delete process.env.TIM_DB_PATH;
     else process.env.TIM_DB_PATH = prevDb;
 
-    expect(calls).toBeGreaterThanOrEqual(2);
+    expect(labels).toEqual(['P0002', 'P0003']);
+    expect(JSON.parse(fs.readFileSync(path.join(target, '.tim-project'), 'utf8')).project).toBe('P0003');
     const store = new TimStore(dbPath);
     const projects = await store.listProjects();
+    expect(projects.some(p => p.label === 'P0002')).toBe(false);
     expect(projects.some(p => p.label === 'P0003')).toBe(true);
     store.close();
+  });
+
+  it('stops after ten duplicate label collisions with database failure exit 5', async () => {
+    const target = path.join(workDir, 'collision-exhaustion');
+    const labels: string[] = [];
+    const createProject: typeof createProjectCoordinated = async (_store, args) => {
+      labels.push(args.label);
+      expect(fs.existsSync(path.join(target, '.tim-project'))).toBe(false);
+      throw new Error(`Project label already exists: ${args.label} (racing-project)`);
+    };
+    const exitSpy = mockExit();
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const prevDb = process.env.TIM_DB_PATH;
+    process.env.TIM_DB_PATH = dbPath;
+
+    try {
+      await expect(cmdNewProject(
+        ['--path', target, '--name', 'Exhausted', '--no-git'],
+        { createProject },
+      )).rejects.toThrow('exit:5');
+    } finally {
+      if (prevDb === undefined) delete process.env.TIM_DB_PATH;
+      else process.env.TIM_DB_PATH = prevDb;
+    }
+
+    expect(labels).toEqual(Array.from({ length: 10 }, (_, index) => `P${String(index + 1).padStart(4, '0')}`));
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('Failed to create project in database'));
+    expect(fs.existsSync(path.join(target, '.tim-project'))).toBe(false);
+    exitSpy.mockRestore();
+  });
+
+  it('does not retry a similar non-duplicate database error and exits 5', async () => {
+    const target = path.join(workDir, 'ordinary-db-failure');
+    let attempts = 0;
+    const createProject: typeof createProjectCoordinated = async () => {
+      attempts++;
+      throw new Error('Project label lookup failed because cache already exists');
+    };
+    const exitSpy = mockExit();
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const prevDb = process.env.TIM_DB_PATH;
+    process.env.TIM_DB_PATH = dbPath;
+
+    try {
+      await expect(cmdNewProject(
+        ['--path', target, '--name', 'DB Failure', '--no-git'],
+        { createProject },
+      )).rejects.toThrow('exit:5');
+    } finally {
+      if (prevDb === undefined) delete process.env.TIM_DB_PATH;
+      else process.env.TIM_DB_PATH = prevDb;
+    }
+
+    expect(attempts).toBe(1);
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining(
+      'Failed to create project in database: Project label lookup failed because cache already exists',
+    ));
+    exitSpy.mockRestore();
+  });
+
+  it('preserves a shell-safe same-DB recovery command after coordinated partial failure', async () => {
+    const target = path.join(workDir, 'partial-failure');
+    let attempts = 0;
+    const createProject: typeof createProjectCoordinated = async (store, args) => {
+      attempts++;
+      return createProjectCoordinated(store, args, {
+        writeExclusive: () => { throw new Error('simulated disk full'); },
+      });
+    };
+    const exitSpy = mockExit();
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const prevDb = process.env.TIM_DB_PATH;
+    process.env.TIM_DB_PATH = dbPath;
+
+    try {
+      const error = await cmdNewProject(
+        ['--path', target, '--name', 'Partial', '--no-git'],
+        { createProject },
+      ).catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(ProjectCreationPartialFailureError);
+      expect((error as Error).message).toContain(
+        `TIM_DB_PATH='${fs.realpathSync(dbPath).replaceAll("'", "'\"'\"'")}' tim bind-project`,
+      );
+    } finally {
+      if (prevDb === undefined) delete process.env.TIM_DB_PATH;
+      else process.env.TIM_DB_PATH = prevDb;
+    }
+
+    expect(attempts).toBe(1);
+    expect(exitSpy).not.toHaveBeenCalled();
+    expect(errorSpy).not.toHaveBeenCalledWith(expect.stringContaining('Failed to create project in database'));
+    exitSpy.mockRestore();
+  });
+
+  it('keeps the documented command inventory aligned with actual CLI help', () => {
+    const reference = fs.readFileSync(
+      path.resolve(__dirname, '../../../../docs/tim-cli-reference.md'),
+      'utf8',
+    );
+    const help = run(['--help'], env);
+    const helpCommands = help.stdout
+      .split('Commands:\n')[1]
+      .split('\n')
+      .filter(line => /^  \S/.test(line))
+      .map(line => line.trim().split(/\s{2,}/)[0].replace(/\s+(?:\[|<).*/, ''));
+    const documentedCommands = [...reference.matchAll(/^\| \d+ \| `tim ([^`]+)` \|/gm)]
+      .map(match => match[1]);
+
+    expect(help.status).toBe(0);
+    expect(helpCommands).toHaveLength(36);
+    expect(documentedCommands).toEqual(helpCommands);
+    expect(reference).toContain('## Command Overview (36 commands)');
+    expect(reference).toContain('### 7. `tim new-project --path <absolute-dir> --name <name>');
+    expect(reference).toContain('`--path` must be absolute');
+    expect(reference).toContain("TIM_DB_PATH='/exact/path/to/tim.db' tim bind-project");
   });
 
   it('starts at P0001 for empty DB', () => {
@@ -227,9 +361,33 @@ describe('tim new-project', () => {
   });
 
   it('rejects relative path', () => {
-    const result = run(['new-project', '-p', 'relative/path', '-n', 'Bad'], env);
+    const relative = `relative-${path.basename(workDir)}/path`;
+    const resolved = path.resolve(relative);
+    const result = run(['new-project', '-p', relative, '-n', 'Bad'], env);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('must be absolute path');
+    expect(fs.existsSync(resolved)).toBe(false);
+  });
+
+  it.each(['~/tim-project', '$HOME/tim-project', '%HOME%/tim-project'])(
+    'rejects path shorthand without creating directories: %s',
+    shorthand => {
+      const resolved = path.resolve(shorthand);
+      const result = run(['new-project', '-p', shorthand, '-n', 'Bad'], env);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toMatch(/shorthand|absolute path/i);
+      expect(fs.existsSync(resolved)).toBe(false);
+    },
+  );
+
+  it('rejects an existing non-directory target before confirmation', () => {
+    const target = path.join(workDir, 'existing-file');
+    fs.writeFileSync(target, 'not a directory');
+
+    const result = run(['new-project', '-p', target, '-n', 'Bad'], env);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toMatch(/must be a directory/i);
+    expect(fs.readFileSync(target, 'utf8')).toBe('not a directory');
   });
 
   it('rejects empty name', () => {
@@ -339,7 +497,7 @@ describe('tim new-project', () => {
     expect(marker.batch_size).toBe(5);
     expect(marker.exchanges).toBe(0);
     expect(marker.batches_summarized).toBe(0);
-    expect(marker.session).toMatch(/^[0-9A-Z]{26}$/);
+    expect(marker.session).toMatch(/^[0-9a-f-]{36}$/);
   });
 
   it('metadata.path and metadata.name stored', async () => {

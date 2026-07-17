@@ -27,6 +27,20 @@ describe('ensureProjectForPath', () => {
     expect(await ensureProjectForPath(store, taskDir)).toBeNull();
   });
 
+  it('rebinds to existing project by directory alias without creating a new label', async () => {
+    const projectDir = path.join(dir, 'tim');
+    fs.mkdirSync(projectDir);
+    await store.createProject('P0063', {
+      content: 'TIM | Active',
+      aliases: ['tim'],
+    });
+
+    const result = await ensureProjectForPath(store, projectDir);
+    expect(result).toMatchObject({ label: 'P0063', created: false });
+    const projects = await store.listProjects();
+    expect(projects.filter(p => p.label.startsWith('P01'))).toHaveLength(0);
+  });
+
   it('assigns unique labels for sequential creation', async () => {
     const dirs = Array.from({ length: 4 }, (_, i) => {
       const d = path.join(dir, `seq-${i}`);

@@ -152,6 +152,32 @@ describe('statusline', () => {
     }
   });
 
+  it('shows unbound suffix for phantom marker not in DB', async () => {
+    const db = path.join(TEST_ROOT, `sl-phantom-${Date.now()}.db`);
+    const prevDb = process.env.TIM_DB_PATH;
+    process.env.TIM_DB_PATH = db;
+    const store = new TimStore(db);
+    try {
+      const dir = fs.mkdtempSync(path.join(TEST_ROOT, 'sl-phantom-'));
+      writeMarker(dir, {
+        project: 'P0888',
+        session: 'phantom-sess',
+        exchanges: 2,
+        batch_size: 5,
+        batches_summarized: 0,
+      });
+
+      const line = await statuslineFromCwd(dir, { maxRoot: dir });
+      expect(line).toMatch(/P0888\?/);
+      fs.rmSync(dir, { recursive: true, force: true });
+    } finally {
+      store.close();
+      if (prevDb === undefined) delete process.env.TIM_DB_PATH;
+      else process.env.TIM_DB_PATH = prevDb;
+      fs.rmSync(db, { force: true });
+    }
+  });
+
   it('uses marker project even when DB session has different project_ref', async () => {
     const db = path.join(TEST_ROOT, `sl-marker-proj-${Date.now()}.db`);
     const prevDb = process.env.TIM_DB_PATH;

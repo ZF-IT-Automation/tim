@@ -16,12 +16,13 @@
     "packages/tim-skills"
   ],
   "scripts": {
-    "prepare": "rm -rf packages/*/tsconfig.tsbuildinfo && npm run build",
-    "build": "tsc -b",
+    "prepare": "npm run clean && npm run build",
+    "build": "tsc -b && node scripts/ensure-executable-dist.mjs",
     "pretest": "npm run build",
     "test": "vitest run",
+    "test:build-pipeline": "npm run clean && node scripts/check-clean-output.mjs && npm run build && node scripts/check-build-output.mjs",
     "lint": "tsc -b --noEmit",
-    "clean": "rm -rf packages/*/dist"
+    "clean": "rm -rf packages/*/dist packages/*/tsconfig.tsbuildinfo"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.12",

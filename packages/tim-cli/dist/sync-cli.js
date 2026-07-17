@@ -48,33 +48,16 @@ const tim_store_1 = require("tim-store");
 const tim_store_2 = require("tim-store");
 const tim_sync_client_1 = require("tim-sync-client");
 const tim_core_1 = require("tim-core");
+const args_js_1 = require("./args.js");
 function getDbPath() {
     const config = (0, tim_core_1.loadConfig)();
     return process.env.TIM_DB_PATH || config.dbPath || `${process.env.HOME}/.tim/tim.db`;
-}
-function parseSyncArgs(args) {
-    const parsed = {};
-    for (let i = 0; i < args.length; i++) {
-        const arg = args[i];
-        if (arg.startsWith('--')) {
-            const key = arg.slice(2);
-            const next = args[i + 1];
-            if (next && !next.startsWith('--')) {
-                parsed[key] = next;
-                i++;
-            }
-            else {
-                parsed[key] = 'true';
-            }
-        }
-    }
-    return parsed;
 }
 async function promptHidden(rl, label) {
     return rl.question(label);
 }
 async function cmdSyncConnect(args) {
-    const flags = parseSyncArgs(args);
+    const { flags } = (0, args_js_1.parseArgs)(args, { valueOptions: (0, args_js_1.valueOptionsFor)('sync', 'connect') });
     const rl = readline.createInterface({ input: node_process_1.stdin, output: node_process_1.stdout });
     try {
         const deviceId = (0, tim_sync_client_1.getDeviceId)();
@@ -155,7 +138,7 @@ function requirePassphrase(flags) {
     return p;
 }
 async function cmdSyncPush(args) {
-    const flags = parseSyncArgs(args);
+    const { flags } = (0, args_js_1.parseArgs)(args, { valueOptions: (0, args_js_1.valueOptionsFor)('sync', 'push') });
     const config = (0, tim_sync_client_1.loadConfig)();
     if (!config) {
         console.error('Not connected. Run: tim sync connect');
@@ -173,7 +156,7 @@ async function cmdSyncPush(args) {
     }
 }
 async function cmdSyncPull(args) {
-    const flags = parseSyncArgs(args);
+    const { flags } = (0, args_js_1.parseArgs)(args, { valueOptions: (0, args_js_1.valueOptionsFor)('sync', 'pull') });
     const config = (0, tim_sync_client_1.loadConfig)();
     if (!config) {
         console.error('Not connected. Run: tim sync connect');
@@ -248,7 +231,7 @@ function cmdSyncDisconnect() {
     }
 }
 async function cmdSyncDev(args) {
-    const flags = parseSyncArgs(args);
+    const { flags } = (0, args_js_1.parseArgs)(args, { valueOptions: (0, args_js_1.valueOptionsFor)('sync', 'dev') });
     const port = parseInt(flags.port ?? '3100', 10);
     (0, tim_sync_client_1.startDevServer)(port);
 }

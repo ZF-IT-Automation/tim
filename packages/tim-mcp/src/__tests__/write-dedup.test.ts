@@ -4,7 +4,9 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { spawn, type ChildProcess } from 'node:child_process';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
+import { childServerCwd, isolateChildServerCwd } from './helpers/child-server-workspace.js';
 import os from 'node:os';
+isolateChildServerCwd();
 
 const SERVER_PATH = path.resolve(__dirname, '..', '..', 'dist', 'server.js');
 
@@ -26,6 +28,7 @@ class McpClient {
       throw new Error(`Server dist not found: ${SERVER_PATH}. Run "npm run build" first.`);
     }
     this.proc = spawn('node', [SERVER_PATH], {
+      cwd: childServerCwd(),
       env: { ...process.env, TIM_DB_PATH: dbPath },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
@@ -108,7 +111,7 @@ describe('tim_write dedup gate', () => {
   });
 
   it('refuses a near-duplicate title and lists candidates', async () => {
-    const proj = await client.callTool('tim_create_project', { label: 'P9000', content: 'Dedup Proj' });
+    const proj = await client.callTool('tim_create_project', { label: 'P9000', content: 'Dedup Proj', memoryOnly: true });
     const project = JSON.parse(proj.result!.content![0].text);
     const section = await client.callTool('tim_write', {
       content: 'Notes',
@@ -159,7 +162,7 @@ describe('tim_write dedup gate', () => {
   });
 
   it('skips dedup gate without parentId even when another project has the same title', async () => {
-    const projA = await client.callTool('tim_create_project', { label: 'P9001', content: 'Project A' });
+    const projA = await client.callTool('tim_create_project', { label: 'P9001', content: 'Project A', memoryOnly: true });
     const projectA = JSON.parse(projA.result!.content![0].text);
     const sectionA = await client.callTool('tim_write', {
       content: 'Tasks',
@@ -176,7 +179,7 @@ describe('tim_write dedup gate', () => {
       tags: ['#note', '#test'],
     });
 
-    const projB = await client.callTool('tim_create_project', { label: 'P9002', content: 'Project B' });
+    const projB = await client.callTool('tim_create_project', { label: 'P9002', content: 'Project B', memoryOnly: true });
     expect(projB.result?.isError).toBeFalsy();
 
     const second = await client.callTool('tim_write', {
@@ -190,7 +193,7 @@ describe('tim_write dedup gate', () => {
   });
 
   it('applies dedup gate within project when parentId is set', async () => {
-    const proj = await client.callTool('tim_create_project', { label: 'P9003', content: 'Scoped Project' });
+    const proj = await client.callTool('tim_create_project', { label: 'P9003', content: 'Scoped Project', memoryOnly: true });
     const project = JSON.parse(proj.result!.content![0].text);
     const section = await client.callTool('tim_write', {
       content: 'Tasks',

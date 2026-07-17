@@ -2,12 +2,12 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { spawn, type ChildProcess } from 'node:child_process';
-import * as os from 'node:os';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
-import { isolatedCwd } from './test-helpers/mcp-client.js';
+import { childServerCwd, childServerDbPath, isolateChildServerCwd } from './helpers/child-server-workspace.js';
 
 const SERVER_PATH = path.resolve(__dirname, '..', '..', 'dist', 'server.js');
+isolateChildServerCwd();
 
 interface JsonRpcResp {
   id: number;
@@ -22,13 +22,12 @@ class McpClient {
   private buffer = '';
   private ready = false;
 
-  constructor(dbPath: string, cwd: string = isolatedCwd()) {
+  constructor(dbPath: string) {
     if (!fs.existsSync(SERVER_PATH)) {
       throw new Error(`Server dist not found: ${SERVER_PATH}. Run "npm run build" first.`);
     }
     this.proc = spawn('node', [SERVER_PATH], {
-      // Never inherit the runner cwd — the server syncs .tim-project markers there.
-      cwd,
+      cwd: childServerCwd(),
       env: { ...process.env, TIM_DB_PATH: dbPath },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
@@ -98,26 +97,21 @@ class McpClient {
 describe('tim_load_project bind:false', () => {
   let client: McpClient;
   let dbPath: string;
-  let cwdDir: string;
-  let markerPath: string;
 
   beforeEach(async () => {
-    dbPath = `/tmp/tim-bind-${Date.now()}-${Math.random().toString(36).slice(2)}.db`;
+    dbPath = childServerDbPath();
     if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath);
-    cwdDir = isolatedCwd();
-    markerPath = path.join(cwdDir, '.tim-project');
-    client = new McpClient(dbPath, cwdDir);
+    client = new McpClient(dbPath);
     await client.init();
 
     // Seed two projects.
-    await client.callTool('tim_create_project', { label: 'P8101', content: 'Project 8101' });
-    await client.callTool('tim_create_project', { label: 'P8102', content: 'Project 8102' });
+    await client.callTool('tim_create_project', { label: 'P8101', content: 'Project 8101', memoryOnly: true });
+    await client.callTool('tim_create_project', { label: 'P8102', content: 'Project 8102', memoryOnly: true });
   });
 
   afterEach(() => {
     client.kill();
     if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath);
-    fs.rmSync(cwdDir, { recursive: true, force: true });
   });
 
   it('does not bind the session and can be called for multiple projects', async () => {
@@ -134,52 +128,106 @@ describe('tim_load_project bind:false', () => {
     expect(c.result!.isError).toBeFalsy();
   });
 
+  it('bind:false preserves marker bytes and mtime', async () => {
+    const markerPath = path.join(childServerCwd(), '.tim-project');
+    fs.writeFileSync(markerPath, JSON.stringify({
+      version: 2,
+      project: 'P8101',
+      session: 'bind-false-session',
+      exchanges: 7,
+      batch_size: 5,
+      batches_summarized: 1,
+    }, null, 2));
+    const beforeBytes = fs.readFileSync(markerPath);
+    const beforeMtime = fs.statSync(markerPath, { bigint: true }).mtimeNs;
+
+    const response = await client.callTool('tim_load_project', {
+      label: 'P8102',
+      bind: false,
+      sessionId: 'bind-false-session',
+    });
+
+    expect(response.result?.isError).toBeFalsy();
+    expect(fs.readFileSync(markerPath)).toEqual(beforeBytes);
+    expect(fs.statSync(markerPath, { bigint: true }).mtimeNs).toBe(beforeMtime);
+  });
+
+  it('tim_read_project preserves marker bytes and mtime', async () => {
+    const markerPath = path.join(childServerCwd(), '.tim-project');
+    fs.writeFileSync(markerPath, JSON.stringify({
+      version: 2,
+      project: 'P8101',
+      session: 'read-project-session',
+      exchanges: 4,
+      batch_size: 5,
+      batches_summarized: 0,
+    }, null, 2));
+    const beforeBytes = fs.readFileSync(markerPath);
+    const beforeMtime = fs.statSync(markerPath, { bigint: true }).mtimeNs;
+
+    const response = await client.callTool('tim_read_project', { label: 'P8102' });
+
+    expect(response.result?.isError).toBeFalsy();
+    expect(fs.readFileSync(markerPath)).toEqual(beforeBytes);
+    expect(fs.statSync(markerPath, { bigint: true }).mtimeNs).toBe(beforeMtime);
+  });
+
   it('bind:false then bind:true works — read does not consume the gate', async () => {
-    const read = await client.callTool('tim_load_project', { label: 'P8101', bind: false });
+    const sessionId = 'bind-after-read-session';
+    const read = await client.callTool('tim_load_project', {
+      label: 'P8101', bind: false, sessionId,
+    });
     expect(read.error).toBeUndefined();
     expect(read.result!.isError).toBeFalsy();
 
     // Now bind for real — should succeed because the read did NOT bind.
-    const bind = await client.callTool('tim_load_project', { label: 'P8102' });
+    const bind = await client.callTool('tim_load_project', { label: 'P8102', sessionId });
     expect(bind.error).toBeUndefined();
     expect(bind.result!.isError).toBeFalsy();
-  });
 
-  it('bind:false leaves a pre-existing .tim-project byte-identical', async () => {
-    const before = fs.readFileSync(markerPath, 'utf8');
-    const read = await client.callTool('tim_load_project', { label: 'P8101', bind: false });
-    expect(read.result!.isError).toBeFalsy();
-    expect(fs.readFileSync(markerPath, 'utf8')).toBe(before);
+    const rejected = await client.callTool('tim_load_project', { label: 'P8101', sessionId });
+    expect(rejected.result!.isError).toBe(true);
+    expect(rejected.result!.content[0].text).toContain('P8102');
   });
 
   it('bind:false creates no .tim-project when the cwd has none', async () => {
-    const bareDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tim-bind-bare-'));
-    const bare = new McpClient(dbPath, bareDir);
-    try {
-      const read = await bare.callTool('tim_load_project', { label: 'P8101', bind: false });
-      expect(read.result!.isError).toBeFalsy();
-      expect(fs.existsSync(path.join(bareDir, '.tim-project'))).toBe(false);
-    } finally {
-      bare.kill();
-      fs.rmSync(bareDir, { recursive: true, force: true });
-    }
+    const markerPath = path.join(childServerCwd(), '.tim-project');
+    const read = await client.callTool('tim_load_project', { label: 'P8101', bind: false });
+    expect(read.result!.isError).toBeFalsy();
+    expect(fs.existsSync(markerPath)).toBe(false);
   });
 
   it('bind:true syncs the cwd marker to the loaded project', async () => {
-    const bind = await client.callTool('tim_load_project', { label: 'P8102' });
+    const markerPath = path.join(childServerCwd(), '.tim-project');
+    fs.writeFileSync(markerPath, JSON.stringify({
+      version: 2,
+      project: 'P8101',
+      session: 'bind-sync-session',
+      exchanges: 0,
+      batch_size: 5,
+      batches_summarized: 0,
+    }, null, 2));
+    const bind = await client.callTool('tim_load_project', {
+      label: 'P8102', sessionId: 'bind-sync-session',
+    });
     expect(bind.result!.isError).toBeFalsy();
     const marker = JSON.parse(fs.readFileSync(markerPath, 'utf8')) as { project: string };
     expect(marker.project).toBe('P8102');
   });
 
   it('tim_read_project still works as a deprecated alias for bind:false', async () => {
+    const sessionId = 'bind-after-deprecated-read-session';
     const resp = await client.callTool('tim_read_project', { label: 'P8101' });
     expect(resp.error).toBeUndefined();
     expect(resp.result!.isError).toBeFalsy();
 
     // And the gate is still free — we can bind afterward to a different project.
-    const bind = await client.callTool('tim_load_project', { label: 'P8102' });
+    const bind = await client.callTool('tim_load_project', { label: 'P8102', sessionId });
     expect(bind.error).toBeUndefined();
     expect(bind.result!.isError).toBeFalsy();
+
+    const rejected = await client.callTool('tim_load_project', { label: 'P8101', sessionId });
+    expect(rejected.result!.isError).toBe(true);
+    expect(rejected.result!.content[0].text).toContain('P8102');
   });
 });
