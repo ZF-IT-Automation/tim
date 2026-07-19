@@ -25,14 +25,7 @@ async function labelIfValidProject(
   label: string,
 ): Promise<string | null> {
   const validated = await validateMarkerAgainstStore(
-    {
-      version: 2,
-      project: label,
-      session: '',
-      exchanges: 0,
-      batch_size: 5,
-      batches_summarized: 0,
-    },
+    { version: 3, project: label },
     store,
   );
   return validated?.project ?? null;

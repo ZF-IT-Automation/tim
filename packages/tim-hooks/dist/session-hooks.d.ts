@@ -4,7 +4,7 @@ export interface SpawnContext {
     cwd: string;
 }
 export type Spawner = (command: string, ctx: SpawnContext) => void;
-export type SessionStopReason = 'spawned' | 'no-marker' | 'below-threshold' | 'locked' | 'spawn-failed';
+export type SessionStopReason = 'spawned' | 'no-marker' | 'no-session' | 'below-threshold' | 'locked' | 'spawn-failed';
 export interface SessionStopResult {
     spawned: boolean;
     reason: SessionStopReason;
@@ -23,6 +23,8 @@ export interface MaybeSpawnSummarizerOptions {
     /** Skip pending threshold — use when a batch just filled (live trigger). */
     batchFull?: boolean;
     timeoutSec?: number;
+    /** Session to summarize; when omitted, resolved from the store for marker.project + cwd. */
+    sessionId?: string;
 }
 /** Shared spawn gate for session-stop hook and live batch-full trigger. */
 export declare function maybeSpawnSummarizer(store: TimStore, cwd: string, opts?: MaybeSpawnSummarizerOptions): Promise<SessionStopResult>;

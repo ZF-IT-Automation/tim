@@ -163,6 +163,98 @@ describe('session-end checkpoint orchestration', () => {
     }
   });
 
+  it('runSessionStart does not rewrite an existing .tim-project marker', async () => {
+    const store = new TimStore(':memory:');
+    await store.createProject('P0042');
+    const dir = fs.mkdtempSync(path.join('/home/bbbee/.tim-test-runs', 'tim-marker-keep-'));
+    const markerPath = path.join(dir, '.tim-project');
+    const markerBody = JSON.stringify({ version: 3, project: 'P0042' }, null, 2);
+    fs.writeFileSync(markerPath, markerBody);
+    const mtimeBefore = fs.statSync(markerPath).mtimeMs;
+
+    await runSessionStart(store, {
+      sessionId: 'keep-marker',
+      agentName: 'agent',
+      cwd: dir,
+      harness: 'test',
+    });
+
+    expect(fs.readFileSync(markerPath, 'utf8')).toBe(markerBody);
+    expect(fs.statSync(markerPath).mtimeMs).toBe(mtimeBefore);
+    fs.rmSync(dir, { recursive: true, force: true });
+    store.close();
+  });
+
+  it('runSessionStart writes a v3 marker when cwd has none and projectId is explicit', async () => {
+    const dir = fs.mkdtempSync(path.join('/home/bbbee/.tim-test-runs', 'tim-marker-write-'));
+    const store = new TimStore(path.join(dir, 'test.db'));
+    await store.createProject('P0099');
+
+    await runSessionStart(store, {
+      sessionId: 'write-marker',
+      agentName: 'agent',
+      cwd: dir,
+      harness: 'test',
+      projectId: 'P0099',
+    });
+
+    const marker = JSON.parse(fs.readFileSync(path.join(dir, '.tim-project'), 'utf8'));
+    expect(marker).toEqual({ version: 3, project: 'P0099' });
+    store.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('runSessionStart skips marker writes for :memory: stores even with explicit projectId', async () => {
+    const store = new TimStore(':memory:');
+    await store.createProject('P0099');
+    const dir = fs.mkdtempSync(path.join('/home/bbbee/.tim-test-runs', 'tim-marker-mem-'));
+
+    await runSessionStart(store, {
+      sessionId: 'mem-marker',
+      agentName: 'agent',
+      cwd: dir,
+      harness: 'test',
+      projectId: 'P0099',
+    });
+
+    expect(fs.existsSync(path.join(dir, '.tim-project'))).toBe(false);
+    fs.rmSync(dir, { recursive: true, force: true });
+    store.close();
+  });
+
+  it('runSessionStart cadence reminder uses deriveCounters, not marker fields', async () => {
+    const store = new TimStore(':memory:');
+    await store.createProject('P0077');
+    const dir = fs.mkdtempSync(path.join('/home/bbbee/.tim-test-runs', 'tim-cadence-'));
+    fs.writeFileSync(
+      path.join(dir, '.tim-project'),
+      JSON.stringify({ version: 3, project: 'P0077' }),
+    );
+    const sessions = new SessionManager(store);
+    await sessions.startProjectSession({
+      sessionId: 'cadence-sess',
+      projectId: 'P0077',
+      agentName: 'agent',
+      cwd: dir,
+      harness: 'test',
+    });
+    await sessions.logExchange('cadence-sess', Array.from({ length: 17 }, (_, i) => ([
+      { role: 'user' as const, content: `user-${i + 1}` },
+      { role: 'agent' as const, content: `agent-${i + 1}` },
+    ])).flat());
+
+    const { briefing } = await runSessionStart(store, {
+      sessionId: 'cadence-sess',
+      agentName: 'agent',
+      cwd: dir,
+      harness: 'test',
+    });
+
+    expect(briefing).toContain('checkpoint in 3 exchange');
+    fs.rmSync(dir, { recursive: true, force: true });
+    store.close();
+  });
+
   it('runSessionStart does NOT walk up to a parent .tim-project (cwd-only contract)', async () => {
     // Auto-Load Hook contract: a session binds to a project ONLY when the
     // .tim-project marker is in cwd. Walking up to a parent has caused

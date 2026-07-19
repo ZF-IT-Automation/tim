@@ -43,6 +43,7 @@ exports.maybeSpawnProjectSummary = maybeSpawnProjectSummary;
 const child_process_1 = require("child_process");
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
+const tim_store_1 = require("tim-store");
 const marker_js_1 = require("./marker.js");
 const constants_js_1 = require("./constants.js");
 var constants_js_2 = require("./constants.js");
@@ -106,19 +107,28 @@ async function maybeSpawnSummarizer(store, cwd, opts = {}) {
     const marker = (0, marker_js_1.detectProject)(cwd);
     if (!marker)
         return { spawned: false, reason: 'no-marker' };
-    const reconciled = await (0, marker_js_1.reconcileMarker)(store, cwd);
-    const pending = reconciled.exchanges - reconciled.batches_summarized * reconciled.batch_size;
-    if (!opts.batchFull && pending < reconciled.batch_size) {
+    const sessionEntry = opts.sessionId
+        ? await store.read(opts.sessionId)
+        : await (0, tim_store_1.resolveCurrentSession)(store, marker.project, cwd);
+    if (!sessionEntry)
+        return { spawned: false, reason: 'no-session' };
+    const sessionId = sessionEntry.id;
+    const batchSize = typeof sessionEntry.metadata.batch_size === 'number'
+        ? sessionEntry.metadata.batch_size
+        : 5;
+    const { exchangeCount, batchesSummarized } = await (0, tim_store_1.deriveCounters)(store, sessionId);
+    const pending = exchangeCount - batchesSummarized * batchSize;
+    if (!opts.batchFull && pending < batchSize) {
         return { spawned: false, reason: 'below-threshold', pending };
     }
     if (!(0, marker_js_1.acquireLock)(cwd))
         return { spawned: false, reason: 'locked', pending };
-    const lockPath = path.join(cwd, marker_js_1.MARKER_LOCK);
+    const lockPath = (0, marker_js_1.summarizerLockPath)(cwd);
     const logPath = summarizerLogPath(cwd);
     const timeoutSec = opts.timeoutSec ?? constants_js_1.DEFAULT_SUMMARIZER_TIMEOUT_SEC;
     try {
-        spawn(buildSummarizerCommand(reconciled.session, lockPath, logPath, timeoutSec), {
-            sessionId: reconciled.session,
+        spawn(buildSummarizerCommand(sessionId, lockPath, logPath, timeoutSec), {
+            sessionId,
             cwd,
         });
         return { spawned: true, reason: 'spawned', pending };

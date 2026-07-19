@@ -27,7 +27,6 @@ SCRIPT_DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" && pwd)"
 unset SCRIPT_PATH SCRIPT_LINK_DIR
 # shellcheck source=lib/resolve-tim-cli.sh
 source "$SCRIPT_DIR/lib/resolve-tim-cli.sh"
-TIM_HOOKS_MARKER="${TIM_MARKER_MODULE:-${SCRIPT_DIR}/../dist/marker.js}"
 
 # Read stdin once (some harnesses pass payload, some pass nothing)
 payload="$(cat -)"
@@ -50,27 +49,11 @@ if [[ -z "$cwd" ]]; then
   cwd=$(pwd)
 fi
 
-# Extract session_id from payload (for marker rotation, Fix F)
-hook_session=$(printf '%s' "$payload" | jq -r '.session_id // empty' 2>/dev/null || true)
-
 # --- Resolve project marker ---
 directive=$(run_tim_cli resolve-project --walk-up --cwd "$cwd" --format directive 2>/dev/null || true)
 if [[ -z "$directive" ]]; then
   # No .tim-project marker found — silent skip (exit 0)
   exit 0
-fi
-
-# ── Session rotation: update .tim-project with current session ──
-# Prevents stale cron session IDs from persisting in the marker (PITFALLS-46).
-# cwd/session are passed via env, never interpolated into the JS source —
-# paths or session ids containing quotes/backslashes must not break rotation.
-if [[ -n "$hook_session" && -f "$TIM_HOOKS_MARKER" ]]; then
-  TIM_HOOK_CWD="$cwd" TIM_HOOK_SESSION="$hook_session" TIM_MARKER_MODULE="$TIM_HOOKS_MARKER" \
-    node --input-type=module -e "
-    const { pathToFileURL } = await import('node:url');
-    const m = await import(pathToFileURL(process.env.TIM_MARKER_MODULE).href);
-    m.rotateMarkerSession(process.env.TIM_HOOK_CWD, process.env.TIM_HOOK_SESSION);
-  " 2>/dev/null || true
 fi
 
 # --- Detect harness and format output ---

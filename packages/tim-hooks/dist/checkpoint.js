@@ -104,47 +104,40 @@ async function resolveSessionProjectId(store, cwd, explicitProjectId) {
         if (explicitProjectId !== 'P0000') {
             const resolved = await store.resolveProjectLabel(explicitProjectId);
             if (resolved.status === 'found')
-                return resolved.label;
+                return { projectId: resolved.label, binding: 'explicit' };
             if (resolved.status === 'not_found') {
                 throw new Error(`Project not found: ${explicitProjectId}. Use tim_load_project to pick a real project.`);
             }
             throw new Error(`Ambiguous project label: ${explicitProjectId} matches ${resolved.labels.join(', ')}.`);
         }
-        return explicitProjectId;
+        return { projectId: explicitProjectId, binding: 'explicit' };
     }
     const located = (0, marker_js_1.discoverMarker)(cwd, marker_js_1.CWD_ONLY_MARKER_DISCOVERY_POLICY);
     if (located) {
         const validated = await (0, marker_js_1.validateMarkerAgainstStore)(located.marker, store);
         if (validated)
-            return validated.project;
+            return { projectId: validated.project, binding: 'marker' };
         const recovered = await (0, phantom_recovery_js_1.repairPhantomProjectBinding)(store, located.dir);
         if (recovered) {
             if (store.getDatabasePath() !== ':memory:') {
                 (0, marker_js_1.writeMarker)(located.dir, (0, phantom_recovery_js_1.markerWithRepairedProject)(located.marker, recovered));
             }
-            return recovered;
+            return { projectId: recovered, binding: 'phantom' };
         }
         await (0, tim_store_1.ensureInboxProject)(store);
-        return tim_store_1.INBOX_PROJECT_LABEL;
+        return { projectId: tim_store_1.INBOX_PROJECT_LABEL, binding: 'inbox' };
     }
     const active = getActiveProjectLabel();
     if (active) {
-        const validated = await (0, marker_js_1.validateMarkerAgainstStore)({
-            version: 2,
-            project: active,
-            session: '',
-            exchanges: 0,
-            batch_size: 5,
-            batches_summarized: 0,
-        }, store);
+        const validated = await (0, marker_js_1.validateMarkerAgainstStore)({ version: 3, project: active }, store);
         if (validated)
-            return validated.project;
+            return { projectId: validated.project, binding: 'active' };
     }
     const auto = await (0, tim_store_1.ensureProjectForPath)(store, cwd);
     if (auto)
-        return auto.label;
+        return { projectId: auto.label, binding: 'auto' };
     await (0, tim_store_1.ensureInboxProject)(store);
-    return tim_store_1.INBOX_PROJECT_LABEL;
+    return { projectId: tim_store_1.INBOX_PROJECT_LABEL, binding: 'inbox' };
 }
 async function runCheckpoint(store, sessionId, opts = {}) {
     const sessions = new tim_store_1.SessionManager(store);
@@ -152,7 +145,7 @@ async function runCheckpoint(store, sessionId, opts = {}) {
 }
 async function runSessionStart(store, params) {
     const sessions = new tim_store_1.SessionManager(store);
-    const projectId = await resolveSessionProjectId(store, params.cwd, params.projectId);
+    const { projectId, binding } = await resolveSessionProjectId(store, params.cwd, params.projectId);
     const session = await sessions.startProjectSession({
         sessionId: params.sessionId,
         projectId,
@@ -162,16 +155,11 @@ async function runSessionStart(store, params) {
         batchSize: params.batchSize,
     });
     if (store.getDatabasePath() !== ':memory:') {
-        (0, marker_js_1.writeMarker)(params.cwd, {
-            project: projectId,
-            session: params.sessionId,
-            exchanges: 0,
-            batch_size: typeof session.metadata.batch_size === 'number'
-                ? session.metadata.batch_size
-                : 5,
-            batches_summarized: 0,
-            version: 2,
-        });
+        const existingMarker = (0, marker_js_1.readMarker)(params.cwd);
+        const shouldWrite = !existingMarker && (binding === 'explicit' || binding === 'auto');
+        if (shouldWrite) {
+            (0, marker_js_1.writeMarker)(params.cwd, { project: projectId });
+        }
     }
     await (0, hooks_js_1.runConfiguredHooks)('sessionStart', params.hooksConfig, {
         TIM_SESSION_ID: params.sessionId,
@@ -193,10 +181,10 @@ async function runSessionStart(store, params) {
     const updateLine = await (0, update_check_js_1.getUpdateCheckLineBriefing)();
     if (updateLine)
         briefingParts.push(updateLine);
-    const marker = (0, marker_js_1.readMarker)(params.cwd);
-    if (marker && marker.exchanges > 0) {
+    const { exchangeCount } = await (0, tim_store_1.deriveCounters)(store, params.sessionId);
+    if (exchangeCount > 0) {
         const everyN = (0, cadence_js_1.getCheckpointEveryN)((0, tim_core_1.loadConfig)());
-        const reminder = (0, cadence_js_1.checkpointCadenceReminder)(marker.exchanges, everyN);
+        const reminder = (0, cadence_js_1.checkpointCadenceReminder)(exchangeCount, everyN);
         if (reminder)
             briefingParts.push(reminder);
     }

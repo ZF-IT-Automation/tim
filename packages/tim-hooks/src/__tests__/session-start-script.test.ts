@@ -1,5 +1,5 @@
 // Regression tests for scripts/tim-session-start.sh — output envelope per
-// harness payload shape, and marker session rotation with hostile values.
+// harness payload shape, and marker immutability during session start.
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { execFileSync } from 'child_process';
@@ -106,19 +106,19 @@ describe('tim-session-start.sh output envelopes', () => {
   });
 });
 
-describe('tim-session-start.sh marker rotation', () => {
-  it('rotates .tim-project session to the hook session id', () => {
+describe('tim-session-start.sh marker immutability', () => {
+  it('does not rewrite .tim-project when emitting the directive', () => {
+    const markerPath = path.join(tmpDir, '.tim-project');
+    const before = fs.readFileSync(markerPath);
+    const mtimeBefore = fs.statSync(markerPath).mtimeMs;
     runScript(JSON.stringify({ session_id: 's-new', cwd: tmpDir }));
-    const marker = JSON.parse(fs.readFileSync(path.join(tmpDir, '.tim-project'), 'utf8'));
-    expect(marker.session).toBe('s-new');
+    const after = fs.readFileSync(markerPath);
+    const mtimeAfter = fs.statSync(markerPath).mtimeMs;
+    expect(after.equals(before)).toBe(true);
+    expect(mtimeAfter).toBe(mtimeBefore);
+    const marker = JSON.parse(after.toString('utf8'));
     expect(marker.project).toBe('P0063');
-  });
-
-  it("survives session ids and paths containing quotes/backslashes", () => {
-    const hostile = `s'\\"; require("fs").rmSync("x") //`;
-    runScript(JSON.stringify({ session_id: hostile, cwd: tmpDir }));
-    const marker = JSON.parse(fs.readFileSync(path.join(tmpDir, '.tim-project'), 'utf8'));
-    expect(marker.session).toBe(hostile);
+    expect(marker.session).toBe('old-session');
   });
 });
 

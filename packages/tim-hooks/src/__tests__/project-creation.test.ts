@@ -269,7 +269,7 @@ describe('project creation', () => {
     expect(fs.readdirSync(dir).filter(name => name.startsWith('.tim-write-probe.'))).toEqual([]);
   });
 
-  it('creates a verified target-local v2 binding at the canonical path', async () => {
+  it('creates a verified target-local v3 binding at the canonical path', async () => {
     const target = path.join(dir, 'target');
     const link = path.join(dir, 'link');
     fs.mkdirSync(target);
@@ -293,12 +293,8 @@ describe('project creation', () => {
       metadata: { label: 'P1010', path: canonical, name: 'Canonical' },
     });
     expect(readMarker(canonical)).toEqual({
-      version: 2,
+      version: 3,
       project: 'P1010',
-      session: 'injected-session',
-      exchanges: 0,
-      batch_size: 5,
-      batches_summarized: 0,
     });
     expect(readMarker(dir)?.project).toBe('P1111');
   });
@@ -461,7 +457,7 @@ describe('project creation', () => {
       label: 'P1020', projectPath: fs.realpathSync(dir), markerPath: path.join(fs.realpathSync(dir), '.tim-project'), alreadyBound: false,
     });
     expect(second).toEqual({ ...first, alreadyBound: true });
-    expect(readMarker(dir)).toMatchObject({ session: 'recovery-session', batch_size: 5 });
+    expect(readMarker(dir)).toMatchObject({ version: 3, project: 'P1020' });
   });
 
   it('recovery rejects a missing label and never overwrites a different marker', async () => {
@@ -502,6 +498,6 @@ describe('project creation', () => {
     await expect(recoverProjectBinding(store, { label: 'P1024', path: dir }, {
       writeExclusive: lateWinner,
     })).rejects.toThrow(/P1024.*P1025|P1025.*P1024/);
-    expect(readMarker(dir)).toMatchObject({ project: 'P1025', session: 'winner' });
+    expect(readMarker(dir)).toMatchObject({ version: 3, project: 'P1025' });
   });
 });

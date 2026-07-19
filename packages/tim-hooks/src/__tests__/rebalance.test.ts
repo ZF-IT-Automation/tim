@@ -4,7 +4,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { TimStore, SessionManager } from 'tim-store';
 import { rebalanceBatch } from '../rebalance.js';
-import { MARKER_LOCK, writeMarker } from '../marker.js';
+import { writeMarker, summarizerLockPath } from '../marker.js';
 
 let store: TimStore;
 let sessions: SessionManager;
@@ -89,15 +89,10 @@ describe('rebalanceBatch', () => {
   });
 
   it('skips when session lock is active', async () => {
-    writeMarker(tmpDir, {
-      project: 'P0099',
-      session: 'rebal-sess',
-      exchanges: 0,
-      batch_size: 2,
-      batches_summarized: 0,
-    });
+    writeMarker(tmpDir, { project: 'P0099' });
+    fs.mkdirSync(path.join(tmpDir, '.tim'), { recursive: true });
     fs.writeFileSync(
-      path.join(tmpDir, MARKER_LOCK),
+      summarizerLockPath(tmpDir),
       JSON.stringify({ pid: process.pid, ts: Date.now() }),
     );
 

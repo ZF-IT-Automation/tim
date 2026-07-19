@@ -5,7 +5,7 @@ export interface CadenceResult {
     checkpointEntryId?: string;
 }
 /**
- * After logging exchanges: bump marker counter, optionally auto-checkpoint.
+ * After logging exchanges: derive counters from the store, optionally auto-checkpoint.
  */
-export declare function afterExchangeLogged(store: TimStore, sessionId: string, cwd: string): Promise<CadenceResult>;
+export declare function afterExchangeLogged(store: TimStore, sessionId: string, _cwd: string): Promise<CadenceResult>;
 //# sourceMappingURL=cadence-runner.d.ts.map

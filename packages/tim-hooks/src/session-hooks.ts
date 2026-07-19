@@ -2,12 +2,12 @@ import { spawn as nodeSpawn } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import type { TimStore } from 'tim-store';
+import { deriveCounters, resolveCurrentSession } from 'tim-store';
 import {
   detectProject,
-  reconcileMarker,
   acquireLock,
   releaseLock,
-  MARKER_LOCK,
+  summarizerLockPath,
 } from './marker.js';
 import { DEFAULT_SUMMARIZER_TIMEOUT_SEC } from './constants.js';
 
@@ -21,6 +21,7 @@ export type Spawner = (command: string, ctx: SpawnContext) => void;
 export type SessionStopReason =
   | 'spawned'
   | 'no-marker'
+  | 'no-session'
   | 'below-threshold'
   | 'locked'
   | 'spawn-failed';
@@ -97,6 +98,8 @@ export interface MaybeSpawnSummarizerOptions {
   /** Skip pending threshold — use when a batch just filled (live trigger). */
   batchFull?: boolean;
   timeoutSec?: number;
+  /** Session to summarize; when omitted, resolved from the store for marker.project + cwd. */
+  sessionId?: string;
 }
 
 /** Shared spawn gate for session-stop hook and live batch-full trigger. */
@@ -110,21 +113,30 @@ export async function maybeSpawnSummarizer(
   const marker = detectProject(cwd);
   if (!marker) return { spawned: false, reason: 'no-marker' };
 
-  const reconciled = await reconcileMarker(store, cwd);
-  const pending = reconciled.exchanges - reconciled.batches_summarized * reconciled.batch_size;
-  if (!opts.batchFull && pending < reconciled.batch_size) {
+  const sessionEntry = opts.sessionId
+    ? await store.read(opts.sessionId)
+    : await resolveCurrentSession(store, marker.project, cwd);
+  if (!sessionEntry) return { spawned: false, reason: 'no-session' };
+
+  const sessionId = sessionEntry.id;
+  const batchSize = typeof sessionEntry.metadata.batch_size === 'number'
+    ? sessionEntry.metadata.batch_size
+    : 5;
+  const { exchangeCount, batchesSummarized } = await deriveCounters(store, sessionId);
+  const pending = exchangeCount - batchesSummarized * batchSize;
+  if (!opts.batchFull && pending < batchSize) {
     return { spawned: false, reason: 'below-threshold', pending };
   }
 
   if (!acquireLock(cwd)) return { spawned: false, reason: 'locked', pending };
 
-  const lockPath = path.join(cwd, MARKER_LOCK);
+  const lockPath = summarizerLockPath(cwd);
   const logPath = summarizerLogPath(cwd);
   const timeoutSec = opts.timeoutSec ?? DEFAULT_SUMMARIZER_TIMEOUT_SEC;
 
   try {
-    spawn(buildSummarizerCommand(reconciled.session, lockPath, logPath, timeoutSec), {
-      sessionId: reconciled.session,
+    spawn(buildSummarizerCommand(sessionId, lockPath, logPath, timeoutSec), {
+      sessionId,
       cwd,
     });
     return { spawned: true, reason: 'spawned', pending };

@@ -13,6 +13,7 @@ import {
   ensureInboxProject,
   ensureProjectForPath,
   INBOX_PROJECT_LABEL,
+  deriveCounters,
   type Summarizer,
   type TimStore,
 } from 'tim-store';
@@ -89,11 +90,18 @@ export async function loadProjectContext(store: TimStore): Promise<Entry | null>
   return store.read(label);
 }
 
+type SessionBindingSource = 'explicit' | 'marker' | 'phantom' | 'active' | 'auto' | 'inbox';
+
+interface ResolvedSessionProject {
+  projectId: string;
+  binding: SessionBindingSource;
+}
+
 async function resolveSessionProjectId(
   store: TimStore,
   cwd: string,
   explicitProjectId?: string,
-): Promise<string> {
+): Promise<ResolvedSessionProject> {
   if (explicitProjectId) {
     // Validate explicit project ids against the DB so a hand-edited
     // `--project=P9999` (or a botched upstream commit) can't smuggle
@@ -104,7 +112,7 @@ async function resolveSessionProjectId(
     // explicit override could re-poison the file.
     if (explicitProjectId !== 'P0000') {
       const resolved = await store.resolveProjectLabel(explicitProjectId);
-      if (resolved.status === 'found') return resolved.label;
+      if (resolved.status === 'found') return { projectId: resolved.label, binding: 'explicit' };
       if (resolved.status === 'not_found') {
         throw new Error(
           `Project not found: ${explicitProjectId}. Use tim_load_project to pick a real project.`,
@@ -114,13 +122,13 @@ async function resolveSessionProjectId(
         `Ambiguous project label: ${explicitProjectId} matches ${resolved.labels.join(', ')}.`,
       );
     }
-    return explicitProjectId;
+    return { projectId: explicitProjectId, binding: 'explicit' };
   }
 
   const located = discoverMarker(cwd, CWD_ONLY_MARKER_DISCOVERY_POLICY);
   if (located) {
     const validated = await validateMarkerAgainstStore(located.marker, store);
-    if (validated) return validated.project;
+    if (validated) return { projectId: validated.project, binding: 'marker' };
 
     const recovered = await repairPhantomProjectBinding(store, located.dir);
     if (recovered) {
@@ -130,34 +138,27 @@ async function resolveSessionProjectId(
           markerWithRepairedProject(located.marker, recovered),
         );
       }
-      return recovered;
+      return { projectId: recovered, binding: 'phantom' };
     }
 
     await ensureInboxProject(store);
-    return INBOX_PROJECT_LABEL;
+    return { projectId: INBOX_PROJECT_LABEL, binding: 'inbox' };
   }
 
   const active = getActiveProjectLabel();
   if (active) {
     const validated = await validateMarkerAgainstStore(
-      {
-        version: 2,
-        project: active,
-        session: '',
-        exchanges: 0,
-        batch_size: 5,
-        batches_summarized: 0,
-      },
+      { version: 3, project: active },
       store,
     );
-    if (validated) return validated.project;
+    if (validated) return { projectId: validated.project, binding: 'active' };
   }
 
   const auto = await ensureProjectForPath(store, cwd);
-  if (auto) return auto.label;
+  if (auto) return { projectId: auto.label, binding: 'auto' };
 
   await ensureInboxProject(store);
-  return INBOX_PROJECT_LABEL;
+  return { projectId: INBOX_PROJECT_LABEL, binding: 'inbox' };
 }
 
 export async function runCheckpoint(
@@ -185,7 +186,7 @@ export async function runSessionStart(
   },
 ): Promise<SessionStartResult> {
   const sessions = new SessionManager(store);
-  const projectId = await resolveSessionProjectId(store, params.cwd, params.projectId);
+  const { projectId, binding } = await resolveSessionProjectId(store, params.cwd, params.projectId);
 
   const session = await sessions.startProjectSession({
     sessionId: params.sessionId,
@@ -197,16 +198,12 @@ export async function runSessionStart(
   });
 
   if (store.getDatabasePath() !== ':memory:') {
-    writeMarker(params.cwd, {
-      project: projectId,
-      session: params.sessionId,
-      exchanges: 0,
-      batch_size: typeof session.metadata.batch_size === 'number'
-        ? session.metadata.batch_size
-        : 5,
-      batches_summarized: 0,
-      version: 2,
-    });
+    const existingMarker = readMarker(params.cwd);
+    const shouldWrite =
+      !existingMarker && (binding === 'explicit' || binding === 'auto');
+    if (shouldWrite) {
+      writeMarker(params.cwd, { project: projectId });
+    }
   }
 
   await runConfiguredHooks('sessionStart', params.hooksConfig, {
@@ -230,10 +227,10 @@ export async function runSessionStart(
   const updateLine = await getUpdateCheckLineBriefing();
   if (updateLine) briefingParts.push(updateLine);
 
-  const marker = readMarker(params.cwd);
-  if (marker && marker.exchanges > 0) {
+  const { exchangeCount } = await deriveCounters(store, params.sessionId);
+  if (exchangeCount > 0) {
     const everyN = getCheckpointEveryN(loadConfig());
-    const reminder = checkpointCadenceReminder(marker.exchanges, everyN);
+    const reminder = checkpointCadenceReminder(exchangeCount, everyN);
     if (reminder) briefingParts.push(reminder);
   }
 

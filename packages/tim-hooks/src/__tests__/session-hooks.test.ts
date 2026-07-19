@@ -8,7 +8,7 @@ import {
   maybeSpawnProjectSummary,
   buildProjectSummaryCommand,
 } from '../session-hooks.js';
-import { writeMarker } from '../marker.js';
+import { writeMarker, summarizerLockPath } from '../marker.js';
 import { TimStore, SessionManager } from 'tim-store';
 
 const TEST_ROOT = path.join('/home/bbbee', '.tim-test-runs');
@@ -46,13 +46,7 @@ describe('onSessionStop', () => {
       { role: 'user', content: 'q2' },
       { role: 'agent', content: 'a2' },
     ]);
-    writeMarker(dir, {
-      project: 'P0003',
-      session: 'st',
-      exchanges: 0,
-      batch_size: 2,
-      batches_summarized: 0,
-    });
+    writeMarker(dir, { project: 'P0003' });
 
     const spawn = vi.fn();
     const res = await onSessionStop(store, dir, { spawn });
@@ -62,7 +56,36 @@ describe('onSessionStop', () => {
     expect(cmd).toContain('trap');
     expect(cmd).toContain('timeout');
     expect(cmd).toContain('.tim/summarizer.log');
+    expect(cmd).toContain(summarizerLockPath(dir));
     expect(ctx.sessionId).toBe('st');
+  });
+
+  it('maybeSpawnSummarizer honors an explicit sessionId option', async () => {
+    await sessions.logExchange('st', [
+      { role: 'user', content: 'q1' },
+      { role: 'agent', content: 'a1' },
+      { role: 'user', content: 'q2' },
+      { role: 'agent', content: 'a2' },
+    ]);
+    writeMarker(dir, { project: 'P0003' });
+    const spawn = vi.fn();
+    const res = await maybeSpawnSummarizer(store, dir, { spawn, sessionId: 'st' });
+    expect(res.spawned).toBe(true);
+    expect(spawn.mock.calls[0][1].sessionId).toBe('st');
+  });
+
+  it('maybeSpawnSummarizer resolves session via store when sessionId omitted', async () => {
+    await sessions.logExchange('st', [
+      { role: 'user', content: 'q1' },
+      { role: 'agent', content: 'a1' },
+      { role: 'user', content: 'q2' },
+      { role: 'agent', content: 'a2' },
+    ]);
+    writeMarker(dir, { project: 'P0003' });
+    const spawn = vi.fn();
+    const res = await onSessionStop(store, dir, { spawn });
+    expect(res.spawned).toBe(true);
+    expect(spawn.mock.calls[0][1].sessionId).toBe('st');
   });
 
   it('buildSummarizerCommand uses EXIT trap and tim-summarizer path', () => {
@@ -76,13 +99,7 @@ describe('onSessionStop', () => {
 
   it('maybeSpawnSummarizer with batchFull skips below-threshold', async () => {
     await sessions.logExchange('st', [{ role: 'user', content: 'only' }]);
-    writeMarker(dir, {
-      project: 'P0003',
-      session: 'st',
-      exchanges: 1,
-      batch_size: 2,
-      batches_summarized: 0,
-    });
+    writeMarker(dir, { project: 'P0003' });
     const spawn = vi.fn();
     const res = await maybeSpawnSummarizer(store, dir, { spawn, batchFull: true });
     expect(res.spawned).toBe(true);
@@ -91,13 +108,7 @@ describe('onSessionStop', () => {
 
   it('does NOT spawn when pending < batch_size', async () => {
     await sessions.logExchange('st', [{ role: 'user', content: 'only one' }]);
-    writeMarker(dir, {
-      project: 'P0003',
-      session: 'st',
-      exchanges: 0,
-      batch_size: 2,
-      batches_summarized: 0,
-    });
+    writeMarker(dir, { project: 'P0003' });
     const spawn = vi.fn();
     const res = await onSessionStop(store, dir, { spawn });
     expect(res.spawned).toBe(false);
