@@ -143,33 +143,35 @@ source metadata through. An imported project is therefore database-only until
 someone binds a directory by hand, which recreates exactly the unbound-project
 failure mode the 2026-07-16 design closed for creation.
 
-Add a post-import binding pass, run as a step of the `tim migrate-from-hmem`
-wizard and available standalone as `tim bind-imported-projects [--dry-run]`:
+The mechanism is deliberately simple: the migration is agent-driven (runbook
+plus `tim-hmem-import-audit` skill), so binding becomes an **agent
+obligation**, not a new subsystem. The runbook and the audit skill gain a
+mandatory closing step:
 
-1. Enumerate `kind=project` entries (Inbox excluded). The candidate path is
-   the root node's `metadata.path` — present when the hmem source carried it
-   or when it was backfilled later. There is no path guessing; a project
-   without `metadata.path` is reported, never bound.
-2. A candidate binds only when all of these hold on the current device: the
-   path exists and is a directory, it is not an unsafe marker dir
-   (`isUnsafeMarkerDir`), and it has no local `.tim-project` of its own. The
-   marker is written with the v3 exclusive no-clobber writer.
-3. Every project gets one report line: `bound`, `already-bound` (existing
-   marker, same label), `conflict` (existing marker, different label —
-   reported with both labels, resolved manually, never overwritten),
-   `no-path` (no `metadata.path`), or `path-missing` (directory absent on
-   this device — expected when migrating a synced store on a second machine).
-4. The wizard shows the dry-run table and asks once before writing; the
-   standalone command defaults to `--dry-run` semantics matching `tim import`.
-5. A successful bind also upserts the current device's `project-path`
-   inventory row, so migration seeds the inventory.
+> For every imported project, establish a directory binding before declaring
+> the migration done. Never hand-write a `.tim-project` file — always use
+> `tim bind-project --label <label> --cwd <dir>`.
 
-The pass is idempotent: re-running it finds `already-bound` everywhere it
-succeeded. For `no-path` and `path-missing` projects, the migration runbook
-gains a closing step directing the agent to ask the user for the directory
-and run `tim bind-project --label <label> --cwd <dir>`, which also backfills
-`metadata.path`. The importer itself stays filesystem-free; all binding logic
-lives in the post-import pass.
+Per project, the agent:
+
+1. Takes the root node's `metadata.path` as the default answer when present
+   (carried over from the hmem source or backfilled later) and the directory
+   exists on this device.
+2. Otherwise asks the user for the project directory — the case no
+   programmatic pass can solve — or records, with the user's confirmation,
+   that the project is intentionally memory-only.
+3. Runs `tim bind-project`, which owns all safety: label validation against
+   the store, unsafe-dir refusal, the v3 exclusive no-clobber writer (an
+   existing marker with a different label is a reported conflict, never
+   overwritten), backfilling `metadata.path`, and upserting the current
+   device's `project-path` inventory row.
+
+The importer itself stays filesystem-free. `tim migrate-from-hmem` ends by
+listing every imported `kind=project` entry with its binding state on this
+device (`bound` / `unbound` / `no-path`), so the agent's checklist — and the
+handoff summary to the user — falls out of the report instead of a separate
+command. The step is idempotent because `tim bind-project` is: re-running on
+a bound directory with the same label is a no-op.
 
 ## Migration
 
@@ -201,11 +203,14 @@ lives in the post-import pass.
   provably never read `project-path` nodes.
 - P9999 gate, unsafe-dir refusal, and corrupt-shadowing behavior all hold on
   the v3 schema.
-- Binding pass: each report outcome (`bound`, `already-bound`, `conflict`,
-  `no-path`, `path-missing`) is produced from a matching fixture; `conflict`
-  leaves the existing marker byte-identical; dry-run writes nothing; a second
-  run reports `already-bound` for everything previously bound; a successful
-  bind creates the device's `project-path` inventory row.
+- Migration report: `tim migrate-from-hmem` lists each imported project with
+  its binding state (`bound` / `unbound` / `no-path`) from matching fixtures.
+- `tim bind-project`: same-label rebind is a no-op, different-label conflict
+  leaves the existing marker byte-identical and reports both labels, a
+  successful bind writes the v3 marker, backfills `metadata.path`, and
+  creates the device's `project-path` inventory row.
+- Runbook and audit skill contain the mandatory binding step and the
+  prohibition on hand-written marker files.
 
 ## Acceptance Criteria
 
@@ -217,8 +222,8 @@ lives in the post-import pass.
   longer exist in the codebase.
 - The path inventory syncs without losing writes across devices and is
   demonstrably absent from every resolution code path.
-- After `tim migrate-from-hmem`, every imported project with a locally valid
-  `metadata.path` has a v3 marker, and every other project appears in the
-  binding report with an actionable outcome; no existing marker is ever
+- A migration is not complete until every imported project is bound, declared
+  memory-only, or listed unbound in the handoff summary; the agent gets there
+  through `tim bind-project` alone, and no existing marker is ever
   overwritten by migration.
 - All existing marker-protection regression tests pass unchanged in intent.
