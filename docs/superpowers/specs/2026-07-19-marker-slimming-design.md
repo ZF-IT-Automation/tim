@@ -1,7 +1,7 @@
 # Slim `.tim-project` to Binding-Only; Runtime State Moves Into the Store
 
 **Date:** 2026-07-19
-**Status:** Proposed design, pending review
+**Status:** Approved design — implementation plan: `docs/superpowers/plans/2026-07-19-marker-slimming.md`
 
 ## Problem
 
