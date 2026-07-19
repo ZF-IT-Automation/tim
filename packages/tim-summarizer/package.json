@@ -1,6 +1,6 @@
 {
   "name": "tim-summarizer",
-  "version": "0.1.0-beta.0",
+  "version": "0.1.0-beta.1",
   "description": "TIM batch summarizer CLI — MCP client for tim_show_unsummarized / tim_write_batch_summary",
   "main": "dist/summarize.js",
   "bin": {
@@ -17,11 +17,11 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",
-    "tim-core": "0.1.0-beta.0",
-    "tim-mcp": "0.1.0-beta.0",
-    "tim-store": "0.1.0-beta.0"
+    "tim-core": "0.1.0-beta.1",
+    "tim-mcp": "0.1.0-beta.1",
+    "tim-store": "0.1.0-beta.1"
   },
   "devDependencies": {
-    "tim-hooks": "0.1.0-beta.0"
+    "tim-hooks": "0.1.0-beta.1"
   }
 }

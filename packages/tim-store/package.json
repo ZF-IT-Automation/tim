@@ -1,6 +1,6 @@
 {
   "name": "tim-store",
-  "version": "0.1.0-beta.0",
+  "version": "0.1.0-beta.1",
   "description": "TIM SQLite store: schema, CRUD, search, edges, staging",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -14,7 +14,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "tim-core": "0.1.0-beta.0",
+    "tim-core": "0.1.0-beta.1",
     "better-sqlite3": "^11.7.0",
     "ulid": "^3.0.0"
   },

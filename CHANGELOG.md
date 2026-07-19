@@ -4,6 +4,15 @@ All notable changes to TIM are documented in this file.
 
 ## [Unreleased]
 
+## [0.1.0-beta.1] — 2026-07-19
+
+### Changed
+
+- **Marker v3 (binding-only)** — `.tim-project` is now `{version, project}` only. Session id and counters live in the store (`resolveCurrentSession`, `deriveCounters`). Summarizer lock moved to `.tim/summarizer.lock`.
+- **`tim bind-project`** — backfills `metadata.path` when absent and seeds per-device `project-path` inventory rows.
+- **`tim doctor --bind`** — binding health report; opt-in flag binds only `unbound` findings via `recoverProjectBinding`.
+- **hmem migration** — closes with per-project binding-state report; runbook/skills require bind-before-done (never hand-write markers).
+
 ## [0.1.0-beta.0] — 2026-07-19
 
 First public beta. GitHub repo is public; npm packages publish under the `beta` dist-tag (`npm install tim-cli@beta`). Expect breaking changes.

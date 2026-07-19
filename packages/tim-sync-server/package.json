@@ -1,6 +1,6 @@
 {
   "name": "tim-sync-server",
-  "version": "0.1.0-beta.0",
+  "version": "0.1.0-beta.1",
   "description": "TIM hosted sync server — multi-tenant blind sync with quotas",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
