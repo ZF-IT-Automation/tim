@@ -46,9 +46,16 @@ async function computePromptContext(
 
   let hits = await store.search({
     query,
-    topK: RETRIEVAL_TOP_K * 3,
+    // Generous candidate pool: most of the store is O-tree session logs,
+    // which the filter below discards.
+    topK: RETRIEVAL_TOP_K * 10,
     searchType: 'fts',
   });
+
+  // Session logs (O-trees) are raw exchange transcripts — resume material, not
+  // recall material. Without this filter they dominate FTS (checkpoint-agent
+  // prompts, skill dumps, the user's own just-logged prompt echoing back).
+  hits = hits.filter(e => !/^O\d/.test(e.id));
 
   if (params.projectLabel) {
     hits = hits.filter(e => store.getProjectLabel(e.id) === params.projectLabel);
