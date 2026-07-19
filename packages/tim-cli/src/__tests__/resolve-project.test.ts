@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { execFileSync } from 'child_process';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
-import { TimStore } from 'tim-store';
+import { TimStore, listProjectPathRows } from 'tim-store';
 
 const CLI = path.resolve(__dirname, '../../dist/cli.js');
 const TEST_ROOT = '/tmp/tim-test-runs';
@@ -142,6 +143,33 @@ describe('tim resolve-project / bind-project', () => {
     expect(out).toContain('tim_load_project(label="P0200")');
     const marker = JSON.parse(fs.readFileSync(path.join(dir, '.tim-project'), 'utf8'));
     expect(marker).toEqual({ version: 3, project: 'P0200' });
+  });
+
+  it('bind-project backfills metadata.path and seeds the path inventory', async () => {
+    await store.createProject('P0105');
+    const canonical = fs.realpathSync(dir);
+
+    const output = run(['bind-project', '--cwd', dir, '--label', 'P0105'], {
+      TIM_MARKER_MAX_ROOT: dir,
+      TIM_DB_PATH: dbPath,
+    });
+
+    expect(output).toContain('Wrote .tim-project');
+    const reopened = new TimStore(dbPath);
+    try {
+      expect((await reopened.loadProject('P0105'))?.project.metadata.path).toBe(canonical);
+      const rows = await listProjectPathRows(reopened, 'P0105');
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({
+        metadata: {
+          kind: 'project-path',
+          device: os.hostname(),
+          path: canonical,
+        },
+      });
+    } finally {
+      reopened.close();
+    }
   });
 
   it('bind-project preserves an existing winner instead of overwriting it', async () => {

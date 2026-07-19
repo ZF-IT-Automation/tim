@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { TimStore } from 'tim-store';
+import { TimStore, listProjectPathRows } from 'tim-store';
 import {
   MODE_ERROR,
   ProjectCreationPartialFailureError,
@@ -447,10 +447,13 @@ describe('project creation', () => {
     await store.createProject('P1020', { metadata: { path: '/stale' } });
 
     const first = await recoverProjectBinding(store, {
-      label: 'P1020', path: dir, sessionId: 'recovery-session',
+      label: 'P1020', path: dir,
     });
+    const markerAfterFirst = fs.readFileSync(path.join(fs.realpathSync(dir), '.tim-project'));
+    const projectAfterFirst = await store.loadProject('P1020');
+    const inventoryAfterFirst = await listProjectPathRows(store, 'P1020');
     const second = await recoverProjectBinding(store, {
-      label: 'P1020', path: dir, sessionId: 'ignored-on-idempotence',
+      label: 'P1020', path: dir,
     });
 
     expect(first).toEqual({
@@ -458,6 +461,46 @@ describe('project creation', () => {
     });
     expect(second).toEqual({ ...first, alreadyBound: true });
     expect(readMarker(dir)).toMatchObject({ version: 3, project: 'P1020' });
+    expect(projectAfterFirst?.project.metadata.path).toBe('/stale');
+    expect(fs.readFileSync(path.join(fs.realpathSync(dir), '.tim-project'))).toEqual(markerAfterFirst);
+    expect(await store.loadProject('P1020')).toEqual(projectAfterFirst);
+    expect(await listProjectPathRows(store, 'P1020')).toEqual(inventoryAfterFirst);
+  });
+
+  it('recovery backfills metadata.path when absent and seeds the path inventory', async () => {
+    await store.createProject('P1026');
+    const canonical = fs.realpathSync(dir);
+
+    const result = await recoverProjectBinding(store, { label: 'P1026', path: dir });
+
+    expect(result.alreadyBound).toBe(false);
+    expect((await store.loadProject('P1026'))?.project.metadata.path).toBe(canonical);
+    const rows = await listProjectPathRows(store, 'P1026');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      metadata: {
+        kind: 'project-path',
+        device: os.hostname(),
+        path: canonical,
+      },
+    });
+    expect(typeof rows[0]?.metadata.last_seen_at).toBe('string');
+  });
+
+  it('bound project creation seeds the path inventory for this device', async () => {
+    const canonical = fs.realpathSync(dir);
+
+    await createProjectCoordinated(store, { label: 'P1027', path: dir });
+
+    const rows = await listProjectPathRows(store, 'P1027');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      metadata: {
+        kind: 'project-path',
+        device: os.hostname(),
+        path: canonical,
+      },
+    });
   });
 
   it('recovery rejects a missing label and never overwrites a different marker', async () => {

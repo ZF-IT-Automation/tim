@@ -3,7 +3,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import type { Entry } from 'tim-core';
-import { TimStore } from 'tim-store';
+import { TimStore, upsertProjectPathRow } from 'tim-store';
 import {
   readMarker,
   markerPath as projectMarkerPath,
@@ -45,7 +45,6 @@ export interface ProjectCreationDeps {
 export interface RecoverProjectBindingArgs {
   label: string;
   path: string;
-  sessionId?: string;
 }
 
 export interface RecoverProjectBindingResult {
@@ -144,14 +143,45 @@ function shellSingleQuote(value: string): string {
   return `'${value.replaceAll("'", "'\"'\"'")}'`;
 }
 
-function markerInput(label: string, session: string) {
-  return {
-    project: label,
-    session,
-    exchanges: 0,
-    batch_size: 5,
-    batches_summarized: 0,
-  };
+function markerInput(label: string) {
+  return { project: label };
+}
+
+function bindingDeviceId(): string {
+  return os.hostname();
+}
+
+async function seedProjectPathInventory(
+  store: TimStore,
+  label: string,
+  projectPath: string,
+): Promise<void> {
+  await upsertProjectPathRow(store, label, bindingDeviceId(), projectPath);
+}
+
+async function backfillProjectPathMetadata(
+  store: TimStore,
+  label: string,
+  projectPath: string,
+): Promise<void> {
+  const project = await store.requireProject(label);
+  const existingPath = project.metadata.path;
+  if (typeof existingPath === 'string' && existingPath.length > 0) return;
+  await store.update(project.id, {
+    metadata: { ...project.metadata, path: projectPath },
+  });
+}
+
+async function enrichBoundProject(
+  store: TimStore,
+  label: string,
+  projectPath: string,
+  options: { backfillPath?: boolean } = {},
+): Promise<void> {
+  if (options.backfillPath !== false) {
+    await backfillProjectPathMetadata(store, label, projectPath);
+  }
+  await seedProjectPathInventory(store, label, projectPath);
 }
 
 function recoveryCommand(databasePath: string, label: string, projectPath: string): string {
@@ -256,7 +286,7 @@ export async function createProjectCoordinated(
   });
 
   try {
-    runtime.writeExclusive(projectPath, markerInput(args.label, runtime.sessionId()));
+    runtime.writeExclusive(projectPath, markerInput(args.label));
   } catch (error) {
     const winner = localMarkerLabel(projectPath);
     if (winner !== null && winner !== args.label) {
@@ -277,6 +307,8 @@ export async function createProjectCoordinated(
       'the marker is absent after publication',
     );
   }
+
+  await enrichBoundProject(store, args.label, projectPath, { backfillPath: false });
 
   return { ...entry, mode, projectPath, markerPath };
 }
@@ -310,10 +342,7 @@ export async function recoverProjectBinding(
 
   runtime.preflight(projectPath);
   try {
-    runtime.writeExclusive(
-      projectPath,
-      markerInput(args.label, args.sessionId ?? runtime.sessionId()),
-    );
+    runtime.writeExclusive(projectPath, markerInput(args.label));
   } catch (error) {
     const winner = localMarkerLabel(projectPath);
     if (winner === args.label) {
@@ -336,5 +365,6 @@ export async function recoverProjectBinding(
     }
     throw new Error(`Could not verify recovered project binding for ${args.label} at ${projectPath}`);
   }
+  await enrichBoundProject(store, args.label, projectPath);
   return { label: args.label, projectPath, markerPath, alreadyBound: false };
 }
