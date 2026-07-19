@@ -33,9 +33,10 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.CWD_ONLY_MARKER_DISCOVERY_POLICY = exports.DEFAULT_MARKER_DISCOVERY_POLICY = exports.LOCK_TTL_MS = exports.ExclusiveMarkerConflictError = exports.INBOX_LABEL = exports.MARKER_VERSION = exports.CANONICAL_PROJECT_FILENAME = exports.MARKER_LOCK = exports.MARKER_FILENAME = void 0;
+exports.CWD_ONLY_MARKER_DISCOVERY_POLICY = exports.DEFAULT_MARKER_DISCOVERY_POLICY = exports.LOCK_TTL_MS = exports.ExclusiveMarkerConflictError = exports.INBOX_LABEL = exports.MARKER_VERSION = exports.CANONICAL_PROJECT_FILENAME = exports.MARKER_LOCK = exports.SUMMARIZER_LOCK = exports.MARKER_FILENAME = void 0;
 exports.markerPath = markerPath;
 exports.canonicalProjectPath = canonicalProjectPath;
+exports.summarizerLockPath = summarizerLockPath;
 exports.validateProjectLabel = validateProjectLabel;
 exports.readMarker = readMarker;
 exports.validateMarkerAgainstStore = validateMarkerAgainstStore;
@@ -43,10 +44,8 @@ exports.isUnsafeMarkerDir = isUnsafeMarkerDir;
 exports.writeMarkerAtomic = writeMarkerAtomic;
 exports.writeMarkerExclusive = writeMarkerExclusive;
 exports.writeMarker = writeMarker;
-exports.rotateMarkerSession = rotateMarkerSession;
 exports.syncNearestProjectMarker = syncNearestProjectMarker;
 exports.detectProject = detectProject;
-exports.reconcileMarker = reconcileMarker;
 exports.acquireLock = acquireLock;
 exports.isSessionLocked = isSessionLocked;
 exports.releaseLock = releaseLock;
@@ -60,14 +59,14 @@ const os = __importStar(require("os"));
 const path = __importStar(require("path"));
 const crypto = __importStar(require("node:crypto"));
 const constants_js_1 = require("./constants.js");
-const tim_store_1 = require("tim-store");
 exports.MARKER_FILENAME = '.tim-project';
-exports.MARKER_LOCK = '.tim-project.lock';
+var constants_js_2 = require("./constants.js");
+Object.defineProperty(exports, "SUMMARIZER_LOCK", { enumerable: true, get: function () { return constants_js_2.SUMMARIZER_LOCK; } });
+Object.defineProperty(exports, "MARKER_LOCK", { enumerable: true, get: function () { return constants_js_2.MARKER_LOCK; } });
 /**
  * Committed default project label for repos that gitignore `.tim-project`.
- * Contains only the stable `project` field; runtime counters live in the
- * local `.tim-project` file created on session start. Override per-machine
- * by creating `.tim-project` in the repo root (it wins over tim.json).
+ * Contains only the stable `project` field. Override per-machine by creating
+ * `.tim-project` in the repo root (it wins over tim.json).
  */
 exports.CANONICAL_PROJECT_FILENAME = 'tim.json';
 /**
@@ -75,12 +74,15 @@ exports.CANONICAL_PROJECT_FILENAME = 'tim.json';
  * readers detect older files by the missing/unknown `version` field and
  * normalize to the current shape.
  */
-exports.MARKER_VERSION = 2;
+exports.MARKER_VERSION = 3;
 function markerPath(cwd) {
     return path.join(cwd, exports.MARKER_FILENAME);
 }
 function canonicalProjectPath(cwd) {
     return path.join(cwd, exports.CANONICAL_PROJECT_FILENAME);
+}
+function summarizerLockPath(cwd) {
+    return path.join(cwd, constants_js_1.TIM_META_DIR, constants_js_1.SUMMARIZER_LOCK);
 }
 /** Valid project labels: P/L/E/N + 4 digits (P0062, L0042, …). */
 const PROJECT_LABEL_PATTERN = /^[PLEN]\d{4}$/;
@@ -106,14 +108,8 @@ exports.INBOX_LABEL = 'P0000';
  *
  * - Missing file → null
  * - Corrupt JSON → null
- * - v1 file (no `version` field) → strips `route_exchanges_to` + `sessions`
- *   map, sets `version: 2`, returns the upgraded object. The file itself
- *   is NOT rewritten here — the next `writeMarker` call upgrades it.
- * - v2 file → returned as-is.
- *
- * Callers always see a v2-conformant `ProjectMarker` regardless of what's
- * on disk. This is the only safe way to evolve the schema without forcing
- * a one-shot migration.
+ * - v1/v2 file → `{ version: 3, project }` (runtime fields ignored)
+ * - v3 file → returned as-is
  *
  * When no `.tim-project` exists, falls back to `tim.json` (committed
  * canonical default). A real `.tim-project` always wins — even when
@@ -134,8 +130,7 @@ function readMarker(cwd) {
     return readCanonicalProject(cwd);
 }
 /**
- * Read the committed default project from tim.json. Runtime fields use
- * neutral defaults — session start overwrites them into `.tim-project`.
+ * Read the committed default project from tim.json.
  */
 function readCanonicalProject(cwd) {
     const p = canonicalProjectPath(cwd);
@@ -159,24 +154,11 @@ function readCanonicalProject(cwd) {
     return {
         version: exports.MARKER_VERSION,
         project: obj.project,
-        session: '',
-        exchanges: 0,
-        batch_size: 5,
-        batches_summarized: 0,
     };
 }
 /**
- * Coerce an unknown JSON value into a v2 ProjectMarker. Strips legacy
- * fields. Returns null if the value isn't a usable marker (missing
- * project/session, wrong types, or malformed project label).
- *
- * NOTE: This is the pure-FS reader. The DB-existence check
- * (project label must resolve to a real entry in the TIM DB) lives
- * in `validateMarkerAgainstStore` — called from the two write-side
- * paths (runSessionStart, syncNearestProjectMarker) before they
- * persist anything. We deliberately keep the disk reader free of
- * DB dependencies so hooks under a tight timeout can still parse
- * the marker without paying for an SQLite roundtrip.
+ * Coerce an unknown JSON value into a v3 ProjectMarker. Returns null if the
+ * value isn't a usable marker (missing project, wrong type, or malformed label).
  */
 function normalizeMarker(raw) {
     if (!raw || typeof raw !== 'object')
@@ -189,43 +171,14 @@ function normalizeMarker(raw) {
             `expected ^[PLEN]\\d{4}$ (P0062, L0042, …). Ignoring marker.`);
         return null;
     }
-    if (typeof obj.session !== 'string')
-        return null;
-    if (typeof obj.exchanges !== 'number' || !Number.isFinite(obj.exchanges))
-        return null;
-    if (typeof obj.batch_size !== 'number' || !Number.isFinite(obj.batch_size))
-        return null;
-    if (typeof obj.batches_summarized !== 'number' || !Number.isFinite(obj.batches_summarized)) {
-        return null;
-    }
     return {
         version: exports.MARKER_VERSION,
         project: obj.project,
-        session: obj.session,
-        exchanges: obj.exchanges,
-        batch_size: obj.batch_size,
-        batches_summarized: obj.batches_summarized,
     };
 }
 /**
  * Defense-in-depth check: a project label that matches the
- * pattern but is semantically bogus (e.g. `P9999` — a label that
- * was never issued by TIM, often the residue of a hand-edit or a
- * botched commit) must NOT be persisted into `.tim-project`. The
- * original P9999 bug bound the statusline to a non-existent
- * project because the file was trusted blindly.
- *
- * Resolution: pattern-match (already enforced by normalizeMarker)
- * AND the project must exist as a `kind=project` entry in the DB.
- * The Inbox (P0000) is exempt — it's a system project that
- * tim-store creates on first use via `ensureInboxProject`.
- *
- * Returns the marker on success, null on rejection. On DB error
- * (store unavailable, DB locked, etc.) we FAIL OPEN: a corrupted
- * DB is not a license to corrupt the marker, but a transient
- * read failure shouldn't brick the session-start hook. The
- * pattern check in normalizeMarker still ran, so we never accept
- * malformed labels — we just skip the existence confirmation.
+ * pattern but is semantically bogus (e.g. `P9999`) must NOT be persisted.
  */
 async function validateMarkerAgainstStore(marker, store) {
     if (marker.project === exports.INBOX_LABEL)
@@ -247,12 +200,7 @@ async function validateMarkerAgainstStore(marker, store) {
     return null;
 }
 /**
- * Shared/system directories where a `.tim-project` must never live: every
- * process can have them as cwd, so a marker there leaks into unrelated
- * sessions via walk-up (observed: a cron with cwd=/tmp wrote /tmp/.tim-project
- * and every process under /tmp inherited it). v1 unsafe set — deliberately
- * minimal and explicit: os.tmpdir() itself and the filesystem root.
- * Subdirectories of tmpdir (mkdtemp scratch dirs) are private and stay legal.
+ * Shared/system directories where a `.tim-project` must never live.
  */
 function isUnsafeMarkerDir(dir) {
     let resolved = path.resolve(dir);
@@ -290,7 +238,7 @@ function writeMarkerExclusive(cwd, marker) {
     }
     const filePath = markerPath(cwd);
     const tmp = `${filePath}.tmp.${process.pid}.${crypto.randomUUID()}`;
-    const complete = { ...marker, version: exports.MARKER_VERSION };
+    const complete = { version: exports.MARKER_VERSION, project: marker.project };
     let ownsTemp = false;
     try {
         fs.writeFileSync(tmp, JSON.stringify(complete, null, 2), { flag: 'wx' });
@@ -317,9 +265,7 @@ function writeMarkerExclusive(cwd, marker) {
         }
     }
 }
-/** Write a project marker file. Always emits the current schema version:
- *  the on-disk file becomes v2 on first write, regardless of the caller's
- *  input. This is the auto-upgrade path for v1 files. */
+/** Write a project marker file. Always emits the current v3 schema. */
 function writeMarker(cwd, marker) {
     if (isUnsafeMarkerDir(cwd)) {
         console.warn(`[tim-hooks] writeMarker: refusing to write ${exports.MARKER_FILENAME} in shared directory ` +
@@ -332,36 +278,11 @@ function writeMarker(cwd, marker) {
         return;
     }
     const p = markerPath(cwd);
-    const upgraded = { ...marker, version: exports.MARKER_VERSION };
+    const upgraded = { version: exports.MARKER_VERSION, project: marker.project };
     writeMarkerAtomic(p, JSON.stringify(upgraded, null, 2));
 }
 /**
- * Rotate the session id in cwd's `.tim-project` when the harness supplies a new one.
- * Used by tim-session-start.sh — must not interpolate paths into JS source.
- */
-function rotateMarkerSession(cwd, sessionId) {
-    if (isUnsafeMarkerDir(cwd)) {
-        console.warn(`[tim-hooks] rotateMarkerSession: refusing to touch ${exports.MARKER_FILENAME} in shared ` +
-            `directory "${cwd}" (tmpdir / filesystem root). Running markerless.`);
-        return;
-    }
-    const p = markerPath(cwd);
-    if (!fs.existsSync(p))
-        return;
-    try {
-        const raw = JSON.parse(fs.readFileSync(p, 'utf8'));
-        if (raw.session === sessionId)
-            return;
-        raw.session = sessionId;
-        writeMarkerAtomic(p, JSON.stringify(raw, null, 2));
-    }
-    catch {
-        /* corrupt marker — leave untouched */
-    }
-}
-/**
  * Update the nearest `.tim-project` (walk-up from cwd) after tim_load_project.
- * Statusline and hooks read this marker — must match the loaded project label.
  */
 function syncNearestProjectMarker(startCwd, projectLabel, options) {
     if (!validateProjectLabel(projectLabel)) {
@@ -375,39 +296,20 @@ function syncNearestProjectMarker(startCwd, projectLabel, options) {
     });
     if (!located)
         return false;
-    const sessionId = options?.sessionId?.trim();
-    const { version: _v, ...rest } = located.marker;
-    writeMarker(located.dir, {
-        ...rest,
-        project: projectLabel,
-        ...(sessionId ? { session: sessionId } : {}),
-    });
+    writeMarker(located.dir, { project: projectLabel });
     return true;
 }
 /** Project detection — cwd-only marker (no walk-up). */
 function detectProject(cwd) {
     return discoverMarker(cwd, exports.CWD_ONLY_MARKER_DISCOVERY_POLICY)?.marker ?? null;
 }
-/** Re-derive counters from the DB and persist them into the marker. */
-async function reconcileMarker(store, cwd) {
-    const marker = readMarker(cwd);
-    if (!marker)
-        throw new Error(`No ${exports.MARKER_FILENAME} in ${cwd}`);
-    const { exchangeCount, batchesSummarized } = await (0, tim_store_1.deriveCounters)(store, marker.session);
-    const reconciled = {
-        ...marker,
-        exchanges: exchangeCount,
-        batches_summarized: batchesSummarized,
-    };
-    writeMarker(cwd, reconciled);
-    // Read back to return the canonical v2 shape (writeMarker upgraded the file).
-    return readMarker(cwd) ?? reconciled;
-}
-var constants_js_2 = require("./constants.js");
-Object.defineProperty(exports, "LOCK_TTL_MS", { enumerable: true, get: function () { return constants_js_2.LOCK_TTL_MS; } });
+var constants_js_3 = require("./constants.js");
+Object.defineProperty(exports, "LOCK_TTL_MS", { enumerable: true, get: function () { return constants_js_3.LOCK_TTL_MS; } });
 function acquireLock(cwd) {
-    const lock = path.join(cwd, exports.MARKER_LOCK);
+    const lockDir = path.join(cwd, constants_js_1.TIM_META_DIR);
+    const lock = summarizerLockPath(cwd);
     try {
+        fs.mkdirSync(lockDir, { recursive: true });
         fs.writeFileSync(lock, JSON.stringify({ pid: process.pid, ts: Date.now() }), { flag: 'wx' });
         return true;
     }
@@ -427,7 +329,7 @@ function acquireLock(cwd) {
 }
 /** True when an active (non-stale) summarizer/session lock is held. */
 function isSessionLocked(cwd) {
-    const lock = path.join(cwd, exports.MARKER_LOCK);
+    const lock = summarizerLockPath(cwd);
     if (!fs.existsSync(lock))
         return false;
     try {
@@ -440,7 +342,7 @@ function isSessionLocked(cwd) {
 }
 function releaseLock(cwd) {
     try {
-        fs.rmSync(path.join(cwd, exports.MARKER_LOCK), { force: true });
+        fs.rmSync(summarizerLockPath(cwd), { force: true });
     }
     catch {
         /* ignore */
@@ -481,8 +383,6 @@ function pickMarkerLocation(candidates) {
     return candidates.reduce((best, cur) => path.resolve(cur.dir).length > path.resolve(best.dir).length ? cur : best);
 }
 function scanDirForMarker(dir) {
-    // Markers in shared directories (tmpdir, /) are never trusted — treat the
-    // dir as marker-free and keep walking, same as any dir without a marker.
     if (isUnsafeMarkerDir(dir))
         return null;
     if (fs.existsSync(markerPath(dir))) {
@@ -498,9 +398,6 @@ function scanDirForMarker(dir) {
 }
 /**
  * Find a project marker from `startCwd` — the single discovery implementation.
- *
- * Policy defaults (when fields omitted): walkUp=true, allowHome=true.
- * Pass `CWD_ONLY_MARKER_DISCOVERY_POLICY` for harness cwd binding.
  */
 function discoverMarker(startCwd, policy = exports.DEFAULT_MARKER_DISCOVERY_POLICY) {
     const walkUp = policy.walkUp ?? true;
@@ -543,7 +440,6 @@ function discoverMarker(startCwd, policy = exports.DEFAULT_MARKER_DISCOVERY_POLI
 }
 /**
  * Back-compat wrapper: when `options` is omitted, cwd-only (historical default).
- * Prefer `discoverMarker` with an explicit policy for new code.
  */
 function findMarker(startCwd, options) {
     if (!options) {
@@ -556,9 +452,7 @@ function findMarker(startCwd, options) {
     });
 }
 /**
- * Shared, harness-agnostic directive text. Every start hook (Hermes,
- * Claude Code, Cursor) emits exactly this so wording stays DRY. The TIM
- * marker is authoritative for project binding this turn (see plan §end-state).
+ * Shared, harness-agnostic directive text. Every start hook emits exactly this.
  */
 function buildLoadDirective(projectLabel, markerDir, bindingLabel) {
     const display = bindingLabel?.trim() || projectLabel;

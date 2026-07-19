@@ -83,11 +83,11 @@ function hasHelpFlag(args, command, subcommand) {
 }
 const COMMAND_HELP = {
     init: 'Usage: tim init',
-    doctor: 'Usage: tim doctor',
+    doctor: 'Usage: tim doctor [--bind]',
     stats: 'Usage: tim stats',
     'resolve-project': 'Usage: tim resolve-project [--cwd <dir>] [--walk-up] [--format label|json|directive]',
     'resolve-session': 'Usage: tim resolve-session --session <id> [--cwd <dir>] [--format label|directive|json]',
-    'bind-project': 'Usage: tim bind-project --label <P00XX> [--cwd <dir>] [--session <id>]',
+    'bind-project': 'Usage: tim bind-project --label <P00XX> [--cwd <dir>]',
     'new-project': 'Usage: tim new-project --path <dir> --name <string> [--no-git] [--confirm]',
     'record-commit': 'Usage: tim record-commit [--cwd <dir>] [--project <label>] [--session <id>] [--hash <sha>] [--message <text>] [--diff <stat>] [--author <name>] [--date <iso>] [--branch <name>]',
     hook: 'Usage: tim hook <session-start|session-end|log|prompt-submit|claude-stop> [options]',
@@ -225,12 +225,15 @@ async function cmdInit() {
     console.log(`\nTIM ready. Connect your MCP client to ${timDir}/mcp.json`);
     store.close();
 }
-async function cmdDoctor() {
+async function cmdDoctor(args = []) {
+    const { flags } = (0, args_js_1.parseArgs)(args);
+    const doBind = flags.bind === 'true';
     const config = (0, tim_core_1.loadConfig)();
     const store = new tim_store_1.TimStore(getDbPath(config));
     const health = await store.health();
     const stats = await store.stats();
     const agents = await store.getAgents();
+    const bindingReport = await (0, tim_hooks_1.collectBindingReport)(store);
     console.log('═══ TIM Doctor ═══');
     console.log(`DB: ${getDbPath(config)}`);
     console.log(`Entries: ${stats.totalEntries} | Edges: ${stats.totalEdges}`);
@@ -250,6 +253,30 @@ async function cmdDoctor() {
         health.issues.forEach(i => console.log(`  - ${i}`));
     }
     console.log(`\nTop tags: ${stats.topTags.slice(0, 5).map(t => `${t.tag}(${t.count})`).join(', ') || 'none'}`);
+    console.log('\nBindings:');
+    if (bindingReport.projects.length === 0 && bindingReport.stalePaths.length === 0) {
+        console.log('  (none)');
+    }
+    else {
+        for (const finding of bindingReport.projects) {
+            console.log((0, tim_hooks_1.formatBindingFindingLine)(finding));
+        }
+        for (const stale of bindingReport.stalePaths) {
+            console.log((0, tim_hooks_1.formatStalePathLine)(stale));
+        }
+    }
+    if (doBind) {
+        const outcomes = await (0, tim_hooks_1.bindUnboundBindings)(store, bindingReport.projects);
+        console.log('\nBind:');
+        if (outcomes.length === 0) {
+            console.log('  (none)');
+        }
+        else {
+            for (const outcome of outcomes) {
+                console.log((0, tim_hooks_1.formatBindOutcomeLine)(outcome));
+            }
+        }
+    }
     const hermesDir = path.join(os.homedir(), '.hermes');
     if (fs.existsSync(hermesDir)) {
         const { installed, issues } = (0, hermes_statusline_install_js_1.auditHermesStatusline)();
@@ -359,7 +386,7 @@ async function cmdBindProject(args) {
     const cwd = flags.cwd ?? process.cwd();
     const label = flags.label;
     if (!label) {
-        console.error('Usage: tim bind-project --label <P00XX> [--cwd <dir>] [--session <id>]');
+        console.error('Usage: tim bind-project --label <P00XX> [--cwd <dir>]');
         process.exit(1);
     }
     const config = (0, tim_core_1.loadConfig)();
@@ -368,7 +395,6 @@ async function cmdBindProject(args) {
         const result = await (0, tim_hooks_1.recoverProjectBinding)(store, {
             label,
             path: cwd,
-            sessionId: flags.session,
         });
         console.log(result.alreadyBound
             ? `Already bound .tim-project → ${result.label} at ${result.projectPath}`
@@ -748,7 +774,7 @@ async function main() {
             await cmdInit();
             break;
         case 'doctor':
-            await cmdDoctor();
+            await cmdDoctor(rest);
             break;
         case 'stats':
             await cmdStats();

@@ -162,5 +162,7 @@ export interface EnsureProjectForPathResult {
  * Re-bind to an existing project with the same directory alias. Reversible via
  * irrelevant flag on the project root.
  */
+/** Latest kind=session entry for a project whose metadata.cwd matches. */
+export declare function resolveCurrentSession(store: TimStore, projectLabel: string, cwd?: string): Promise<Entry | null>;
 export declare function ensureProjectForPath(store: TimStore, cwd: string): Promise<EnsureProjectForPathResult | null>;
 //# sourceMappingURL=session.d.ts.map

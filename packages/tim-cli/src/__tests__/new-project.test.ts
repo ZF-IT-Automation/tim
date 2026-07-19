@@ -487,17 +487,12 @@ describe('tim new-project', () => {
     expect(fs.existsSync(path.join(target, '.tim-project.bak'))).toBe(false);
   });
 
-  it('happy path produces correct marker version 2', () => {
-    const target = path.join(workDir, 'marker-v2');
-    const result = run(['new-project', '-p', target, '-n', 'Marker V2'], env);
+  it('happy path produces correct marker version 3', () => {
+    const target = path.join(workDir, 'marker-v3');
+    const result = run(['new-project', '-p', target, '-n', 'Marker V3'], env);
     expect(result.status).toBe(0);
     const marker = JSON.parse(fs.readFileSync(path.join(target, '.tim-project'), 'utf8'));
-    expect(marker.version).toBe(2);
-    expect(marker.project).toBe('P0001');
-    expect(marker.batch_size).toBe(5);
-    expect(marker.exchanges).toBe(0);
-    expect(marker.batches_summarized).toBe(0);
-    expect(marker.session).toMatch(/^[0-9a-f-]{36}$/);
+    expect(marker).toEqual({ version: 3, project: 'P0001' });
   });
 
   it('metadata.path and metadata.name stored', async () => {

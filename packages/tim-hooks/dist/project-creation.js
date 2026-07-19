@@ -43,6 +43,7 @@ const crypto = __importStar(require("node:crypto"));
 const fs = __importStar(require("node:fs"));
 const os = __importStar(require("node:os"));
 const path = __importStar(require("node:path"));
+const tim_store_1 = require("tim-store");
 const marker_js_1 = require("./marker.js");
 exports.MODE_ERROR = 'Exactly one creation mode is required. Pass an absolute project path for a repository/workspace, or memoryOnly: true only when no directory should be bound.';
 class ProjectCreationPartialFailureError extends Error {
@@ -128,14 +129,29 @@ function localMarkerLabel(projectPath) {
 function shellSingleQuote(value) {
     return `'${value.replaceAll("'", "'\"'\"'")}'`;
 }
-function markerInput(label, session) {
-    return {
-        project: label,
-        session,
-        exchanges: 0,
-        batch_size: 5,
-        batches_summarized: 0,
-    };
+function markerInput(label) {
+    return { project: label };
+}
+function bindingDeviceId() {
+    return os.hostname();
+}
+async function seedProjectPathInventory(store, label, projectPath) {
+    await (0, tim_store_1.upsertProjectPathRow)(store, label, bindingDeviceId(), projectPath);
+}
+async function backfillProjectPathMetadata(store, label, projectPath) {
+    const project = await store.requireProject(label);
+    const existingPath = project.metadata.path;
+    if (typeof existingPath === 'string' && existingPath.length > 0)
+        return;
+    await store.update(project.id, {
+        metadata: { ...project.metadata, path: projectPath },
+    });
+}
+async function enrichBoundProject(store, label, projectPath, options = {}) {
+    if (options.backfillPath !== false) {
+        await backfillProjectPathMetadata(store, label, projectPath);
+    }
+    await seedProjectPathInventory(store, label, projectPath);
 }
 function recoveryCommand(databasePath, label, projectPath) {
     return `TIM_DB_PATH=${shellSingleQuote(databasePath)} tim bind-project --label ${shellSingleQuote(label)} --cwd ${shellSingleQuote(projectPath)}`;
@@ -201,7 +217,7 @@ async function createProjectCoordinated(store, args, deps = {}) {
         aliases: args.aliases,
     });
     try {
-        runtime.writeExclusive(projectPath, markerInput(args.label, runtime.sessionId()));
+        runtime.writeExclusive(projectPath, markerInput(args.label));
     }
     catch (error) {
         const winner = localMarkerLabel(projectPath);
@@ -218,6 +234,7 @@ async function createProjectCoordinated(store, args, deps = {}) {
             throw publicationRace(args.label, verified, projectPath);
         throw publicationFailure(store.getDatabasePath(), args.label, projectPath, 'the marker is absent after publication');
     }
+    await enrichBoundProject(store, args.label, projectPath, { backfillPath: false });
     return { ...entry, mode, projectPath, markerPath };
 }
 async function recoverProjectBinding(store, args, deps = {}) {
@@ -241,7 +258,7 @@ async function recoverProjectBinding(store, args, deps = {}) {
     }
     runtime.preflight(projectPath);
     try {
-        runtime.writeExclusive(projectPath, markerInput(args.label, args.sessionId ?? runtime.sessionId()));
+        runtime.writeExclusive(projectPath, markerInput(args.label));
     }
     catch (error) {
         const winner = localMarkerLabel(projectPath);
@@ -260,6 +277,7 @@ async function recoverProjectBinding(store, args, deps = {}) {
         }
         throw new Error(`Could not verify recovered project binding for ${args.label} at ${projectPath}`);
     }
+    await enrichBoundProject(store, args.label, projectPath);
     return { label: args.label, projectPath, markerPath, alreadyBound: false };
 }
 //# sourceMappingURL=project-creation.js.map

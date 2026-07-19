@@ -27,7 +27,6 @@ export interface ProjectCreationDeps {
 export interface RecoverProjectBindingArgs {
     label: string;
     path: string;
-    sessionId?: string;
 }
 export interface RecoverProjectBindingResult {
     label: string;

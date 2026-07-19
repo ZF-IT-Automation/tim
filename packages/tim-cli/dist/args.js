@@ -17,7 +17,7 @@ const EMPTY_VALUE_OPTIONS = new Set();
 const COMMAND_VALUE_OPTIONS = {
     'resolve-project': new Set(['cwd', 'format']),
     'resolve-session': new Set(['session', 'cwd', 'format']),
-    'bind-project': new Set(['label', 'cwd', 'session']),
+    'bind-project': new Set(['label', 'cwd']),
     'new-project': new Set(['path', 'name']),
     'record-commit': new Set([
         'cwd', 'project', 'session', 'hash', 'message', 'diff', 'author', 'date', 'branch',

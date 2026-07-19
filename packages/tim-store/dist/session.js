@@ -34,6 +34,7 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.SessionManager = void 0;
+exports.resolveCurrentSession = resolveCurrentSession;
 exports.ensureProjectForPath = ensureProjectForPath;
 const tim_core_1 = require("tim-core");
 const fs = __importStar(require("fs"));
@@ -890,6 +891,26 @@ function isAutoProjectBlocked(cwd) {
  * Re-bind to an existing project with the same directory alias. Reversible via
  * irrelevant flag on the project root.
  */
+/** Latest kind=session entry for a project whose metadata.cwd matches. */
+async function resolveCurrentSession(store, projectLabel, cwd) {
+    const project = await store.requireProject(projectLabel);
+    const sessionsSection = await (0, session_tree_js_1.findChildByKind)(store, project.id, session_tree_js_1.KIND_SESSIONS_ROOT);
+    if (!sessionsSection)
+        return null;
+    const sessions = await store.getChildByKind(sessionsSection.id, session_tree_js_1.KIND_SESSION);
+    if (sessions.length === 0)
+        return null;
+    let candidates = sessions;
+    if (cwd !== undefined) {
+        const resolvedCwd = path.resolve(cwd);
+        candidates = sessions.filter(s => typeof s.metadata.cwd === 'string' &&
+            path.resolve(s.metadata.cwd) === resolvedCwd);
+        if (candidates.length === 0)
+            return null;
+    }
+    candidates.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    return candidates[0] ?? null;
+}
 async function ensureProjectForPath(store, cwd) {
     const config = (0, tim_core_1.loadConfig)();
     if (config.autoProject === false)
