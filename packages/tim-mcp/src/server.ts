@@ -27,6 +27,7 @@ import {
   listProjectTokenEstimates,
   isProjectLabelConflictError,
   nextLabelAfterProjectLabelConflict,
+  resolveCurrentSession,
   type TaskRecord,
   isCodingNeedsReview,
 } from 'tim-store';
@@ -43,7 +44,6 @@ import {
   getActiveProjectLabel,
   getBriefingMaxTokens,
   maybeSpawnSummarizer,
-  rotateMarkerSession,
   runPromptSubmit,
   syncNearestProjectMarker,
 } from 'tim-hooks';
@@ -79,6 +79,34 @@ function findConfiguredMarker(cwd: string) {
   return findMarker(cwd, {
     walkUp: true,
     ...(findMarkerOptionsFromEnv() ?? {}),
+  });
+}
+
+/** Latest session id for the marker-bound project at cwd (store lookup, not marker file). */
+async function resolveMarkerSession(store: TimStore, cwd: string): Promise<string | undefined> {
+  const located = findConfiguredMarker(cwd);
+  if (!located) return undefined;
+  const session = await resolveCurrentSession(store, located.marker.project, cwd);
+  return session?.id;
+}
+
+async function resolveHarnessSessionId(
+  store: TimStore,
+  options: {
+    sessionIdArg?: string;
+    cwd?: string;
+    useSessionCache?: boolean;
+    useEnv?: boolean;
+  },
+): Promise<string | undefined> {
+  const markerSession = options.cwd
+    ? await resolveMarkerSession(store, options.cwd)
+    : undefined;
+  return resolveActiveSessionId({
+    sessionIdArg: options.sessionIdArg,
+    markerSession,
+    useSessionCache: options.useSessionCache,
+    useEnv: options.useEnv,
   });
 }
 
@@ -442,7 +470,9 @@ const TimLoadProjectSchema = z.object({
     .describe('Max child entries to return'),
   sections: z.array(z.string()).nullable().optional().default(null)
     .describe('Optional section IDs/labels to filter direct children'),
-  sessionId: z.string().optional().describe('Harness session id; binds TIM session project_ref on first load only'),
+  sessionId: z.string().optional().describe(
+    'Harness session id; when omitted, resolved from env/cache or the current session for the marker-bound project (stdio only). Binds TIM session project_ref on first load only.',
+  ),
   bind: z.boolean().optional().default(true)
     .describe('false = cross-project read without binding the session (replaces tim_read_project)'),
 });
@@ -659,7 +689,7 @@ export const TOOL_DEFS: Array<{
     name: 'tim_session_resume',
     description:
       'Resume a previous session from any tool: injects session summary + all batch summaries + last N raw ' +
-      'exchanges, and aliases the current harness session to the old session node so exchanges keep appending there.',
+      'exchanges, and aliases the current harness session (from env/cache or the store-resolved session for the bound project) to the old session node so exchanges keep appending there.',
     schema: TimSessionResumeSchema,
   },
   {
@@ -1581,12 +1611,13 @@ let transportIsHttp = false;
  * process has no resolvable session (recording is then session-less and
  * can never be marked referenced, which is the correct neutral outcome).
  */
-function usageSessionId(): string | null {
+async function usageSessionId(): Promise<string | null> {
   try {
+    const markerSession = transportIsHttp
+      ? undefined
+      : await resolveMarkerSession(getStore(), process.cwd());
     return resolveActiveSessionId({
-      markerSession: transportIsHttp
-        ? undefined
-        : findConfiguredMarker(process.cwd())?.marker.session,
+      markerSession,
       useSessionCache: !transportIsHttp,
       useEnv: !transportIsHttp,
     }) ?? null;
@@ -1686,6 +1717,7 @@ export async function createMcpServer(
             include_body,
           } = TimReadSchema.parse(args);
           const readOpts = { depth, includeChildren, showIrrelevant, enforceSuppression: true };
+          const usageSid = await usageSessionId();
 
           if (Array.isArray(id)) {
             let projectLabel: string | null = null;
@@ -1720,7 +1752,7 @@ export async function createMcpServer(
               entries.push(entry);
             }
             bestEffortTelemetry('recordRead', () =>
-              s.recordRead(entries.map(e => e.id), usageSessionId()));
+              s.recordRead(entries.map(e => e.id), usageSid));
             return {
               content: [{ type: 'text', text: formatToolResponse({
                 entries: entries.map(e => summarizeEntry(annotateTrust(e, isHttp ? '' : process.cwd()) as Entry, include_body)),
@@ -1813,7 +1845,7 @@ export async function createMcpServer(
             }
             const edges = includeEdges ? await s.getEdges(entry.id, 'both') : [];
             bestEffortTelemetry('recordRead', () =>
-              s.recordRead([entry.id], usageSessionId()));
+              s.recordRead([entry.id], usageSid));
             return {
               content: [{ type: 'text', text: formatToolResponse({
                 entry: summarizeEntry(annotateTrust(entry, isHttp ? '' : process.cwd()) as Entry, include_body),
@@ -1849,7 +1881,7 @@ export async function createMcpServer(
             }
             const edges = includeEdges ? await s.getEdges(id, 'both') : [];
             bestEffortTelemetry('recordRead', () =>
-              s.recordRead([entry.id], usageSessionId()));
+              s.recordRead([entry.id], usageSid));
             return {
               content: [{ type: 'text', text: formatToolResponse({
                 entry: summarizeEntry(annotateTrust(entry, isHttp ? '' : process.cwd()) as Entry, include_body),
@@ -2043,7 +2075,7 @@ export async function createMcpServer(
             ...writeOpts,
             projectPath: callerProjectPath,
           });
-          const usageSid = usageSessionId();
+          const usageSid = await usageSessionId();
           if (usageSid) {
             const readIds = s.getSessionReadIds(usageSid);
             const cited = readIds.filter(rid => opts.content.includes(rid));
@@ -2059,6 +2091,7 @@ export async function createMcpServer(
 
         case 'tim_search': {
           const { query, topK, excerptChars, root, type, tag, status } = TimSearchSchema.parse(args);
+          const usageSid = await usageSessionId();
           const hasFilters = Boolean(root || type || tag || status);
           let results = await s.search({ query, topK: hasFilters ? 1000 : topK });
           if (root) {
@@ -2088,7 +2121,7 @@ export async function createMcpServer(
           }
           const response = buildBoundedSearchResponse(results, excerptChars);
           bestEffortTelemetry('recordRead', () =>
-            s.recordRead(response.results.map(e => e.id), usageSessionId()));
+            s.recordRead(response.results.map(e => e.id), usageSid));
           return {
             content: [{ type: 'text', text: JSON.stringify(response) }],
           };
@@ -2163,8 +2196,8 @@ export async function createMcpServer(
           let cutoff = since;
           let baseline = 'explicit since argument';
           if (!cutoff) {
-            const currentSession = resolveActiveSessionId({
-              markerSession: isHttp ? undefined : findConfiguredMarker(process.cwd())?.marker.session,
+            const currentSession = await resolveHarnessSessionId(s, {
+              cwd: isHttp ? undefined : process.cwd(),
               useSessionCache: !isHttp,
               useEnv: !isHttp,
             });
@@ -2221,6 +2254,7 @@ export async function createMcpServer(
 
         case 'tim_link': {
           const { sourceId, targetId, type, weight, metadata } = TimLinkSchema.parse(args);
+          const usageSid = await usageSessionId();
           const edge = await s.link(sourceId, targetId, type as EdgeType, weight, metadata);
           const refIds: string[] = [];
           for (const raw of [sourceId, targetId]) {
@@ -2229,7 +2263,7 @@ export async function createMcpServer(
           }
           if (refIds.length > 0) {
             bestEffortTelemetry('markReferenced', () =>
-              s.markReferenced(refIds, usageSessionId()));
+              s.markReferenced(refIds, usageSid));
           }
           return {
             content: [{ type: 'text', text: formatToolResponse(edge) }],
@@ -2246,6 +2280,7 @@ export async function createMcpServer(
 
         case 'tim_update': {
           const { id, ...patch } = TimUpdateSchema.parse(args);
+          const usageSid = await usageSessionId();
           const resolved = await s.read(id, { showIrrelevant: true, includeChildren: false });
           if (!resolved) return errorResult(`Entry not found: ${id}`);
           const projectPath = callerProjectPath;
@@ -2255,7 +2290,7 @@ export async function createMcpServer(
             patch.tags = cleanTags;
             const entry = await s.update(resolved.id, patch as Partial<Entry>, { projectPath });
             bestEffortTelemetry('markReferenced', () =>
-              s.markReferenced([entry.id], usageSessionId()));
+              s.markReferenced([entry.id], usageSid));
             const payload = tagWarnings.length > 0 ? { entry, warnings: tagWarnings } : entry;
             return {
               content: [{ type: 'text', text: formatToolResponse(payload) }],
@@ -2263,7 +2298,7 @@ export async function createMcpServer(
           }
           const entry = await s.update(resolved.id, patch as Partial<Entry>, { projectPath });
           bestEffortTelemetry('markReferenced', () =>
-            s.markReferenced([entry.id], usageSessionId()));
+            s.markReferenced([entry.id], usageSid));
           return {
             content: [{ type: 'text', text: formatToolResponse(entry) }],
           };
@@ -2724,8 +2759,8 @@ export async function createMcpServer(
         case 'tim_session_resume': {
           const { sessionId, rawCount } = TimSessionResumeSchema.parse(args);
           const cwd = isHttp ? undefined : process.cwd();
-          const newHarnessId = resolveActiveSessionId({
-            markerSession: cwd ? findConfiguredMarker(cwd)?.marker.session : undefined,
+          const newHarnessId = await resolveHarnessSessionId(s, {
+            cwd,
             useSessionCache: !isHttp,
             useEnv: !isHttp,
           });
@@ -2735,13 +2770,6 @@ export async function createMcpServer(
             rawCount,
             boundProjectId,
           });
-          if (cwd) {
-            try {
-              rotateMarkerSession(cwd, payload.sessionId);
-            } catch {
-              // marker rotation is best-effort; resume payload is already durable
-            }
-          }
           // Best-effort summarizer sweep when the session has no batch summaries yet.
           if (payload.batchSummaries.length === 0 && cwd) {
             void maybeSpawnSummarizer(getStore(), cwd, { batchFull: true }).catch(() => {});
@@ -2956,11 +2984,9 @@ export async function createMcpServer(
 
           const projectLabel = resolved.label;
           const cwd = isHttp ? undefined : process.cwd();
-          const sessionId = resolveActiveSessionId({
-            sessionIdArg: sessionIdArg,
-            markerSession: cwd
-              ? findConfiguredMarker(cwd)?.marker.session
-              : undefined,
+          const sessionId = await resolveHarnessSessionId(s, {
+            sessionIdArg,
+            cwd,
             useSessionCache: !isHttp,
             useEnv: !isHttp,
           });
@@ -3005,7 +3031,6 @@ export async function createMcpServer(
           if (bind && cwd) {
             try {
               syncNearestProjectMarker(cwd, projectLabel, {
-                sessionId,
                 findOptions: findMarkerOptionsFromEnv(),
               });
             } catch {

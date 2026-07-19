@@ -86,6 +86,25 @@ function findConfiguredMarker(cwd) {
         ...((0, tim_hooks_1.findMarkerOptionsFromEnv)() ?? {}),
     });
 }
+/** Latest session id for the marker-bound project at cwd (store lookup, not marker file). */
+async function resolveMarkerSession(store, cwd) {
+    const located = findConfiguredMarker(cwd);
+    if (!located)
+        return undefined;
+    const session = await (0, tim_store_1.resolveCurrentSession)(store, located.marker.project, cwd);
+    return session?.id;
+}
+async function resolveHarnessSessionId(store, options) {
+    const markerSession = options.cwd
+        ? await resolveMarkerSession(store, options.cwd)
+        : undefined;
+    return (0, tim_core_1.resolveActiveSessionId)({
+        sessionIdArg: options.sessionIdArg,
+        markerSession,
+        useSessionCache: options.useSessionCache,
+        useEnv: options.useEnv,
+    });
+}
 // ─── CLI ────────────────────────────────────────────────
 function parseCliArgs() {
     const argv = process.argv.slice(2);
@@ -397,7 +416,7 @@ const TimLoadProjectSchema = zod_1.z.object({
         .describe('Max child entries to return'),
     sections: zod_1.z.array(zod_1.z.string()).nullable().optional().default(null)
         .describe('Optional section IDs/labels to filter direct children'),
-    sessionId: zod_1.z.string().optional().describe('Harness session id; binds TIM session project_ref on first load only'),
+    sessionId: zod_1.z.string().optional().describe('Harness session id; when omitted, resolved from env/cache or the current session for the marker-bound project (stdio only). Binds TIM session project_ref on first load only.'),
     bind: zod_1.z.boolean().optional().default(true)
         .describe('false = cross-project read without binding the session (replaces tim_read_project)'),
 });
@@ -591,7 +610,7 @@ exports.TOOL_DEFS = [
     {
         name: 'tim_session_resume',
         description: 'Resume a previous session from any tool: injects session summary + all batch summaries + last N raw ' +
-            'exchanges, and aliases the current harness session to the old session node so exchanges keep appending there.',
+            'exchanges, and aliases the current harness session (from env/cache or the store-resolved session for the bound project) to the old session node so exchanges keep appending there.',
         schema: TimSessionResumeSchema,
     },
     {
@@ -1433,12 +1452,13 @@ let transportIsHttp = false;
  * process has no resolvable session (recording is then session-less and
  * can never be marked referenced, which is the correct neutral outcome).
  */
-function usageSessionId() {
+async function usageSessionId() {
     try {
+        const markerSession = transportIsHttp
+            ? undefined
+            : await resolveMarkerSession(getStore(), process.cwd());
         return (0, tim_core_1.resolveActiveSessionId)({
-            markerSession: transportIsHttp
-                ? undefined
-                : findConfiguredMarker(process.cwd())?.marker.session,
+            markerSession,
             useSessionCache: !transportIsHttp,
             useEnv: !transportIsHttp,
         }) ?? null;
@@ -1512,6 +1532,7 @@ async function createMcpServer(options = {}) {
                 case 'tim_read': {
                     const { id, project, section, depth, includeEdges, includeChildren, showIrrelevant, include_body, } = TimReadSchema.parse(args);
                     const readOpts = { depth, includeChildren, showIrrelevant, enforceSuppression: true };
+                    const usageSid = await usageSessionId();
                     if (Array.isArray(id)) {
                         let projectLabel = null;
                         if (project) {
@@ -1544,7 +1565,7 @@ async function createMcpServer(options = {}) {
                             }
                             entries.push(entry);
                         }
-                        bestEffortTelemetry('recordRead', () => s.recordRead(entries.map(e => e.id), usageSessionId()));
+                        bestEffortTelemetry('recordRead', () => s.recordRead(entries.map(e => e.id), usageSid));
                         return {
                             content: [{ type: 'text', text: formatToolResponse({
                                         entries: entries.map(e => summarizeEntry((0, trust_js_1.annotateTrust)(e, isHttp ? '' : process.cwd()), include_body)),
@@ -1634,7 +1655,7 @@ async function createMcpServer(options = {}) {
                             return errorResult(`Project not found: ${project}`);
                         }
                         const edges = includeEdges ? await s.getEdges(entry.id, 'both') : [];
-                        bestEffortTelemetry('recordRead', () => s.recordRead([entry.id], usageSessionId()));
+                        bestEffortTelemetry('recordRead', () => s.recordRead([entry.id], usageSid));
                         return {
                             content: [{ type: 'text', text: formatToolResponse({
                                         entry: summarizeEntry((0, trust_js_1.annotateTrust)(entry, isHttp ? '' : process.cwd()), include_body),
@@ -1668,7 +1689,7 @@ async function createMcpServer(options = {}) {
                             return errorResult(`Entry ${id} not found in project ${projectLabel}`);
                         }
                         const edges = includeEdges ? await s.getEdges(id, 'both') : [];
-                        bestEffortTelemetry('recordRead', () => s.recordRead([entry.id], usageSessionId()));
+                        bestEffortTelemetry('recordRead', () => s.recordRead([entry.id], usageSid));
                         return {
                             content: [{ type: 'text', text: formatToolResponse({
                                         entry: summarizeEntry((0, trust_js_1.annotateTrust)(entry, isHttp ? '' : process.cwd()), include_body),
@@ -1847,7 +1868,7 @@ async function createMcpServer(options = {}) {
                         ...writeOpts,
                         projectPath: callerProjectPath,
                     });
-                    const usageSid = usageSessionId();
+                    const usageSid = await usageSessionId();
                     if (usageSid) {
                         const readIds = s.getSessionReadIds(usageSid);
                         const cited = readIds.filter(rid => opts.content.includes(rid));
@@ -1862,6 +1883,7 @@ async function createMcpServer(options = {}) {
                 }
                 case 'tim_search': {
                     const { query, topK, excerptChars, root, type, tag, status } = TimSearchSchema.parse(args);
+                    const usageSid = await usageSessionId();
                     const hasFilters = Boolean(root || type || tag || status);
                     let results = await s.search({ query, topK: hasFilters ? 1000 : topK });
                     if (root) {
@@ -1888,7 +1910,7 @@ async function createMcpServer(options = {}) {
                         results = results.slice(0, topK);
                     }
                     const response = (0, search_response_js_1.buildBoundedSearchResponse)(results, excerptChars);
-                    bestEffortTelemetry('recordRead', () => s.recordRead(response.results.map(e => e.id), usageSessionId()));
+                    bestEffortTelemetry('recordRead', () => s.recordRead(response.results.map(e => e.id), usageSid));
                     return {
                         content: [{ type: 'text', text: JSON.stringify(response) }],
                     };
@@ -1960,8 +1982,8 @@ async function createMcpServer(options = {}) {
                     let cutoff = since;
                     let baseline = 'explicit since argument';
                     if (!cutoff) {
-                        const currentSession = (0, tim_core_1.resolveActiveSessionId)({
-                            markerSession: isHttp ? undefined : findConfiguredMarker(process.cwd())?.marker.session,
+                        const currentSession = await resolveHarnessSessionId(s, {
+                            cwd: isHttp ? undefined : process.cwd(),
                             useSessionCache: !isHttp,
                             useEnv: !isHttp,
                         });
@@ -2016,6 +2038,7 @@ async function createMcpServer(options = {}) {
                 }
                 case 'tim_link': {
                     const { sourceId, targetId, type, weight, metadata } = TimLinkSchema.parse(args);
+                    const usageSid = await usageSessionId();
                     const edge = await s.link(sourceId, targetId, type, weight, metadata);
                     const refIds = [];
                     for (const raw of [sourceId, targetId]) {
@@ -2024,7 +2047,7 @@ async function createMcpServer(options = {}) {
                             refIds.push(e.id);
                     }
                     if (refIds.length > 0) {
-                        bestEffortTelemetry('markReferenced', () => s.markReferenced(refIds, usageSessionId()));
+                        bestEffortTelemetry('markReferenced', () => s.markReferenced(refIds, usageSid));
                     }
                     return {
                         content: [{ type: 'text', text: formatToolResponse(edge) }],
@@ -2039,6 +2062,7 @@ async function createMcpServer(options = {}) {
                 }
                 case 'tim_update': {
                     const { id, ...patch } = TimUpdateSchema.parse(args);
+                    const usageSid = await usageSessionId();
                     const resolved = await s.read(id, { showIrrelevant: true, includeChildren: false });
                     if (!resolved)
                         return errorResult(`Entry not found: ${id}`);
@@ -2048,14 +2072,14 @@ async function createMcpServer(options = {}) {
                         const { clean: cleanTags } = (0, tim_core_1.stripDeprecatedTags)(patch.tags);
                         patch.tags = cleanTags;
                         const entry = await s.update(resolved.id, patch, { projectPath });
-                        bestEffortTelemetry('markReferenced', () => s.markReferenced([entry.id], usageSessionId()));
+                        bestEffortTelemetry('markReferenced', () => s.markReferenced([entry.id], usageSid));
                         const payload = tagWarnings.length > 0 ? { entry, warnings: tagWarnings } : entry;
                         return {
                             content: [{ type: 'text', text: formatToolResponse(payload) }],
                         };
                     }
                     const entry = await s.update(resolved.id, patch, { projectPath });
-                    bestEffortTelemetry('markReferenced', () => s.markReferenced([entry.id], usageSessionId()));
+                    bestEffortTelemetry('markReferenced', () => s.markReferenced([entry.id], usageSid));
                     return {
                         content: [{ type: 'text', text: formatToolResponse(entry) }],
                     };
@@ -2485,8 +2509,8 @@ async function createMcpServer(options = {}) {
                 case 'tim_session_resume': {
                     const { sessionId, rawCount } = TimSessionResumeSchema.parse(args);
                     const cwd = isHttp ? undefined : process.cwd();
-                    const newHarnessId = (0, tim_core_1.resolveActiveSessionId)({
-                        markerSession: cwd ? findConfiguredMarker(cwd)?.marker.session : undefined,
+                    const newHarnessId = await resolveHarnessSessionId(s, {
+                        cwd,
                         useSessionCache: !isHttp,
                         useEnv: !isHttp,
                     });
@@ -2496,14 +2520,6 @@ async function createMcpServer(options = {}) {
                         rawCount,
                         boundProjectId,
                     });
-                    if (cwd) {
-                        try {
-                            (0, tim_hooks_1.rotateMarkerSession)(cwd, payload.sessionId);
-                        }
-                        catch {
-                            // marker rotation is best-effort; resume payload is already durable
-                        }
-                    }
                     // Best-effort summarizer sweep when the session has no batch summaries yet.
                     if (payload.batchSummaries.length === 0 && cwd) {
                         void (0, tim_hooks_1.maybeSpawnSummarizer)(getStore(), cwd, { batchFull: true }).catch(() => { });
@@ -2696,11 +2712,9 @@ async function createMcpServer(options = {}) {
                     }
                     const projectLabel = resolved.label;
                     const cwd = isHttp ? undefined : process.cwd();
-                    const sessionId = (0, tim_core_1.resolveActiveSessionId)({
-                        sessionIdArg: sessionIdArg,
-                        markerSession: cwd
-                            ? findConfiguredMarker(cwd)?.marker.session
-                            : undefined,
+                    const sessionId = await resolveHarnessSessionId(s, {
+                        sessionIdArg,
+                        cwd,
                         useSessionCache: !isHttp,
                         useEnv: !isHttp,
                     });
@@ -2739,7 +2753,6 @@ async function createMcpServer(options = {}) {
                     if (bind && cwd) {
                         try {
                             (0, tim_hooks_1.syncNearestProjectMarker)(cwd, projectLabel, {
-                                sessionId,
                                 findOptions: (0, tim_hooks_1.findMarkerOptionsFromEnv)(),
                             });
                         }
