@@ -1,6 +1,6 @@
 {
   "name": "tim-mcp",
-  "version": "0.1.0-alpha",
+  "version": "0.1.0-beta.0",
   "description": "TIM MCP server: stdio transport, tool registration for AI agents",
   "main": "dist/index.js",
   "bin": {
@@ -18,11 +18,11 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",
     "express": "^5.1.0",
-    "tim-core": "*",
-    "tim-hooks": "*",
-    "tim-migrate": "*",
-    "tim-store": "*",
-    "tim-sync-client": "*",
+    "tim-core": "0.1.0-beta.0",
+    "tim-hooks": "0.1.0-beta.0",
+    "tim-migrate": "0.1.0-beta.0",
+    "tim-store": "0.1.0-beta.0",
+    "tim-sync-client": "0.1.0-beta.0",
     "zod": "^3.24.0",
     "zod-to-json-schema": "^3.25.2"
   },

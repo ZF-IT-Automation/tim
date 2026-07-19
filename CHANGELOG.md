@@ -4,6 +4,10 @@ All notable changes to TIM are documented in this file.
 
 ## [Unreleased]
 
+## [0.1.0-beta.0] — 2026-07-19
+
+First public beta. GitHub repo is public; npm packages publish under the `beta` dist-tag (`npm install tim-cli@beta`). Expect breaking changes.
+
 ### Added
 
 - **Idea lifecycle & coding tasks** — ideas track `metadata.idea.status` with in-place promote to task when status → `planned`. Coding tasks add `subtype`, `commits`, `changes_pending` status, and `needs_review` filter on `getTasks` / `tim_show`.
@@ -33,6 +37,10 @@ All notable changes to TIM are documented in this file.
 
 ### Fixed
 
+- **`.tim-project` in shared directories** — hooks never trust or write markers under `os.tmpdir()` or the filesystem root (cron cwd=`/tmp` was poisoning every walk-up under `/tmp`).
+- **`tim_load_project(bind:false)` marker mutation** — marker sync runs only on binding loads; read-only loads leave existing markers byte-identical and create none when absent.
+- **MCP test marker hygiene** — child servers use an isolated temp cwd so the suite no longer rewrites the repo checkout (or live `/tmp`) `.tim-project`.
+- **Idea-promote / coding-task follow-ups** — vcs auto-detection before `pushed` gate; memoized caller project path; promote on metadata object (no write-path JSON roundtrip); shared Tasks retarget helper; `createProject` skips idea-promote; order recompute after promote retarget.
 - **Usage ranking on label paths** — `tim_update`/`tim_link` now pass the store-resolved entry id to `markReferenced`, so usage feedback works when callers use hmem-style labels (e.g. `L0042`) instead of composite ids.
 - **`tim_guard` German queries** — `searchFailures` splits action text on Unicode-aware word boundaries so umlauts (ü/ö/ä/ß) are not stripped before FTS lookup.
 - **`tim_update` metadata** — partial metadata patches preserve system-managed fields (`verified_at`, `provenance`) and deep-merge `metadata.task` instead of replacing the whole object.

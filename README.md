@@ -2,7 +2,7 @@
 
 TIM is a local-first memory system for AI agents. In this repo, the core user-facing surface is the `tim` CLI, the `tim-mcp` server, the SQLite-backed store, and the migration tools for older `.hmem` databases.
 
-This project is still **alpha**. The core is usable, but the interfaces and release shape are still moving.
+This project is **public beta**. The core is usable, but the interfaces and release shape are still moving. Expect breaking changes.
 
 ## Requirements
 

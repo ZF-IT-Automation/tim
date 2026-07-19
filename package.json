@@ -1,8 +1,8 @@
 {
   "name": "tim",
-  "version": "0.1.0-alpha",
+  "version": "0.1.0-beta.0",
   "private": true,
-  "description": "TIM \u2014 Theoretically Infinite Memory. Local-first, self-optimizing cognitive OS for AI agents.",
+  "description": "TIM — Theoretically Infinite Memory. Local-first, self-optimizing cognitive OS for AI agents.",
   "workspaces": [
     "packages/tim-core",
     "packages/tim-store",

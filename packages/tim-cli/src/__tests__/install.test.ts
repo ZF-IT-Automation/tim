@@ -77,9 +77,14 @@ afterEach(() => {
 describe('multi-host installer', () => {
   it('declares tim-mcp as a direct runtime dependency', () => {
     const pkg = JSON.parse(fs.readFileSync(CLI_PACKAGE_PATH, 'utf8')) as {
+      version?: string;
       dependencies?: Record<string, string>;
     };
-    expect(pkg.dependencies?.['tim-mcp']).toBe('*');
+    // Workspace may use "*" locally; publish pins the same version as the package.
+    expect(pkg.dependencies?.['tim-mcp']).toMatch(/^\*|0\.\d+\.\d+(-[\w.]+)?$/);
+    if (pkg.dependencies?.['tim-mcp'] !== '*') {
+      expect(pkg.dependencies?.['tim-mcp']).toBe(pkg.version);
+    }
   });
 
   it('resolves tim-mcp from a nested installed-package dependency', () => {
