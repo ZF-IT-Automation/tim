@@ -12,6 +12,11 @@ import {
   buildLoadDirective,
   buildSessionDirective,
   recoverProjectBinding,
+  collectBindingReport,
+  bindUnboundBindings,
+  formatBindingFindingLine,
+  formatStalePathLine,
+  formatBindOutcomeLine,
   rebalanceBatch,
   afterExchangeLogged,
   validateMarkerAgainstStore,
@@ -76,13 +81,13 @@ function hasHelpFlag(args: string[], command: string, subcommand?: string): bool
 
 const COMMAND_HELP: Record<string, string> = {
   init: 'Usage: tim init',
-  doctor: 'Usage: tim doctor',
+  doctor: 'Usage: tim doctor [--bind]',
   stats: 'Usage: tim stats',
   'resolve-project':
     'Usage: tim resolve-project [--cwd <dir>] [--walk-up] [--format label|json|directive]',
   'resolve-session':
     'Usage: tim resolve-session --session <id> [--cwd <dir>] [--format label|directive|json]',
-  'bind-project': 'Usage: tim bind-project --label <P00XX> [--cwd <dir>] [--session <id>]',
+  'bind-project': 'Usage: tim bind-project --label <P00XX> [--cwd <dir>]',
   'new-project':
     'Usage: tim new-project --path <dir> --name <string> [--no-git] [--confirm]',
   'record-commit':
@@ -249,12 +254,15 @@ async function cmdInit() {
   store.close();
 }
 
-async function cmdDoctor() {
+async function cmdDoctor(args: string[] = []) {
+  const { flags } = parseArgs(args);
+  const doBind = flags.bind === 'true';
   const config = loadConfig();
   const store = new TimStore(getDbPath(config));
   const health = await store.health();
   const stats = await store.stats();
   const agents = await store.getAgents();
+  const bindingReport = await collectBindingReport(store);
 
   console.log('═══ TIM Doctor ═══');
   console.log(`DB: ${getDbPath(config)}`);
@@ -273,6 +281,30 @@ async function cmdDoctor() {
     health.issues.forEach(i => console.log(`  - ${i}`));
   }
   console.log(`\nTop tags: ${stats.topTags.slice(0, 5).map(t => `${t.tag}(${t.count})`).join(', ') || 'none'}`);
+
+  console.log('\nBindings:');
+  if (bindingReport.projects.length === 0 && bindingReport.stalePaths.length === 0) {
+    console.log('  (none)');
+  } else {
+    for (const finding of bindingReport.projects) {
+      console.log(formatBindingFindingLine(finding));
+    }
+    for (const stale of bindingReport.stalePaths) {
+      console.log(formatStalePathLine(stale));
+    }
+  }
+
+  if (doBind) {
+    const outcomes = await bindUnboundBindings(store, bindingReport.projects);
+    console.log('\nBind:');
+    if (outcomes.length === 0) {
+      console.log('  (none)');
+    } else {
+      for (const outcome of outcomes) {
+        console.log(formatBindOutcomeLine(outcome));
+      }
+    }
+  }
 
   const hermesDir = path.join(os.homedir(), '.hermes');
   if (fs.existsSync(hermesDir)) {
@@ -387,7 +419,7 @@ async function cmdBindProject(args: string[]) {
   const cwd = flags.cwd ?? process.cwd();
   const label = flags.label;
   if (!label) {
-    console.error('Usage: tim bind-project --label <P00XX> [--cwd <dir>] [--session <id>]');
+    console.error('Usage: tim bind-project --label <P00XX> [--cwd <dir>]');
     process.exit(1);
   }
   const config = loadConfig();
@@ -396,7 +428,6 @@ async function cmdBindProject(args: string[]) {
     const result = await recoverProjectBinding(store, {
       label,
       path: cwd,
-      sessionId: flags.session,
     });
     console.log(result.alreadyBound
       ? `Already bound .tim-project → ${result.label} at ${result.projectPath}`
@@ -830,7 +861,7 @@ async function main() {
       await cmdInit();
       break;
     case 'doctor':
-      await cmdDoctor();
+      await cmdDoctor(rest);
       break;
     case 'stats':
       await cmdStats();

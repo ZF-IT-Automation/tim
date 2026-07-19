@@ -128,3 +128,18 @@ export {
   isUnboundProjectLabel,
   markerWithRepairedProject,
 } from './phantom-recovery.js';
+
+export {
+  bindingDeviceId,
+  classifyProjectPathBinding,
+  collectBindingReport,
+  bindUnboundBindings,
+  formatBindingFindingLine,
+  formatStalePathLine,
+  formatBindOutcomeLine,
+  type ProjectBindingStatus,
+  type ProjectBindingFinding,
+  type StalePathFinding,
+  type BindingReport,
+  type BindOutcome,
+} from './project-binding-health.js';
