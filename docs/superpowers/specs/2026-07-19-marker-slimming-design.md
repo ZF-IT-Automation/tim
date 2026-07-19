@@ -173,6 +173,29 @@ handoff summary to the user — falls out of the report instead of a separate
 command. The step is idempotent because `tim bind-project` is: re-running on
 a bound directory with the same label is a no-op.
 
+## Ongoing binding health: doctor detects, curate repairs
+
+Binding drift is not migration-specific — directories move, clones appear,
+projects get created on other devices. Detection and repair get permanent
+homes, split the same way as the migration step (mechanical check in the
+tool, judgment in the skill):
+
+- **`tim doctor`** gains a binding section. For every `kind=project` entry
+  with `metadata.path`: `unbound` (directory exists on this device, no local
+  marker), `label-mismatch` (marker at that path names a different project),
+  or `path-missing` (directory absent here — informational, expected on
+  synced stores). Doctor only reports; it never writes markers. The same
+  section lists stale `project-path` inventory rows for this device.
+- **`tim-project-curate`** gains a fix-order entry: a doctor `unbound` or
+  `label-mismatch` finding → confirm the directory with the user, then
+  `tim bind-project --label <label> --cwd <dir>`; never hand-write the file,
+  never overwrite a mismatched marker without explicit user decision. Since
+  the skill already opens and closes with `tim_doctor`, the loop closes
+  without new workflow steps.
+- **Session-start hooks stay out of it.** They already self-heal the cwd
+  binding; a cross-project sweep inside a tight-timeout hook would reopen
+  the cross-binding bug class that cwd-only discovery closed.
+
 ## Migration
 
 - No one-shot migration. v1/v2 files keep working read-only forever; they
@@ -211,6 +234,9 @@ a bound directory with the same label is a no-op.
   creates the device's `project-path` inventory row.
 - Runbook and audit skill contain the mandatory binding step and the
   prohibition on hand-written marker files.
+- Doctor binding section: `unbound`, `label-mismatch`, and `path-missing`
+  findings from matching fixtures; doctor performs no filesystem writes; the
+  curate skill's fix order references the findings and `tim bind-project`.
 
 ## Acceptance Criteria
 
