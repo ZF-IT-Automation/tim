@@ -184,8 +184,16 @@ tool, judgment in the skill):
   with `metadata.path`: `unbound` (directory exists on this device, no local
   marker), `label-mismatch` (marker at that path names a different project),
   or `path-missing` (directory absent here — informational, expected on
-  synced stores). Doctor only reports; it never writes markers. The same
-  section lists stale `project-path` inventory rows for this device.
+  synced stores). The default run only reports; it never writes markers. The
+  same section lists stale `project-path` inventory rows for this device.
+- **`tim doctor --bind`** (opt-in) closes exactly the mechanical case: every
+  `unbound` finding — directory exists locally, no local marker, label
+  resolves in the store — is bound through the same code path as
+  `tim bind-project`, including the no-clobber writer and the inventory
+  upsert. `label-mismatch`, `no-path`, and `path-missing` are never touched;
+  they stay report-only regardless of flags. Without the flag, doctor
+  remains strictly read-only, because every runbook and skill wires it in as
+  a harmless preflight check.
 - **`tim-project-curate`** gains a fix-order entry: a doctor `unbound` or
   `label-mismatch` finding → confirm the directory with the user, then
   `tim bind-project --label <label> --cwd <dir>`; never hand-write the file,
@@ -235,8 +243,13 @@ tool, judgment in the skill):
 - Runbook and audit skill contain the mandatory binding step and the
   prohibition on hand-written marker files.
 - Doctor binding section: `unbound`, `label-mismatch`, and `path-missing`
-  findings from matching fixtures; doctor performs no filesystem writes; the
-  curate skill's fix order references the findings and `tim bind-project`.
+  findings from matching fixtures; the default run performs no filesystem
+  writes; the curate skill's fix order references the findings and
+  `tim bind-project`.
+- `tim doctor --bind`: binds every `unbound` fixture and reports it as
+  bound on the next run; leaves `label-mismatch`, `no-path`, and
+  `path-missing` fixtures untouched; a marker appearing between detection
+  and write is not clobbered.
 
 ## Acceptance Criteria
 
@@ -252,4 +265,7 @@ tool, judgment in the skill):
   memory-only, or listed unbound in the handoff summary; the agent gets there
   through `tim bind-project` alone, and no existing marker is ever
   overwritten by migration.
+- `tim doctor` without flags never writes to the filesystem; with `--bind`
+  it closes only `unbound` findings, through the shared `bind-project` code
+  path.
 - All existing marker-protection regression tests pass unchanged in intent.
