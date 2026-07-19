@@ -29,6 +29,7 @@ export {
 export { runMigrations, getCurrentVersion, MIGRATIONS } from './schema.js';
 export {
   SessionManager,
+  resolveCurrentSession,
   ensureProjectForPath,
   type Exchange,
   type ExchangeRole,
@@ -151,3 +152,10 @@ export {
   type ProjectTokenEstimate,
 } from './token-budget.js';
 export { detectProjectVcs } from './vcs.js';
+export {
+  KIND_PROJECT_PATH,
+  DEFAULT_STALE_PATH_MAX_AGE_DAYS,
+  upsertProjectPathRow,
+  listProjectPathRows,
+  isStalePathRow,
+} from './project-path-inventory.js';

@@ -1121,6 +1121,36 @@ export interface EnsureProjectForPathResult {
  * Re-bind to an existing project with the same directory alias. Reversible via
  * irrelevant flag on the project root.
  */
+/** Latest kind=session entry for a project whose metadata.cwd matches. */
+export async function resolveCurrentSession(
+  store: TimStore,
+  projectLabel: string,
+  cwd?: string,
+): Promise<Entry | null> {
+  const project = await store.requireProject(projectLabel);
+  const sessionsSection = await findChildByKind(store, project.id, KIND_SESSIONS_ROOT);
+  if (!sessionsSection) return null;
+
+  const sessions = await store.getChildByKind(sessionsSection.id, KIND_SESSION);
+  if (sessions.length === 0) return null;
+
+  let candidates = sessions;
+  if (cwd !== undefined) {
+    const resolvedCwd = path.resolve(cwd);
+    candidates = sessions.filter(
+      s =>
+        typeof s.metadata.cwd === 'string' &&
+        path.resolve(s.metadata.cwd) === resolvedCwd,
+    );
+    if (candidates.length === 0) return null;
+  }
+
+  candidates.sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+  );
+  return candidates[0] ?? null;
+}
+
 export async function ensureProjectForPath(
   store: TimStore,
   cwd: string,
