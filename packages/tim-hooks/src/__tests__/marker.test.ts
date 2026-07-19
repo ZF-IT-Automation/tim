@@ -1,13 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as markerModule from '../marker.js';
 import {
   readMarker,
   writeMarker,
   writeMarkerAtomic,
   writeMarkerExclusive,
   ExclusiveMarkerConflictError,
-  rotateMarkerSession,
   detectProject,
   discoverMarker,
   findMarker,
@@ -15,15 +15,16 @@ import {
   DEFAULT_MARKER_DISCOVERY_POLICY,
   syncNearestProjectMarker,
   buildLoadDirective,
-  reconcileMarker,
   acquireLock,
   releaseLock,
+  summarizerLockPath,
   validateMarkerAgainstStore,
   validateProjectLabel,
   isUnsafeMarkerDir,
   INBOX_LABEL,
+  MARKER_VERSION,
 } from '../marker.js';
-import { TimStore, SessionManager } from 'tim-store';
+import { TimStore } from 'tim-store';
 
 const markerIoFaults = vi.hoisted(() => ({
   uuid: null as string | null,
@@ -59,6 +60,10 @@ vi.mock('fs', async (importOriginal) => {
 /** Outside ~ so findMarker walk-up does not hit real ~/.tim-project */
 const TEST_ROOT = '/tmp/tim-test-runs';
 
+function markerOnDisk(dir: string): Record<string, unknown> {
+  return JSON.parse(fs.readFileSync(path.join(dir, '.tim-project'), 'utf8'));
+}
+
 describe('marker', () => {
   let dir: string;
 
@@ -71,25 +76,19 @@ describe('marker', () => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
-  it('round-trips a marker file', () => {
-    writeMarker(dir, {
-      project: 'P0001',
-      session: 's1',
-      exchanges: 3,
-      batch_size: 5,
-      batches_summarized: 0,
-    });
-    expect(readMarker(dir)).toMatchObject({ project: 'P0001', session: 's1', exchanges: 3 });
+  it('rotateMarkerSession and reconcileMarker are removed from the module', () => {
+    expect(markerModule).not.toHaveProperty('rotateMarkerSession');
+    expect(markerModule).not.toHaveProperty('reconcileMarker');
+  });
+
+  it('round-trips a v3 marker file', () => {
+    writeMarker(dir, { project: 'P0001' });
+    expect(readMarker(dir)).toEqual({ version: 3, project: 'P0001' });
+    expect(markerOnDisk(dir)).toEqual({ version: 3, project: 'P0001' });
   });
 
   it('detectProject prefers the .tim-project marker', () => {
-    writeMarker(dir, {
-      project: 'P0009',
-      session: 's',
-      exchanges: 0,
-      batch_size: 5,
-      batches_summarized: 0,
-    });
+    writeMarker(dir, { project: 'P0009' });
     expect(detectProject(dir)?.project).toBe('P0009');
   });
 
@@ -99,19 +98,12 @@ describe('marker', () => {
 
   it('readMarker falls back to tim.json when no .tim-project exists', () => {
     fs.writeFileSync(path.join(dir, 'tim.json'), JSON.stringify({ project: 'P0063' }));
-    expect(readMarker(dir)?.project).toBe('P0063');
-    expect(readMarker(dir)?.exchanges).toBe(0);
+    expect(readMarker(dir)).toEqual({ version: 3, project: 'P0063' });
   });
 
   it('readMarker prefers .tim-project over tim.json', () => {
     fs.writeFileSync(path.join(dir, 'tim.json'), JSON.stringify({ project: 'P0062' }));
-    writeMarker(dir, {
-      project: 'P0063',
-      session: 's',
-      exchanges: 1,
-      batch_size: 5,
-      batches_summarized: 0,
-    });
+    writeMarker(dir, { project: 'P0063' });
     expect(readMarker(dir)?.project).toBe('P0063');
   });
 
@@ -122,62 +114,42 @@ describe('marker', () => {
     expect(findMarker(sub, { maxRoot: dir, walkUp: true })?.marker.project).toBe('P0063');
   });
 
-  it('reconcileMarker overwrites cached counters with DB-derived values', async () => {
-    const store = new TimStore(':memory:');
-    const sessions = new SessionManager(store);
-    await store.createProject('P0002');
-    await sessions.startProjectSession({
-      sessionId: 'sm',
-      projectId: 'P0002',
-      agentName: 'a',
-      cwd: dir,
-      harness: 't',
-      batchSize: 2,
-    });
-    await sessions.logExchange('sm', [
-      { role: 'user', content: 'q' },
-      { role: 'agent', content: 'a' },
-    ]);
-    writeMarker(dir, {
-      project: 'P0002',
-      session: 'sm',
-      exchanges: 99,
-      batch_size: 2,
-      batches_summarized: 7,
-    });
-
-    const reconciled = await reconcileMarker(store, dir);
-    expect(reconciled.exchanges).toBe(1);
-    expect(reconciled.batches_summarized).toBe(0);
-    store.close();
-  });
-
   it('acquireLock single-flights: second acquire fails while the lock is fresh', () => {
     expect(acquireLock(dir)).toBe(true);
+    expect(fs.existsSync(summarizerLockPath(dir))).toBe(true);
     expect(acquireLock(dir)).toBe(false);
     releaseLock(dir);
     expect(acquireLock(dir)).toBe(true);
   });
 
+  it('acquireLock ignores a leftover .tim-project.lock at cwd root', () => {
+    fs.writeFileSync(
+      path.join(dir, '.tim-project.lock'),
+      JSON.stringify({ pid: process.pid, ts: Date.now() }),
+    );
+    expect(acquireLock(dir)).toBe(true);
+    expect(fs.existsSync(summarizerLockPath(dir))).toBe(true);
+  });
+
   it('findMarker returns the marker in the cwd itself', () => {
-    writeMarker(dir, { project: 'P0001', session: 's', exchanges: 0, batch_size: 5, batches_summarized: 0 });
+    writeMarker(dir, { project: 'P0001' });
     const found = findMarker(dir, { maxRoot: dir });
     expect(found?.marker.project).toBe('P0001');
     expect(found?.dir).toBe(fs.realpathSync(dir));
   });
 
   it('findMarker walks up to a parent marker', () => {
-    writeMarker(dir, { project: 'P0002', session: 's', exchanges: 0, batch_size: 5, batches_summarized: 0 });
+    writeMarker(dir, { project: 'P0002' });
     const sub = path.join(dir, 'a', 'b', 'c');
     fs.mkdirSync(sub, { recursive: true });
     expect(findMarker(sub, { maxRoot: dir, walkUp: true })?.marker.project).toBe('P0002');
   });
 
   it('findMarker: nearest marker wins over an ancestor', () => {
-    writeMarker(dir, { project: 'P0002', session: 's', exchanges: 0, batch_size: 5, batches_summarized: 0 });
+    writeMarker(dir, { project: 'P0002' });
     const sub = path.join(dir, 'child');
     fs.mkdirSync(sub, { recursive: true });
-    writeMarker(sub, { project: 'P0003', session: 's', exchanges: 0, batch_size: 5, batches_summarized: 0 });
+    writeMarker(sub, { project: 'P0003' });
     expect(findMarker(sub, { maxRoot: dir, walkUp: true })?.marker.project).toBe('P0003');
   });
 
@@ -186,20 +158,8 @@ describe('marker', () => {
     const repo = path.join(fakeHome, 'projects', 'tim');
     const sub = path.join(repo, 'packages');
     fs.mkdirSync(sub, { recursive: true });
-    writeMarker(fakeHome, {
-      project: 'P0099',
-      session: 's',
-      exchanges: 0,
-      batch_size: 5,
-      batches_summarized: 0,
-    });
-    writeMarker(repo, {
-      project: 'P0063',
-      session: 's',
-      exchanges: 0,
-      batch_size: 5,
-      batches_summarized: 0,
-    });
+    writeMarker(fakeHome, { project: 'P0099' });
+    writeMarker(repo, { project: 'P0063' });
     const found = findMarker(sub, { maxRoot: fakeHome, walkUp: true });
     expect(found?.marker.project).toBe('P0063');
     expect(found?.dir).toBe(fs.realpathSync(repo));
@@ -212,7 +172,7 @@ describe('marker', () => {
   });
 
   it('findMarker stops at a corrupt nearest marker (does not silently use an ancestor)', () => {
-    writeMarker(dir, { project: 'P0002', session: 's', exchanges: 0, batch_size: 5, batches_summarized: 0 });
+    writeMarker(dir, { project: 'P0002' });
     const sub = path.join(dir, 'child');
     fs.mkdirSync(sub, { recursive: true });
     fs.writeFileSync(path.join(sub, '.tim-project'), '{ not valid json');
@@ -220,14 +180,14 @@ describe('marker', () => {
   });
 
   it('findMarker returns null for parent marker when walkUp is not set (cwd-only default)', () => {
-    writeMarker(dir, { project: 'P0002', session: 's', exchanges: 0, batch_size: 5, batches_summarized: 0 });
+    writeMarker(dir, { project: 'P0002' });
     const sub = path.join(dir, 'child');
     fs.mkdirSync(sub, { recursive: true });
     expect(findMarker(sub)).toBeNull();
   });
 
   it('findMarker returns cwd marker without walkUp option', () => {
-    writeMarker(dir, { project: 'P0001', session: 's', exchanges: 0, batch_size: 5, batches_summarized: 0 });
+    writeMarker(dir, { project: 'P0001' });
     expect(findMarker(dir)?.marker.project).toBe('P0001');
   });
 
@@ -248,26 +208,14 @@ describe('marker', () => {
     });
 
     it('skips home ancestor when allowHome is false', () => {
-      writeMarker(homeDir, {
-        project: 'P0099',
-        session: 's',
-        exchanges: 0,
-        batch_size: 5,
-        batches_summarized: 0,
-      });
+      writeMarker(homeDir, { project: 'P0099' });
       const sub = path.join(homeDir, 'projects', 'repo');
       fs.mkdirSync(sub, { recursive: true });
       expect(findMarker(sub, { maxRoot: homeDir, walkUp: true, allowHome: false })).toBeNull();
     });
 
     it('returns home ancestor when allowHome is true', () => {
-      writeMarker(homeDir, {
-        project: 'P0099',
-        session: 's',
-        exchanges: 0,
-        batch_size: 5,
-        batches_summarized: 0,
-      });
+      writeMarker(homeDir, { project: 'P0099' });
       const sub = path.join(homeDir, 'projects', 'repo');
       fs.mkdirSync(sub, { recursive: true });
       expect(findMarker(sub, { maxRoot: homeDir, walkUp: true, allowHome: true })?.marker.project).toBe(
@@ -276,25 +224,11 @@ describe('marker', () => {
     });
 
     it('returns home marker when cwd is home even if allowHome is false', () => {
-      writeMarker(homeDir, {
-        project: 'P0099',
-        session: 's',
-        exchanges: 0,
-        batch_size: 5,
-        batches_summarized: 0,
-      });
+      writeMarker(homeDir, { project: 'P0099' });
       expect(findMarker(homeDir, { walkUp: true, allowHome: false })?.marker.project).toBe('P0099');
     });
   });
 
-  // Regression: a hand-edited or stale .tim-project with a malformed
-  // project label (e.g. "notalabel", "12345", or wrong digit count)
-  // must not be treated as authoritative. The original bug was a P9999
-  // label silently binding the session to a non-existent project
-  // (TIM's Inbox-fallback is P0000, never P9999). The new whitelist
-  // rejects any label that doesn't match the canonical ^[PLEN]\d{4}$
-  // shape so the resolution chain falls back to ~/.tim/active-project
-  // or INBOX_PROJECT_LABEL (P0000).
   it.each(['notalabel', '12345', 'P12345', 'P', 'P0', 'p0062', 'P006', 'P0062X'])(
     'readMarker returns null for malformed project label %s',
     (bad) => {
@@ -359,8 +293,6 @@ describe('marker', () => {
     );
     const sub = path.join(dir, 'a', 'b');
     fs.mkdirSync(sub, { recursive: true });
-    // findMarker must reject the corrupt nearest marker — same
-    // contract as for unparseable JSON.
     expect(findMarker(sub, { maxRoot: dir, walkUp: true })).toBeNull();
   });
 
@@ -378,43 +310,23 @@ describe('marker', () => {
   });
 
   it('syncNearestProjectMarker overwrites project on nearest marker', () => {
-    writeMarker(dir, {
-      project: 'P0062',
-      session: 'bg_old',
-      exchanges: 0,
-      batch_size: 5,
-      batches_summarized: 0,
-    });
+    writeMarker(dir, { project: 'P0062' });
     const sub = path.join(dir, 'repo');
     fs.mkdirSync(sub, { recursive: true });
-    writeMarker(sub, {
-      project: 'P0062',
-      session: 'bg_old',
-      exchanges: 0,
-      batch_size: 5,
-      batches_summarized: 0,
-    });
+    writeMarker(sub, { project: 'P0062' });
 
     expect(
       syncNearestProjectMarker(sub, 'P0063', {
-        sessionId: '20260602_155620_ee0929',
         findOptions: { maxRoot: dir },
       }),
     ).toBe(true);
-    expect(readMarker(sub)?.project).toBe('P0063');
-    expect(readMarker(sub)?.session).toBe('20260602_155620_ee0929');
-    expect(readMarker(dir)?.project).toBe('P0062');
+    expect(readMarker(sub)).toEqual({ version: 3, project: 'P0063' });
+    expect(readMarker(dir)).toEqual({ version: 3, project: 'P0062' });
   });
 
   it('writeMarker refuses to write P9999 (invalid label — 5 digits)', () => {
     expect(validateProjectLabel('P9999')).toBe(false);
-    writeMarker(dir, {
-      project: 'P9999',
-      session: 's',
-      exchanges: 0,
-      batch_size: 5,
-      batches_summarized: 0,
-    });
+    writeMarker(dir, { project: 'P9999' });
     const markerFile = path.join(dir, '.tim-project');
     const exists = fs.existsSync(markerFile);
     if (exists) {
@@ -424,13 +336,7 @@ describe('marker', () => {
   });
 
   it('syncNearestProjectMarker with P9999 returns false and does not write', () => {
-    writeMarker(dir, {
-      project: 'P0062',
-      session: 'bg_old',
-      exchanges: 0,
-      batch_size: 5,
-      batches_summarized: 0,
-    });
+    writeMarker(dir, { project: 'P0062' });
     const result = syncNearestProjectMarker(dir, 'P9999', {
       findOptions: { maxRoot: dir },
     });
@@ -439,51 +345,48 @@ describe('marker', () => {
   });
 });
 
-describe('marker v2 schema', () => {
+describe('marker v3 schema', () => {
   let dir: string;
 
   beforeEach(() => {
     fs.mkdirSync(TEST_ROOT, { recursive: true });
-    dir = fs.mkdtempSync(path.join(TEST_ROOT, 'marker-v2-'));
+    dir = fs.mkdtempSync(path.join(TEST_ROOT, 'marker-v3-'));
   });
 
   afterEach(() => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
-  it('writeMarker stamps the current version on disk', () => {
-    writeMarker(dir, {
-      project: 'P0001',
-      session: 's1',
-      exchanges: 0,
-      batch_size: 5,
-      batches_summarized: 0,
-    });
-    const onDisk = JSON.parse(
-      fs.readFileSync(path.join(dir, '.tim-project'), 'utf8'),
-    );
-    expect(onDisk.version).toBe(2);
+  it('writeMarker stamps the current version on disk with only project + version', () => {
+    writeMarker(dir, { project: 'P0001' });
+    expect(markerOnDisk(dir)).toEqual({ version: 3, project: 'P0001' });
+    expect(Object.keys(markerOnDisk(dir))).toEqual(['version', 'project']);
   });
 
-  it('readMarker returns the v2 shape (with version: 2)', () => {
-    writeMarker(dir, {
-      project: 'P0001',
-      session: 's1',
-      exchanges: 3,
-      batch_size: 5,
-      batches_summarized: 1,
-    });
+  it('readMarker returns the v3 shape', () => {
+    writeMarker(dir, { project: 'P0001' });
     const m = readMarker(dir);
-    expect(m?.version).toBe(2);
-    expect(m?.project).toBe('P0001');
-    expect(m?.session).toBe('s1');
-    expect(m?.exchanges).toBe(3);
-    expect(m?.batch_size).toBe(5);
-    expect(m?.batches_summarized).toBe(1);
+    expect(m).toEqual({ version: 3, project: 'P0001' });
+    expect(MARKER_VERSION).toBe(3);
   });
 
-  it('readMarker auto-upgrades a v1 file (no version field) to v2 in memory', () => {
-    // Hand-write a v1 file on disk — no `version` field, plus legacy cruft.
+  it('readMarker normalizes a v2 file to v3, ignoring runtime fields', () => {
+    fs.writeFileSync(
+      path.join(dir, '.tim-project'),
+      JSON.stringify({
+        version: 2,
+        project: 'P0063',
+        session: 'bg',
+        exchanges: 42,
+        batch_size: 5,
+        batches_summarized: 2,
+      }, null, 2),
+    );
+
+    expect(readMarker(dir)).toEqual({ version: 3, project: 'P0063' });
+  });
+
+  it('readMarker normalizes a v1 file (no version field) to v3, ignoring legacy fields', () => {
     fs.writeFileSync(
       path.join(dir, '.tim-project'),
       JSON.stringify({
@@ -497,18 +400,10 @@ describe('marker v2 schema', () => {
       }, null, 2),
     );
 
-    const m = readMarker(dir);
-    expect(m).toEqual({
-      version: 2,
-      project: 'P0062',
-      session: 'bg',
-      exchanges: 42,
-      batch_size: 5,
-      batches_summarized: 2,
-    });
+    expect(readMarker(dir)).toEqual({ version: 3, project: 'P0062' });
   });
 
-  it('readMarker does NOT rewrite the v1 file on read (auto-upgrade happens on next write)', () => {
+  it('readMarker does NOT rewrite the v1 file on read', () => {
     fs.writeFileSync(
       path.join(dir, '.tim-project'),
       JSON.stringify({
@@ -521,16 +416,14 @@ describe('marker v2 schema', () => {
       }, null, 2),
     );
 
-    readMarker(dir); // should not touch the file
+    readMarker(dir);
 
-    const onDisk = JSON.parse(
-      fs.readFileSync(path.join(dir, '.tim-project'), 'utf8'),
-    );
+    const onDisk = markerOnDisk(dir);
     expect(onDisk.version).toBeUndefined();
     expect(onDisk.route_exchanges_to).toBe('P0063');
   });
 
-  it('the first write to a v1 file upgrades it to v2 on disk', () => {
+  it('the first write to a v1 file upgrades it to v3 on disk', () => {
     fs.writeFileSync(
       path.join(dir, '.tim-project'),
       JSON.stringify({
@@ -544,93 +437,29 @@ describe('marker v2 schema', () => {
       }, null, 2),
     );
 
-    writeMarker(dir, {
-      project: 'P0062',
-      session: 'bg',
-      exchanges: 50,
-      batch_size: 5,
-      batches_summarized: 2,
-    });
+    writeMarker(dir, { project: 'P0062' });
 
-    const onDisk = JSON.parse(
-      fs.readFileSync(path.join(dir, '.tim-project'), 'utf8'),
-    );
-    expect(onDisk.version).toBe(2);
-    expect(onDisk.exchanges).toBe(50);
-    expect(onDisk.route_exchanges_to).toBeUndefined();
-    expect(onDisk.sessions).toBeUndefined();
+    expect(markerOnDisk(dir)).toEqual({ version: 3, project: 'P0062' });
   });
 
-  it('readMarker strips legacy fields even if version is 1 (corrupt-ish v1)', () => {
-    fs.writeFileSync(
-      path.join(dir, '.tim-project'),
-      JSON.stringify({
-        version: 1,
-        project: 'P0001',
-        session: 's',
-        exchanges: 0,
-        batch_size: 5,
-        batches_summarized: 0,
-        route_exchanges_to: 'X',
-        sessions: { X: 'y' },
-      }, null, 2),
-    );
-    const m = readMarker(dir);
-    expect(m?.version).toBe(2);
-    expect(m).not.toHaveProperty('route_exchanges_to');
-    expect(m).not.toHaveProperty('sessions');
-  });
-
-  it('readMarker returns null for a marker missing required numeric fields', () => {
+  it('readMarker accepts v2 files missing runtime numeric fields (label-only read)', () => {
     fs.writeFileSync(
       path.join(dir, '.tim-project'),
       JSON.stringify({
         project: 'P0001',
-        session: 's',
-        // exchanges missing
-        batch_size: 5,
-        batches_summarized: 0,
+        version: 2,
       }, null, 2),
     );
-    expect(readMarker(dir)).toBeNull();
-  });
-
-  it('readMarker returns null for a marker with non-numeric counters', () => {
-    fs.writeFileSync(
-      path.join(dir, '.tim-project'),
-      JSON.stringify({
-        project: 'P0001',
-        session: 's',
-        exchanges: 'not a number',
-        batch_size: 5,
-        batches_summarized: 0,
-      }, null, 2),
-    );
-    expect(readMarker(dir)).toBeNull();
+    expect(readMarker(dir)).toEqual({ version: 3, project: 'P0001' });
   });
 
   it('ProjectMarkerInput accepts a marker without version (writer fills it in)', () => {
-    // Type-level test: this line must compile.
-    const input: Parameters<typeof writeMarker>[1] = {
-      project: 'P0001',
-      session: 's',
-      exchanges: 0,
-      batch_size: 5,
-      batches_summarized: 0,
-    };
+    const input: Parameters<typeof writeMarker>[1] = { project: 'P0001' };
     writeMarker(dir, input);
-    expect(readMarker(dir)?.version).toBe(2);
+    expect(readMarker(dir)?.version).toBe(3);
   });
 });
 
-// ─── DB-existence validation (P9999 defense-in-depth) ────────────────────
-//
-// The pattern check in normalizeMarker catches "P9", "P", "notalabel",
-// etc. — but a label like "P9999" matches the pattern yet never
-// corresponds to a real TIM project. The P9999 bug bound the statusline
-// to a non-existent project because the on-disk marker was trusted.
-// `validateMarkerAgainstStore` closes that gap: the marker is only
-// accepted when the project label resolves to a real entry in the DB.
 describe('validateMarkerAgainstStore', () => {
   let store: TimStore;
   beforeEach(() => {
@@ -642,65 +471,30 @@ describe('validateMarkerAgainstStore', () => {
 
   it('rejects a pattern-valid label that has no matching DB entry (P9999 case)', async () => {
     await store.createProject('P0062');
-    const bogus = {
-      version: 2 as const,
-      project: 'P9999',
-      session: 's',
-      exchanges: 0,
-      batch_size: 5,
-      batches_summarized: 0,
-    };
+    const bogus = { version: 3 as const, project: 'P9999' };
     expect(await validateMarkerAgainstStore(bogus, store)).toBeNull();
   });
 
   it('accepts a label that resolves to a real project, returning the canonical form', async () => {
     await store.createProject('P0062');
-    const ok = {
-      version: 2 as const,
-      project: 'P0062',
-      session: 's',
-      exchanges: 0,
-      batch_size: 5,
-      batches_summarized: 0,
-    };
+    const ok = { version: 3 as const, project: 'P0062' };
     const validated = await validateMarkerAgainstStore(ok, store);
     expect(validated?.project).toBe('P0062');
   });
 
   it('accepts the Inbox (P0000) even when it is not yet materialized in the DB', async () => {
-    // P0000 is exempt: tim-store.ensureInboxProject() creates it lazily,
-    // and session-start should never block on that materialization just
-    // to validate a marker.
-    const inbox = {
-      version: 2 as const,
-      project: INBOX_LABEL,
-      session: 's',
-      exchanges: 0,
-      batch_size: 5,
-      batches_summarized: 0,
-    };
+    const inbox = { version: 3 as const, project: INBOX_LABEL };
     const validated = await validateMarkerAgainstStore(inbox, store);
     expect(validated?.project).toBe('P0000');
   });
 
   it('fails open (accepts) when the DB lookup itself throws — pattern check still gates', async () => {
-    const ok = {
-      version: 2 as const,
-      project: 'P0062',
-      session: 's',
-      exchanges: 0,
-      batch_size: 5,
-      batches_summarized: 0,
-    };
+    const ok = { version: 3 as const, project: 'P0062' };
     const broken = {
       resolveProjectLabel: () => {
         throw new Error('db locked');
       },
     } as unknown as Pick<TimStore, 'resolveProjectLabel'>;
-    // The marker is returned unchanged — we never reject a label that
-    // already passed the pattern check just because the DB is briefly
-    // unavailable. The pattern check is the strict gate; the DB
-    // existence check is the soft gate.
     expect(await validateMarkerAgainstStore(ok, broken)).toEqual(ok);
   });
 });
@@ -718,7 +512,7 @@ describe('discoverMarker policy', () => {
   });
 
   it('cwd-only policy does not walk to parent', () => {
-    writeMarker(dir, { project: 'P0002', session: 's', exchanges: 0, batch_size: 5, batches_summarized: 0 });
+    writeMarker(dir, { project: 'P0002' });
     const sub = path.join(dir, 'sub');
     fs.mkdirSync(sub, { recursive: true });
     expect(discoverMarker(sub, CWD_ONLY_MARKER_DISCOVERY_POLICY)).toBeNull();
@@ -727,7 +521,7 @@ describe('discoverMarker policy', () => {
   });
 
   it('default policy walks up like syncNearestProjectMarker', () => {
-    writeMarker(dir, { project: 'P0002', session: 's', exchanges: 0, batch_size: 5, batches_summarized: 0 });
+    writeMarker(dir, { project: 'P0002' });
     const sub = path.join(dir, 'sub');
     fs.mkdirSync(sub, { recursive: true });
     expect(discoverMarker(sub, { ...DEFAULT_MARKER_DISCOVERY_POLICY, maxRoot: dir })?.marker.project)
@@ -755,60 +549,29 @@ describe('marker atomic writes', () => {
 
   it('writeMarkerAtomic never leaves torn JSON on rapid rewrites', () => {
     const p = path.join(dir, '.tim-project');
-    writeMarker(dir, { project: 'P0001', session: 's0', exchanges: 0, batch_size: 5, batches_summarized: 0 });
+    writeMarker(dir, { project: 'P0001' });
     for (let i = 0; i < 200; i++) {
-      writeMarkerAtomic(p, JSON.stringify({
-        version: 2,
-        project: 'P0001',
-        session: `s${i}`,
-        exchanges: i,
-        batch_size: 5,
-        batches_summarized: 0,
-      }, null, 2));
+      writeMarkerAtomic(p, JSON.stringify({ version: 3, project: 'P0001' }, null, 2));
       const raw = fs.readFileSync(p, 'utf8');
       expect(() => JSON.parse(raw)).not.toThrow();
     }
   });
 
-  it('writeMarkerExclusive publishes a complete v2 marker without temp residue', () => {
-    const marker = writeMarkerExclusive(dir, {
-      project: 'P0042',
-      session: 'exclusive-session',
-      exchanges: 3,
-      batch_size: 5,
-      batches_summarized: 1,
-    });
+  it('writeMarkerExclusive publishes a complete v3 marker without temp residue', () => {
+    const marker = writeMarkerExclusive(dir, { project: 'P0042' });
 
-    expect(marker).toEqual({
-      version: 2,
-      project: 'P0042',
-      session: 'exclusive-session',
-      exchanges: 3,
-      batch_size: 5,
-      batches_summarized: 1,
-    });
+    expect(marker).toEqual({ version: 3, project: 'P0042' });
     expect(readMarker(dir)).toEqual(marker);
+    expect(markerOnDisk(dir)).toEqual({ version: 3, project: 'P0042' });
     expect(fs.readdirSync(dir).filter((name) => name.includes('.tmp.'))).toEqual([]);
   });
 
   it('writeMarkerExclusive preserves an existing winner and removes its temp file', () => {
-    writeMarkerExclusive(dir, {
-      project: 'P0043',
-      session: 'winner-session',
-      exchanges: 7,
-      batch_size: 5,
-      batches_summarized: 1,
-    });
+    writeMarkerExclusive(dir, { project: 'P0043' });
     const markerFile = path.join(dir, '.tim-project');
     const winnerBytes = fs.readFileSync(markerFile);
 
-    expect(() => writeMarkerExclusive(dir, {
-      project: 'P0042',
-      session: 'loser-session',
-      exchanges: 0,
-      batch_size: 5,
-      batches_summarized: 0,
-    })).toThrow(ExclusiveMarkerConflictError);
+    expect(() => writeMarkerExclusive(dir, { project: 'P0042' })).toThrow(ExclusiveMarkerConflictError);
     expect(fs.readFileSync(markerFile)).toEqual(winnerBytes);
     expect(fs.readdirSync(dir).filter((name) => name.includes('.tmp.'))).toEqual([]);
   });
@@ -820,13 +583,7 @@ describe('marker atomic writes', () => {
     const collisionBytes = Buffer.from('owned by another publisher');
     fs.writeFileSync(tempFile, collisionBytes);
 
-    expect(() => writeMarkerExclusive(dir, {
-      project: 'P0042',
-      session: 'collision-session',
-      exchanges: 0,
-      batch_size: 5,
-      batches_summarized: 0,
-    })).toThrow(expect.objectContaining({ code: 'EEXIST' }));
+    expect(() => writeMarkerExclusive(dir, { project: 'P0042' })).toThrow(expect.objectContaining({ code: 'EEXIST' }));
     expect(fs.readFileSync(tempFile)).toEqual(collisionBytes);
     expect(fs.existsSync(markerFile)).toBe(false);
   });
@@ -838,13 +595,7 @@ describe('marker atomic writes', () => {
     const markerFile = path.join(dir, '.tim-project');
     const tempFile = `${markerFile}.tmp.${process.pid}.${markerIoFaults.uuid}`;
 
-    expect(() => writeMarkerExclusive(dir, {
-      project: 'P0042',
-      session: 'link-error-session',
-      exchanges: 0,
-      batch_size: 5,
-      batches_summarized: 0,
-    })).toThrow(linkError);
+    expect(() => writeMarkerExclusive(dir, { project: 'P0042' })).toThrow(linkError);
     expect(fs.existsSync(tempFile)).toBe(false);
     expect(fs.existsSync(markerFile)).toBe(false);
   });
@@ -855,37 +606,18 @@ describe('marker atomic writes', () => {
     markerIoFaults.linkError = linkError;
     markerIoFaults.cleanupError = new Error('cleanup failed');
 
-    expect(() => writeMarkerExclusive(dir, {
-      project: 'P0042',
-      session: 'cleanup-error-session',
-      exchanges: 0,
-      batch_size: 5,
-      batches_summarized: 0,
-    })).toThrow(linkError);
+    expect(() => writeMarkerExclusive(dir, { project: 'P0042' })).toThrow(linkError);
     expect(fs.existsSync(path.join(dir, '.tim-project'))).toBe(false);
-  });
-
-  it('rotateMarkerSession updates session id atomically', () => {
-    writeMarker(dir, { project: 'P0001', session: 'old', exchanges: 0, batch_size: 5, batches_summarized: 0 });
-    rotateMarkerSession(dir, 'new-session');
-    expect(readMarker(dir)?.session).toBe('new-session');
   });
 });
 
 describe('unsafe marker directories (tmpdir / filesystem root)', () => {
-  const MARKER = {
-    project: 'P0001',
-    session: 's1',
-    exchanges: 0,
-    batch_size: 5,
-    batches_summarized: 0,
-  };
+  const MARKER = { project: 'P0001' };
   let fakeTmp: string;
   const origTmpdir = process.env.TMPDIR;
 
   beforeEach(() => {
     fs.mkdirSync(TEST_ROOT, { recursive: true });
-    // Fake tmpdir via TMPDIR so tests never touch a real /tmp/.tim-project.
     fakeTmp = fs.mkdtempSync(path.join(TEST_ROOT, 'fake-tmp-'));
     process.env.TMPDIR = fakeTmp;
   });
@@ -909,15 +641,8 @@ describe('unsafe marker directories (tmpdir / filesystem root)', () => {
     expect(fs.existsSync('/.tim-project')).toBe(false);
   });
 
-  it('rotateMarkerSession leaves a tmpdir marker untouched', () => {
-    const p = path.join(fakeTmp, '.tim-project');
-    writeMarkerAtomic(p, JSON.stringify({ version: 2, ...MARKER }));
-    rotateMarkerSession(fakeTmp, 'hijack');
-    expect((JSON.parse(fs.readFileSync(p, 'utf8')) as { session: string }).session).toBe('s1');
-  });
-
   it('findMarker walk-up skips a tmpdir marker — markerless fallback', () => {
-    writeMarkerAtomic(path.join(fakeTmp, '.tim-project'), JSON.stringify({ version: 2, ...MARKER }));
+    writeMarkerAtomic(path.join(fakeTmp, '.tim-project'), JSON.stringify({ version: 3, ...MARKER }));
     const sub = path.join(fakeTmp, 'a', 'b');
     fs.mkdirSync(sub, { recursive: true });
     expect(findMarker(sub, { walkUp: true, maxRoot: fakeTmp })).toBeNull();
@@ -925,10 +650,10 @@ describe('unsafe marker directories (tmpdir / filesystem root)', () => {
   });
 
   it('walk-up still finds a legit marker in a tmpdir subdirectory', () => {
-    writeMarkerAtomic(path.join(fakeTmp, '.tim-project'), JSON.stringify({ version: 2, ...MARKER }));
+    writeMarkerAtomic(path.join(fakeTmp, '.tim-project'), JSON.stringify({ version: 3, ...MARKER }));
     const proj = path.join(fakeTmp, 'proj');
     fs.mkdirSync(path.join(proj, 'src'), { recursive: true });
-    writeMarkerAtomic(path.join(proj, '.tim-project'), JSON.stringify({ version: 2, ...MARKER, project: 'P0002' }));
+    writeMarkerAtomic(path.join(proj, '.tim-project'), JSON.stringify({ version: 3, project: 'P0002' }));
     const found = findMarker(path.join(proj, 'src'), { walkUp: true, maxRoot: fakeTmp });
     expect(found?.marker.project).toBe('P0002');
     expect(found?.dir).toBe(proj);
