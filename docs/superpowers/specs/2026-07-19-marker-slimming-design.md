@@ -63,6 +63,9 @@ A per-device path *inventory* in the store is still useful as information
    survive row-level LWW sync.
 5. Preserve every existing corruption defense (label pattern, P9999 DB gate,
    unsafe-dir refusal) on the slimmed schema.
+6. Give the hmem→TIM migration a binding step: after import, write a marker
+   into each imported project's directory where that is safely possible, and
+   report the projects where it is not.
 
 ## Non-Goals
 
@@ -132,6 +135,42 @@ One child node per (device, path) under the project root:
   skipping the upsert when cwd sits under a recognized throwaway root (same
   unsafe-dir spirit) and by doctor's staleness flagging. No automatic deletion.
 
+## hmem import: binding markers for imported projects
+
+The hmem importer (`tim-migrate/src/import.ts`) carries no filesystem
+information of its own — it marks P-prefix roots as `kind=project` and copies
+source metadata through. An imported project is therefore database-only until
+someone binds a directory by hand, which recreates exactly the unbound-project
+failure mode the 2026-07-16 design closed for creation.
+
+Add a post-import binding pass, run as a step of the `tim migrate-from-hmem`
+wizard and available standalone as `tim bind-imported-projects [--dry-run]`:
+
+1. Enumerate `kind=project` entries (Inbox excluded). The candidate path is
+   the root node's `metadata.path` — present when the hmem source carried it
+   or when it was backfilled later. There is no path guessing; a project
+   without `metadata.path` is reported, never bound.
+2. A candidate binds only when all of these hold on the current device: the
+   path exists and is a directory, it is not an unsafe marker dir
+   (`isUnsafeMarkerDir`), and it has no local `.tim-project` of its own. The
+   marker is written with the v3 exclusive no-clobber writer.
+3. Every project gets one report line: `bound`, `already-bound` (existing
+   marker, same label), `conflict` (existing marker, different label —
+   reported with both labels, resolved manually, never overwritten),
+   `no-path` (no `metadata.path`), or `path-missing` (directory absent on
+   this device — expected when migrating a synced store on a second machine).
+4. The wizard shows the dry-run table and asks once before writing; the
+   standalone command defaults to `--dry-run` semantics matching `tim import`.
+5. A successful bind also upserts the current device's `project-path`
+   inventory row, so migration seeds the inventory.
+
+The pass is idempotent: re-running it finds `already-bound` everywhere it
+succeeded. For `no-path` and `path-missing` projects, the migration runbook
+gains a closing step directing the agent to ask the user for the directory
+and run `tim bind-project --label <label> --cwd <dir>`, which also backfills
+`metadata.path`. The importer itself stays filesystem-free; all binding logic
+lives in the post-import pass.
+
 ## Migration
 
 - No one-shot migration. v1/v2 files keep working read-only forever; they
@@ -162,6 +201,11 @@ One child node per (device, path) under the project root:
   provably never read `project-path` nodes.
 - P9999 gate, unsafe-dir refusal, and corrupt-shadowing behavior all hold on
   the v3 schema.
+- Binding pass: each report outcome (`bound`, `already-bound`, `conflict`,
+  `no-path`, `path-missing`) is produced from a matching fixture; `conflict`
+  leaves the existing marker byte-identical; dry-run writes nothing; a second
+  run reports `already-bound` for everything previously bound; a successful
+  bind creates the device's `project-path` inventory row.
 
 ## Acceptance Criteria
 
@@ -173,4 +217,8 @@ One child node per (device, path) under the project root:
   longer exist in the codebase.
 - The path inventory syncs without losing writes across devices and is
   demonstrably absent from every resolution code path.
+- After `tim migrate-from-hmem`, every imported project with a locally valid
+  `metadata.path` has a v3 marker, and every other project appears in the
+  binding report with an actionable outcome; no existing marker is ever
+  overwritten by migration.
 - All existing marker-protection regression tests pass unchanged in intent.
