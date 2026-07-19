@@ -293,7 +293,7 @@ async function cmdResolveProject(args) {
         if (!projectLabel) {
             const recovered = await (0, tim_hooks_1.repairPhantomProjectBinding)(store, dir);
             if (recovered) {
-                (0, tim_hooks_1.writeMarker)(dir, { ...marker, project: recovered });
+                (0, tim_hooks_1.writeMarker)(dir, { project: recovered });
                 projectLabel = recovered;
             }
         }

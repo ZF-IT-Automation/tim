@@ -323,7 +323,7 @@ async function cmdResolveProject(args: string[]) {
     if (!projectLabel) {
       const recovered = await repairPhantomProjectBinding(store, dir);
       if (recovered) {
-        writeMarker(dir, { ...marker, project: recovered });
+        writeMarker(dir, { project: recovered });
         projectLabel = recovered;
       }
     }

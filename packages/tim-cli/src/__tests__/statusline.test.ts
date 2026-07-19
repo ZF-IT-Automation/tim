@@ -7,7 +7,7 @@ import {
   formatNoProjectStatusLine,
   statuslineFromCwd,
   resolveStatuslineCwd,
-  reconcileMarkerCounters,
+  resolveStatuslineCounters,
 } from '../statusline.js';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -28,15 +28,15 @@ describe('statusline', () => {
     delete process.env.TIM_CACHE_DIR;
     fs.rmSync(emptyCacheDir, { recursive: true, force: true });
   });
+
   it('formats example line with display name', () => {
     expect(
       formatTimStatusLine(
         {
           project: 'P0063',
-          session: 's',
           exchanges: 3,
-          batch_size: 5,
-          batches_summarized: 0,
+          batchSize: 5,
+          batchesSummarized: 0,
         },
         'TIM',
       ),
@@ -62,10 +62,9 @@ describe('statusline', () => {
       formatHermesStatus(
         {
           project: 'P0063',
-          session: 's',
           exchanges: 1,
-          batch_size: 5,
-          batches_summarized: 0,
+          batchSize: 5,
+          batchesSummarized: 0,
         },
         'TIM',
       ),
@@ -81,21 +80,39 @@ describe('statusline', () => {
     expect(resolveStatuslineCwd({ cwd: '/a', workspace: { current_dir: '/b' } })).toBe('/b');
   });
 
-  it('statuslineFromCwd uses nearest marker', async () => {
-    fs.mkdirSync(TEST_ROOT, { recursive: true });
-    const dir = fs.mkdtempSync(path.join(TEST_ROOT, 'sl-'));
-    writeMarker(dir, {
-      project: 'P0099',
-      session: 'sl-test-marker-only',
-      exchanges: 8,
-      batch_size: 5,
-      batches_summarized: 1,
-    });
-    const sub = path.join(dir, 'nested');
-    fs.mkdirSync(sub);
-    const line = await statuslineFromCwd(sub, { maxRoot: dir });
-    expect(line).toMatch(/ · 3\/5 exchanges · summary in 2$/);
-    fs.rmSync(dir, { recursive: true, force: true });
+  it('statuslineFromCwd uses nearest marker and DB counters', async () => {
+    const db = path.join(TEST_ROOT, `sl-nearest-${Date.now()}.db`);
+    const prevDb = process.env.TIM_DB_PATH;
+    process.env.TIM_DB_PATH = db;
+    const store = new TimStore(db);
+    const sessions = new SessionManager(store);
+    try {
+      fs.mkdirSync(TEST_ROOT, { recursive: true });
+      const dir = fs.mkdtempSync(path.join(TEST_ROOT, 'sl-'));
+      await store.createProject('P0099');
+      await sessions.startProjectSession({
+        sessionId: 'sl-test-session',
+        projectId: 'P0099',
+        agentName: 't',
+        cwd: dir,
+        harness: 'hermes',
+      });
+      for (let i = 0; i < 8; i++) {
+        await sessions.logExchange('sl-test-session', [{ role: 'user', content: `msg ${i}` }]);
+      }
+
+      writeMarker(dir, { project: 'P0099' });
+      const sub = path.join(dir, 'nested');
+      fs.mkdirSync(sub);
+      const line = await statuslineFromCwd(sub, { maxRoot: dir });
+      expect(line).toMatch(/ · 3\/5 exchanges · summary in 2$/);
+      fs.rmSync(dir, { recursive: true, force: true });
+    } finally {
+      store.close();
+      if (prevDb === undefined) delete process.env.TIM_DB_PATH;
+      else process.env.TIM_DB_PATH = prevDb;
+      fs.rmSync(db, { force: true });
+    }
   });
 
   it('statuslineFromCwd without marker', async () => {
@@ -105,7 +122,28 @@ describe('statusline', () => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
-  it('reconciles stale marker exchanges from DB', async () => {
+  it('statuslineFromCwd shows 0/5 when bound but no session', async () => {
+    const db = path.join(TEST_ROOT, `sl-no-session-${Date.now()}.db`);
+    const prevDb = process.env.TIM_DB_PATH;
+    process.env.TIM_DB_PATH = db;
+    const store = new TimStore(db);
+    try {
+      await store.createProject('P0105', { content: 'no session yet' });
+
+      const dir = fs.mkdtempSync(path.join(TEST_ROOT, 'sl-no-sess-'));
+      writeMarker(dir, { project: 'P0105' });
+      const line = await statuslineFromCwd(dir, { maxRoot: dir });
+      expect(line).toMatch(/ · 0\/5 exchanges · summary in 5$/);
+      fs.rmSync(dir, { recursive: true, force: true });
+    } finally {
+      store.close();
+      if (prevDb === undefined) delete process.env.TIM_DB_PATH;
+      else process.env.TIM_DB_PATH = prevDb;
+      fs.rmSync(db, { force: true });
+    }
+  });
+
+  it('derives counters from DB via resolveCurrentSession', async () => {
     const db = path.join(TEST_ROOT, `sl-reconcile-${Date.now()}.db`);
     const prevDb = process.env.TIM_DB_PATH;
     process.env.TIM_DB_PATH = db;
@@ -114,35 +152,22 @@ describe('statusline', () => {
     const sessions = new SessionManager(store);
     try {
       await store.createProject('P0100');
+      const dir = fs.mkdtempSync(path.join(TEST_ROOT, 'sl-recon-'));
       await sessions.startProjectSession({
         sessionId: 'hermes-real',
         projectId: 'P0100',
         agentName: 't',
-        cwd: '/',
+        cwd: dir,
         harness: 'hermes',
       });
       await sessions.logExchange('hermes-real', [{ role: 'user', content: 'one' }]);
-
-      const dir = fs.mkdtempSync(path.join(TEST_ROOT, 'sl-recon-'));
-      writeMarker(dir, {
-        project: 'P0100',
-        session: 'hermes-real',
-        exchanges: 0,
-        batch_size: 5,
-        batches_summarized: 0,
-      });
+      writeMarker(dir, { project: 'P0100' });
 
       const line = await statuslineFromCwd(dir, { maxRoot: dir });
       expect(line).toMatch(/ · 1\/5 exchanges · /);
 
-      const reconciled = await reconcileMarkerCounters(store, {
-        project: 'P0100',
-        session: 'hermes-real',
-        exchanges: 0,
-        batch_size: 5,
-        batches_summarized: 0,
-      });
-      expect(reconciled.exchanges).toBe(1);
+      const counters = await resolveStatuslineCounters(store, 'P0100', dir);
+      expect(counters.exchanges).toBe(1);
       fs.rmSync(dir, { recursive: true, force: true });
     } finally {
       store.close();
@@ -159,16 +184,11 @@ describe('statusline', () => {
     const store = new TimStore(db);
     try {
       const dir = fs.mkdtempSync(path.join(TEST_ROOT, 'sl-phantom-'));
-      writeMarker(dir, {
-        project: 'P0888',
-        session: 'phantom-sess',
-        exchanges: 2,
-        batch_size: 5,
-        batches_summarized: 0,
-      });
+      writeMarker(dir, { project: 'P0888' });
 
       const line = await statuslineFromCwd(dir, { maxRoot: dir });
       expect(line).toMatch(/P0888\?/);
+      expect(line).toMatch(/ · 0\/5 exchanges · /);
       fs.rmSync(dir, { recursive: true, force: true });
     } finally {
       store.close();
@@ -178,32 +198,24 @@ describe('statusline', () => {
     }
   });
 
-  it('uses marker project even when DB session has different project_ref', async () => {
+  it('uses marker project with session resolved for that project', async () => {
     const db = path.join(TEST_ROOT, `sl-marker-proj-${Date.now()}.db`);
     const prevDb = process.env.TIM_DB_PATH;
     process.env.TIM_DB_PATH = db;
     const store = new TimStore(db);
     const sessions = new SessionManager(store);
     try {
-      await store.createProject('P0101', { content: 'other' });
       await store.createProject('P0102', { content: 'marker' });
+      const dir = fs.mkdtempSync(path.join(TEST_ROOT, 'sl-marker-proj-'));
       await sessions.startProjectSession({
         sessionId: 'marker-sess',
-        projectId: 'P0101',
+        projectId: 'P0102',
         agentName: 't',
-        cwd: '/',
+        cwd: dir,
         harness: 'hermes',
       });
       await sessions.logExchange('marker-sess', [{ role: 'user', content: 'one' }]);
-
-      const dir = fs.mkdtempSync(path.join(TEST_ROOT, 'sl-marker-proj-'));
-      writeMarker(dir, {
-        project: 'P0102',
-        session: 'marker-sess',
-        exchanges: 0,
-        batch_size: 5,
-        batches_summarized: 0,
-      });
+      writeMarker(dir, { project: 'P0102' });
 
       const line = await statuslineFromCwd(dir, { maxRoot: dir });
       expect(line).toMatch(/^marker · 1\/5 exchanges · /);

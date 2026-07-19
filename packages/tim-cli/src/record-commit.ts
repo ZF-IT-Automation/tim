@@ -1,6 +1,6 @@
 import * as os from 'os';
 import * as path from 'path';
-import { TimStore, CommitManager } from 'tim-store';
+import { TimStore, CommitManager, resolveCurrentSession } from 'tim-store';
 import { loadConfig, type TimConfigFile } from 'tim-core';
 import { findMarker, findMarkerOptionsFromEnv } from 'tim-hooks';
 import { readGitCommit, isGitRepo } from './git-commit.js';
@@ -19,7 +19,10 @@ export async function cmdRecordCommit(args: string[]): Promise<void> {
   const projectId = flags.project ?? located?.marker.project;
   if (!projectId) return;
 
-  const sessionId = flags.session ?? located?.marker.session ?? undefined;
+  const config = loadConfig();
+  const store = new TimStore(getDbPath(config));
+  const sessionId =
+    flags.session ?? (await resolveCurrentSession(store, projectId, cwd))?.id ?? undefined;
 
   let hash = flags.hash;
   let message = flags.message;
@@ -49,8 +52,6 @@ export async function cmdRecordCommit(args: string[]): Promise<void> {
     process.exit(1);
   }
 
-  const config = loadConfig();
-  const store = new TimStore(getDbPath(config));
   try {
     const mgr = new CommitManager(store);
     const entry = await mgr.recordCommit({

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
-import { TimStore, CommitManager } from 'tim-store';
+import { TimStore, CommitManager, SessionManager } from 'tim-store';
 
 const CLI = path.resolve(__dirname, '../../dist/cli.js');
 const TEST_ROOT = path.join('/home/bbbee', '.tim-test-runs');
@@ -32,11 +32,8 @@ describe('tim record-commit', () => {
     fs.writeFileSync(
       path.join(dir, '.tim-project'),
       JSON.stringify({
+        version: 3,
         project: 'P0002',
-        session: 'sess-rc',
-        exchanges: 0,
-        batch_size: 5,
-        batches_summarized: 0,
       }),
     );
   });
@@ -79,6 +76,70 @@ describe('tim record-commit', () => {
     const entry = JSON.parse(out);
     expect(entry.title).toBe('leading-dash');
     expect(entry.content).toContain('--fix parser');
+  });
+
+  it('resolves session from store when --session omitted', async () => {
+    const store = new TimStore(dbPath);
+    const sessions = new SessionManager(store);
+    await sessions.startProjectSession({
+      sessionId: 'sess-rc',
+      projectId: 'P0002',
+      agentName: 't',
+      cwd: dir,
+      harness: 'hermes',
+    });
+    store.close();
+
+    const out = run(
+      [
+        'record-commit',
+        '--cwd', dir,
+        '--hash', 'sesshash',
+        '--message', 'with session',
+      ],
+      { TIM_DB_PATH: dbPath },
+    );
+    const entry = JSON.parse(out);
+    const verify = new TimStore(dbPath);
+    const edges = await verify.getEdges(entry.id, 'outgoing');
+    expect(edges.some(e => e.targetId === 'sess-rc' && e.type === 'relates')).toBe(true);
+    verify.close();
+  });
+
+  it('honors explicit --session flag', async () => {
+    const store = new TimStore(dbPath);
+    const sessions = new SessionManager(store);
+    await sessions.startProjectSession({
+      sessionId: 'sess-current',
+      projectId: 'P0002',
+      agentName: 't',
+      cwd: dir,
+      harness: 'hermes',
+    });
+    await sessions.startProjectSession({
+      sessionId: 'sess-explicit',
+      projectId: 'P0002',
+      agentName: 't',
+      cwd: dir,
+      harness: 'hermes',
+    });
+    store.close();
+
+    const out = run(
+      [
+        'record-commit',
+        '--cwd', dir,
+        '--session', 'sess-explicit',
+        '--hash', 'explicit-sess',
+        '--message', 'explicit session',
+      ],
+      { TIM_DB_PATH: dbPath },
+    );
+    const entry = JSON.parse(out);
+    const verify = new TimStore(dbPath);
+    const edges = await verify.getEdges(entry.id, 'outgoing');
+    expect(edges.some(e => e.targetId === 'sess-explicit' && e.type === 'relates')).toBe(true);
+    verify.close();
   });
 
   it('is idempotent for the same hash', async () => {

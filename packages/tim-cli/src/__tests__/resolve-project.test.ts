@@ -35,7 +35,7 @@ describe('tim resolve-project / bind-project', () => {
 
   it('resolve-project prints the label (default format)', () => {
     fs.writeFileSync(path.join(dir, '.tim-project'),
-      JSON.stringify({ project: 'P0063', session: 's', exchanges: 0, batch_size: 5, batches_summarized: 0 }));
+      JSON.stringify({ version: 3, project: 'P0063' }));
     expect(run(['resolve-project', '--cwd', dir], { TIM_MARKER_MAX_ROOT: dir }).trim()).toBe('P0063');
   });
 
@@ -48,7 +48,7 @@ describe('tim resolve-project / bind-project', () => {
     await store.createProject('P0063');
     store.close();
     fs.writeFileSync(path.join(dir, '.tim-project'),
-      JSON.stringify({ project: 'P0063', session: 's', exchanges: 0, batch_size: 5, batches_summarized: 0 }));
+      JSON.stringify({ version: 3, project: 'P0063' }));
     const out = run(['resolve-project', '--cwd', dir, '--format', 'directive'], {
       TIM_DB_PATH: dbPath,
       TIM_MARKER_MAX_ROOT: dir,
@@ -73,17 +73,17 @@ describe('tim resolve-project / bind-project', () => {
 
   it('resolve-project label format marks unrepaired phantom with ?', () => {
     fs.writeFileSync(path.join(dir, '.tim-project'),
-      JSON.stringify({ project: 'P0888', session: 's', exchanges: 0, batch_size: 5, batches_summarized: 0 }));
+      JSON.stringify({ version: 3, project: 'P0888' }));
     expect(run(['resolve-project', '--cwd', dir], {
       TIM_MARKER_MAX_ROOT: dir,
       TIM_DB_PATH: dbPath,
     }).trim()).toBe('P0888?');
   });
 
-  it('bind-project is idempotent for the same live label and preserves counters', async () => {
+  it('bind-project is idempotent for the same live label', async () => {
     await store.createProject('P0100');
     fs.writeFileSync(path.join(dir, '.tim-project'),
-      JSON.stringify({ version: 2, project: 'P0100', session: 's7', exchanges: 12, batch_size: 3, batches_summarized: 4 }));
+      JSON.stringify({ version: 3, project: 'P0100' }));
     const before = fs.readFileSync(path.join(dir, '.tim-project'));
     const output = run(['bind-project', '--cwd', dir, '--label', 'P0100'], {
       TIM_MARKER_MAX_ROOT: dir,
@@ -117,12 +117,8 @@ describe('tim resolve-project / bind-project', () => {
   it('resolve-project --format directive emits repair guidance for an unrepaired phantom marker', () => {
     fs.writeFileSync(path.join(dir, 'tim.json'), JSON.stringify({ project: 'P0063' }));
     fs.writeFileSync(path.join(dir, '.tim-project'), JSON.stringify({
-      version: 2,
+      version: 3,
       project: 'P0888',
-      session: 's',
-      exchanges: 0,
-      batch_size: 5,
-      batches_summarized: 0,
     }));
     const out = run(['resolve-project', '--cwd', dir, '--format', 'directive'], {
       TIM_MARKER_MAX_ROOT: dir,
@@ -137,7 +133,7 @@ describe('tim resolve-project / bind-project', () => {
     const alias = path.basename(dir).toLowerCase();
     await store.createProject('P0200', { content: 'Recovered', aliases: [alias] });
     fs.writeFileSync(path.join(dir, '.tim-project'),
-      JSON.stringify({ version: 2, project: 'P0888', session: 's', exchanges: 3, batch_size: 5, batches_summarized: 1 }));
+      JSON.stringify({ version: 3, project: 'P0888' }));
 
     const out = run(['resolve-project', '--cwd', dir, '--format', 'directive'], {
       TIM_MARKER_MAX_ROOT: dir,
@@ -145,14 +141,13 @@ describe('tim resolve-project / bind-project', () => {
     });
     expect(out).toContain('tim_load_project(label="P0200")');
     const marker = JSON.parse(fs.readFileSync(path.join(dir, '.tim-project'), 'utf8'));
-    expect(marker.project).toBe('P0200');
-    expect(marker.exchanges).toBe(3);
+    expect(marker).toEqual({ version: 3, project: 'P0200' });
   });
 
   it('bind-project preserves an existing winner instead of overwriting it', async () => {
     await store.createProject('P0102');
     fs.writeFileSync(path.join(dir, '.tim-project'),
-      JSON.stringify({ version: 2, project: 'P0103', session: 'winner', exchanges: 9, batch_size: 5, batches_summarized: 1 }));
+      JSON.stringify({ version: 3, project: 'P0103' }));
     const before = fs.readFileSync(path.join(dir, '.tim-project'), 'utf8');
 
     const output = run(['bind-project', '--cwd', dir, '--label', 'P0102'], {

@@ -52,7 +52,9 @@ async function cmdRecordCommit(args) {
     const projectId = flags.project ?? located?.marker.project;
     if (!projectId)
         return;
-    const sessionId = flags.session ?? located?.marker.session ?? undefined;
+    const config = (0, tim_core_1.loadConfig)();
+    const store = new tim_store_1.TimStore(getDbPath(config));
+    const sessionId = flags.session ?? (await (0, tim_store_1.resolveCurrentSession)(store, projectId, cwd))?.id ?? undefined;
     let hash = flags.hash;
     let message = flags.message;
     let diffSummary = flags.diff;
@@ -76,8 +78,6 @@ async function cmdRecordCommit(args) {
         console.error('Usage: tim record-commit [--cwd DIR] [--project LABEL] [--session ID] [--hash SHA] [--message TEXT] [--diff STAT]');
         process.exit(1);
     }
-    const config = (0, tim_core_1.loadConfig)();
-    const store = new tim_store_1.TimStore(getDbPath(config));
     try {
         const mgr = new tim_store_1.CommitManager(store);
         const entry = await mgr.recordCommit({

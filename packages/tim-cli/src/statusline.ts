@@ -2,8 +2,14 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { loadConfig } from 'tim-core';
-import { TimStore, deriveCounters, resolveProjectDisplayName } from 'tim-store';
-import type { FindMarkerOptions, ProjectMarker, ProjectMarkerInput } from 'tim-hooks';
+import {
+  TimStore,
+  deriveCounters,
+  resolveCurrentSession,
+  resolveProjectDisplayName,
+  DEFAULT_BATCH_SIZE,
+} from 'tim-store';
+import type { FindMarkerOptions } from 'tim-hooks';
 import {
   findMarker,
   findMarkerOptionsFromEnv,
@@ -13,50 +19,76 @@ import {
   isUnboundProjectLabel,
 } from 'tim-hooks';
 
-const RECONCILE_TTL_MS = 5_000;
-const reconcileCache = new Map<
+const COUNTERS_TTL_MS = 5_000;
+const countersCache = new Map<
   string,
-  { at: number; exchanges: number; batches_summarized: number }
+  { at: number; exchanges: number; batchesSummarized: number; batchSize: number }
 >();
+
+export interface StatuslineCounters {
+  project: string;
+  exchanges: number;
+  batchSize: number;
+  batchesSummarized: number;
+}
 
 function dbPath(): string {
   const config = loadConfig();
   return process.env.TIM_DB_PATH || config.dbPath || path.join(os.homedir(), '.tim', 'tim.db');
 }
 
-/** DB-authoritative exchange counters (5s in-process cache). */
-export async function reconcileMarkerCounters(
+/** DB-authoritative exchange counters (5s in-process cache keyed by session id). */
+export async function resolveStatuslineCounters(
   store: TimStore,
-  marker: ProjectMarkerInput,
-): Promise<ProjectMarker> {
-  const sid = marker.session?.trim();
-  if (!sid) return { version: 2, ...marker };
+  project: string,
+  cwd: string,
+  sessionIdArg?: string,
+): Promise<StatuslineCounters> {
+  const noSession: StatuslineCounters = {
+    project,
+    exchanges: 0,
+    batchSize: DEFAULT_BATCH_SIZE,
+    batchesSummarized: 0,
+  };
 
-  const entry = await store.read(sid);
-  if (!entry || entry.metadata.kind !== 'session') return { version: 2, ...marker };
+  let sessionId = sessionIdArg?.trim();
+  if (!sessionId) {
+    const sessionEntry = await resolveCurrentSession(store, project, cwd);
+    if (!sessionEntry) return noSession;
+    sessionId = sessionEntry.id;
+  }
+
+  const sessionEntry = await store.read(sessionId);
+  if (!sessionEntry || sessionEntry.metadata.kind !== 'session') return noSession;
+
+  const batchSize =
+    typeof sessionEntry.metadata.batch_size === 'number'
+      ? sessionEntry.metadata.batch_size
+      : DEFAULT_BATCH_SIZE;
 
   const now = Date.now();
-  const hit = reconcileCache.get(sid);
-  if (hit && now - hit.at < RECONCILE_TTL_MS) {
+  const hit = countersCache.get(sessionId);
+  if (hit && now - hit.at < COUNTERS_TTL_MS) {
     return {
-      version: 2,
-      ...marker,
+      project,
       exchanges: hit.exchanges,
-      batches_summarized: hit.batches_summarized,
+      batchSize: hit.batchSize,
+      batchesSummarized: hit.batchesSummarized,
     };
   }
 
-  const { exchangeCount, batchesSummarized } = await deriveCounters(store, sid);
-  reconcileCache.set(sid, {
+  const { exchangeCount, batchesSummarized } = await deriveCounters(store, sessionId);
+  countersCache.set(sessionId, {
     at: now,
     exchanges: exchangeCount,
-    batches_summarized: batchesSummarized,
+    batchesSummarized,
+    batchSize,
   });
   return {
-    version: 2,
-    ...marker,
+    project,
     exchanges: exchangeCount,
-    batches_summarized: batchesSummarized,
+    batchSize,
+    batchesSummarized,
   };
 }
 
@@ -88,12 +120,12 @@ export function summaryIn(exchanges: number, batchSize: number): number {
   return bs - mod;
 }
 
-export function formatTimStatusLine(marker: ProjectMarkerInput, projectName?: string): string {
-  const batchSize = marker.batch_size > 0 ? marker.batch_size : 5;
-  const exchanges = Math.max(0, marker.exchanges);
+export function formatTimStatusLine(counters: StatuslineCounters, projectName?: string): string {
+  const batchSize = counters.batchSize > 0 ? counters.batchSize : DEFAULT_BATCH_SIZE;
+  const exchanges = Math.max(0, counters.exchanges);
   const inBatch = exchangesInCurrentBatch(exchanges, batchSize);
   const k = summaryIn(exchanges, batchSize);
-  const name = projectName?.trim() || marker.project;
+  const name = projectName?.trim() || counters.project;
   return `${name} · ${inBatch}/${batchSize} exchanges · summary in ${k}`;
 }
 
@@ -110,18 +142,18 @@ export interface HermesStatusJson {
 }
 
 export function formatHermesStatus(
-  marker: ProjectMarkerInput | null,
+  counters: StatuslineCounters | null,
   projectName?: string,
 ): HermesStatusJson {
-  if (!marker) {
+  if (!counters) {
     return { device: '', project: 'no project', o_node: '', counter: '' };
   }
-  const batchSize = marker.batch_size > 0 ? marker.batch_size : 5;
-  const inBatch = exchangesInCurrentBatch(marker.exchanges, batchSize);
-  const k = summaryIn(marker.exchanges, batchSize);
+  const batchSize = counters.batchSize > 0 ? counters.batchSize : DEFAULT_BATCH_SIZE;
+  const inBatch = exchangesInCurrentBatch(counters.exchanges, batchSize);
+  const k = summaryIn(counters.exchanges, batchSize);
   return {
     device: '',
-    project: projectName?.trim() || marker.project,
+    project: projectName?.trim() || counters.project,
     o_node: '',
     counter: `${inBatch}/${batchSize} · Σ${k}`,
   };
@@ -129,29 +161,35 @@ export function formatHermesStatus(
 
 async function projectNameForStatusline(
   store: TimStore,
-  marker: ProjectMarker,
+  counters: StatuslineCounters,
 ): Promise<string> {
-  if (isUnboundProjectLabel(marker.project)) {
-    return formatUnboundProjectLabel(stripUnboundProjectSuffix(marker.project));
+  if (isUnboundProjectLabel(counters.project)) {
+    return formatUnboundProjectLabel(stripUnboundProjectSuffix(counters.project));
   }
-  return resolveProjectDisplayName(store, marker.project);
+  return resolveProjectDisplayName(store, counters.project);
 }
 
-async function resolveStatuslineMarker(
+async function resolveStatuslineData(
   cwd: string,
-  _sessionIdArg: string | undefined,
+  sessionIdArg: string | undefined,
   options: FindMarkerOptions | undefined,
   store: TimStore,
-): Promise<ProjectMarker | null> {
+): Promise<StatuslineCounters | null> {
   const located = findMarker(cwd, { walkUp: true, ...options });
   if (!located) return null;
 
   const validated = await validateMarkerAgainstStore(located.marker, store);
-  const marker = validated ?? {
-    ...located.marker,
-    project: formatUnboundProjectLabel(located.marker.project),
-  };
-  return reconcileMarkerCounters(store, marker);
+  const project = validated?.project ?? formatUnboundProjectLabel(located.marker.project);
+  if (!validated) {
+    return {
+      project,
+      exchanges: 0,
+      batchSize: DEFAULT_BATCH_SIZE,
+      batchesSummarized: 0,
+    };
+  }
+  const counters = await resolveStatuslineCounters(store, validated.project, located.dir, sessionIdArg);
+  return { ...counters, project };
 }
 
 export async function statuslineFromCwd(
@@ -161,10 +199,10 @@ export async function statuslineFromCwd(
 ): Promise<string> {
   const store = new TimStore(dbPath());
   try {
-    const marker = await resolveStatuslineMarker(cwd, sessionIdArg, options, store);
-    if (!marker) return formatNoProjectStatusLine();
-    const name = await projectNameForStatusline(store, marker);
-    return formatTimStatusLine(marker, name);
+    const counters = await resolveStatuslineData(cwd, sessionIdArg, options, store);
+    if (!counters) return formatNoProjectStatusLine();
+    const name = await projectNameForStatusline(store, counters);
+    return formatTimStatusLine(counters, name);
   } finally {
     store.close();
   }
@@ -177,10 +215,10 @@ export async function hermesStatusFromCwd(
 ): Promise<HermesStatusJson> {
   const store = new TimStore(dbPath());
   try {
-    const marker = await resolveStatuslineMarker(cwd, sessionIdArg, options, store);
-    if (!marker) return formatHermesStatus(null);
-    const name = await projectNameForStatusline(store, marker);
-    return formatHermesStatus(marker, name);
+    const counters = await resolveStatuslineData(cwd, sessionIdArg, options, store);
+    if (!counters) return formatHermesStatus(null);
+    const name = await projectNameForStatusline(store, counters);
+    return formatHermesStatus(counters, name);
   } finally {
     store.close();
   }
@@ -210,16 +248,16 @@ export async function runStatusline(opts: StatuslineCliOptions = {}): Promise<vo
   const findOpts = { walkUp: true, ...findMarkerOptionsFromEnv() };
   const store = new TimStore(dbPath());
   try {
-    const marker = await resolveStatuslineMarker(cwd, opts.sessionId?.trim(), findOpts, store);
-    const projectName = marker ? await projectNameForStatusline(store, marker) : undefined;
+    const counters = await resolveStatuslineData(cwd, opts.sessionId?.trim(), findOpts, store);
+    const projectName = counters ? await projectNameForStatusline(store, counters) : undefined;
 
     const format = opts.format ?? 'text';
     if (format === 'hermes') {
-      process.stdout.write(`${JSON.stringify(formatHermesStatus(marker, projectName))}\n`);
+      process.stdout.write(`${JSON.stringify(formatHermesStatus(counters, projectName))}\n`);
       return;
     }
-    const line = marker
-      ? formatTimStatusLine(marker, projectName)
+    const line = counters
+      ? formatTimStatusLine(counters, projectName)
       : formatNoProjectStatusLine();
     process.stdout.write(`${line}\n`);
   } finally {
