@@ -12,10 +12,11 @@ Rules:
 - No direct SQL. Use TIM tools only.
 - Keep the original import report and source path in the handoff.
 - If structure is unclear, ask before moving entries.
+- Binding: for each imported project, \`tim bind-project --label P#### --cwd <dir>\` (ask user when metadata.path absent) or record intentionally memory-only; never hand-write \`.tim-project\`.
 
 Audit:
 1. Read import report: check warnings, remapped, skipped.
-2. Run \`tim_doctor\` or CLI \`tim doctor\`; note broken links/orphans.
+2. Run \`tim_doctor\` or CLI \`tim doctor\`; note broken links/orphans and binding lines.
 3. For each imported project label (P####), call
    \`tim_load_project({ label:"P####", bind:false, depth:3 })\`.
 4. Confirm expected sections exist: Overview, Context, Decisions, Tasks,
@@ -38,8 +39,8 @@ Verify again:
 - \`tim_import(source, { dryRun:true, deduplicate:true })\`
 
 Handoff:
-source path | snapshot path | import counts | projects checked | repairs made |
-remaining warnings | MCP restart needed.
+source path | snapshot path | import counts | projects checked | bindings resolved |
+repairs made | remaining warnings | MCP restart needed.
 `,
 };
 //# sourceMappingURL=tim-hmem-import-audit.js.map

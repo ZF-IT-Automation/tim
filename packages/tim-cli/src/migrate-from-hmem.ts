@@ -4,6 +4,11 @@ import * as path from 'node:path';
 import { loadConfig, type TimConfigFile } from 'tim-core';
 import { TimStore } from 'tim-store';
 import { inspectHmemManifest, tim_import } from 'tim-migrate';
+import {
+  collectBindingReport,
+  formatBindingFindingLine,
+  type ProjectBindingFinding,
+} from 'tim-hooks';
 import { runSnapshot } from './snapshot.js';
 import { parseArgs, valueOptionsFor } from './args.js';
 
@@ -28,6 +33,7 @@ export function buildMigrateFromHmemPlan(
     { id: 'import', description: 'Run live import' },
     { id: 'audit', description: 'Run import audit and print repair suggestions' },
     { id: 'doctor', description: 'Run TIM doctor' },
+    { id: 'bindings', description: 'Report per-imported-project binding state on this device' },
     { id: 'handoff', description: 'Print source, snapshot, counts, warnings, next steps' },
   ];
 }
@@ -45,6 +51,30 @@ export function evaluateDryRunGate(report: { format: string; warnings: string[] 
 
 export function buildImportAuditArgs(source: string): { source: string; includeRepairPlan: true } {
   return { source, includeRepairPlan: true };
+}
+
+/** Labels for project roots imported from hmem (metadata.hmemUid present). */
+export async function listHmemImportedProjectLabels(store: TimStore): Promise<string[]> {
+  const labels: string[] = [];
+  for (const row of await store.listProjects()) {
+    const entry = await store.read(row.id);
+    if (!entry || entry.metadata.kind !== 'project') continue;
+    if (entry.metadata.hmemUid) labels.push(row.label);
+  }
+  return labels.sort();
+}
+
+/** Binding findings for hmem-imported projects only — reuses doctor classification. */
+export async function collectMigrationProjectBindings(
+  store: TimStore,
+): Promise<ProjectBindingFinding[]> {
+  const importedLabels = new Set(await listHmemImportedProjectLabels(store));
+  const { projects } = await collectBindingReport(store);
+  return projects.filter(project => importedLabels.has(project.label));
+}
+
+export function formatMigrationBindingLines(findings: ProjectBindingFinding[]): string[] {
+  return findings.map(finding => formatBindingFindingLine(finding).trimStart());
 }
 
 function getDbPath(config: TimConfigFile): string {
@@ -133,6 +163,8 @@ export async function cmdMigrateFromHmem(args: string[]): Promise<void> {
   try {
     const importReport = tim_import(store, sourcePath, { deduplicate });
     const health = await store.health();
+    const bindingFindings = await collectMigrationProjectBindings(store);
+    const bindingLines = formatMigrationBindingLines(bindingFindings);
     const warnings = [
       ...dryRunReport.warnings,
       ...importReport.warnings,
@@ -158,6 +190,10 @@ export async function cmdMigrateFromHmem(args: string[]): Promise<void> {
         orphanEntries: health.orphanEntries,
         ftsIntegrity: health.ftsIntegrity,
       },
+      bindings: {
+        projects: bindingFindings,
+        lines: bindingLines,
+      },
       audit: {
         tool: 'tim_import_audit',
         args: buildImportAuditArgs(sourcePath),
@@ -167,7 +203,8 @@ export async function cmdMigrateFromHmem(args: string[]): Promise<void> {
       nextSteps: [
         'Run MCP tool tim_import_audit with includeRepairPlan=true.',
         'Review imported project roots and O-entry nesting against docs/hmem-to-tim-migration.md.',
-        'Run tim doctor again after any manual repair.',
+        'For each imported project: bind via `tim bind-project --label P#### --cwd <dir>` (ask the user when metadata.path is absent) or record it as intentionally memory-only; never hand-write `.tim-project`.',
+        'Run tim doctor again after binding or any manual repair.',
       ],
     }, null, 2));
   } finally {

@@ -2,8 +2,8 @@ export { TimStore, splitTitleBody, titleSimilarity, cosineSimilarity, runBenchma
 export type { ResolveProjectResult } from 'tim-core';
 export { cropDisplayName, projectDisplayNameFromEntry, resolveProjectDisplayName, resolveProjectBindingLabel, } from './project-display.js';
 export { runMigrations, getCurrentVersion, MIGRATIONS } from './schema.js';
-export { SessionManager, ensureProjectForPath, type Exchange, type ExchangeRole, type SessionStartParams, type ProjectSessionParams, type Summarizer, type UnsummarizedBatch, type UnsummarizedExchange, type UntaggedBatch, type BatchFullInfo, type OnBatchFullHandler, type EnsureProjectForPathResult, type ResumeBatchSummary, type ResumeExchange, type ResumePayload, type ResumeSessionOpts, type ResumableSession, } from './session.js';
-export { deriveCounters, findChildByKind, getCurrentBatch, ensureInboxProject, foldBatchSummaries, type DerivedCounters, type CurrentBatch, SESSIONS_SECTION_TITLE, SUMMARY_NODE_TITLE, EXCHANGES_NODE_TITLE, KIND_SESSIONS_ROOT, KIND_SESSION, KIND_SESSION_ALIAS, KIND_SUMMARY_ROOT, KIND_BATCH, KIND_EXCHANGES_ROOT, KIND_EXCHANGE_BATCH, KIND_EXCHANGE, SESSION_SUMMARY_TAG, DEFAULT_BATCH_SIZE, SESSION_ROLLUP_THRESHOLD, MARKER_FILENAME, MARKER_LOCK, INBOX_PROJECT_LABEL, } from './session-tree.js';
+export { SessionManager, resolveCurrentSession, ensureProjectForPath, type Exchange, type ExchangeRole, type SessionStartParams, type ProjectSessionParams, type Summarizer, type UnsummarizedBatch, type UnsummarizedExchange, type UntaggedBatch, type BatchFullInfo, type OnBatchFullHandler, type EnsureProjectForPathResult, type ResumeBatchSummary, type ResumeExchange, type ResumePayload, type ResumeSessionOpts, type ResumableSession, } from './session.js';
+export { deriveCounters, findChildByKind, getCurrentBatch, ensureInboxProject, foldBatchSummaries, type DerivedCounters, type CurrentBatch, SESSIONS_SECTION_TITLE, SUMMARY_NODE_TITLE, EXCHANGES_NODE_TITLE, KIND_SESSIONS_ROOT, KIND_SESSION, KIND_SESSION_ALIAS, KIND_SUMMARY_ROOT, KIND_BATCH, KIND_EXCHANGES_ROOT, KIND_EXCHANGE_BATCH, KIND_EXCHANGE, SESSION_SUMMARY_TAG, DEFAULT_BATCH_SIZE, SESSION_ROLLUP_THRESHOLD, MARKER_FILENAME, INBOX_PROJECT_LABEL, } from './session-tree.js';
 export { CommitManager, type RecordCommitParams, } from './commit.js';
 export { COMMITS_SECTION_TITLE, COMMITS_SECTION_ORDER, KIND_COMMITS_ROOT, KIND_COMMIT, COMMIT_TAG, } from './commit-tree.js';
 export { CurateManager, type UpdateManyFlags } from './curate.js';
@@ -19,4 +19,5 @@ export { isSecret, parentIsSecret, findSecretSource, setSecretSubtree, ensureSec
 export { ensureHumanProfile, getHumanProfileSummary, HUMAN_ROOT_LABEL, HUMAN_SECTIONS, type HumanProfileNode, } from './user.js';
 export { charsToTokens, estimateProjectTokens, listProjectTokenEstimates, CHARS_PER_TOKEN, type ProjectTokenEstimate, } from './token-budget.js';
 export { detectProjectVcs } from './vcs.js';
+export { KIND_PROJECT_PATH, DEFAULT_STALE_PATH_MAX_AGE_DAYS, upsertProjectPathRow, listProjectPathRows, isStalePathRow, } from './project-path-inventory.js';
 //# sourceMappingURL=index.d.ts.map

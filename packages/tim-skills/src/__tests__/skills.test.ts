@@ -98,6 +98,42 @@ describe('weak-model skills', () => {
     expect(getSkill('tim-new-project')).toBe(TIM_NEW_PROJECT_SKILL);
   });
 
+  it('tim-project-curate includes doctor binding fix order', () => {
+    const packaged = readFileSync(
+      new URL('../../skills/tim-project-curate/SKILL.md', import.meta.url),
+      'utf8',
+    );
+    const requiredGuidance = [
+      'unbound',
+      'label-mismatch',
+      'tim bind-project',
+      'never overwrite a mismatched marker without explicit user decision',
+    ];
+
+    for (const guidance of requiredGuidance) {
+      expect(packaged).toContain(guidance);
+      expect(TIM_PROJECT_CURATE_SKILL.content).toContain(guidance);
+    }
+  });
+
+  it('tim-hmem-import-audit requires binding and prohibits hand-written markers', () => {
+    const packaged = readFileSync(
+      new URL('../../skills/tim-hmem-import-audit/SKILL.md', import.meta.url),
+      'utf8',
+    );
+    const requiredGuidance = [
+      'tim bind-project',
+      'memory-only',
+      'never hand-write `.tim-project`',
+    ];
+
+    for (const guidance of requiredGuidance) {
+      expect(packaged).toContain(guidance);
+      expect(TIM_HMEM_IMPORT_AUDIT_SKILL.content).toContain(guidance);
+    }
+    expect(lineCount(TIM_HMEM_IMPORT_AUDIT_SKILL.content)).toBeLessThanOrEqual(50);
+  });
+
   it('migration and beta ops skills are concise and tool-oriented', () => {
     const expectations = [
       [TIM_RELEASE_BETA_SKILL, ['npm pack --dry-run', 'git tag', 'tim snapshot']],

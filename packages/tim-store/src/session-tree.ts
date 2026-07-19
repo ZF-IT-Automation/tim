@@ -23,8 +23,6 @@ export const BATCH_STRUCTURAL_TAGS = new Set([SESSION_SUMMARY_TAG, BATCH_SUMMARY
 export const DEFAULT_BATCH_SIZE = 5;
 export const SESSION_ROLLUP_THRESHOLD = 3;
 export const MARKER_FILENAME = '.tim-project';
-/** Process lock for summarizer spawn; Task 2 relocates to `.tim/summarizer.lock`. */
-export const MARKER_LOCK = '.tim-project.lock';
 
 export const INBOX_PROJECT_LABEL = 'P0000';
 

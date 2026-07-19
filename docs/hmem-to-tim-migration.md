@@ -92,7 +92,9 @@ That wizard performs the agent-safe sequence in one command:
 3. snapshot the TIM database
 4. run the live import
 5. print the MCP `tim_import_audit` handoff
-6. run a TIM health check and print a final handoff summary
+6. run a TIM health check
+7. print a per-imported-project binding report (`bound` / `unbound` / `no-path` / etc.)
+8. print a final handoff summary
 
 Use the lower-level import command only when you need a narrower operation:
 
@@ -166,6 +168,33 @@ tim doctor
 
 Then restart the MCP client so it reads the TIM server config.
 
+## Bind Imported Projects
+
+After import, the migration wizard prints a `bindings` block with one line per
+hmem-imported project (`metadata.hmemUid` present). Each line shows the binding
+state on this device: `bound`, `unbound`, `no-path`, `path-missing`, or
+`label-mismatch`.
+
+For every imported project:
+
+1. If `metadata.path` points at the correct repository on this machine and the
+   line is `unbound`, run:
+   ```bash
+   tim bind-project --label P#### --cwd /absolute/path/to/repo
+   ```
+2. If `metadata.path` is absent or wrong, ask the user for the directory, then
+   bind with `tim bind-project` or record the project as intentionally
+   memory-only in the handoff.
+3. If the line is `label-mismatch`, stop and reconcile with the user — never
+   overwrite a different project's marker without an explicit decision.
+4. Never hand-write `.tim-project` files. `tim bind-project` is the only safe
+   marker-writing path for migration repair; it backfills `metadata.path` and
+   seeds the path inventory when needed.
+
+Re-run `tim doctor` after binding. Use `tim doctor --bind` only to auto-bind
+`unbound` findings when the path is already correct — it never fixes
+`label-mismatch` or `path-missing`.
+
 ## Handoff Summary
 
 When finished, tell the user:
@@ -174,6 +203,7 @@ When finished, tell the user:
 - TIM DB path from `tim doctor`
 - snapshot path created before import
 - import report counts
+- per-project binding lines from the wizard `bindings` block (or `tim doctor`)
 - remaining warnings or remaps
 - whether `--repair-flags` was run
 - whether MCP client restart is still needed

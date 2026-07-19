@@ -71,7 +71,6 @@ export {
   DEFAULT_BATCH_SIZE,
   SESSION_ROLLUP_THRESHOLD,
   MARKER_FILENAME,
-  MARKER_LOCK,
   INBOX_PROJECT_LABEL,
 } from './session-tree.js';
 export {

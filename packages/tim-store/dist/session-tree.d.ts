@@ -19,7 +19,6 @@ export declare const BATCH_STRUCTURAL_TAGS: Set<string>;
 export declare const DEFAULT_BATCH_SIZE = 5;
 export declare const SESSION_ROLLUP_THRESHOLD = 3;
 export declare const MARKER_FILENAME = ".tim-project";
-export declare const MARKER_LOCK = ".tim-project.lock";
 export declare const INBOX_PROJECT_LABEL = "P0000";
 export declare function foldBatchSummaries(batches: Pick<Entry, 'content' | 'metadata'>[]): string;
 export interface DerivedCounters {

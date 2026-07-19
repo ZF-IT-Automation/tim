@@ -112,7 +112,13 @@ to enable the TIM MCP tools (tim_read, tim_search, tim_write, tim_update, etc.).
 ### 2. `tim doctor`
 
 Run diagnostics. Shows DB health, entry/edge counts, broken links, orphan entries,
-top tags, and whether Hermes statusline integration is installed.
+top tags, per-project binding state, and whether Hermes statusline integration is installed.
+
+**Flags:**
+
+| Flag | Description |
+|------|-------------|
+| `--bind` | Opt-in: bind only `unbound` projects whose `metadata.path` exists on this device. Never overwrites a different marker or fixes `label-mismatch` / `path-missing`. |
 
 **Full output** (`samples/tim-doctor.txt`):
 ```
@@ -133,7 +139,14 @@ Stale (>30d): 0
   - 7201 orphan entries
 
 Top tags: #exchange(1258), #session-summary(448), #batch-summary(258), #session(189), #exchanges(186)
+
+Bindings:
+  P0062 /home/user/projects/tim bound
+  P0063 /home/user/projects/other unbound
+  P0064 no-path
 ```
+
+With `--bind`, a `Bind:` section follows listing outcomes (`bound`, `already-bound`, or `failed`) for each `unbound` project that was eligible.
 
 **What to watch for:**
 - **Orphan entries** — entries with no parent edge. These accumulate during session checkpointing
@@ -199,7 +212,7 @@ tim resolve-project --cwd ~/projects/tim
 # Output: P9999
 
 tim resolve-project --cwd ~/projects/tim --format json
-# {"version":2,"project":"P9999","session":"","exchanges":0,"batch_size":5,...}
+# {"version":3,"project":"P9999"}
 
 tim resolve-project --cwd ~/projects/tim --format directive
 # 📍 TIM project marker detected (.tim-project in ...)
@@ -225,6 +238,12 @@ Safely recover a missing `.tim-project` marker for an existing project. The comm
 resolves the exact `P` label in the selected database before it writes anything. It
 writes only when no target-local marker exists, is idempotent for the same label, and
 never overwrites a marker owned by a different project.
+
+Side effects on success:
+
+- Writes a v3 marker: `{"version":3,"project":"P00XX"}` at `<cwd>/.tim-project`
+- Backfills `metadata.path` on the project entry when absent
+- Seeds or updates the per-device `project-path` inventory row for `<cwd>`
 
 ```
 Usage: tim bind-project --label <P00XX> [--cwd <dir>] [--session <id>]
@@ -696,8 +715,18 @@ tim resolve-project --cwd . --format json
 tim resolve-project --walk-up
 ```
 
-The project marker file `.tim-project` contains a single line like `P9999`.
+The project marker file `.tim-project` is JSON with v3 shape:
+
+```json
+{"version":3,"project":"P9999"}
+```
+
+Session counters and batch state live in the TIM database, not in the marker.
 TIM walks up from your current directory looking for this file.
+
+The summarizer process lock lives at `.tim/summarizer.lock` (per repository cwd),
+not beside the marker. It uses the same TTL semantics as the legacy
+`.tim-project.lock` file, which is ignored after marker slimming.
 
 ### How to recover a missing project marker
 

@@ -36,6 +36,9 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.buildMigrateFromHmemPlan = buildMigrateFromHmemPlan;
 exports.evaluateDryRunGate = evaluateDryRunGate;
 exports.buildImportAuditArgs = buildImportAuditArgs;
+exports.listHmemImportedProjectLabels = listHmemImportedProjectLabels;
+exports.collectMigrationProjectBindings = collectMigrationProjectBindings;
+exports.formatMigrationBindingLines = formatMigrationBindingLines;
 exports.cmdMigrateFromHmem = cmdMigrateFromHmem;
 const fs = __importStar(require("node:fs"));
 const os = __importStar(require("node:os"));
@@ -43,6 +46,7 @@ const path = __importStar(require("node:path"));
 const tim_core_1 = require("tim-core");
 const tim_store_1 = require("tim-store");
 const tim_migrate_1 = require("tim-migrate");
+const tim_hooks_1 = require("tim-hooks");
 const snapshot_js_1 = require("./snapshot.js");
 const args_js_1 = require("./args.js");
 function buildMigrateFromHmemPlan(source, opts = {}) {
@@ -54,6 +58,7 @@ function buildMigrateFromHmemPlan(source, opts = {}) {
         { id: 'import', description: 'Run live import' },
         { id: 'audit', description: 'Run import audit and print repair suggestions' },
         { id: 'doctor', description: 'Run TIM doctor' },
+        { id: 'bindings', description: 'Report per-imported-project binding state on this device' },
         { id: 'handoff', description: 'Print source, snapshot, counts, warnings, next steps' },
     ];
 }
@@ -69,6 +74,27 @@ function evaluateDryRunGate(report) {
 }
 function buildImportAuditArgs(source) {
     return { source, includeRepairPlan: true };
+}
+/** Labels for project roots imported from hmem (metadata.hmemUid present). */
+async function listHmemImportedProjectLabels(store) {
+    const labels = [];
+    for (const row of await store.listProjects()) {
+        const entry = await store.read(row.id);
+        if (!entry || entry.metadata.kind !== 'project')
+            continue;
+        if (entry.metadata.hmemUid)
+            labels.push(row.label);
+    }
+    return labels.sort();
+}
+/** Binding findings for hmem-imported projects only — reuses doctor classification. */
+async function collectMigrationProjectBindings(store) {
+    const importedLabels = new Set(await listHmemImportedProjectLabels(store));
+    const { projects } = await (0, tim_hooks_1.collectBindingReport)(store);
+    return projects.filter(project => importedLabels.has(project.label));
+}
+function formatMigrationBindingLines(findings) {
+    return findings.map(finding => (0, tim_hooks_1.formatBindingFindingLine)(finding).trimStart());
 }
 function getDbPath(config) {
     return process.env.TIM_DB_PATH || config.dbPath || path.join(os.homedir(), '.tim', 'tim.db');
@@ -150,6 +176,8 @@ async function cmdMigrateFromHmem(args) {
     try {
         const importReport = (0, tim_migrate_1.tim_import)(store, sourcePath, { deduplicate });
         const health = await store.health();
+        const bindingFindings = await collectMigrationProjectBindings(store);
+        const bindingLines = formatMigrationBindingLines(bindingFindings);
         const warnings = [
             ...dryRunReport.warnings,
             ...importReport.warnings,
@@ -174,6 +202,10 @@ async function cmdMigrateFromHmem(args) {
                 orphanEntries: health.orphanEntries,
                 ftsIntegrity: health.ftsIntegrity,
             },
+            bindings: {
+                projects: bindingFindings,
+                lines: bindingLines,
+            },
             audit: {
                 tool: 'tim_import_audit',
                 args: buildImportAuditArgs(sourcePath),
@@ -183,7 +215,8 @@ async function cmdMigrateFromHmem(args) {
             nextSteps: [
                 'Run MCP tool tim_import_audit with includeRepairPlan=true.',
                 'Review imported project roots and O-entry nesting against docs/hmem-to-tim-migration.md.',
-                'Run tim doctor again after any manual repair.',
+                'For each imported project: bind via `tim bind-project --label P#### --cwd <dir>` (ask the user when metadata.path is absent) or record it as intentionally memory-only; never hand-write `.tim-project`.',
+                'Run tim doctor again after binding or any manual repair.',
             ],
         }, null, 2));
     }

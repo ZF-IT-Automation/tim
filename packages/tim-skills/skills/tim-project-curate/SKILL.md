@@ -13,6 +13,7 @@ Read first:
 3. `tim_doctor`
 
 Fix order:
+- Doctor `unbound`/`label-mismatch` finding → confirm directory with user, then `tim bind-project`; never overwrite a mismatched marker without explicit user decision.
 - Missing canonical section → `tim_repair_section({ project:label, title })`.
 - Child under wrong parent → `tim_dry_run_move`, then `tim_move_entry`.
 - Duplicate section → move useful children into canonical section; mark duplicate
