@@ -12,6 +12,7 @@ node_modules/
 .hermes.md
 AGENTS.md
 CLAUDE.md
+.claude/
 tmp/
 .worktrees/
 
