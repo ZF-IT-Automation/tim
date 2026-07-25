@@ -8,7 +8,12 @@ function truncText(s, max) {
     const t = s.replace(/\s+/g, ' ').trim();
     if (t.length <= max)
         return t;
-    return t.slice(0, max) + '…';
+    const slice = t.slice(0, max);
+    // Break on the last word boundary rather than mid-word ("stealth, su…"),
+    // unless that would drop too much (then hard-cut).
+    const lastSpace = slice.lastIndexOf(' ');
+    const cut = lastSpace > max * 0.6 ? slice.slice(0, lastSpace) : slice;
+    return cut.trimEnd() + '…';
 }
 function parseProjectContent(title, content) {
     const combined = content ? `${title}\n${content}` : title;
@@ -48,16 +53,27 @@ function sectionPreview(entry) {
 function isEmptyBody(entry) {
     return sectionPreview(entry) === '';
 }
+// ponytail: single-line-ish cap; raise if session lines should show more.
+const SESSION_SUMMARY_MAX = 400;
+// Only dedup section bodies with real substance — short/empty bodies ("No entries",
+// a one-line preview) may coincidentally match and shouldn't collapse.
+const DEDUP_MIN_CHARS = 80;
 function parseSessionEntry(entry) {
     const date = entry.createdAt.slice(0, 10);
     const combined = entry.content ? `${entry.title}\n${entry.content}` : entry.title;
     const exMatch = combined.match(/(\d+)\s+exchanges?/i);
-    const exchanges = exMatch ? parseInt(exMatch[1], 10) : 0;
-    let summary = combined;
-    if (exMatch) {
+    // Prefer the structured metadata the store maintains (rollUpSession/updateSessionSummary
+    // set metadata.exchanges + metadata.summary); the body regex is only a legacy fallback.
+    const metaExchanges = Number(entry.metadata.exchanges);
+    const exchanges = Number.isFinite(metaExchanges) && metaExchanges > 0
+        ? metaExchanges
+        : exMatch ? parseInt(exMatch[1], 10) : 0;
+    const metaSummary = typeof entry.metadata.summary === 'string' ? entry.metadata.summary.trim() : '';
+    let summary = metaSummary || combined;
+    if (!metaSummary && exMatch) {
         summary = combined.replace(/\s*[—–-]\s*\d+\s+exchanges?.*$/i, '').trim();
     }
-    return { exchanges, summary: truncText(summary, 120), date };
+    return { exchanges, summary: truncText(summary, SESSION_SUMMARY_MAX), date };
 }
 function compareEntryOrder(a, b) {
     const oa = Number(a.metadata.order);
@@ -253,6 +269,12 @@ function formatProjectOutput(result, budget, schema, renderMode) {
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     if (sections.length > 0) {
         lines.push('', `── Sections (${sections.length}) ──`, '');
+        // Non-destructive cross-section dedup: two sections whose rendered body is
+        // identical (e.g. an import that duplicated a subtree) are shown once; the
+        // repeat collapses to a reference so a resuming agent sees the relationship
+        // without re-reading — and the render budget spent on the discarded body is
+        // refunded so it isn't charged twice.
+        const seenBodies = new Map();
         for (const section of sections) {
             const name = entryTitle(section);
             const schemaSection = findSchemaSection(schema?.sections, name);
@@ -263,24 +285,38 @@ function formatProjectOutput(result, budget, schema, renderMode) {
             }
             const useTail = resolveRenderTail(section, schemaSection?.render_tail);
             const subkids = childMap.get(section.id) ?? [];
-            lines.push(`  ${name}`);
+            // Render the body into a temp buffer first, so an identical body can be deduped.
+            const budgetBefore = budgetState.remaining;
+            const body = [];
             if (subkids.length > 0 && !shouldRenderChildren(renderDepth)) {
-                lines.push(`    ${childCountLabel(subkids.length)}`);
+                body.push(`    ${childCountLabel(subkids.length)}`);
             }
             else {
                 const content = sectionContentBody(section);
                 if (content) {
-                    lines.push(`    ${content}`);
+                    body.push(`    ${content}`);
                 }
                 else if (subkids.length === 0) {
-                    lines.push(`    No entries`);
+                    body.push(`    No entries`);
                 }
                 if (subkids.length > 0 && shouldRenderChildren(renderDepth)) {
                     const nextDepth = maxChildDepth(renderDepth);
                     if (nextDepth > 0) {
-                        lines.push(...formatChildrenTree(subkids, childMap, 0, budgetState, schema, useTail, renderMode));
+                        body.push(...formatChildrenTree(subkids, childMap, 0, budgetState, schema, useTail, renderMode));
                     }
                 }
+            }
+            lines.push(`  ${name}`);
+            const fingerprint = body.join('\n').trim();
+            const dupOf = fingerprint.length >= DEDUP_MIN_CHARS ? seenBodies.get(fingerprint) : undefined;
+            if (dupOf) {
+                budgetState.remaining = budgetBefore; // refund — the duplicate body is discarded
+                lines.push(`    (inhaltsgleich mit "${dupOf}" — nicht wiederholt)`);
+            }
+            else {
+                if (fingerprint.length >= DEDUP_MIN_CHARS)
+                    seenBodies.set(fingerprint, name);
+                lines.push(...body);
             }
         }
     }

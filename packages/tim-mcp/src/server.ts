@@ -321,6 +321,12 @@ const TimProjectStructureSchema = z.object({
   label: z.string().describe('Project label/alias/name, e.g. P0062'),
 });
 
+const TimFindDuplicatesSchema = z.object({
+  label: z.string().describe('Project label/alias/name, e.g. P0062'),
+  threshold: z.number().min(0).max(1).optional()
+    .describe('Cosine similarity threshold (default 0.8). Title similarity >= 0.6 also flags a pair.'),
+});
+
 const TimImportAuditSchema = z.object({
   source: z.string().optional().describe('Optional .hmem source path to compare labels'),
   labels: z.array(z.string()).optional().default([])
@@ -654,6 +660,11 @@ export const TOOL_DEFS: Array<{
     schema: TimProjectStructureSchema,
   },
   {
+    name: 'tim_find_duplicates',
+    description: 'Report-first duplicate detector: scans a project for near-duplicate entries (identical/similar titles or embeddings) and enqueues them as pending curation candidates — never deletes anything. Review the returned pairs, then consolidate via tim_move_entry/tim_delete, or reject.',
+    schema: TimFindDuplicatesSchema,
+  },
+  {
     name: 'tim_import_audit',
     description: 'Post-import audit for hmem migrations: missing sections, duplicate sections, loose imported nodes, health issues, and repair suggestions.',
     schema: TimImportAuditSchema,
@@ -838,13 +849,22 @@ export const TOOL_DEFS: Array<{
 // ─── Project output formatting ──────────────────────────
 
 function loadProjectSchema(): ProjectSchema | undefined {
-  const schemaPath = path.join(process.cwd(), 'docs/project-schema.json');
-  try {
-    if (fs.existsSync(schemaPath)) {
-      return JSON.parse(fs.readFileSync(schemaPath, 'utf8')) as ProjectSchema;
+  // The schema lives at repo-root/docs. The daemon runs as a long-lived service
+  // whose cwd is NOT the checkout (e.g. $HOME), so cwd-relative resolution silently
+  // fails and every render_depth collapses to 1. Resolve relative to this module
+  // (dist/ → ../../../docs) first, then fall back to cwd for dev/CLI invocations.
+  const candidates = [
+    path.join(__dirname, '../../../docs/project-schema.json'),
+    path.join(process.cwd(), 'docs/project-schema.json'),
+  ];
+  for (const schemaPath of candidates) {
+    try {
+      if (fs.existsSync(schemaPath)) {
+        return JSON.parse(fs.readFileSync(schemaPath, 'utf8')) as ProjectSchema;
+      }
+    } catch {
+      // schema optional / malformed → try next candidate
     }
-  } catch {
-    // schema optional
   }
   return undefined;
 }
@@ -1544,6 +1564,7 @@ const WRITE_TOOLS = new Set([
   'tim_tag_add', 'tim_tag_remove', 'tim_tag_rename', 'tim_import',
   'tim_repair_section',
   'tim_create_project', 'tim_error_log',
+  'tim_find_duplicates',
 ]);
 
 const READ_TOOLS = new Set([
@@ -2521,6 +2542,37 @@ export async function createMcpServer(
           const { label } = TimProjectStructureSchema.parse(args);
           const structure = await buildProjectStructure(s, label);
           return { content: [{ type: 'text', text: formatToolResponse(structure) }] };
+        }
+
+        case 'tim_find_duplicates': {
+          const { label, threshold } = TimFindDuplicatesSchema.parse(args);
+          const candidates = await s.consolidate().findDuplicateCandidates(
+            label,
+            threshold !== undefined ? { threshold } : {},
+          );
+          const shown = candidates.slice(0, 100);
+          const pairs = [];
+          for (const c of shown) {
+            if (!c.pair) continue;
+            const [aId, bId] = c.pair;
+            const a = await s.read(aId, { includeChildren: false });
+            const b = await s.read(bId, { includeChildren: false });
+            pairs.push({
+              a: { id: aId, title: a?.title ?? '' },
+              b: { id: bId, title: b?.title ?? '' },
+              score: c.score,
+              reason: c.reason,
+              queueId: c.id,
+            });
+          }
+          const payload = {
+            project: label,
+            duplicateCandidates: candidates.length,
+            shown: pairs.length,
+            pairs,
+            note: 'Report-first: candidates enqueued as pending curation nodes (idempotent — re-running does not duplicate the queue). Nothing deleted. Review, then consolidate via tim_move_entry/tim_delete, or reject.',
+          };
+          return { content: [{ type: 'text', text: formatToolResponse(payload) }] };
         }
 
         case 'tim_import_audit': {
