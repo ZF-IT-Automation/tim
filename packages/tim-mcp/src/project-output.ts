@@ -20,7 +20,12 @@ export interface ProjectSchema {
 function truncText(s: string, max: number): string {
   const t = s.replace(/\s+/g, ' ').trim();
   if (t.length <= max) return t;
-  return t.slice(0, max) + '…';
+  const slice = t.slice(0, max);
+  // Break on the last word boundary rather than mid-word ("stealth, su…"),
+  // unless that would drop too much (then hard-cut).
+  const lastSpace = slice.lastIndexOf(' ');
+  const cut = lastSpace > max * 0.6 ? slice.slice(0, lastSpace) : slice;
+  return cut.trimEnd() + '…';
 }
 
 interface ParsedProjectHeader {
@@ -72,16 +77,31 @@ function isEmptyBody(entry: Entry): boolean {
   return sectionPreview(entry) === '';
 }
 
+// ponytail: single-line-ish cap; raise if session lines should show more.
+const SESSION_SUMMARY_MAX = 400;
+
+// Only dedup section bodies with real substance — short/empty bodies ("No entries",
+// a one-line preview) may coincidentally match and shouldn't collapse.
+const DEDUP_MIN_CHARS = 80;
+
 function parseSessionEntry(entry: Entry): { exchanges: number; summary: string; date: string } {
   const date = entry.createdAt.slice(0, 10);
   const combined = entry.content ? `${entry.title}\n${entry.content}` : entry.title;
   const exMatch = combined.match(/(\d+)\s+exchanges?/i);
-  const exchanges = exMatch ? parseInt(exMatch[1], 10) : 0;
-  let summary = combined;
-  if (exMatch) {
+
+  // Prefer the structured metadata the store maintains (rollUpSession/updateSessionSummary
+  // set metadata.exchanges + metadata.summary); the body regex is only a legacy fallback.
+  const metaExchanges = Number(entry.metadata.exchanges);
+  const exchanges = Number.isFinite(metaExchanges) && metaExchanges > 0
+    ? metaExchanges
+    : exMatch ? parseInt(exMatch[1], 10) : 0;
+
+  const metaSummary = typeof entry.metadata.summary === 'string' ? entry.metadata.summary.trim() : '';
+  let summary = metaSummary || combined;
+  if (!metaSummary && exMatch) {
     summary = combined.replace(/\s*[—–-]\s*\d+\s+exchanges?.*$/i, '').trim();
   }
-  return { exchanges, summary: truncText(summary, 120), date };
+  return { exchanges, summary: truncText(summary, SESSION_SUMMARY_MAX), date };
 }
 
 function compareEntryOrder(a: Entry, b: Entry): number {
@@ -116,10 +136,47 @@ function sectionContentBody(section: Entry): string {
   return truncText(sectionPreview(section), 200);
 }
 
+function isBugEntry(entry: Entry): boolean {
+  if (entry.tags.some(t => t === '#bug' || t === 'bug')) return true;
+  if (String(entry.metadata.type ?? '') === 'bug') return true;
+  const bug = entry.metadata.bug;
+  return bug !== null && typeof bug === 'object' && !Array.isArray(bug);
+}
+
+function resolveBugStatus(entry: Entry): string {
+  const bug = entry.metadata.bug;
+  if (typeof bug === 'object' && bug !== null && !Array.isArray(bug)) {
+    const st = (bug as { status?: unknown }).status;
+    if (typeof st === 'string' && st) return st;
+  }
+  if (String(entry.metadata.type ?? '') === 'bug' && typeof entry.metadata.status === 'string') {
+    return entry.metadata.status;
+  }
+  return 'open';
+}
+
+function resolveBugSeverity(entry: Entry): string | undefined {
+  const bug = entry.metadata.bug;
+  if (typeof bug === 'object' && bug !== null && !Array.isArray(bug)) {
+    const sev = (bug as { severity?: unknown }).severity;
+    if (typeof sev === 'string' && sev) return sev;
+  }
+  if (typeof entry.metadata.severity === 'string' && entry.metadata.severity) {
+    return entry.metadata.severity;
+  }
+  return undefined;
+}
+
 function entryBadge(entry: Entry): string {
   if (isTaskMarker(entry.metadata.task)) {
     const status = resolveEntryTaskStatus(entry.metadata);
     return ` [${status}]`;
+  }
+  if (isBugEntry(entry)) {
+    const status = resolveBugStatus(entry);
+    const severity = resolveBugSeverity(entry);
+    const parts = severity ? [status, severity] : [status];
+    return ` [${parts.join(' · ')}]`;
   }
   if (entry.metadata.kind === 'error') {
     return ` [${entry.metadata.severity || 'medium'}]`;
@@ -127,13 +184,160 @@ function entryBadge(entry: Entry): string {
   return '';
 }
 
+function entryBodyPreview(entry: Entry): string {
+  if (!isTaskMarker(entry.metadata.task) && !isBugEntry(entry)) {
+    return '';
+  }
+  return truncText(sectionPreview(entry), 120);
+}
+
 interface FormatBudget {
   remaining: number;
 }
 
 const MAX_CHILDREN_PER_LEVEL = 10;
+const MAX_CHILDREN_PROTECTED_SECTIONS = 50;
+const PROTECTED_CHILD_SECTIONS = new Set(['Bugs', 'Next Steps']);
 const PROJECT_SUMMARY_MARKER = '## Project Summary';
 const RECENT_SESSIONS_COUNT = 5; // TODO: read from config
+
+const CLOSED_TASK_STATUSES = new Set(['done', 'cancelled']);
+const CLOSED_BUG_STATUSES = new Set(['fixed', 'closed', 'resolved', 'wontfix', 'done']);
+
+const TASK_STATUS_SORT: Record<string, number> = {
+  in_progress: 0,
+  changes_pending: 0,
+  pushed: 1,
+  reviewed: 1,
+  todo: 2,
+};
+const TASK_PRIORITY_SORT: Record<string, number> = {
+  high: 0,
+  medium: 1,
+  low: 2,
+};
+const BUG_SEVERITY_SORT: Record<string, number> = {
+  P0: 0,
+  P1: 1,
+  P2: 2,
+  P3: 3,
+};
+
+function getTaskMeta(entry: Entry): { priority?: string; due?: string; order?: number } {
+  const task = entry.metadata.task;
+  if (typeof task === 'object' && task !== null && !Array.isArray(task)) {
+    const tm = task as Record<string, unknown>;
+    const order = Number(tm.order);
+    return {
+      priority: typeof tm.priority === 'string' ? tm.priority : undefined,
+      due: typeof tm.due === 'string' ? tm.due
+        : typeof tm.due_date === 'string' ? tm.due_date
+          : undefined,
+      order: Number.isFinite(order) ? order : undefined,
+    };
+  }
+  return {};
+}
+
+function isClosedTask(entry: Entry): boolean {
+  if (!isTaskMarker(entry.metadata.task)) return false;
+  return CLOSED_TASK_STATUSES.has(resolveEntryTaskStatus(entry.metadata));
+}
+
+function isClosedBug(entry: Entry): boolean {
+  if (!isBugEntry(entry)) return false;
+  return CLOSED_BUG_STATUSES.has(resolveBugStatus(entry));
+}
+
+function compareTaskEntries(a: Entry, b: Entry): number {
+  const metaA = getTaskMeta(a);
+  const metaB = getTaskMeta(b);
+  const orderA = metaA.order ?? 999999;
+  const orderB = metaB.order ?? 999999;
+  if (orderA !== orderB) return orderA - orderB;
+
+  const statusA = TASK_STATUS_SORT[resolveEntryTaskStatus(a.metadata)] ?? 3;
+  const statusB = TASK_STATUS_SORT[resolveEntryTaskStatus(b.metadata)] ?? 3;
+  if (statusA !== statusB) return statusA - statusB;
+
+  const priorityA = TASK_PRIORITY_SORT[metaA.priority ?? ''] ?? 3;
+  const priorityB = TASK_PRIORITY_SORT[metaB.priority ?? ''] ?? 3;
+  if (priorityA !== priorityB) return priorityA - priorityB;
+
+  if (!metaA.due && !metaB.due) return compareEntryOrder(a, b);
+  if (!metaA.due) return 1;
+  if (!metaB.due) return -1;
+  const dueCmp = metaA.due.localeCompare(metaB.due);
+  return dueCmp !== 0 ? dueCmp : compareEntryOrder(a, b);
+}
+
+function compareBugEntries(a: Entry, b: Entry): number {
+  const openA = isClosedBug(a) ? 1 : 0;
+  const openB = isClosedBug(b) ? 1 : 0;
+  if (openA !== openB) return openA - openB;
+
+  const sevA = BUG_SEVERITY_SORT[resolveBugSeverity(a) ?? ''] ?? 4;
+  const sevB = BUG_SEVERITY_SORT[resolveBugSeverity(b) ?? ''] ?? 4;
+  if (sevA !== sevB) return sevA - sevB;
+
+  return compareEntryOrder(a, b);
+}
+
+interface PreparedSectionChildren {
+  visible: Entry[];
+  collapsedCount: number;
+  collapsedLabel: string;
+}
+
+function prepareSectionChildren(children: Entry[], sectionName: string): PreparedSectionChildren {
+  if (sectionName === 'Next Steps') {
+    const tasks = children.filter(c => isTaskMarker(c.metadata.task));
+    const active = tasks.filter(c => !isClosedTask(c)).sort(compareTaskEntries);
+    const collapsed = tasks.filter(c => isClosedTask(c));
+    return {
+      visible: active,
+      collapsedCount: collapsed.length,
+      collapsedLabel: collapsed.length === 1
+        ? '1 completed task (done/cancelled)'
+        : `${collapsed.length} completed tasks (done/cancelled)`,
+    };
+  }
+
+  if (sectionName === 'Tasks') {
+    const tasks = children.filter(c => isTaskMarker(c.metadata.task));
+    const nonTasks = children.filter(c => !isTaskMarker(c.metadata.task));
+    const active = tasks.filter(c => !isClosedTask(c)).sort(compareTaskEntries);
+    const collapsed = tasks.filter(c => isClosedTask(c));
+    return {
+      visible: [...active, ...nonTasks.sort(compareEntryOrder)],
+      collapsedCount: collapsed.length,
+      collapsedLabel: collapsed.length === 1
+        ? '1 completed task (done/cancelled)'
+        : `${collapsed.length} completed tasks (done/cancelled)`,
+    };
+  }
+
+  if (sectionName === 'Bugs') {
+    const bugs = children.filter(c => isBugEntry(c));
+    const nonBugs = children.filter(c => !isBugEntry(c));
+    const open = bugs.filter(c => !isClosedBug(c)).sort(compareBugEntries);
+    const closed = bugs.filter(c => isClosedBug(c)).sort(compareBugEntries);
+    return {
+      visible: [...open, ...closed, ...nonBugs.sort(compareEntryOrder)],
+      collapsedCount: 0,
+      collapsedLabel: '',
+    };
+  }
+
+  return { visible: children, collapsedCount: 0, collapsedLabel: '' };
+}
+
+function maxChildrenForSection(sectionName?: string): number {
+  if (sectionName && PROTECTED_CHILD_SECTIONS.has(sectionName)) {
+    return MAX_CHILDREN_PROTECTED_SECTIONS;
+  }
+  return MAX_CHILDREN_PER_LEVEL;
+}
 
 function normalizeRenderDepth(value: unknown): number | 'full' | undefined {
   if (value === 'full') return 'full';
@@ -204,12 +408,15 @@ function formatChildrenTree(
   schema?: ProjectSchema,
   renderTail?: boolean,
   renderMode?: 'load' | 'read',
+  sectionName?: string,
+  collapsed?: Pick<PreparedSectionChildren, 'collapsedCount' | 'collapsedLabel'>,
 ): string[] {
   if (children.length === 0 || budget.remaining <= 0) return [];
 
   const lines: string[] = [];
   const indent = ' '.repeat(4 + depth * 2);
-  const maxShow = Math.min(MAX_CHILDREN_PER_LEVEL, children.length);
+  const maxChildren = maxChildrenForSection(sectionName);
+  const maxShow = Math.min(maxChildren, children.length);
   // renderTail → show the LAST maxShow children (still in ascending order)
   const indices = renderTail
     ? Array.from({ length: maxShow }, (_, i) => children.length - maxShow + i)
@@ -229,6 +436,11 @@ function formatChildrenTree(
 
     lines.push(`${indent}${entryTitle(child)}${entryBadge(child)}`);
     budget.remaining -= 1;
+
+    const preview = entryBodyPreview(child);
+    if (preview) {
+      lines.push(`${indent}  ${preview}`);
+    }
     shown += 1;
 
     const subkids = childMap.get(child.id) ?? [];
@@ -243,6 +455,11 @@ function formatChildrenTree(
   const hidden = children.length - shown;
   if (hidden > 0 && budget.remaining > 0) {
     lines.push(`${indent}… ${hidden} more${renderTail ? ' (older)' : ''}`);
+    budget.remaining -= 1;
+  }
+
+  if (collapsed && collapsed.collapsedCount > 0 && budget.remaining > 0) {
+    lines.push(`${indent}… ${collapsed.collapsedLabel}`);
     budget.remaining -= 1;
   }
 
@@ -314,6 +531,12 @@ export function formatProjectOutput(
 
   if (sections.length > 0) {
     lines.push('', `── Sections (${sections.length}) ──`, '');
+    // Non-destructive cross-section dedup: two sections whose rendered body is
+    // identical (e.g. an import that duplicated a subtree) are shown once; the
+    // repeat collapses to a reference so a resuming agent sees the relationship
+    // without re-reading — and the render budget spent on the discarded body is
+    // refunded so it isn't charged twice.
+    const seenBodies = new Map<string, string>();
     for (const section of sections) {
       const name = entryTitle(section);
       const schemaSection = findSchemaSection(schema?.sections, name);
@@ -325,23 +548,49 @@ export function formatProjectOutput(
       }
 
       const useTail = resolveRenderTail(section, schemaSection?.render_tail);
-      const subkids = childMap.get(section.id) ?? [];
-      lines.push(`  ${name}`);
+      const rawSubkids = childMap.get(section.id) ?? [];
+      const prepared = prepareSectionChildren(rawSubkids, name);
+      const subkids = prepared.visible;
+
+      // Render the body into a temp buffer first, so an identical body can be deduped.
+      const budgetBefore = budgetState.remaining;
+      const body: string[] = [];
       if (subkids.length > 0 && !shouldRenderChildren(renderDepth)) {
-        lines.push(`    ${childCountLabel(subkids.length)}`);
+        body.push(`    ${childCountLabel(subkids.length)}`);
       } else {
         const content = sectionContentBody(section);
         if (content) {
-          lines.push(`    ${content}`);
-        } else if (subkids.length === 0) {
-          lines.push(`    No entries`);
+          body.push(`    ${content}`);
+        } else if (subkids.length === 0 && prepared.collapsedCount === 0) {
+          body.push(`    No entries`);
         }
-        if (subkids.length > 0 && shouldRenderChildren(renderDepth)) {
+        if ((subkids.length > 0 || prepared.collapsedCount > 0) && shouldRenderChildren(renderDepth)) {
           const nextDepth = maxChildDepth(renderDepth);
           if (nextDepth > 0) {
-            lines.push(...formatChildrenTree(subkids, childMap, 0, budgetState, schema, useTail, renderMode));
+            body.push(...formatChildrenTree(
+              subkids,
+              childMap,
+              0,
+              budgetState,
+              schema,
+              useTail,
+              renderMode,
+              name,
+              prepared,
+            ));
           }
         }
+      }
+
+      lines.push(`  ${name}`);
+      const fingerprint = body.join('\n').trim();
+      const dupOf = fingerprint.length >= DEDUP_MIN_CHARS ? seenBodies.get(fingerprint) : undefined;
+      if (dupOf) {
+        budgetState.remaining = budgetBefore; // refund — the duplicate body is discarded
+        lines.push(`    (inhaltsgleich mit "${dupOf}" — nicht wiederholt)`);
+      } else {
+        if (fingerprint.length >= DEDUP_MIN_CHARS) seenBodies.set(fingerprint, name);
+        lines.push(...body);
       }
     }
   }

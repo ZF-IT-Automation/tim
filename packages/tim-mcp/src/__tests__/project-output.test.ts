@@ -208,8 +208,9 @@ describe('formatProjectOutput entry badges', () => {
 
     const out = formatProjectOutput({ project, children, truncated: false }, 200);
     expect(out).toMatch(/Ship feature \[in_progress\]/);
-    expect(out).toMatch(/Write docs \[done\]/);
     expect(out).toMatch(/No status task \[todo\]/);
+    expect(out).not.toMatch(/Write docs \[done\]/);
+    expect(out).toMatch(/1 completed task \(done\/cancelled\)/);
   });
 
   it('renders error severity badges', () => {
