@@ -136,10 +136,47 @@ function sectionContentBody(section: Entry): string {
   return truncText(sectionPreview(section), 200);
 }
 
+function isBugEntry(entry: Entry): boolean {
+  if (entry.tags.some(t => t === '#bug' || t === 'bug')) return true;
+  if (String(entry.metadata.type ?? '') === 'bug') return true;
+  const bug = entry.metadata.bug;
+  return bug !== null && typeof bug === 'object' && !Array.isArray(bug);
+}
+
+function resolveBugStatus(entry: Entry): string {
+  const bug = entry.metadata.bug;
+  if (typeof bug === 'object' && bug !== null && !Array.isArray(bug)) {
+    const st = (bug as { status?: unknown }).status;
+    if (typeof st === 'string' && st) return st;
+  }
+  if (String(entry.metadata.type ?? '') === 'bug' && typeof entry.metadata.status === 'string') {
+    return entry.metadata.status;
+  }
+  return 'open';
+}
+
+function resolveBugSeverity(entry: Entry): string | undefined {
+  const bug = entry.metadata.bug;
+  if (typeof bug === 'object' && bug !== null && !Array.isArray(bug)) {
+    const sev = (bug as { severity?: unknown }).severity;
+    if (typeof sev === 'string' && sev) return sev;
+  }
+  if (typeof entry.metadata.severity === 'string' && entry.metadata.severity) {
+    return entry.metadata.severity;
+  }
+  return undefined;
+}
+
 function entryBadge(entry: Entry): string {
   if (isTaskMarker(entry.metadata.task)) {
     const status = resolveEntryTaskStatus(entry.metadata);
     return ` [${status}]`;
+  }
+  if (isBugEntry(entry)) {
+    const status = resolveBugStatus(entry);
+    const severity = resolveBugSeverity(entry);
+    const parts = severity ? [status, severity] : [status];
+    return ` [${parts.join(' · ')}]`;
   }
   if (entry.metadata.kind === 'error') {
     return ` [${entry.metadata.severity || 'medium'}]`;
@@ -147,13 +184,160 @@ function entryBadge(entry: Entry): string {
   return '';
 }
 
+function entryBodyPreview(entry: Entry): string {
+  if (!isTaskMarker(entry.metadata.task) && !isBugEntry(entry)) {
+    return '';
+  }
+  return truncText(sectionPreview(entry), 120);
+}
+
 interface FormatBudget {
   remaining: number;
 }
 
 const MAX_CHILDREN_PER_LEVEL = 10;
+const MAX_CHILDREN_PROTECTED_SECTIONS = 50;
+const PROTECTED_CHILD_SECTIONS = new Set(['Bugs', 'Next Steps']);
 const PROJECT_SUMMARY_MARKER = '## Project Summary';
 const RECENT_SESSIONS_COUNT = 5; // TODO: read from config
+
+const CLOSED_TASK_STATUSES = new Set(['done', 'cancelled']);
+const CLOSED_BUG_STATUSES = new Set(['fixed', 'closed', 'resolved', 'wontfix', 'done']);
+
+const TASK_STATUS_SORT: Record<string, number> = {
+  in_progress: 0,
+  changes_pending: 0,
+  pushed: 1,
+  reviewed: 1,
+  todo: 2,
+};
+const TASK_PRIORITY_SORT: Record<string, number> = {
+  high: 0,
+  medium: 1,
+  low: 2,
+};
+const BUG_SEVERITY_SORT: Record<string, number> = {
+  P0: 0,
+  P1: 1,
+  P2: 2,
+  P3: 3,
+};
+
+function getTaskMeta(entry: Entry): { priority?: string; due?: string; order?: number } {
+  const task = entry.metadata.task;
+  if (typeof task === 'object' && task !== null && !Array.isArray(task)) {
+    const tm = task as Record<string, unknown>;
+    const order = Number(tm.order);
+    return {
+      priority: typeof tm.priority === 'string' ? tm.priority : undefined,
+      due: typeof tm.due === 'string' ? tm.due
+        : typeof tm.due_date === 'string' ? tm.due_date
+          : undefined,
+      order: Number.isFinite(order) ? order : undefined,
+    };
+  }
+  return {};
+}
+
+function isClosedTask(entry: Entry): boolean {
+  if (!isTaskMarker(entry.metadata.task)) return false;
+  return CLOSED_TASK_STATUSES.has(resolveEntryTaskStatus(entry.metadata));
+}
+
+function isClosedBug(entry: Entry): boolean {
+  if (!isBugEntry(entry)) return false;
+  return CLOSED_BUG_STATUSES.has(resolveBugStatus(entry));
+}
+
+function compareTaskEntries(a: Entry, b: Entry): number {
+  const metaA = getTaskMeta(a);
+  const metaB = getTaskMeta(b);
+  const orderA = metaA.order ?? 999999;
+  const orderB = metaB.order ?? 999999;
+  if (orderA !== orderB) return orderA - orderB;
+
+  const statusA = TASK_STATUS_SORT[resolveEntryTaskStatus(a.metadata)] ?? 3;
+  const statusB = TASK_STATUS_SORT[resolveEntryTaskStatus(b.metadata)] ?? 3;
+  if (statusA !== statusB) return statusA - statusB;
+
+  const priorityA = TASK_PRIORITY_SORT[metaA.priority ?? ''] ?? 3;
+  const priorityB = TASK_PRIORITY_SORT[metaB.priority ?? ''] ?? 3;
+  if (priorityA !== priorityB) return priorityA - priorityB;
+
+  if (!metaA.due && !metaB.due) return compareEntryOrder(a, b);
+  if (!metaA.due) return 1;
+  if (!metaB.due) return -1;
+  const dueCmp = metaA.due.localeCompare(metaB.due);
+  return dueCmp !== 0 ? dueCmp : compareEntryOrder(a, b);
+}
+
+function compareBugEntries(a: Entry, b: Entry): number {
+  const openA = isClosedBug(a) ? 1 : 0;
+  const openB = isClosedBug(b) ? 1 : 0;
+  if (openA !== openB) return openA - openB;
+
+  const sevA = BUG_SEVERITY_SORT[resolveBugSeverity(a) ?? ''] ?? 4;
+  const sevB = BUG_SEVERITY_SORT[resolveBugSeverity(b) ?? ''] ?? 4;
+  if (sevA !== sevB) return sevA - sevB;
+
+  return compareEntryOrder(a, b);
+}
+
+interface PreparedSectionChildren {
+  visible: Entry[];
+  collapsedCount: number;
+  collapsedLabel: string;
+}
+
+function prepareSectionChildren(children: Entry[], sectionName: string): PreparedSectionChildren {
+  if (sectionName === 'Next Steps') {
+    const tasks = children.filter(c => isTaskMarker(c.metadata.task));
+    const active = tasks.filter(c => !isClosedTask(c)).sort(compareTaskEntries);
+    const collapsed = tasks.filter(c => isClosedTask(c));
+    return {
+      visible: active,
+      collapsedCount: collapsed.length,
+      collapsedLabel: collapsed.length === 1
+        ? '1 completed task (done/cancelled)'
+        : `${collapsed.length} completed tasks (done/cancelled)`,
+    };
+  }
+
+  if (sectionName === 'Tasks') {
+    const tasks = children.filter(c => isTaskMarker(c.metadata.task));
+    const nonTasks = children.filter(c => !isTaskMarker(c.metadata.task));
+    const active = tasks.filter(c => !isClosedTask(c)).sort(compareTaskEntries);
+    const collapsed = tasks.filter(c => isClosedTask(c));
+    return {
+      visible: [...active, ...nonTasks.sort(compareEntryOrder)],
+      collapsedCount: collapsed.length,
+      collapsedLabel: collapsed.length === 1
+        ? '1 completed task (done/cancelled)'
+        : `${collapsed.length} completed tasks (done/cancelled)`,
+    };
+  }
+
+  if (sectionName === 'Bugs') {
+    const bugs = children.filter(c => isBugEntry(c));
+    const nonBugs = children.filter(c => !isBugEntry(c));
+    const open = bugs.filter(c => !isClosedBug(c)).sort(compareBugEntries);
+    const closed = bugs.filter(c => isClosedBug(c)).sort(compareBugEntries);
+    return {
+      visible: [...open, ...closed, ...nonBugs.sort(compareEntryOrder)],
+      collapsedCount: 0,
+      collapsedLabel: '',
+    };
+  }
+
+  return { visible: children, collapsedCount: 0, collapsedLabel: '' };
+}
+
+function maxChildrenForSection(sectionName?: string): number {
+  if (sectionName && PROTECTED_CHILD_SECTIONS.has(sectionName)) {
+    return MAX_CHILDREN_PROTECTED_SECTIONS;
+  }
+  return MAX_CHILDREN_PER_LEVEL;
+}
 
 function normalizeRenderDepth(value: unknown): number | 'full' | undefined {
   if (value === 'full') return 'full';
@@ -224,12 +408,15 @@ function formatChildrenTree(
   schema?: ProjectSchema,
   renderTail?: boolean,
   renderMode?: 'load' | 'read',
+  sectionName?: string,
+  collapsed?: Pick<PreparedSectionChildren, 'collapsedCount' | 'collapsedLabel'>,
 ): string[] {
   if (children.length === 0 || budget.remaining <= 0) return [];
 
   const lines: string[] = [];
   const indent = ' '.repeat(4 + depth * 2);
-  const maxShow = Math.min(MAX_CHILDREN_PER_LEVEL, children.length);
+  const maxChildren = maxChildrenForSection(sectionName);
+  const maxShow = Math.min(maxChildren, children.length);
   // renderTail → show the LAST maxShow children (still in ascending order)
   const indices = renderTail
     ? Array.from({ length: maxShow }, (_, i) => children.length - maxShow + i)
@@ -249,6 +436,11 @@ function formatChildrenTree(
 
     lines.push(`${indent}${entryTitle(child)}${entryBadge(child)}`);
     budget.remaining -= 1;
+
+    const preview = entryBodyPreview(child);
+    if (preview) {
+      lines.push(`${indent}  ${preview}`);
+    }
     shown += 1;
 
     const subkids = childMap.get(child.id) ?? [];
@@ -263,6 +455,11 @@ function formatChildrenTree(
   const hidden = children.length - shown;
   if (hidden > 0 && budget.remaining > 0) {
     lines.push(`${indent}… ${hidden} more${renderTail ? ' (older)' : ''}`);
+    budget.remaining -= 1;
+  }
+
+  if (collapsed && collapsed.collapsedCount > 0 && budget.remaining > 0) {
+    lines.push(`${indent}… ${collapsed.collapsedLabel}`);
     budget.remaining -= 1;
   }
 
@@ -351,7 +548,9 @@ export function formatProjectOutput(
       }
 
       const useTail = resolveRenderTail(section, schemaSection?.render_tail);
-      const subkids = childMap.get(section.id) ?? [];
+      const rawSubkids = childMap.get(section.id) ?? [];
+      const prepared = prepareSectionChildren(rawSubkids, name);
+      const subkids = prepared.visible;
 
       // Render the body into a temp buffer first, so an identical body can be deduped.
       const budgetBefore = budgetState.remaining;
@@ -362,13 +561,23 @@ export function formatProjectOutput(
         const content = sectionContentBody(section);
         if (content) {
           body.push(`    ${content}`);
-        } else if (subkids.length === 0) {
+        } else if (subkids.length === 0 && prepared.collapsedCount === 0) {
           body.push(`    No entries`);
         }
-        if (subkids.length > 0 && shouldRenderChildren(renderDepth)) {
+        if ((subkids.length > 0 || prepared.collapsedCount > 0) && shouldRenderChildren(renderDepth)) {
           const nextDepth = maxChildDepth(renderDepth);
           if (nextDepth > 0) {
-            body.push(...formatChildrenTree(subkids, childMap, 0, budgetState, schema, useTail, renderMode));
+            body.push(...formatChildrenTree(
+              subkids,
+              childMap,
+              0,
+              budgetState,
+              schema,
+              useTail,
+              renderMode,
+              name,
+              prepared,
+            ));
           }
         }
       }

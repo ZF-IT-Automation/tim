@@ -39,10 +39,10 @@ const section = {
 describe('formatProjectOutput task badge (T3 fix)', () => {
   it('reads metadata.task.status (canonical) for the badge label', () => {
     const children = [
-      section,
+      { ...section, id: 'overview', title: 'Overview' },
       {
         id: 't-done',
-        parentId: 'tasks',
+        parentId: 'overview',
         title: 'Done task',
         // NOTE: no legacy metadata.status — only the canonical task.status
         metadata: { order: 0, task: { status: 'done' } },
@@ -77,10 +77,10 @@ describe('formatProjectOutput task badge (T3 fix)', () => {
 
   it('renders [x] for metadata.task.status=done (the [x] alias)', () => {
     const children = [
-      section,
+      { ...section, id: 'overview', title: 'Overview' },
       {
         id: 't-x',
-        parentId: 'tasks',
+        parentId: 'overview',
         title: 'Completed task',
         metadata: { order: 0, task: { status: 'done' } },
         tags: [],

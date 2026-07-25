@@ -108,19 +108,190 @@ function sectionContentBody(section) {
         return '';
     return truncText(sectionPreview(section), 200);
 }
+function isBugEntry(entry) {
+    if (entry.tags.some(t => t === '#bug' || t === 'bug'))
+        return true;
+    if (String(entry.metadata.type ?? '') === 'bug')
+        return true;
+    const bug = entry.metadata.bug;
+    return bug !== null && typeof bug === 'object' && !Array.isArray(bug);
+}
+function resolveBugStatus(entry) {
+    const bug = entry.metadata.bug;
+    if (typeof bug === 'object' && bug !== null && !Array.isArray(bug)) {
+        const st = bug.status;
+        if (typeof st === 'string' && st)
+            return st;
+    }
+    if (String(entry.metadata.type ?? '') === 'bug' && typeof entry.metadata.status === 'string') {
+        return entry.metadata.status;
+    }
+    return 'open';
+}
+function resolveBugSeverity(entry) {
+    const bug = entry.metadata.bug;
+    if (typeof bug === 'object' && bug !== null && !Array.isArray(bug)) {
+        const sev = bug.severity;
+        if (typeof sev === 'string' && sev)
+            return sev;
+    }
+    if (typeof entry.metadata.severity === 'string' && entry.metadata.severity) {
+        return entry.metadata.severity;
+    }
+    return undefined;
+}
 function entryBadge(entry) {
     if ((0, tim_store_1.isTaskMarker)(entry.metadata.task)) {
         const status = (0, task_status_js_1.resolveEntryTaskStatus)(entry.metadata);
         return ` [${status}]`;
+    }
+    if (isBugEntry(entry)) {
+        const status = resolveBugStatus(entry);
+        const severity = resolveBugSeverity(entry);
+        const parts = severity ? [status, severity] : [status];
+        return ` [${parts.join(' · ')}]`;
     }
     if (entry.metadata.kind === 'error') {
         return ` [${entry.metadata.severity || 'medium'}]`;
     }
     return '';
 }
+function entryBodyPreview(entry) {
+    if (!(0, tim_store_1.isTaskMarker)(entry.metadata.task) && !isBugEntry(entry)) {
+        return '';
+    }
+    return truncText(sectionPreview(entry), 120);
+}
 const MAX_CHILDREN_PER_LEVEL = 10;
+const MAX_CHILDREN_PROTECTED_SECTIONS = 50;
+const PROTECTED_CHILD_SECTIONS = new Set(['Bugs', 'Next Steps']);
 const PROJECT_SUMMARY_MARKER = '## Project Summary';
 const RECENT_SESSIONS_COUNT = 5; // TODO: read from config
+const CLOSED_TASK_STATUSES = new Set(['done', 'cancelled']);
+const CLOSED_BUG_STATUSES = new Set(['fixed', 'closed', 'resolved', 'wontfix', 'done']);
+const TASK_STATUS_SORT = {
+    in_progress: 0,
+    changes_pending: 0,
+    pushed: 1,
+    reviewed: 1,
+    todo: 2,
+};
+const TASK_PRIORITY_SORT = {
+    high: 0,
+    medium: 1,
+    low: 2,
+};
+const BUG_SEVERITY_SORT = {
+    P0: 0,
+    P1: 1,
+    P2: 2,
+    P3: 3,
+};
+function getTaskMeta(entry) {
+    const task = entry.metadata.task;
+    if (typeof task === 'object' && task !== null && !Array.isArray(task)) {
+        const tm = task;
+        const order = Number(tm.order);
+        return {
+            priority: typeof tm.priority === 'string' ? tm.priority : undefined,
+            due: typeof tm.due === 'string' ? tm.due
+                : typeof tm.due_date === 'string' ? tm.due_date
+                    : undefined,
+            order: Number.isFinite(order) ? order : undefined,
+        };
+    }
+    return {};
+}
+function isClosedTask(entry) {
+    if (!(0, tim_store_1.isTaskMarker)(entry.metadata.task))
+        return false;
+    return CLOSED_TASK_STATUSES.has((0, task_status_js_1.resolveEntryTaskStatus)(entry.metadata));
+}
+function isClosedBug(entry) {
+    if (!isBugEntry(entry))
+        return false;
+    return CLOSED_BUG_STATUSES.has(resolveBugStatus(entry));
+}
+function compareTaskEntries(a, b) {
+    const metaA = getTaskMeta(a);
+    const metaB = getTaskMeta(b);
+    const orderA = metaA.order ?? 999999;
+    const orderB = metaB.order ?? 999999;
+    if (orderA !== orderB)
+        return orderA - orderB;
+    const statusA = TASK_STATUS_SORT[(0, task_status_js_1.resolveEntryTaskStatus)(a.metadata)] ?? 3;
+    const statusB = TASK_STATUS_SORT[(0, task_status_js_1.resolveEntryTaskStatus)(b.metadata)] ?? 3;
+    if (statusA !== statusB)
+        return statusA - statusB;
+    const priorityA = TASK_PRIORITY_SORT[metaA.priority ?? ''] ?? 3;
+    const priorityB = TASK_PRIORITY_SORT[metaB.priority ?? ''] ?? 3;
+    if (priorityA !== priorityB)
+        return priorityA - priorityB;
+    if (!metaA.due && !metaB.due)
+        return compareEntryOrder(a, b);
+    if (!metaA.due)
+        return 1;
+    if (!metaB.due)
+        return -1;
+    const dueCmp = metaA.due.localeCompare(metaB.due);
+    return dueCmp !== 0 ? dueCmp : compareEntryOrder(a, b);
+}
+function compareBugEntries(a, b) {
+    const openA = isClosedBug(a) ? 1 : 0;
+    const openB = isClosedBug(b) ? 1 : 0;
+    if (openA !== openB)
+        return openA - openB;
+    const sevA = BUG_SEVERITY_SORT[resolveBugSeverity(a) ?? ''] ?? 4;
+    const sevB = BUG_SEVERITY_SORT[resolveBugSeverity(b) ?? ''] ?? 4;
+    if (sevA !== sevB)
+        return sevA - sevB;
+    return compareEntryOrder(a, b);
+}
+function prepareSectionChildren(children, sectionName) {
+    if (sectionName === 'Next Steps') {
+        const tasks = children.filter(c => (0, tim_store_1.isTaskMarker)(c.metadata.task));
+        const active = tasks.filter(c => !isClosedTask(c)).sort(compareTaskEntries);
+        const collapsed = tasks.filter(c => isClosedTask(c));
+        return {
+            visible: active,
+            collapsedCount: collapsed.length,
+            collapsedLabel: collapsed.length === 1
+                ? '1 completed task (done/cancelled)'
+                : `${collapsed.length} completed tasks (done/cancelled)`,
+        };
+    }
+    if (sectionName === 'Tasks') {
+        const tasks = children.filter(c => (0, tim_store_1.isTaskMarker)(c.metadata.task));
+        const nonTasks = children.filter(c => !(0, tim_store_1.isTaskMarker)(c.metadata.task));
+        const active = tasks.filter(c => !isClosedTask(c)).sort(compareTaskEntries);
+        const collapsed = tasks.filter(c => isClosedTask(c));
+        return {
+            visible: [...active, ...nonTasks.sort(compareEntryOrder)],
+            collapsedCount: collapsed.length,
+            collapsedLabel: collapsed.length === 1
+                ? '1 completed task (done/cancelled)'
+                : `${collapsed.length} completed tasks (done/cancelled)`,
+        };
+    }
+    if (sectionName === 'Bugs') {
+        const bugs = children.filter(c => isBugEntry(c));
+        const nonBugs = children.filter(c => !isBugEntry(c));
+        const open = bugs.filter(c => !isClosedBug(c)).sort(compareBugEntries);
+        const closed = bugs.filter(c => isClosedBug(c)).sort(compareBugEntries);
+        return {
+            visible: [...open, ...closed, ...nonBugs.sort(compareEntryOrder)],
+            collapsedCount: 0,
+            collapsedLabel: '',
+        };
+    }
+    return { visible: children, collapsedCount: 0, collapsedLabel: '' };
+}
+function maxChildrenForSection(sectionName) {
+    if (sectionName && PROTECTED_CHILD_SECTIONS.has(sectionName)) {
+        return MAX_CHILDREN_PROTECTED_SECTIONS;
+    }
+    return MAX_CHILDREN_PER_LEVEL;
+}
 function normalizeRenderDepth(value) {
     if (value === 'full')
         return 'full';
@@ -186,12 +357,13 @@ function maxChildDepth(depth) {
         return Number.MAX_SAFE_INTEGER;
     return Math.max(0, depth);
 }
-function formatChildrenTree(children, childMap, depth, budget, schema, renderTail, renderMode) {
+function formatChildrenTree(children, childMap, depth, budget, schema, renderTail, renderMode, sectionName, collapsed) {
     if (children.length === 0 || budget.remaining <= 0)
         return [];
     const lines = [];
     const indent = ' '.repeat(4 + depth * 2);
-    const maxShow = Math.min(MAX_CHILDREN_PER_LEVEL, children.length);
+    const maxChildren = maxChildrenForSection(sectionName);
+    const maxShow = Math.min(maxChildren, children.length);
     // renderTail → show the LAST maxShow children (still in ascending order)
     const indices = renderTail
         ? Array.from({ length: maxShow }, (_, i) => children.length - maxShow + i)
@@ -209,6 +381,10 @@ function formatChildrenTree(children, childMap, depth, budget, schema, renderTai
         }
         lines.push(`${indent}${entryTitle(child)}${entryBadge(child)}`);
         budget.remaining -= 1;
+        const preview = entryBodyPreview(child);
+        if (preview) {
+            lines.push(`${indent}  ${preview}`);
+        }
         shown += 1;
         const subkids = childMap.get(child.id) ?? [];
         if (subkids.length > 0 && shouldRenderChildren(childRenderDepth)) {
@@ -221,6 +397,10 @@ function formatChildrenTree(children, childMap, depth, budget, schema, renderTai
     const hidden = children.length - shown;
     if (hidden > 0 && budget.remaining > 0) {
         lines.push(`${indent}… ${hidden} more${renderTail ? ' (older)' : ''}`);
+        budget.remaining -= 1;
+    }
+    if (collapsed && collapsed.collapsedCount > 0 && budget.remaining > 0) {
+        lines.push(`${indent}… ${collapsed.collapsedLabel}`);
         budget.remaining -= 1;
     }
     return lines;
@@ -284,7 +464,9 @@ function formatProjectOutput(result, budget, schema, renderMode) {
                 continue;
             }
             const useTail = resolveRenderTail(section, schemaSection?.render_tail);
-            const subkids = childMap.get(section.id) ?? [];
+            const rawSubkids = childMap.get(section.id) ?? [];
+            const prepared = prepareSectionChildren(rawSubkids, name);
+            const subkids = prepared.visible;
             // Render the body into a temp buffer first, so an identical body can be deduped.
             const budgetBefore = budgetState.remaining;
             const body = [];
@@ -296,13 +478,13 @@ function formatProjectOutput(result, budget, schema, renderMode) {
                 if (content) {
                     body.push(`    ${content}`);
                 }
-                else if (subkids.length === 0) {
+                else if (subkids.length === 0 && prepared.collapsedCount === 0) {
                     body.push(`    No entries`);
                 }
-                if (subkids.length > 0 && shouldRenderChildren(renderDepth)) {
+                if ((subkids.length > 0 || prepared.collapsedCount > 0) && shouldRenderChildren(renderDepth)) {
                     const nextDepth = maxChildDepth(renderDepth);
                     if (nextDepth > 0) {
-                        body.push(...formatChildrenTree(subkids, childMap, 0, budgetState, schema, useTail, renderMode));
+                        body.push(...formatChildrenTree(subkids, childMap, 0, budgetState, schema, useTail, renderMode, name, prepared));
                     }
                 }
             }
