@@ -158,11 +158,18 @@ export interface EnsureProjectForPathResult {
     created: boolean;
 }
 /**
- * Auto-create a project from a directory name when no .tim-project binding exists.
- * Re-bind to an existing project with the same directory alias. Reversible via
- * irrelevant flag on the project root.
+ * Latest kind=session entry for a project, preferring the given cwd.
+ *
+ * The cwd is a *disambiguator* between concurrent sessions, not a hard filter.
+ * Callers routinely pass a directory that is not literally the session's cwd —
+ * the statusline, for instance, passes the directory where `.tim-project` was
+ * found by walking up, so a session started in a subdirectory would never
+ * match on equality alone and every counter read back as zero.
+ *
+ * Order: exact cwd match, then any session nested under (or containing) that
+ * directory, newest first. Unrelated directories still resolve to null so a
+ * sibling project's session is never mistaken for this one.
  */
-/** Latest kind=session entry for a project whose metadata.cwd matches. */
 export declare function resolveCurrentSession(store: TimStore, projectLabel: string, cwd?: string): Promise<Entry | null>;
 export declare function ensureProjectForPath(store: TimStore, cwd: string): Promise<EnsureProjectForPathResult | null>;
 //# sourceMappingURL=session.d.ts.map

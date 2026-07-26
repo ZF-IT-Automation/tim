@@ -127,10 +127,11 @@ function summaryIn(exchanges, batchSize) {
 function formatTimStatusLine(counters, projectName) {
     const batchSize = counters.batchSize > 0 ? counters.batchSize : tim_store_1.DEFAULT_BATCH_SIZE;
     const exchanges = Math.max(0, counters.exchanges);
-    const inBatch = exchangesInCurrentBatch(exchanges, batchSize);
     const k = summaryIn(exchanges, batchSize);
     const name = projectName?.trim() || counters.project;
-    return `${name} · ${inBatch}/${batchSize} exchanges · summary in ${k}`;
+    // `n/batchSize exchanges` carried no information the countdown lacks — both
+    // derive from the same modulo, so one is the other subtracted from batchSize.
+    return `${name} · summary in ${k}`;
 }
 function formatNoProjectStatusLine() {
     return 'no project';

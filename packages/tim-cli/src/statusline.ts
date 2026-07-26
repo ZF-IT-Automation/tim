@@ -123,10 +123,11 @@ export function summaryIn(exchanges: number, batchSize: number): number {
 export function formatTimStatusLine(counters: StatuslineCounters, projectName?: string): string {
   const batchSize = counters.batchSize > 0 ? counters.batchSize : DEFAULT_BATCH_SIZE;
   const exchanges = Math.max(0, counters.exchanges);
-  const inBatch = exchangesInCurrentBatch(exchanges, batchSize);
   const k = summaryIn(exchanges, batchSize);
   const name = projectName?.trim() || counters.project;
-  return `${name} · ${inBatch}/${batchSize} exchanges · summary in ${k}`;
+  // `n/batchSize exchanges` carried no information the countdown lacks — both
+  // derive from the same modulo, so one is the other subtracted from batchSize.
+  return `${name} · summary in ${k}`;
 }
 
 export function formatNoProjectStatusLine(): string {

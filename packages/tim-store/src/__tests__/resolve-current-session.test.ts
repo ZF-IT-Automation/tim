@@ -40,6 +40,52 @@ describe('resolveCurrentSession', () => {
     expect(resolved?.metadata.cwd).toBe(cwdA);
   });
 
+  // Regression: the statusline passes the directory where .tim-project was
+  // found by walking up, which is an ANCESTOR of the directory the session
+  // actually started in. Exact-match filtering returned null there, so every
+  // counter rendered as zero forever ("0/5 exchanges · summary in 5").
+  it('resolves a session started in a subdirectory of the queried dir', async () => {
+    await store.createProject('P0095');
+    const markerDir = path.resolve('/tmp/workspace');
+    const sessionCwd = path.resolve('/tmp/workspace/repo');
+
+    await sessions.startProjectSession({
+      sessionId: 'sess-nested',
+      projectId: 'P0095',
+      agentName: 'test',
+      cwd: sessionCwd,
+      harness: 'vitest',
+    });
+
+    expect((await resolveCurrentSession(store, 'P0095', markerDir))?.id).toBe('sess-nested');
+    expect((await resolveCurrentSession(store, 'P0095', sessionCwd))?.id).toBe('sess-nested');
+  });
+
+  it('prefers an exact cwd match over a merely nested one', async () => {
+    await store.createProject('P0094');
+    const parent = path.resolve('/tmp/outer');
+    const child = path.resolve('/tmp/outer/inner');
+
+    await sessions.startProjectSession({
+      sessionId: 'sess-child',
+      projectId: 'P0094',
+      agentName: 'test',
+      cwd: child,
+      harness: 'vitest',
+    });
+    await new Promise(r => setTimeout(r, 5));
+    await sessions.startProjectSession({
+      sessionId: 'sess-parent',
+      projectId: 'P0094',
+      agentName: 'test',
+      cwd: parent,
+      harness: 'vitest',
+    });
+
+    // newest overall is sess-parent, but an exact match must still win
+    expect((await resolveCurrentSession(store, 'P0094', child))?.id).toBe('sess-child');
+  });
+
   it('returns null for an unknown cwd', async () => {
     await store.createProject('P0099');
     await sessions.startProjectSession({

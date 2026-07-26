@@ -40,7 +40,7 @@ describe('statusline', () => {
         },
         'TIM',
       ),
-    ).toBe('TIM · 3/5 exchanges · summary in 2');
+    ).toBe('TIM · summary in 2');
   });
 
   it('summary at batch boundary', () => {
@@ -105,7 +105,7 @@ describe('statusline', () => {
       const sub = path.join(dir, 'nested');
       fs.mkdirSync(sub);
       const line = await statuslineFromCwd(sub, { maxRoot: dir });
-      expect(line).toMatch(/ · 3\/5 exchanges · summary in 2$/);
+      expect(line).toMatch(/ · summary in 2$/);
       fs.rmSync(dir, { recursive: true, force: true });
     } finally {
       store.close();
@@ -133,7 +133,7 @@ describe('statusline', () => {
       const dir = fs.mkdtempSync(path.join(TEST_ROOT, 'sl-no-sess-'));
       writeMarker(dir, { project: 'P0105' });
       const line = await statuslineFromCwd(dir, { maxRoot: dir });
-      expect(line).toMatch(/ · 0\/5 exchanges · summary in 5$/);
+      expect(line).toMatch(/ · summary in 5$/);
       fs.rmSync(dir, { recursive: true, force: true });
     } finally {
       store.close();
@@ -164,7 +164,7 @@ describe('statusline', () => {
       writeMarker(dir, { project: 'P0100' });
 
       const line = await statuslineFromCwd(dir, { maxRoot: dir });
-      expect(line).toMatch(/ · 1\/5 exchanges · /);
+      expect(line).toMatch(/ · summary in 4$/);
 
       const counters = await resolveStatuslineCounters(store, 'P0100', dir);
       expect(counters.exchanges).toBe(1);
@@ -188,7 +188,7 @@ describe('statusline', () => {
 
       const line = await statuslineFromCwd(dir, { maxRoot: dir });
       expect(line).toMatch(/P0888\?/);
-      expect(line).toMatch(/ · 0\/5 exchanges · /);
+      expect(line).toMatch(/ · summary in 5$/);
       fs.rmSync(dir, { recursive: true, force: true });
     } finally {
       store.close();
@@ -218,7 +218,7 @@ describe('statusline', () => {
       writeMarker(dir, { project: 'P0102' });
 
       const line = await statuslineFromCwd(dir, { maxRoot: dir });
-      expect(line).toMatch(/^marker · 1\/5 exchanges · /);
+      expect(line).toMatch(/^marker · summary in 4$/);
       fs.rmSync(dir, { recursive: true, force: true });
     } finally {
       store.close();

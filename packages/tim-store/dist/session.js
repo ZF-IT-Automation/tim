@@ -891,7 +891,25 @@ function isAutoProjectBlocked(cwd) {
  * Re-bind to an existing project with the same directory alias. Reversible via
  * irrelevant flag on the project root.
  */
-/** Latest kind=session entry for a project whose metadata.cwd matches. */
+/** True when one path is the other, or lies inside it. */
+function pathsRelated(a, b) {
+    if (a === b)
+        return true;
+    return a.startsWith(b + path.sep) || b.startsWith(a + path.sep);
+}
+/**
+ * Latest kind=session entry for a project, preferring the given cwd.
+ *
+ * The cwd is a *disambiguator* between concurrent sessions, not a hard filter.
+ * Callers routinely pass a directory that is not literally the session's cwd —
+ * the statusline, for instance, passes the directory where `.tim-project` was
+ * found by walking up, so a session started in a subdirectory would never
+ * match on equality alone and every counter read back as zero.
+ *
+ * Order: exact cwd match, then any session nested under (or containing) that
+ * directory, newest first. Unrelated directories still resolve to null so a
+ * sibling project's session is never mistaken for this one.
+ */
 async function resolveCurrentSession(store, projectLabel, cwd) {
     const project = await store.requireProject(projectLabel);
     const sessionsSection = await (0, session_tree_js_1.findChildByKind)(store, project.id, session_tree_js_1.KIND_SESSIONS_ROOT);
@@ -903,8 +921,11 @@ async function resolveCurrentSession(store, projectLabel, cwd) {
     let candidates = sessions;
     if (cwd !== undefined) {
         const resolvedCwd = path.resolve(cwd);
-        candidates = sessions.filter(s => typeof s.metadata.cwd === 'string' &&
-            path.resolve(s.metadata.cwd) === resolvedCwd);
+        const withCwd = sessions.filter(s => typeof s.metadata.cwd === 'string');
+        const exact = withCwd.filter(s => path.resolve(s.metadata.cwd) === resolvedCwd);
+        candidates = exact.length
+            ? exact
+            : withCwd.filter(s => pathsRelated(path.resolve(s.metadata.cwd), resolvedCwd));
         if (candidates.length === 0)
             return null;
     }
