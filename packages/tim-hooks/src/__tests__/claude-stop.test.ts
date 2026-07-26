@@ -134,12 +134,19 @@ describe('runClaudeStop', () => {
     expect((await store.read('claude-stop-sess'))?.metadata.harness).toBe('claude-code');
   });
 
-  it('returns not-logged when transcript exceeds 1 MiB', async () => {
-    const huge = 'x'.repeat(MAX_TRANSCRIPT_BYTES + 1);
-    const file = path.join(cwd, 'huge.jsonl');
-    fs.writeFileSync(file, huge);
+  it('logs the last turn of a transcript well past 1 MiB', async () => {
+    const filler = Array.from({ length: 40 }, (_, i) =>
+      userMsg(`old-${i}`, 'x'.repeat(32 * 1024)),
+    );
+    const file = writeTranscript(cwd, [
+      ...filler,
+      userMsg('u-last', 'question at the end'),
+      assistantMsg('a-last', 'answer at the end'),
+    ]);
+    expect(fs.statSync(file).size).toBeGreaterThan(MAX_TRANSCRIPT_BYTES);
+
     const result = await runClaudeStop(store, payload({ transcript_path: file }), { cwd });
-    expect(result).toEqual({ logged: false });
+    expect(result.logged).toBe(true);
   });
 
   it('produces counters 1-5 and exactly one configured checkpoint across five distinct exchanges', async () => {

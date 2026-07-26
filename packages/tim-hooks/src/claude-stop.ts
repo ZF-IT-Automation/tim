@@ -5,6 +5,7 @@ import { SessionManager, deriveCounters } from 'tim-store';
 import { afterExchangeLogged, type CadenceResult } from './cadence-runner.js';
 import { findMarker } from './marker.js';
 
+/** Tail window, not a file-size limit: only the last turn is needed. */
 export const MAX_TRANSCRIPT_BYTES = 1024 * 1024;
 export const MAX_EXCHANGE_CHARS = 64 * 1024;
 
@@ -79,7 +80,8 @@ function turnIdentity(userUuid: string | null, assistantUuid: string | null, use
 
 /**
  * Read a Claude Code transcript JSONL and return the last genuine user/assistant turn.
- * Skips isMeta, tool-only assistants, malformed lines, and files over the byte bound.
+ * Skips isMeta, tool-only assistants and malformed lines. Long transcripts are read
+ * from the tail — bailing on size logged nothing at all once a session got going.
  */
 export function readLastExchange(
   transcriptPath: string,
@@ -91,15 +93,24 @@ export function readLastExchange(
   } catch {
     return null;
   }
-  if (!stat.isFile() || stat.size <= 0 || stat.size > maxBytes) return null;
+  if (!stat.isFile() || stat.size <= 0) return null;
 
+  const start = Math.max(0, stat.size - maxBytes);
   let raw: string;
   try {
-    raw = fs.readFileSync(transcriptPath, 'utf8');
+    const fd = fs.openSync(transcriptPath, 'r');
+    try {
+      const buf = Buffer.alloc(stat.size - start);
+      fs.readSync(fd, buf, 0, buf.length, start);
+      raw = buf.toString('utf8');
+    } finally {
+      fs.closeSync(fd);
+    }
   } catch {
     return null;
   }
-  if (Buffer.byteLength(raw, 'utf8') > maxBytes) return null;
+  // The window cuts mid-line; that first fragment is not a whole JSON record.
+  if (start > 0) raw = raw.slice(raw.indexOf('\n') + 1);
 
   let lastUser: { text: string; uuid: string | null } | null = null;
   let lastTurn: TranscriptTurn | null = null;

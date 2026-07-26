@@ -42,6 +42,7 @@ const fs = __importStar(require("node:fs"));
 const tim_store_1 = require("tim-store");
 const cadence_runner_js_1 = require("./cadence-runner.js");
 const marker_js_1 = require("./marker.js");
+/** Tail window, not a file-size limit: only the last turn is needed. */
 exports.MAX_TRANSCRIPT_BYTES = 1024 * 1024;
 exports.MAX_EXCHANGE_CHARS = 64 * 1024;
 function bounded(text, max = exports.MAX_EXCHANGE_CHARS) {
@@ -96,7 +97,8 @@ function turnIdentity(userUuid, assistantUuid, user, assistant) {
 }
 /**
  * Read a Claude Code transcript JSONL and return the last genuine user/assistant turn.
- * Skips isMeta, tool-only assistants, malformed lines, and files over the byte bound.
+ * Skips isMeta, tool-only assistants and malformed lines. Long transcripts are read
+ * from the tail — bailing on size logged nothing at all once a session got going.
  */
 function readLastExchange(transcriptPath, maxBytes = exports.MAX_TRANSCRIPT_BYTES) {
     let stat;
@@ -106,17 +108,27 @@ function readLastExchange(transcriptPath, maxBytes = exports.MAX_TRANSCRIPT_BYTE
     catch {
         return null;
     }
-    if (!stat.isFile() || stat.size <= 0 || stat.size > maxBytes)
+    if (!stat.isFile() || stat.size <= 0)
         return null;
+    const start = Math.max(0, stat.size - maxBytes);
     let raw;
     try {
-        raw = fs.readFileSync(transcriptPath, 'utf8');
+        const fd = fs.openSync(transcriptPath, 'r');
+        try {
+            const buf = Buffer.alloc(stat.size - start);
+            fs.readSync(fd, buf, 0, buf.length, start);
+            raw = buf.toString('utf8');
+        }
+        finally {
+            fs.closeSync(fd);
+        }
     }
     catch {
         return null;
     }
-    if (Buffer.byteLength(raw, 'utf8') > maxBytes)
-        return null;
+    // The window cuts mid-line; that first fragment is not a whole JSON record.
+    if (start > 0)
+        raw = raw.slice(raw.indexOf('\n') + 1);
     let lastUser = null;
     let lastTurn = null;
     for (const line of raw.split(/\r?\n/)) {
