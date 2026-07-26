@@ -30,6 +30,7 @@ export { runMigrations, getCurrentVersion, MIGRATIONS } from './schema.js';
 export {
   SessionManager,
   resolveCurrentSession,
+  isAutomatedSession,
   ensureProjectForPath,
   type Exchange,
   type ExchangeRole,

@@ -28,6 +28,12 @@ export interface ProjectSessionParams extends SessionStartParams {
     tool?: string;
     model?: string;
     taskSummary?: string;
+    /**
+     * Unattended session (cron job, watcher, scheduled agent). Such a session is
+     * never "the session the human is in", so `resolveCurrentSession` skips it.
+     * Set this from anything that starts a session without a human present.
+     */
+    automated?: boolean;
 }
 export interface UnsummarizedExchange {
     seq: number;
@@ -158,6 +164,15 @@ export interface EnsureProjectForPathResult {
     created: boolean;
 }
 /**
+ * Unattended session: a cron job, watcher or scheduled agent.
+ *
+ * `metadata.automated` is the real signal — set it when starting such a
+ * session. The id prefix is a fallback for sessions already in the store,
+ * which were named `cron_<job>_<timestamp>` by the caller before this flag
+ * existed; TIM itself never generated those ids.
+ */
+export declare function isAutomatedSession(entry: Entry): boolean;
+/**
  * Latest kind=session entry for a project, preferring the given cwd.
  *
  * The cwd is a *disambiguator* between concurrent sessions, not a hard filter.
@@ -169,7 +184,14 @@ export interface EnsureProjectForPathResult {
  * Order: exact cwd match, then any session nested under (or containing) that
  * directory, newest first. Unrelated directories still resolve to null so a
  * sibling project's session is never mistaken for this one.
+ *
+ * Unattended sessions (cron jobs, watchers) are skipped: sorting purely by
+ * creation time let a nightly job become "the current session" and report its
+ * own empty counters to a human sitting in a live session. Pass
+ * `includeAutomated` when the automation is asking about itself.
  */
-export declare function resolveCurrentSession(store: TimStore, projectLabel: string, cwd?: string): Promise<Entry | null>;
+export declare function resolveCurrentSession(store: TimStore, projectLabel: string, cwd?: string, opts?: {
+    includeAutomated?: boolean;
+}): Promise<Entry | null>;
 export declare function ensureProjectForPath(store: TimStore, cwd: string): Promise<EnsureProjectForPathResult | null>;
 //# sourceMappingURL=session.d.ts.map

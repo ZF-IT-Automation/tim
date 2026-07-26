@@ -86,6 +86,75 @@ describe('resolveCurrentSession', () => {
     expect((await resolveCurrentSession(store, 'P0094', child))?.id).toBe('sess-child');
   });
 
+  // A nightly cron job outranked the human's live session purely by createdAt,
+  // so the statusline reported the job's empty counters.
+  it('skips automated sessions when picking the current one', async () => {
+    await store.createProject('P0093');
+    const cwd = path.resolve('/tmp/cron-project');
+
+    await sessions.startProjectSession({
+      sessionId: 'sess-human',
+      projectId: 'P0093',
+      agentName: 'test',
+      cwd,
+      harness: 'vitest',
+    });
+    await new Promise(r => setTimeout(r, 5));
+    await sessions.startProjectSession({
+      sessionId: 'cron_postmortem_20260725',
+      projectId: 'P0093',
+      agentName: 'test',
+      cwd,
+      harness: 'mcp',
+    });
+
+    // newest is the cron run, but the human session must win
+    expect((await resolveCurrentSession(store, 'P0093', cwd))?.id).toBe('sess-human');
+    // ...unless the automation is asking about itself
+    expect(
+      (await resolveCurrentSession(store, 'P0093', cwd, { includeAutomated: true }))?.id,
+    ).toBe('cron_postmortem_20260725');
+  });
+
+  it('honours the automated flag regardless of session id', async () => {
+    await store.createProject('P0092');
+    const cwd = path.resolve('/tmp/flagged');
+
+    await sessions.startProjectSession({
+      sessionId: 'sess-interactive',
+      projectId: 'P0092',
+      agentName: 'test',
+      cwd,
+      harness: 'vitest',
+    });
+    await new Promise(r => setTimeout(r, 5));
+    await sessions.startProjectSession({
+      sessionId: 'nightly-watcher',
+      projectId: 'P0092',
+      agentName: 'test',
+      cwd,
+      harness: 'vitest',
+      automated: true,
+    });
+
+    expect((await resolveCurrentSession(store, 'P0092', cwd))?.id).toBe('sess-interactive');
+  });
+
+  it('returns null when every session for the cwd is automated', async () => {
+    await store.createProject('P0091');
+    const cwd = path.resolve('/tmp/only-cron');
+
+    await sessions.startProjectSession({
+      sessionId: 'cron_only_20260726',
+      projectId: 'P0091',
+      agentName: 'test',
+      cwd,
+      harness: 'mcp',
+    });
+
+    expect(await resolveCurrentSession(store, 'P0091', cwd)).toBeNull();
+  });
+
   it('returns null for an unknown cwd', async () => {
     await store.createProject('P0099');
     await sessions.startProjectSession({

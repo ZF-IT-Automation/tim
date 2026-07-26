@@ -56,6 +56,12 @@ export interface ProjectSessionParams extends SessionStartParams {
   tool?: string;
   model?: string;
   taskSummary?: string;
+  /**
+   * Unattended session (cron job, watcher, scheduled agent). Such a session is
+   * never "the session the human is in", so `resolveCurrentSession` skips it.
+   * Set this from anything that starts a session without a human present.
+   */
+  automated?: boolean;
 }
 
 export interface UnsummarizedExchange {
@@ -204,7 +210,8 @@ export class SessionManager {
   }
 
   async startProjectSession(params: ProjectSessionParams): Promise<Entry> {
-    const { sessionId, projectId, agentName, cwd, harness, tool, model, taskSummary } = params;
+    const { sessionId, projectId, agentName, cwd, harness, tool, model, taskSummary, automated } =
+      params;
 
     const existing = await this.store.read(sessionId);
     if (existing?.metadata.kind === KIND_SESSION) {
@@ -264,6 +271,7 @@ export class SessionManager {
         ...(tool && { tool }),
         ...(model && { model }),
         ...(taskSummary && { task_summary: taskSummary }),
+        ...(automated && { automated: true }),
       },
       tags: ['#session'],
     });
@@ -1128,6 +1136,19 @@ function pathsRelated(a: string, b: string): boolean {
 }
 
 /**
+ * Unattended session: a cron job, watcher or scheduled agent.
+ *
+ * `metadata.automated` is the real signal — set it when starting such a
+ * session. The id prefix is a fallback for sessions already in the store,
+ * which were named `cron_<job>_<timestamp>` by the caller before this flag
+ * existed; TIM itself never generated those ids.
+ */
+export function isAutomatedSession(entry: Entry): boolean {
+  if (entry.metadata.automated === true) return true;
+  return /^cron[-_]/i.test(entry.id);
+}
+
+/**
  * Latest kind=session entry for a project, preferring the given cwd.
  *
  * The cwd is a *disambiguator* between concurrent sessions, not a hard filter.
@@ -1139,17 +1160,24 @@ function pathsRelated(a: string, b: string): boolean {
  * Order: exact cwd match, then any session nested under (or containing) that
  * directory, newest first. Unrelated directories still resolve to null so a
  * sibling project's session is never mistaken for this one.
+ *
+ * Unattended sessions (cron jobs, watchers) are skipped: sorting purely by
+ * creation time let a nightly job become "the current session" and report its
+ * own empty counters to a human sitting in a live session. Pass
+ * `includeAutomated` when the automation is asking about itself.
  */
 export async function resolveCurrentSession(
   store: TimStore,
   projectLabel: string,
   cwd?: string,
+  opts: { includeAutomated?: boolean } = {},
 ): Promise<Entry | null> {
   const project = await store.requireProject(projectLabel);
   const sessionsSection = await findChildByKind(store, project.id, KIND_SESSIONS_ROOT);
   if (!sessionsSection) return null;
 
-  const sessions = await store.getChildByKind(sessionsSection.id, KIND_SESSION);
+  const all = await store.getChildByKind(sessionsSection.id, KIND_SESSION);
+  const sessions = opts.includeAutomated ? all : all.filter(s => !isAutomatedSession(s));
   if (sessions.length === 0) return null;
 
   let candidates = sessions;
