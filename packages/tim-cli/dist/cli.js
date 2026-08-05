@@ -50,6 +50,7 @@ const record_commit_js_1 = require("./record-commit.js");
 const new_project_js_1 = require("./new-project.js");
 const hermes_statusline_install_js_1 = require("./hermes-statusline-install.js");
 const consolidate_js_1 = require("./consolidate.js");
+const summarizer_health_js_1 = require("./summarizer-health.js");
 const secret_js_1 = require("./secret.js");
 const release_check_js_1 = require("./release-check.js");
 const migrate_from_hmem_js_1 = require("./migrate-from-hmem.js");
@@ -276,6 +277,17 @@ async function cmdDoctor(args = []) {
                 console.log((0, tim_hooks_1.formatBindOutcomeLine)(outcome));
             }
         }
+    }
+    const summarizer = await (0, summarizer_health_js_1.auditSummarizerHealth)(store, config);
+    console.log('\nSummarizer:');
+    if (summarizer.healthy) {
+        console.log(`  ✓ chain: ${summarizer.firstEntry} (+${summarizer.chainLength - 1} fallback(s))`);
+    }
+    else {
+        console.log(summarizer.chainLength === 0
+            ? '  ✗ no chain configured'
+            : `  ⚠ chain: ${summarizer.firstEntry} (+${summarizer.chainLength - 1} fallback(s))`);
+        summarizer.issues.forEach(i => console.log(`  - ${i}`));
     }
     const hermesDir = path.join(os.homedir(), '.hermes');
     if (fs.existsSync(hermesDir)) {

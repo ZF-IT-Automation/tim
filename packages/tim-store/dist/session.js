@@ -399,13 +399,17 @@ class SessionManager {
             }
             return false;
         })();
+        // Rolling context for the next batch: the batch summary *bodies*, in batch order.
+        // Selected by kind, not by tag — checkpoint nodes carry the same summary tags but
+        // are not part of the batch chain. Titles ("Batch N") carry no information.
         const previousSummaries = [];
         if (summaryNode) {
-            const summaries = await this.store.getChildren(summaryNode.id);
-            for (const s of summaries) {
-                if (s.tags?.includes(session_tree_js_1.SESSION_SUMMARY_TAG)) {
-                    previousSummaries.push(s.title || s.content || '');
-                }
+            const priorBatches = await this.store.getChildByKind(summaryNode.id, session_tree_js_1.KIND_BATCH);
+            priorBatches.sort((a, b) => (Number(a.metadata.batch_index) || 0) - (Number(b.metadata.batch_index) || 0));
+            for (const s of priorBatches) {
+                const text = (s.content || '').trim();
+                if (text)
+                    previousSummaries.push(text);
             }
         }
         const sessionMeta = {

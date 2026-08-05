@@ -393,6 +393,10 @@ const TimWriteBatchSummarySchema = z.object({
 
 const TimRollupSessionSummarySchema = z.object({
   sessionId: z.string(),
+  summary: z
+    .string()
+    .optional()
+    .describe('Pre-condensed rollup text. Omit to fall back to concatenating the batch summaries.'),
 });
 
 const TimRecordCommitSchema = z.object({
@@ -740,7 +744,8 @@ export const TOOL_DEFS: Array<{
   {
     name: 'tim_rollup_session_summary',
     description:
-      'Fold batch-summary children into the session-summary-root content field. Called after tim-summarizer writes all batches.',
+      'Write the session-summary-root content field. Uses the given condensed `summary` when supplied, ' +
+      'otherwise folds the batch-summary children. Called after tim-summarizer writes all batches.',
     schema: TimRollupSessionSummarySchema,
     internal: true,
   },
@@ -2878,8 +2883,12 @@ export async function createMcpServer(
         }
 
         case 'tim_rollup_session_summary': {
-          const { sessionId } = TimRollupSessionSummarySchema.parse(args);
-          const node = await getSessions().rollUpSession(sessionId, async batches => foldBatchSummaries(batches));
+          const { sessionId, summary } = TimRollupSessionSummarySchema.parse(args);
+          // A caller-supplied summary is an LLM condensation of the batches; without
+          // one we fall back to concatenating them (lossy but never empty).
+          const node = await getSessions().rollUpSession(sessionId, async batches =>
+            summary?.trim() || foldBatchSummaries(batches),
+          );
           return {
             content: [{ type: 'text', text: formatToolResponse(node) }],
           };

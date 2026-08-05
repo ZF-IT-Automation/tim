@@ -34,7 +34,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.PROJECT_SUMMARY_MARKER = void 0;
+exports.SUMMARY_FAILURE_MARKER = exports.PROJECT_SUMMARY_MARKER = void 0;
 exports.mergeProjectSummary = mergeProjectSummary;
 exports.runProjectSummary = runProjectSummary;
 exports.processCurationQueue = processCurationQueue;
@@ -46,6 +46,11 @@ const tim_store_1 = require("tim-store");
 const mcp_client_js_1 = require("./mcp-client.js");
 const generate_summary_js_1 = require("./generate-summary.js");
 exports.PROJECT_SUMMARY_MARKER = '## Project Summary';
+/**
+ * Prefix of the placeholder stored when no CLI produced a summary. `tim doctor`
+ * scans stored summaries for it to surface previously-corrupted sessions.
+ */
+exports.SUMMARY_FAILURE_MARKER = '[ALL SUMMARIZER CLIs FAILED';
 /**
  * Idempotently merge a project summary into the project content body.
  * Strips any existing `## Project Summary` block first, so running it twice
@@ -222,6 +227,33 @@ async function processCurationQueue(store, projectLabel) {
     }
     return processed;
 }
+/**
+ * Read this session's batch summaries in batch order — the input for the LLM rollup.
+ * Goes to the store directly (not MCP) so it also sees batches written by earlier
+ * summarizer runs for the same session. Returns [] on any read problem.
+ */
+async function collectBatchSummaries(sessionId) {
+    let store = null;
+    try {
+        store = new tim_store_1.TimStore(resolveDbPath());
+        const resolved = store.resolveSessionAlias(sessionId);
+        const summaryNode = await (0, tim_store_1.findChildByKind)(store, resolved, tim_store_1.KIND_SUMMARY_ROOT);
+        if (!summaryNode)
+            return [];
+        const batches = await store.getChildByKind(summaryNode.id, tim_store_1.KIND_BATCH);
+        return batches
+            .slice()
+            .sort((a, b) => (Number(a.metadata.batch_index) || 0) - (Number(b.metadata.batch_index) || 0))
+            .map(b => (b.content || '').trim())
+            .filter(Boolean);
+    }
+    catch {
+        return [];
+    }
+    finally {
+        store?.close();
+    }
+}
 async function postSummarizerHandoff(sessionId) {
     const store = new tim_store_1.TimStore(resolveDbPath());
     try {
@@ -244,7 +276,7 @@ async function postSummarizerHandoff(sessionId) {
         store.close();
     }
 }
-async function runSummarizerLoop(sessionId) {
+async function runSummarizerLoop(sessionId, opts = {}) {
     const client = await (0, mcp_client_js_1.connectTimMcp)();
     let written = 0;
     const onMCPError = async (tool, error, stack) => {
@@ -258,13 +290,15 @@ async function runSummarizerLoop(sessionId) {
     try {
         let batch = await (0, mcp_client_js_1.callTimTool)(client, 'tim_show_unsummarized', { sessionId });
         while (batch.exchanges.length > 0) {
-            const raw = await (0, generate_summary_js_1.generateSummary)(batch, onMCPError);
+            const { text: raw, status } = await (0, generate_summary_js_1.generateSummaryDetailed)(batch, onMCPError);
+            if (status !== 'ok')
+                opts.onDegraded?.({ batchIndex: batch.batchIndex, status });
             const { seqFrom, seqTo } = seqRange(batch);
             let summary;
             let tags;
             if (raw === generate_summary_js_1.FALLBACK_MARKER) {
                 summary =
-                    `[ALL SUMMARIZER CLIs FAILED — main agent please resummarize batch ${batch.batchIndex}]\n` +
+                    `${exports.SUMMARY_FAILURE_MARKER} — main agent please resummarize batch ${batch.batchIndex}]\n` +
                         `${batch.exchanges.map(e => `Q: ${e.userContent.trim().slice(0, 200)}`).join('\n')}`;
                 tags = undefined;
             }
@@ -289,7 +323,14 @@ async function runSummarizerLoop(sessionId) {
     }
     finally {
         try {
-            await (0, mcp_client_js_1.callTimTool)(client, 'tim_rollup_session_summary', { sessionId });
+            // Condense the batch summaries into a real handoff; the server falls back to
+            // concatenation when we cannot produce one.
+            const batchSummaries = await collectBatchSummaries(sessionId);
+            const rollup = batchSummaries.length > 0 ? await (0, generate_summary_js_1.generateSessionRollup)(batchSummaries, onMCPError) : null;
+            await (0, mcp_client_js_1.callTimTool)(client, 'tim_rollup_session_summary', {
+                sessionId,
+                ...(rollup ? { summary: rollup } : {}),
+            });
         }
         catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
@@ -332,8 +373,18 @@ async function main() {
         process.exit(1);
     }
     try {
-        const count = await runSummarizerLoop(sessionId);
+        const degraded = [];
+        const count = await runSummarizerLoop(sessionId, {
+            onDegraded: ({ status }) => degraded.push(status),
+        });
         console.error(`tim-summarizer: wrote ${count} batch summary(ies) for ${sessionId}`);
+        if (degraded.length > 0) {
+            // Exit 2 = summaries were stored, but degraded — distinguishable from success (0)
+            // and from a hard failure (1). Run `tim doctor` for the cause.
+            console.error(`tim-summarizer: ${degraded.length} of ${count} batch summary(ies) DEGRADED ` +
+                `(${[...new Set(degraded)].join(', ')}) — run 'tim doctor'`);
+            process.exit(2);
+        }
     }
     catch (err) {
         const msg = err instanceof Error ? err.message : String(err);

@@ -121,6 +121,12 @@ describe('tim doctor bindings', () => {
     expect(before).toEqual(after);
   });
 
+  it('reports a Summarizer section', () => {
+    store.close();
+    const out = run(['doctor'], env());
+    expect(out).toContain('Summarizer:');
+  });
+
   it('binds unbound projects with --bind and leaves other findings untouched', () => {
     store.close();
     const markerB = fs.readFileSync(path.join(dirB, '.tim-project'), 'utf8');

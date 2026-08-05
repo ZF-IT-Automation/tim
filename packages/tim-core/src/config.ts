@@ -36,6 +36,13 @@ const DEFAULT_REMEMBER_CHAIN: NonNullable<RememberConfig['chain']> = [
   { cli: 'opencode', model: 'kimi', provider: 'moonshot' },
 ];
 
+/** Same shape/providers as the remember chain — the summarizer falls through it in order. */
+const DEFAULT_SUMMARIZER_CHAIN: NonNullable<TimConfigFile['summarizer']>['chain'] = [
+  { cli: 'opencode', model: 'claude-3-5-haiku', provider: 'anthropic' },
+  { cli: 'opencode', model: 'deepseek-v4-pro', provider: 'deepseek' },
+  { cli: 'opencode', model: 'kimi', provider: 'moonshot' },
+];
+
 const DEFAULT_CONFIG: TimConfigFile = {
   dbPath: path.join(os.homedir(), '.tim', 'tim.db'),
   deviceId: '',
@@ -46,6 +53,10 @@ const DEFAULT_CONFIG: TimConfigFile = {
   batch_size: 5,
   projectSummary: {
     sessions_threshold: 5,
+  },
+  summarizer: {
+    chain: DEFAULT_SUMMARIZER_CHAIN,
+    timeout_sec: 600,
   },
   remember: {
     enabled: true,
@@ -88,6 +99,12 @@ export function loadConfig(): TimConfigFile {
       hooks: {
         ...DEFAULT_CONFIG.hooks,
         ...raw.hooks,
+      },
+      summarizer: {
+        ...DEFAULT_CONFIG.summarizer,
+        ...raw.summarizer,
+        // A user-supplied chain replaces the default wholesale — never merged element-wise.
+        chain: raw.summarizer?.chain ?? DEFAULT_SUMMARIZER_CHAIN,
       },
       remember: {
         ...DEFAULT_CONFIG.remember,

@@ -42,6 +42,7 @@ import {
   cmdSetupHermesStatusline,
 } from './hermes-statusline-install.js';
 import { cmdConsolidate } from './consolidate.js';
+import { auditSummarizerHealth } from './summarizer-health.js';
 import { cmdSecret } from './secret.js';
 import { runReleaseCheck } from './release-check.js';
 import { cmdMigrateFromHmem } from './migrate-from-hmem.js';
@@ -304,6 +305,19 @@ async function cmdDoctor(args: string[] = []) {
         console.log(formatBindOutcomeLine(outcome));
       }
     }
+  }
+
+  const summarizer = await auditSummarizerHealth(store, config);
+  console.log('\nSummarizer:');
+  if (summarizer.healthy) {
+    console.log(`  ✓ chain: ${summarizer.firstEntry} (+${summarizer.chainLength - 1} fallback(s))`);
+  } else {
+    console.log(
+      summarizer.chainLength === 0
+        ? '  ✗ no chain configured'
+        : `  ⚠ chain: ${summarizer.firstEntry} (+${summarizer.chainLength - 1} fallback(s))`,
+    );
+    summarizer.issues.forEach(i => console.log(`  - ${i}`));
   }
 
   const hermesDir = path.join(os.homedir(), '.hermes');

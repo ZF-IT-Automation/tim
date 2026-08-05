@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as os from 'os';
 import { TimStore, SessionManager, deriveCounters, foldBatchSummaries } from 'tim-store';
 import { formatProjectOutput } from 'tim-mcp';
 import { loadConfig } from 'tim-core';
@@ -61,6 +62,8 @@ vi.mock('tim-core', () => ({
     deviceId: 'test',
     summarizer: { chain: [], timeout_sec: 5 },
   })),
+  getTimDir: vi.fn(() => os.tmpdir()),
+  getConfigPath: vi.fn(() => path.join(os.tmpdir(), 'config.json')),
 }));
 
 describe('pipeline e2e — happy path', () => {
