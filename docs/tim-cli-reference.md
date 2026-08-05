@@ -29,7 +29,7 @@ node packages/tim-cli/dist/cli.js statusline
 
 ---
 
-## Command Overview (36 commands)
+## Command Overview (37 commands)
 
 ### Top-Level Summary
 
@@ -70,7 +70,8 @@ node packages/tim-cli/dist/cli.js statusline
 | 33 | `tim root-entries` | List root entries |
 | 34 | `tim consolidate` | Run memory consolidation |
 | 35 | `tim secret` | Manage secret entry metadata |
-| 36 | `tim --help` | Show top-level help |
+| 36 | `tim viewer` | Browse the entry tree in a local read-only web UI |
+| 37 | `tim --help` | Show top-level help |
 
 ---
 
@@ -653,7 +654,17 @@ against one project's entries.
 Manage the `metadata.secret` marker on an entry subtree — set/unset the secret
 boundary and check whether an entry inherits secrecy from an ancestor.
 
-### 36. `tim --help`
+### 36. `tim viewer [--port <number>] [--host 127.0.0.1] [--db <path>] [--show-secrets]`
+
+Start a local HTTP server (default port 7373, loopback only) serving a
+self-contained browser UI over the entry tree. The database is opened
+read-only and only GET/HEAD are answered, so browsing can never mutate
+memory. Unlike the MCP project renderer the viewer applies no child cap,
+no token budget and no truncation, and it renders nodes whose
+`render_depth` is 0 — `render_depth` is shown as data instead. Secret
+subtrees are structure-only unless `--show-secrets` is passed.
+
+### 37. `tim --help`
 
 Print the top-level command inventory without opening the TIM database.
 
