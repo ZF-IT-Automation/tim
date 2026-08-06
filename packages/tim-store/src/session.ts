@@ -24,6 +24,7 @@ import {
   SESSIONS_SECTION_TITLE,
   SUMMARY_NODE_TITLE,
 } from './session-tree.js';
+import { ensureProjectSchema } from './project-schema-init.js';
 
 export type ExchangeRole = 'user' | 'agent';
 
@@ -1092,14 +1093,6 @@ export class SessionManager {
   }
 }
 
-const AUTO_PROJECT_SECTIONS = [
-  { label: 'Tasks', content: 'Actionable work items and open tasks' },
-  { label: 'Bugs', content: 'Bug and error tracking' },
-  { label: 'Lessons', content: 'Lessons learned and pitfalls' },
-  { label: 'Ideas', content: 'Brainstorming and undecided proposals' },
-  { label: 'Decisions', content: 'Architecture and project decisions' },
-] as const;
-
 async function nextAutoProjectLabel(store: TimStore): Promise<string> {
   return store.allocateNextProjectLabel();
 }
@@ -1223,12 +1216,9 @@ export async function ensureProjectForPath(
         aliases: [alias],
       });
 
-      for (const section of AUTO_PROJECT_SECTIONS) {
-        await store.write(section.content, {
-          parentId: entry.id,
-          metadata: { kind: 'section', label: section.label },
-        });
-      }
+      // Auto-created projects get the same standard sections as every other
+      // creation path — the schema is the single owner of that list.
+      await ensureProjectSchema(store, entry.id);
 
       return { label, entry, created: true };
     } catch (err) {

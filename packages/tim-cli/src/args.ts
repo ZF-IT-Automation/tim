@@ -20,6 +20,7 @@ export class MissingOptionValueError extends Error {
 
 const EMPTY_VALUE_OPTIONS = new Set<string>();
 const COMMAND_VALUE_OPTIONS: Record<string, ReadonlySet<string>> = {
+  doctor: new Set(['project']),
   'resolve-project': new Set(['cwd', 'format']),
   'resolve-session': new Set(['session', 'cwd', 'format']),
   'bind-project': new Set(['label', 'cwd']),

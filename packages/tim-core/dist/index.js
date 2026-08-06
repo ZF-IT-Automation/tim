@@ -2,7 +2,7 @@
 // TIM Core Types — v0.1.0-alpha
 // These types define the contract that all modules must implement.
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.daysSinceLastVerified = exports.staleDays = exports.isStale = exports.SCHEMA_KINDS = exports.evaluateLoadGate = exports.timSessionCachePath = exports.resolveActiveSessionId = exports.readTimSessionCache = exports.hooksEnabled = exports.normalizeHookScripts = exports.getTimDir = exports.getConfigPath = exports.saveConfig = exports.loadConfig = exports.InProcessEventBus = exports.resolveLWW = exports.stripDeprecatedTags = exports.isDeprecatedTag = exports.DEPRECATED_TAGS = exports.DEPRECATED_PRIORITY_TAGS = exports.DEPRECATED_STATUS_TAGS = exports.normalizeLegacyTypeTag = exports.isMetadataType = exports.isBuiltinType = exports.isBuiltinMetadataType = exports.METADATA_TYPES = exports.ALL_METADATA_TYPES = exports.LEGACY_METADATA_TYPES = exports.BUILTIN_TYPES = exports.BUILTIN_METADATA_TYPES = void 0;
+exports.daysSinceLastVerified = exports.staleDays = exports.isStale = exports.schemaSectionNames = exports.findSchemaSection = exports.PROJECT_SCHEMA = exports.SCHEMA_KINDS = exports.evaluateLoadGate = exports.timSessionCachePath = exports.resolveActiveSessionId = exports.readTimSessionCache = exports.hooksEnabled = exports.normalizeHookScripts = exports.getTimDir = exports.getConfigPath = exports.saveConfig = exports.loadConfig = exports.InProcessEventBus = exports.resolveLWW = exports.stripDeprecatedTags = exports.isDeprecatedTag = exports.DEPRECATED_TAGS = exports.DEPRECATED_PRIORITY_TAGS = exports.DEPRECATED_STATUS_TAGS = exports.normalizeLegacyTypeTag = exports.isMetadataType = exports.isBuiltinType = exports.isBuiltinMetadataType = exports.METADATA_TYPES = exports.ALL_METADATA_TYPES = exports.LEGACY_METADATA_TYPES = exports.BUILTIN_TYPES = exports.BUILTIN_METADATA_TYPES = void 0;
 var types_js_1 = require("./types.js");
 Object.defineProperty(exports, "BUILTIN_METADATA_TYPES", { enumerable: true, get: function () { return types_js_1.BUILTIN_METADATA_TYPES; } });
 Object.defineProperty(exports, "BUILTIN_TYPES", { enumerable: true, get: function () { return types_js_1.BUILTIN_TYPES; } });
@@ -37,6 +37,10 @@ var load_gate_js_1 = require("./load-gate.js");
 Object.defineProperty(exports, "evaluateLoadGate", { enumerable: true, get: function () { return load_gate_js_1.evaluateLoadGate; } });
 var schema_kinds_js_1 = require("./schema-kinds.js");
 Object.defineProperty(exports, "SCHEMA_KINDS", { enumerable: true, get: function () { return schema_kinds_js_1.SCHEMA_KINDS; } });
+var project_schema_js_1 = require("./project-schema.js");
+Object.defineProperty(exports, "PROJECT_SCHEMA", { enumerable: true, get: function () { return project_schema_js_1.PROJECT_SCHEMA; } });
+Object.defineProperty(exports, "findSchemaSection", { enumerable: true, get: function () { return project_schema_js_1.findSchemaSection; } });
+Object.defineProperty(exports, "schemaSectionNames", { enumerable: true, get: function () { return project_schema_js_1.schemaSectionNames; } });
 var staleness_js_1 = require("./staleness.js");
 Object.defineProperty(exports, "isStale", { enumerable: true, get: function () { return staleness_js_1.isStale; } });
 Object.defineProperty(exports, "staleDays", { enumerable: true, get: function () { return staleness_js_1.staleDays; } });

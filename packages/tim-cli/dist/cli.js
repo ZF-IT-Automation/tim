@@ -51,6 +51,7 @@ const new_project_js_1 = require("./new-project.js");
 const hermes_statusline_install_js_1 = require("./hermes-statusline-install.js");
 const consolidate_js_1 = require("./consolidate.js");
 const summarizer_health_js_1 = require("./summarizer-health.js");
+const project_schema_repair_js_1 = require("./project-schema-repair.js");
 const secret_js_1 = require("./secret.js");
 const release_check_js_1 = require("./release-check.js");
 const migrate_from_hmem_js_1 = require("./migrate-from-hmem.js");
@@ -85,7 +86,7 @@ function hasHelpFlag(args, command, subcommand) {
 }
 const COMMAND_HELP = {
     init: 'Usage: tim init',
-    doctor: 'Usage: tim doctor [--bind]',
+    doctor: 'Usage: tim doctor [--bind] [--repair-schema] [--project <P00XX>]',
     stats: 'Usage: tim stats',
     'resolve-project': 'Usage: tim resolve-project [--cwd <dir>] [--walk-up] [--format label|json|directive]',
     'resolve-session': 'Usage: tim resolve-session --session <id> [--cwd <dir>] [--format label|directive|json]',
@@ -229,8 +230,10 @@ async function cmdInit() {
     store.close();
 }
 async function cmdDoctor(args = []) {
-    const { flags } = (0, args_js_1.parseArgs)(args);
+    const { flags } = (0, args_js_1.parseArgs)(args, { valueOptions: (0, args_js_1.valueOptionsFor)('doctor') });
     const doBind = flags.bind === 'true';
+    const doRepairSchema = flags['repair-schema'] === 'true';
+    const projectFilter = flags.project;
     const config = (0, tim_core_1.loadConfig)();
     const store = new tim_store_1.TimStore(getDbPath(config));
     const health = await store.health();
@@ -290,6 +293,35 @@ async function cmdDoctor(args = []) {
             ? '  ✗ no chain configured'
             : `  ⚠ chain: ${summarizer.firstEntry} (+${summarizer.chainLength - 1} fallback(s))`);
         summarizer.issues.forEach(i => console.log(`  - ${i}`));
+    }
+    // Projects created before the schema became authoritative are missing sections.
+    // Report always; only change the DB behind the explicit --repair-schema opt-in.
+    const schemaReport = await (0, project_schema_repair_js_1.collectProjectSchemaReport)(store, projectFilter);
+    console.log('\nProject schema:');
+    if (schemaReport.length === 0) {
+        console.log('  (none)');
+    }
+    else {
+        const incomplete = schemaReport.filter(f => f.missing.length > 0);
+        for (const finding of schemaReport) {
+            console.log((0, project_schema_repair_js_1.formatProjectSchemaFindingLine)(finding));
+        }
+        if (incomplete.length > 0 && !doRepairSchema) {
+            console.log(`  Fix: tim doctor --repair-schema${projectFilter ? ` --project ${projectFilter}` : ''} ` +
+                '(adds missing sections only; custom sections are kept)');
+        }
+    }
+    if (doRepairSchema) {
+        const outcomes = await (0, project_schema_repair_js_1.repairProjectSchemas)(store, schemaReport);
+        console.log('\nSchema repair:');
+        if (outcomes.length === 0) {
+            console.log('  (nothing to add)');
+        }
+        else {
+            for (const outcome of outcomes) {
+                console.log((0, project_schema_repair_js_1.formatProjectSchemaOutcomeLine)(outcome));
+            }
+        }
     }
     const hermesDir = path.join(os.homedir(), '.hermes');
     if (fs.existsSync(hermesDir)) {

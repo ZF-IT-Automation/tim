@@ -41,6 +41,7 @@ const fs = __importStar(require("fs"));
 const os = __importStar(require("os"));
 const path = __importStar(require("path"));
 const session_tree_js_1 = require("./session-tree.js");
+const project_schema_init_js_1 = require("./project-schema-init.js");
 const DEFAULT_SUMMARIZER = async (exchanges) => {
     if (exchanges.length === 0)
         return 'Empty session — no exchanges to checkpoint.';
@@ -866,13 +867,6 @@ class SessionManager {
     }
 }
 exports.SessionManager = SessionManager;
-const AUTO_PROJECT_SECTIONS = [
-    { label: 'Tasks', content: 'Actionable work items and open tasks' },
-    { label: 'Bugs', content: 'Bug and error tracking' },
-    { label: 'Lessons', content: 'Lessons learned and pitfalls' },
-    { label: 'Ideas', content: 'Brainstorming and undecided proposals' },
-    { label: 'Decisions', content: 'Architecture and project decisions' },
-];
 async function nextAutoProjectLabel(store) {
     return store.allocateNextProjectLabel();
 }
@@ -976,12 +970,9 @@ async function ensureProjectForPath(store, cwd) {
                 metadata: { name: dirName, path: resolvedPath, auto_created: true },
                 aliases: [alias],
             });
-            for (const section of AUTO_PROJECT_SECTIONS) {
-                await store.write(section.content, {
-                    parentId: entry.id,
-                    metadata: { kind: 'section', label: section.label },
-                });
-            }
+            // Auto-created projects get the same standard sections as every other
+            // creation path — the schema is the single owner of that list.
+            await (0, project_schema_init_js_1.ensureProjectSchema)(store, entry.id);
             return { label, entry, created: true };
         }
         catch (err) {

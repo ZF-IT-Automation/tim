@@ -15,6 +15,7 @@ class MissingOptionValueError extends Error {
 exports.MissingOptionValueError = MissingOptionValueError;
 const EMPTY_VALUE_OPTIONS = new Set();
 const COMMAND_VALUE_OPTIONS = {
+    doctor: new Set(['project']),
     'resolve-project': new Set(['cwd', 'format']),
     'resolve-session': new Set(['session', 'cwd', 'format']),
     'bind-project': new Set(['label', 'cwd']),

@@ -760,25 +760,12 @@ exports.TOOL_DEFS = [
 ];
 // ─── Project output formatting ──────────────────────────
 function loadProjectSchema() {
-    // The schema lives at repo-root/docs. The daemon runs as a long-lived service
-    // whose cwd is NOT the checkout (e.g. $HOME), so cwd-relative resolution silently
-    // fails and every render_depth collapses to 1. Resolve relative to this module
-    // (dist/ → ../../../docs) first, then fall back to cwd for dev/CLI invocations.
-    const candidates = [
-        path.join(__dirname, '../../../docs/project-schema.json'),
-        path.join(process.cwd(), 'docs/project-schema.json'),
-    ];
-    for (const schemaPath of candidates) {
-        try {
-            if (fs.existsSync(schemaPath)) {
-                return JSON.parse(fs.readFileSync(schemaPath, 'utf8'));
-            }
-        }
-        catch {
-            // schema optional / malformed → try next candidate
-        }
-    }
-    return undefined;
+    // The schema used to be read from repo-root/docs/project-schema.json, which no
+    // package ships (`files: ["dist/**/*"]`) — under a global install neither the
+    // module-relative nor the cwd-relative candidate existed and every render_depth
+    // collapsed to 1. It is now a compiled constant in tim-core, so it is always
+    // present and always identical to the one the creation paths materialize from.
+    return tim_core_1.PROJECT_SCHEMA;
 }
 function truncText(s, max) {
     const t = s.replace(/\s+/g, ' ').trim();

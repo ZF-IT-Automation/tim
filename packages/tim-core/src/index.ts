@@ -356,4 +356,11 @@ export {
 } from './session-cache.js';
 export { evaluateLoadGate } from './load-gate.js';
 export { SCHEMA_KINDS } from './schema-kinds.js';
+export {
+  PROJECT_SCHEMA,
+  findSchemaSection,
+  schemaSectionNames,
+  type ProjectSchema,
+  type ProjectSchemaSection,
+} from './project-schema.js';
 export { isStale, staleDays, daysSinceLastVerified } from './staleness.js';
