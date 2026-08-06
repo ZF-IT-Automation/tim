@@ -305,7 +305,7 @@ async function cmdDoctor(args = []) {
         console.log('  (none)');
     }
     else {
-        const incomplete = schemaReport.filter(f => f.missing.length > 0);
+        const incomplete = schemaReport.filter(project_schema_repair_js_1.needsSchemaRepair);
         for (const finding of schemaReport) {
             console.log((0, project_schema_repair_js_1.formatProjectSchemaFindingLine)(finding));
         }

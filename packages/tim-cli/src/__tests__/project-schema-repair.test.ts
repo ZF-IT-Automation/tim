@@ -4,6 +4,7 @@ import { TimStore, ensureProjectSchema } from 'tim-store';
 import {
   collectProjectSchemaReport,
   formatProjectSchemaFindingLine,
+  needsSchemaRepair,
   formatProjectSchemaOutcomeLine,
   repairProjectSchemas,
 } from '../project-schema-repair.js';
@@ -84,17 +85,85 @@ describe('project schema repair (tim doctor --repair-schema)', () => {
   it('formats findings and outcomes for the doctor output', () => {
     expect(
       formatProjectSchemaFindingLine({
-        label: 'P0306', title: 'Demo', missing: ['Overview'], unknown: ['Errors'],
+        label: 'P0306', title: 'Demo', missing: ['Overview'], unknown: ['Errors'], renamed: [],
       }),
     ).toBe('  P0306 Demo — 1 missing: Overview | custom (kept): Errors');
 
     expect(
-      formatProjectSchemaFindingLine({ label: 'P0307', title: 'Demo', missing: [], unknown: [] }),
+      formatProjectSchemaFindingLine({
+        label: 'P0307', title: 'Demo', missing: [], unknown: [], renamed: [],
+      }),
     ).toBe('  P0307 Demo — ✓ complete');
 
-    expect(formatProjectSchemaOutcomeLine({ label: 'P0308', added: ['Bugs'] }))
+    expect(
+      formatProjectSchemaFindingLine({
+        label: 'P0310', title: 'Demo', missing: [], unknown: [],
+        renamed: ['Actionable work items and open tasks → Tasks'],
+      }),
+    ).toBe(
+      '  P0310 Demo — ✓ complete | 1 mistitled: Actionable work items and open tasks → Tasks',
+    );
+
+    expect(formatProjectSchemaOutcomeLine({ label: 'P0308', added: ['Bugs'], renamed: [] }))
       .toBe('  ✓ P0308: added Bugs');
-    expect(formatProjectSchemaOutcomeLine({ label: 'P0309', added: [], error: 'boom' }))
+    expect(
+      formatProjectSchemaOutcomeLine({
+        label: 'P0311', added: [], renamed: ['Bug and error tracking → Bugs'],
+      }),
+    ).toBe('  ✓ P0311: retitled Bug and error tracking → Bugs');
+    expect(formatProjectSchemaOutcomeLine({ label: 'P0309', added: [], renamed: [], error: 'boom' }))
       .toBe('  ✗ P0309: boom');
+  });
+});
+
+describe('repair of mistitled legacy sections', () => {
+  let store: TimStore;
+
+  beforeEach(() => {
+    store = new TimStore(':memory:');
+  });
+
+  afterEach(() => {
+    store.close();
+  });
+
+  it('repairs a project whose sections are all present but mistitled', async () => {
+    const project = await store.createProject('P0400');
+    // Every schema section exists by label but under its own description, so
+    // `missing` is empty — the repair must still run.
+    for (const [label, description] of [
+      ['Tasks', 'Actionable work items and open tasks'],
+      ['Ideas', 'Brainstorming and undecided proposals'],
+    ] as const) {
+      await store.write(description, {
+        parentId: project.id,
+        metadata: { kind: 'section', label },
+      });
+    }
+
+    const report = await collectProjectSchemaReport(store, 'P0400');
+    expect(report).toHaveLength(1);
+    expect(report[0]!.renamed.length).toBeGreaterThan(0);
+    expect(needsSchemaRepair(report[0]!)).toBe(true);
+
+    const outcomes = await repairProjectSchemas(store, report);
+    expect(outcomes).toHaveLength(1);
+    expect(outcomes[0]!.renamed).toContain('Actionable work items and open tasks → Tasks');
+
+    const titles = (await store.getChildren(project.id)).map(c => c.title);
+    expect(titles).toContain('Tasks');
+    expect(titles).not.toContain('Actionable work items and open tasks');
+  });
+
+  it('marks a mistitled project as needing repair in the report line', async () => {
+    const project = await store.createProject('P0401');
+    await store.write('Actionable work items and open tasks', {
+      parentId: project.id,
+      metadata: { kind: 'section', label: 'Tasks' },
+    });
+
+    const report = await collectProjectSchemaReport(store, 'P0401');
+    const line = formatProjectSchemaFindingLine(report[0]!);
+    expect(line).toContain('mistitled');
   });
 });

@@ -10,16 +10,22 @@ const tim_core_1 = require("tim-core");
  * renumber, and low enough to stay below the session/commit roots (1000/1100).
  */
 exports.SCHEMA_ORDER_STEP = 10;
-/** Live direct children of `parentId`, keyed by title. */
-async function childrenByTitle(store, parentId) {
+/** Live direct children of `parentId`, indexed by title and by section label. */
+async function indexChildren(store, parentId) {
     const children = await store.getChildren(parentId);
     const byTitle = new Map();
+    const byLabel = new Map();
     for (const child of children) {
         // First writer wins: a duplicate title is left alone rather than reconciled.
         if (!byTitle.has(child.title))
             byTitle.set(child.title, child);
+        if (child.metadata.kind !== 'section')
+            continue;
+        const label = child.metadata.label;
+        if (typeof label === 'string' && label && !byLabel.has(label))
+            byLabel.set(label, child);
     }
-    return byTitle;
+    return { byTitle, byLabel };
 }
 function sectionMetadata(section, index) {
     const metadata = {
@@ -42,7 +48,9 @@ function sectionMetadata(section, index) {
  * everything below is reported as "would be created".
  */
 async function materializeLevel(store, parentId, sections, prefix, dryRun, result) {
-    const existingChildren = parentId ? await childrenByTitle(store, parentId) : new Map();
+    const index_ = parentId
+        ? await indexChildren(store, parentId)
+        : { byTitle: new Map(), byLabel: new Map() };
     for (let index = 0; index < sections.length; index++) {
         const section = sections[index];
         const sectionPath = prefix ? `${prefix}/${section.name}` : section.name;
@@ -51,18 +59,32 @@ async function materializeLevel(store, parentId, sections, prefix, dryRun, resul
         // project two nodes named "Sessions".
         if (section.managed)
             continue;
-        let node = existingChildren.get(section.name) ?? null;
+        let node = index_.byTitle.get(section.name) ?? null;
         if (node) {
             result.existing.push(sectionPath);
         }
         else {
-            result.created.push(sectionPath);
-            if (!dryRun && parentId) {
-                node = await store.write(section.description ?? section.name, {
-                    parentId,
-                    title: section.name,
-                    metadata: sectionMetadata(section, index),
-                });
+            // No title match — before creating one, check for a legacy node carrying
+            // this section's label under a description-shaped title. Retitling it keeps
+            // the user's content reachable; creating a twin would strand it.
+            const legacy = index_.byLabel.get(section.name);
+            if (legacy) {
+                result.renamed.push(`${legacy.title} → ${section.name}`);
+                node = legacy;
+                if (!dryRun) {
+                    await store.update(legacy.id, { title: section.name, content: legacy.content });
+                    node = (await store.read(legacy.id)) ?? legacy;
+                }
+            }
+            else {
+                result.created.push(sectionPath);
+                if (!dryRun && parentId) {
+                    node = await store.write(section.description ?? section.name, {
+                        parentId,
+                        title: section.name,
+                        metadata: sectionMetadata(section, index),
+                    });
+                }
             }
         }
         if (section.children?.length) {
@@ -76,10 +98,13 @@ async function materializeLevel(store, parentId, sections, prefix, dryRun, resul
  * section's render_depth / render_tail onto the created node's metadata.
  *
  * Idempotent: a section is created only when no live direct child of the same
- * title exists, so re-running adds nothing. Purely additive — sections the schema
- * does not describe are reported in `unknown` and otherwise left untouched, which
- * makes this safe to run as a migration over projects created with the older,
- * divergent section lists.
+ * title exists, so re-running adds nothing. Sections the schema does not describe
+ * are reported in `unknown` and otherwise left untouched.
+ *
+ * The one in-place change is a retitle: a legacy node whose `metadata.label` is a
+ * schema section but whose title is its own description (how the pre-schema paths
+ * wrote them) is renamed to the section name rather than shadowed by a new twin,
+ * so the content already filed under it stays reachable. See `renamed`.
  */
 async function ensureProjectSchema(store, projectRef, options = {}) {
     const schema = options.schema ?? tim_core_1.PROJECT_SCHEMA;
@@ -94,8 +119,9 @@ async function ensureProjectSchema(store, projectRef, options = {}) {
         created: [],
         existing: [],
         unknown: [],
+        renamed: [],
     };
-    const before = await childrenByTitle(store, project.id);
+    const before = (await indexChildren(store, project.id)).byTitle;
     await materializeLevel(store, project.id, schema.sections, '', dryRun, result);
     const schemaTopLevel = new Set(schema.sections.map(s => s.name));
     for (const [title, entry] of before) {
@@ -103,8 +129,13 @@ async function ensureProjectSchema(store, projectRef, options = {}) {
         // loose notes written directly under the project root are not schema drift.
         if (entry.metadata.kind !== 'section')
             continue;
-        if (!schemaTopLevel.has(title))
-            result.unknown.push(title);
+        if (schemaTopLevel.has(title))
+            continue;
+        // A legacy node retitled to its schema name is recovered, not drift.
+        const label = entry.metadata.label;
+        if (typeof label === 'string' && schemaTopLevel.has(label))
+            continue;
+        result.unknown.push(title);
     }
     return result;
 }

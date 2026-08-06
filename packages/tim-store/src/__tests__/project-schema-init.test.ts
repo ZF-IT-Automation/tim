@@ -238,3 +238,90 @@ describe('planProjectSchema', () => {
     expect(plan.created).toEqual([]);
   });
 });
+
+describe('ensureProjectSchema recovery of mistitled legacy sections', () => {
+  let store: TimStore;
+
+  beforeEach(() => {
+    store = new TimStore(':memory:');
+  });
+
+  afterEach(() => {
+    store.close();
+  });
+
+  /**
+   * How the pre-schema paths wrote sections: store.write(description, …) derives
+   * the title from its first argument, so the node ends up titled with its own
+   * description and only metadata.label carries the section name.
+   */
+  async function seedLegacySection(projectId: string, label: string, description: string) {
+    return store.write(description, {
+      parentId: projectId,
+      metadata: { kind: 'section', label },
+    });
+  }
+
+  it('retitles a legacy section instead of creating a twin beside it', async () => {
+    const project = await store.createProject('P0300');
+    const legacy = await seedLegacySection(project.id, 'Tasks', 'Actionable work items and open tasks');
+
+    const result = await ensureProjectSchema(store, project.id);
+
+    const tasks = (await store.getChildren(project.id)).filter(c => c.title === 'Tasks');
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0]!.id).toBe(legacy.id);
+    expect(result.renamed).toContain('Actionable work items and open tasks → Tasks');
+    expect(result.created).not.toContain('Tasks');
+  });
+
+  it('keeps the content filed under the legacy section reachable by title', async () => {
+    const project = await store.createProject('P0301');
+    const legacy = await seedLegacySection(project.id, 'Tasks', 'Actionable work items and open tasks');
+    const note = await store.write('Migrate the sync server', { parentId: legacy.id });
+
+    await ensureProjectSchema(store, project.id);
+
+    const resolved = await store.resolveSectionByTitle('P0301', 'Tasks');
+    expect(resolved.status).toBe('found');
+    const children = await store.getChildren(legacy.id);
+    expect(children.map(c => c.id)).toContain(note.id);
+  });
+
+  it('does not report a recovered section as unknown drift', async () => {
+    const project = await store.createProject('P0302');
+    await seedLegacySection(project.id, 'Tasks', 'Actionable work items and open tasks');
+    await seedLegacySection(project.id, 'Errors', 'Bug and error tracking');
+
+    const result = await ensureProjectSchema(store, project.id);
+
+    expect(result.unknown).not.toContain('Actionable work items and open tasks');
+    // 'Errors' is genuinely outside the schema — it stays, and stays reported.
+    expect(result.unknown).toContain('Bug and error tracking');
+    const titles = (await store.getChildren(project.id)).map(c => c.title);
+    expect(titles).toContain('Bug and error tracking');
+  });
+
+  it('reports the retitle in dry run without touching the node', async () => {
+    const project = await store.createProject('P0303');
+    const legacy = await seedLegacySection(project.id, 'Tasks', 'Actionable work items and open tasks');
+
+    const plan = await planProjectSchema(store, project.id);
+
+    expect(plan.renamed).toContain('Actionable work items and open tasks → Tasks');
+    expect((await store.read(legacy.id))!.title).toBe('Actionable work items and open tasks');
+  });
+
+  it('is idempotent across a repeated repair', async () => {
+    const project = await store.createProject('P0304');
+    await seedLegacySection(project.id, 'Tasks', 'Actionable work items and open tasks');
+
+    await ensureProjectSchema(store, project.id);
+    const second = await ensureProjectSchema(store, project.id);
+
+    expect(second.renamed).toEqual([]);
+    expect(second.created).toEqual([]);
+    const tasks = (await store.getChildren(project.id)).filter(c => c.title === 'Tasks');
+    expect(tasks).toHaveLength(1);
+  });
+});

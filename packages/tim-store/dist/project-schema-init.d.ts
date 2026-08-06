@@ -24,6 +24,16 @@ export interface EnsureProjectSchemaResult {
      * them; never renamed, moved, or deleted.
      */
     unknown: string[];
+    /**
+     * Legacy sections retitled in place, as `old title → Section`. The pre-schema
+     * creation paths called `store.write(description, …)`, and write() derives the
+     * title from its first argument — so those nodes are titled with their own
+     * description and only `metadata.label` carries the section name. Since every
+     * lookup keys on title, they were invisible to `resolveSectionByTitle`, and
+     * creating a correctly-titled twin next to them would strand the user's
+     * content in the old node. Body, children and id are preserved.
+     */
+    renamed: string[];
 }
 /**
  * Ensure every section of the standard project schema exists under `projectRef`
@@ -31,10 +41,13 @@ export interface EnsureProjectSchemaResult {
  * section's render_depth / render_tail onto the created node's metadata.
  *
  * Idempotent: a section is created only when no live direct child of the same
- * title exists, so re-running adds nothing. Purely additive — sections the schema
- * does not describe are reported in `unknown` and otherwise left untouched, which
- * makes this safe to run as a migration over projects created with the older,
- * divergent section lists.
+ * title exists, so re-running adds nothing. Sections the schema does not describe
+ * are reported in `unknown` and otherwise left untouched.
+ *
+ * The one in-place change is a retitle: a legacy node whose `metadata.label` is a
+ * schema section but whose title is its own description (how the pre-schema paths
+ * wrote them) is renamed to the section name rather than shadowed by a new twin,
+ * so the content already filed under it stays reachable. See `renamed`.
  */
 export declare function ensureProjectSchema(store: TimStore, projectRef: string, options?: EnsureProjectSchemaOptions): Promise<EnsureProjectSchemaResult>;
 /** Read-only view of `ensureProjectSchema` — what a repair would add. */

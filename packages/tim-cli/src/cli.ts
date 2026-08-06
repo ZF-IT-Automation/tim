@@ -48,6 +48,7 @@ import {
   collectProjectSchemaReport,
   formatProjectSchemaFindingLine,
   formatProjectSchemaOutcomeLine,
+  needsSchemaRepair,
   repairProjectSchemas,
 } from './project-schema-repair.js';
 import { cmdSecret } from './secret.js';
@@ -343,7 +344,7 @@ async function cmdDoctor(args: string[] = []) {
   if (schemaReport.length === 0) {
     console.log('  (none)');
   } else {
-    const incomplete = schemaReport.filter(f => f.missing.length > 0);
+    const incomplete = schemaReport.filter(needsSchemaRepair);
     for (const finding of schemaReport) {
       console.log(formatProjectSchemaFindingLine(finding));
     }
