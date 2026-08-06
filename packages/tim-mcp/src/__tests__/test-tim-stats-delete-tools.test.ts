@@ -305,15 +305,13 @@ describe('tim_section_children', () => {
   });
 
   it('resolves parent via parentLabel + sectionTitle', async () => {
-    const project = parseResult(await client.callTool('tim_create_project', {
+    // Ideas is a standard schema section created with the project — seeding a
+    // second one here would make sectionTitle resolution ambiguous.
+    parseResult(await client.callTool('tim_create_project', {
       label: 'P7702',
       content: 'Resolve Project',
       memoryOnly: true,
-    })) as { id: string };
-    await client.callTool('tim_write', {
-      content: 'Ideas',
-      parentId: project.id,
-    });
+    }));
     await client.callTool('tim_write', {
       content: 'Spark',
       metadata: { kind: 'idea' },
