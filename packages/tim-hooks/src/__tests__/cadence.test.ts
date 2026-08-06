@@ -4,6 +4,7 @@ import {
   checkpointCadenceReminder,
   getCheckpointEveryN,
   getBriefingMaxTokens,
+  getBriefingRecentSessions,
 } from '../cadence.js';
 
 describe('checkpoint cadence', () => {
@@ -22,5 +23,14 @@ describe('checkpoint cadence', () => {
     expect(getCheckpointEveryN(base)).toBe(20);
     expect(getBriefingMaxTokens(base)).toBe(9000);
     expect(getCheckpointEveryN({ ...base, checkpoint: { everyN: 10 } })).toBe(10);
+  });
+
+  it('briefing.recentSessions defaults to 5 and is overridable', () => {
+    const base = { dbPath: '/tmp/t.db', deviceId: 'd1' };
+    expect(getBriefingRecentSessions(base)).toBe(5);
+    expect(getBriefingRecentSessions({ ...base, briefing: { recentSessions: 8 } })).toBe(8);
+    // Nonsense values fall back to the default rather than hiding all sessions.
+    expect(getBriefingRecentSessions({ ...base, briefing: { recentSessions: 0 } })).toBe(5);
+    expect(getBriefingRecentSessions({ ...base, briefing: { recentSessions: -3 } })).toBe(5);
   });
 });

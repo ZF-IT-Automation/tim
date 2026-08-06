@@ -2,6 +2,7 @@ import type { TimConfigFile } from 'tim-core';
 
 export const DEFAULT_CHECKPOINT_EVERY_N = 20;
 export const DEFAULT_BRIEFING_MAX_TOKENS = 9000;
+export const DEFAULT_BRIEFING_RECENT_SESSIONS = 5;
 
 export function getCheckpointEveryN(config: TimConfigFile): number {
   const n = config.checkpoint?.everyN;
@@ -13,6 +14,12 @@ export function getBriefingMaxTokens(config: TimConfigFile): number {
   const n = config.briefing?.maxTokens;
   if (typeof n === 'number' && n > 0) return n;
   return DEFAULT_BRIEFING_MAX_TOKENS;
+}
+
+export function getBriefingRecentSessions(config: TimConfigFile): number {
+  const n = config.briefing?.recentSessions;
+  if (typeof n === 'number' && n > 0) return Math.floor(n);
+  return DEFAULT_BRIEFING_RECENT_SESSIONS;
 }
 
 /** True when an auto-checkpoint should fire after this exchange count. */

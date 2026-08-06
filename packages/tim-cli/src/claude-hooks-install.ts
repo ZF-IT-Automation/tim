@@ -16,6 +16,7 @@ export interface ClaudeHookMatcher {
 export interface ClaudeSettings {
   permissions?: Record<string, unknown>;
   hooks?: {
+    SessionStart?: ClaudeHookMatcher[];
     UserPromptSubmit?: ClaudeHookMatcher[];
     Stop?: ClaudeHookMatcher[];
     [event: string]: ClaudeHookMatcher[] | undefined;
@@ -40,6 +41,13 @@ const TIM_STOP: ClaudeHookMatcher = {
   hooks: [{ type: 'command', command: 'tim hook claude-stop', timeout: 5 }],
 };
 
+// Roomier timeout than the other two: this one reads the store to assemble the
+// briefing, and a missing briefing costs the whole session its context.
+const TIM_SESSION_START: ClaudeHookMatcher = {
+  matcher: '',
+  hooks: [{ type: 'command', command: 'tim hook claude-session-start', timeout: 10 }],
+};
+
 function appendUnique(
   existing: ClaudeHookMatcher[] | undefined,
   value: ClaudeHookMatcher,
@@ -56,6 +64,7 @@ export function mergeClaudeHooks(settings: ClaudeSettings): ClaudeSettings {
     ...settings,
     hooks: {
       ...settings.hooks,
+      SessionStart: appendUnique(settings.hooks?.SessionStart, TIM_SESSION_START),
       UserPromptSubmit: appendUnique(settings.hooks?.UserPromptSubmit, TIM_PROMPT),
       Stop: appendUnique(settings.hooks?.Stop, TIM_STOP),
     },

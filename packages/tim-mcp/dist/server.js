@@ -2815,7 +2815,7 @@ async function createMcpServer(options = {}) {
                             // Non-critical — brief still returned
                         }
                     }
-                    const formatted = (0, project_output_js_1.formatProjectOutput)(result, budget, loadProjectSchema(), bind ? 'load' : 'read');
+                    const formatted = (0, project_output_js_1.formatProjectOutput)(result, budget, loadProjectSchema(), bind ? 'load' : 'read', (0, tim_hooks_1.getBriefingRecentSessions)((0, tim_core_1.loadConfig)()));
                     // Response-driven guidance: weak models follow response text more
                     // reliably than system prompts — spell out the standard next step.
                     const nextHint = bind
@@ -2843,7 +2843,7 @@ async function createMcpServer(options = {}) {
                     if (!result) {
                         return errorResult(`Project not found: ${label}`);
                     }
-                    const formatted = (0, project_output_js_1.formatProjectOutput)(result, budget, loadProjectSchema(), 'read');
+                    const formatted = (0, project_output_js_1.formatProjectOutput)(result, budget, loadProjectSchema(), 'read', (0, tim_hooks_1.getBriefingRecentSessions)((0, tim_core_1.loadConfig)()));
                     return {
                         content: [{
                                 type: 'text',

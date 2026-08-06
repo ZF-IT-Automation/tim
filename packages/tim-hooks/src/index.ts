@@ -23,10 +23,12 @@ export { getDeltaBriefing, type DeltaBriefingOptions } from './delta.js';
 export {
   getCheckpointEveryN,
   getBriefingMaxTokens,
+  getBriefingRecentSessions,
   shouldAutoCheckpoint,
   checkpointCadenceReminder,
   DEFAULT_CHECKPOINT_EVERY_N,
   DEFAULT_BRIEFING_MAX_TOKENS,
+  DEFAULT_BRIEFING_RECENT_SESSIONS,
 } from './cadence.js';
 
 export { afterExchangeLogged, type CadenceResult } from './cadence-runner.js';
@@ -60,6 +62,7 @@ export {
   CWD_ONLY_MARKER_DISCOVERY_POLICY,
   buildLoadDirective,
   buildSessionDirective,
+  type DirectiveBriefing,
   syncNearestProjectMarker,
   validateMarkerAgainstStore,
   validateProjectLabel,

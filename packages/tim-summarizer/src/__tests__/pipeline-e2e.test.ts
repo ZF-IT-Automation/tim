@@ -160,8 +160,9 @@ describe('pipeline e2e — happy path', () => {
 
     const out = formatProjectOutput(depth3, 200);
     expect(out).toMatch(/── Recent Sessions \(1\/1\) ──/);
-    // parseSessionEntry reads title "Summary", not batch text (Finding B — no rollUp)
-    expect(out).toMatch(/0 exchanges · \d{4}-\d{2}-\d{2}  "Summary"/);
+    // parseSessionEntry reads title "Summary", not batch text (Finding B — no rollUp).
+    // The renderer now emits a header line plus the summary's own indented lines.
+    expect(out).toMatch(/0 exchanges · \d{4}-\d{2}-\d{2}\n {4}Summary/);
     expect(summaryRoot!.metadata.summary ?? '').toBe('');
   });
 

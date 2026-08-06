@@ -74,6 +74,7 @@ const DEFAULT_CONFIG: TimConfigFile = {
   },
   briefing: {
     maxTokens: 9000,
+    recentSessions: 5,
   },
 };
 

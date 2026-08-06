@@ -55,6 +55,7 @@ const secret_js_1 = require("./secret.js");
 const release_check_js_1 = require("./release-check.js");
 const migrate_from_hmem_js_1 = require("./migrate-from-hmem.js");
 const setup_agent_js_1 = require("./setup-agent.js");
+const session_briefing_js_1 = require("./session-briefing.js");
 const args_js_1 = require("./args.js");
 const claude_hook_io_js_1 = require("./claude-hook-io.js");
 const fs = __importStar(require("fs"));
@@ -91,11 +92,12 @@ const COMMAND_HELP = {
     'bind-project': 'Usage: tim bind-project --label <P00XX> [--cwd <dir>]',
     'new-project': 'Usage: tim new-project --path <dir> --name <string> [--no-git] [--confirm]',
     'record-commit': 'Usage: tim record-commit [--cwd <dir>] [--project <label>] [--session <id>] [--hash <sha>] [--message <text>] [--diff <stat>] [--author <name>] [--date <iso>] [--branch <name>]',
-    hook: 'Usage: tim hook <session-start|session-end|log|prompt-submit|claude-stop> [options]',
+    hook: 'Usage: tim hook <session-start|session-end|log|prompt-submit|claude-session-start|claude-stop> [options]',
     'hook session-start': 'Usage: tim hook session-start --session <id> [--agent <name>] [--cwd <path>] [--harness <name>] [--project <label>] [--tool <name>] [--model <name>] [--task-summary <text>]',
     'hook session-end': 'Usage: tim hook session-end --session <id>',
     'hook log': 'Usage: tim hook log --session <id> --user <text> --agent <text> [--cwd <path>]',
     'hook prompt-submit': 'Usage: tim hook prompt-submit < Claude UserPromptSubmit JSON',
+    'hook claude-session-start': 'Usage: tim hook claude-session-start < Claude SessionStart JSON',
     'hook claude-stop': 'Usage: tim hook claude-stop < Claude Stop JSON',
     checkpoint: 'Usage: tim checkpoint --session <id> [--handoff-note <text>]',
     rebalance: 'Usage: tim rebalance --session <id> [--cwd <dir>]',
@@ -310,12 +312,54 @@ async function cmdStats() {
     console.log(JSON.stringify(stats, null, 2));
     store.close();
 }
+/**
+ * Marker at `cwd` → full session-start directive. Shared by `resolve-project
+ * --format directive` and the `hook claude-session-start` entry point. Returns null
+ * when there is no marker (callers stay silent and exit 0).
+ */
+async function buildStartDirectiveForCwd(cwd, walkUp) {
+    const envOpts = (0, tim_hooks_1.findMarkerOptionsFromEnv)() ?? {};
+    const located = (0, tim_hooks_1.findMarker)(cwd, { ...envOpts, walkUp: walkUp ?? envOpts.walkUp ?? false });
+    if (!located)
+        return null;
+    const { marker, dir } = located;
+    const config = (0, tim_core_1.loadConfig)();
+    const store = new tim_store_1.TimStore(getDbPath(config));
+    try {
+        const validated = await (0, tim_hooks_1.validateMarkerAgainstStore)(marker, store);
+        let projectLabel = validated?.project ?? null;
+        if (!projectLabel) {
+            const recovered = await (0, tim_hooks_1.repairPhantomProjectBinding)(store, dir);
+            if (recovered) {
+                (0, tim_hooks_1.writeMarker)(dir, { project: recovered });
+                projectLabel = recovered;
+            }
+        }
+        if (!projectLabel)
+            return buildStaleMarkerDirective(marker.project, dir);
+        const binding = await (0, tim_store_1.resolveProjectBindingLabel)(store, projectLabel);
+        // The directive must carry substance, not just an instruction — a model that
+        // never calls tim_load_project still gets briefed. Failure stays silent so a
+        // start hook is never blocked by a briefing problem.
+        const briefing = await (0, session_briefing_js_1.collectDirectiveBriefing)(store, projectLabel, (0, tim_hooks_1.getBriefingMaxTokens)(config)).catch(() => undefined);
+        return (0, tim_hooks_1.buildLoadDirective)(projectLabel, dir, binding, briefing);
+    }
+    finally {
+        store.close();
+    }
+}
 async function cmdResolveProject(args) {
     const { flags } = (0, args_js_1.parseArgs)(args, { valueOptions: (0, args_js_1.valueOptionsFor)('resolve-project') });
     const cwd = flags.cwd ?? process.cwd();
     const format = flags.format ?? 'label';
     const envOpts = (0, tim_hooks_1.findMarkerOptionsFromEnv)() ?? {};
     const walkUp = flags['walk-up'] !== undefined ? flags['walk-up'] === 'true' : (envOpts.walkUp ?? false);
+    if (format === 'directive') {
+        const directive = await buildStartDirectiveForCwd(cwd, walkUp);
+        if (directive)
+            process.stdout.write(directive);
+        return; // no marker → silent skip, exit 0
+    }
     const located = (0, tim_hooks_1.findMarker)(cwd, { ...envOpts, walkUp });
     if (!located)
         return; // no marker (or corrupt nearest) → silent skip, exit 0
@@ -336,15 +380,7 @@ async function cmdResolveProject(args) {
                 projectLabel = recovered;
             }
         }
-        if (format === 'directive') {
-            if (!projectLabel) {
-                process.stdout.write(buildStaleMarkerDirective(marker.project, dir));
-                return;
-            }
-            const binding = await (0, tim_store_1.resolveProjectBindingLabel)(store, projectLabel);
-            process.stdout.write((0, tim_hooks_1.buildLoadDirective)(projectLabel, dir, binding));
-        }
-        else if (!projectLabel) {
+        if (!projectLabel) {
             // Phantom and unrepaired — do not echo as a live binding.
             process.stdout.write(`${marker.project}?`);
         }
@@ -381,7 +417,8 @@ async function cmdResolveSession(args) {
         }
         else if (format === 'directive') {
             const binding = await (0, tim_store_1.resolveProjectBindingLabel)(store, projectRef);
-            process.stdout.write((0, tim_hooks_1.buildSessionDirective)(projectRef, cwd, binding));
+            const briefing = await (0, session_briefing_js_1.collectDirectiveBriefing)(store, projectRef, (0, tim_hooks_1.getBriefingMaxTokens)(config)).catch(() => undefined);
+            process.stdout.write((0, tim_hooks_1.buildSessionDirective)(projectRef, cwd, binding, briefing));
         }
         else {
             process.stdout.write(projectRef);
@@ -418,6 +455,24 @@ async function cmdBindProject(args) {
 }
 async function cmdHook(args) {
     const sub = args[0];
+    if (sub === 'claude-session-start') {
+        try {
+            const payload = await (0, claude_hook_io_js_1.readJsonStdin)();
+            const cwd = typeof payload?.cwd === 'string' ? payload.cwd.trim() : '';
+            if (!cwd)
+                return;
+            // Walk up: Claude reports the workspace root, but sessions often start in a
+            // subdirectory of the marked repo.
+            const directive = await buildStartDirectiveForCwd(cwd, true);
+            if (directive) {
+                process.stdout.write(JSON.stringify((0, claude_hook_io_js_1.sessionStartEnvelope)(directive)));
+            }
+        }
+        catch {
+            // Claude hooks fail soft: no context, diagnostics, or nonzero exit.
+        }
+        return;
+    }
     if (sub === 'prompt-submit') {
         try {
             const payload = await (0, claude_hook_io_js_1.readJsonStdin)();
@@ -551,7 +606,7 @@ async function cmdHook(args) {
             }
             default:
                 console.error(`Unknown hook: ${sub ?? '(none)'}`);
-                console.error('Usage: tim hook <session-start|session-end|log|prompt-submit|claude-stop> [options]');
+                console.error('Usage: tim hook <session-start|session-end|log|prompt-submit|claude-session-start|claude-stop> [options]');
                 process.exit(1);
         }
     }

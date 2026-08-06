@@ -3,7 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.TIM_HMEM_IMPORT_AUDIT_SKILL = void 0;
 exports.TIM_HMEM_IMPORT_AUDIT_SKILL = {
     name: 'tim-hmem-import-audit',
-    description: 'After tim_import: verify hmem project structure and repair misplaced nodes without SQL.',
+    description: 'After tim_import of a .hmem file, verify project structure and repair misplaced nodes without SQL.',
     content: `# tim-hmem-import-audit
 
 Use after \`tim_import\` of a .hmem file.

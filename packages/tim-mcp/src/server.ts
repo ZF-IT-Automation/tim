@@ -43,6 +43,7 @@ import {
   findMarkerOptionsFromEnv,
   getActiveProjectLabel,
   getBriefingMaxTokens,
+  getBriefingRecentSessions,
   maybeSpawnSummarizer,
   runPromptSubmit,
   syncNearestProjectMarker,
@@ -3099,7 +3100,13 @@ export async function createMcpServer(
             }
           }
 
-          const formatted = formatProjectOutput(result, budget, loadProjectSchema(), bind ? 'load' : 'read');
+          const formatted = formatProjectOutput(
+            result,
+            budget,
+            loadProjectSchema(),
+            bind ? 'load' : 'read',
+            getBriefingRecentSessions(loadConfig()),
+          );
           // Response-driven guidance: weak models follow response text more
           // reliably than system prompts — spell out the standard next step.
           const nextHint = bind
@@ -3132,7 +3139,13 @@ export async function createMcpServer(
             return errorResult(`Project not found: ${label}`);
           }
 
-          const formatted = formatProjectOutput(result, budget, loadProjectSchema(), 'read');
+          const formatted = formatProjectOutput(
+            result,
+            budget,
+            loadProjectSchema(),
+            'read',
+            getBriefingRecentSessions(loadConfig()),
+          );
           return {
             content: [{
               type: 'text',
