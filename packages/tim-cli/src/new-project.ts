@@ -5,6 +5,7 @@ import * as readline from 'readline';
 import { execSync } from 'child_process';
 import {
   TimStore,
+  ensureProjectSchema,
   isProjectLabelConflictError,
   nextLabelAfterProjectLabelConflict,
 } from 'tim-store';
@@ -16,16 +17,6 @@ import {
   type BoundProjectCreationResult,
 } from 'tim-hooks';
 import { NEW_PROJECT_ALIASES, parseArgs, valueOptionsFor } from './args.js';
-
-const STANDARD_SECTIONS = [
-  { label: 'Tasks', content: 'Actionable work items and open tasks' },
-  { label: 'Ideas', content: 'Brainstorming and undecided proposals' },
-  { label: 'Errors', content: 'Bug and error tracking' },
-  { label: 'Decisions', content: 'Architecture and project decisions' },
-  { label: 'Learnings', content: 'Lessons learned and pitfalls' },
-  { label: 'Log', content: 'Project activity log and milestones' },
-  { label: 'Testing', content: 'Test scenarios, test plans, coverage notes, and testing methodologies' },
-] as const;
 
 function getDbPath(): string {
   const config = loadConfig();
@@ -149,20 +140,6 @@ const DEFAULT_NEW_PROJECT_DEPS: NewProjectDeps = {
   createProject: createProjectCoordinated,
 };
 
-async function initProjectSchema(store: TimStore, projectId: string): Promise<void> {
-  for (const section of STANDARD_SECTIONS) {
-    try {
-      await store.write(section.content, {
-        parentId: projectId,
-        metadata: { kind: 'section', label: section.label },
-      });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(`Warning: failed to create section ${section.label}: ${msg}`);
-    }
-  }
-}
-
 export async function cmdNewProject(
   args: string[],
   deps: NewProjectDeps = DEFAULT_NEW_PROJECT_DEPS,
@@ -235,7 +212,14 @@ Create a new TIM project, register it in the database, write .tim-project, and i
     exitWith(5, `Error: Failed to create project in database: ${msg}`);
   }
 
-  await initProjectSchema(store, result.id);
+  // createProjectCoordinated already materializes the schema; this is a no-op
+  // second pass that keeps the CLI correct when `deps.createProject` is injected.
+  try {
+    await ensureProjectSchema(store, result.id);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`Warning: failed to initialize project sections: ${msg}`);
+  }
 
   if (!noGit) {
     const gitDir = path.join(targetPath, '.git');

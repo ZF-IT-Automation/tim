@@ -43,15 +43,6 @@ const tim_store_1 = require("tim-store");
 const tim_core_1 = require("tim-core");
 const tim_hooks_1 = require("tim-hooks");
 const args_js_1 = require("./args.js");
-const STANDARD_SECTIONS = [
-    { label: 'Tasks', content: 'Actionable work items and open tasks' },
-    { label: 'Ideas', content: 'Brainstorming and undecided proposals' },
-    { label: 'Errors', content: 'Bug and error tracking' },
-    { label: 'Decisions', content: 'Architecture and project decisions' },
-    { label: 'Learnings', content: 'Lessons learned and pitfalls' },
-    { label: 'Log', content: 'Project activity log and milestones' },
-    { label: 'Testing', content: 'Test scenarios, test plans, coverage notes, and testing methodologies' },
-];
 function getDbPath() {
     const config = (0, tim_core_1.loadConfig)();
     return process.env.TIM_DB_PATH || config.dbPath || path.join(os.homedir(), '.tim', 'tim.db');
@@ -149,20 +140,6 @@ async function createProjectWithRetry(store, startLabel, name, targetPath, deps)
 const DEFAULT_NEW_PROJECT_DEPS = {
     createProject: tim_hooks_1.createProjectCoordinated,
 };
-async function initProjectSchema(store, projectId) {
-    for (const section of STANDARD_SECTIONS) {
-        try {
-            await store.write(section.content, {
-                parentId: projectId,
-                metadata: { kind: 'section', label: section.label },
-            });
-        }
-        catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            console.error(`Warning: failed to create section ${section.label}: ${msg}`);
-        }
-    }
-}
 async function cmdNewProject(args, deps = DEFAULT_NEW_PROJECT_DEPS) {
     const { flags } = (0, args_js_1.parseArgs)(args, {
         valueOptions: (0, args_js_1.valueOptionsFor)('new-project'),
@@ -220,7 +197,15 @@ Create a new TIM project, register it in the database, write .tim-project, and i
         const msg = err instanceof Error ? err.message : String(err);
         exitWith(5, `Error: Failed to create project in database: ${msg}`);
     }
-    await initProjectSchema(store, result.id);
+    // createProjectCoordinated already materializes the schema; this is a no-op
+    // second pass that keeps the CLI correct when `deps.createProject` is injected.
+    try {
+        await (0, tim_store_1.ensureProjectSchema)(store, result.id);
+    }
+    catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`Warning: failed to initialize project sections: ${msg}`);
+    }
     if (!noGit) {
         const gitDir = path.join(targetPath, '.git');
         if (fs.existsSync(gitDir)) {

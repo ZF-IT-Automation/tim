@@ -2,6 +2,7 @@ export { TimStore, splitTitleBody, titleSimilarity, cosineSimilarity, runBenchma
 export type { ResolveProjectResult } from 'tim-core';
 export { cropDisplayName, projectDisplayNameFromEntry, resolveProjectDisplayName, resolveProjectBindingLabel, } from './project-display.js';
 export { runMigrations, getCurrentVersion, MIGRATIONS } from './schema.js';
+export { ensureProjectSchema, planProjectSchema, SCHEMA_ORDER_STEP, type EnsureProjectSchemaOptions, type EnsureProjectSchemaResult, } from './project-schema-init.js';
 export { SessionManager, resolveCurrentSession, ensureProjectForPath, type Exchange, type ExchangeRole, type SessionStartParams, type ProjectSessionParams, type Summarizer, type UnsummarizedBatch, type UnsummarizedExchange, type UntaggedBatch, type BatchFullInfo, type OnBatchFullHandler, type EnsureProjectForPathResult, type ResumeBatchSummary, type ResumeExchange, type ResumePayload, type ResumeSessionOpts, type ResumableSession, } from './session.js';
 export { deriveCounters, findChildByKind, getCurrentBatch, ensureInboxProject, foldBatchSummaries, type DerivedCounters, type CurrentBatch, SESSIONS_SECTION_TITLE, SUMMARY_NODE_TITLE, EXCHANGES_NODE_TITLE, KIND_SESSIONS_ROOT, KIND_SESSION, KIND_SESSION_ALIAS, KIND_SUMMARY_ROOT, KIND_BATCH, KIND_EXCHANGES_ROOT, KIND_EXCHANGE_BATCH, KIND_EXCHANGE, SESSION_SUMMARY_TAG, DEFAULT_BATCH_SIZE, SESSION_ROLLUP_THRESHOLD, MARKER_FILENAME, INBOX_PROJECT_LABEL, } from './session-tree.js';
 export { CommitManager, type RecordCommitParams, } from './commit.js';

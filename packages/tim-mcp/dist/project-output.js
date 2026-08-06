@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.formatProjectOutput = formatProjectOutput;
+const tim_core_1 = require("tim-core");
 const tim_store_1 = require("tim-store");
 const task_status_js_1 = require("./task-status.js");
 const FORMAT_SEP = '─'.repeat(40);
@@ -337,18 +338,6 @@ function resolveRenderTail(entry, schemaDefault) {
         return schemaDefault;
     return false;
 }
-function findSchemaSection(sections, name) {
-    if (!sections?.length)
-        return undefined;
-    for (const section of sections) {
-        if (section.name === name)
-            return section;
-        const nested = findSchemaSection(section.children, name);
-        if (nested)
-            return nested;
-    }
-    return undefined;
-}
 function shouldRenderChildren(depth) {
     return depth !== 0;
 }
@@ -373,7 +362,7 @@ function formatChildrenTree(children, childMap, depth, budget, schema, renderTai
         if (budget.remaining <= 0)
             break;
         const child = children[i];
-        const childSchema = findSchemaSection(schema?.sections, entryTitle(child));
+        const childSchema = (0, tim_core_1.findSchemaSection)(schema?.sections, entryTitle(child));
         const childRenderDepth = resolveRenderDepth(child, childSchema?.render_depth, renderMode);
         // renderDepth=0 → skip node AND entire subtree entirely
         if (childRenderDepth === 0) {
@@ -457,7 +446,7 @@ function formatProjectOutput(result, budget, schema, renderMode) {
         const seenBodies = new Map();
         for (const section of sections) {
             const name = entryTitle(section);
-            const schemaSection = findSchemaSection(schema?.sections, name);
+            const schemaSection = (0, tim_core_1.findSchemaSection)(schema?.sections, name);
             const renderDepth = resolveRenderDepth(section, schemaSection?.render_depth, renderMode);
             // renderDepth=0 → skip entire section node + subtree
             if (renderDepth === 0) {

@@ -3,7 +3,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import type { Entry } from 'tim-core';
-import { TimStore, upsertProjectPathRow } from 'tim-store';
+import { TimStore, ensureProjectSchema, upsertProjectPathRow } from 'tim-store';
 import {
   readMarker,
   markerPath as projectMarkerPath,
@@ -246,6 +246,10 @@ export async function createProjectCoordinated(
       metadata: args.metadata,
       aliases: args.aliases,
     });
+    // store.createProject inserts the root row only — the standard sections come
+    // from the schema, so every caller (MCP tim_create_project included) lands on
+    // a structured project instead of a bare root.
+    await ensureProjectSchema(store, entry.id);
     return { ...entry, mode };
   }
 
@@ -284,6 +288,9 @@ export async function createProjectCoordinated(
     metadata: { ...(args.metadata ?? {}), path: projectPath },
     aliases: args.aliases,
   });
+  // Materialize before marker publication: the DB row exists from here on, so if
+  // publication fails the recovered project is still structurally complete.
+  await ensureProjectSchema(store, entry.id);
 
   try {
     runtime.writeExclusive(projectPath, markerInput(args.label));

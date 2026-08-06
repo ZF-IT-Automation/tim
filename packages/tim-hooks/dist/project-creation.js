@@ -186,6 +186,10 @@ async function createProjectCoordinated(store, args, deps = {}) {
             metadata: args.metadata,
             aliases: args.aliases,
         });
+        // store.createProject inserts the root row only — the standard sections come
+        // from the schema, so every caller (MCP tim_create_project included) lands on
+        // a structured project instead of a bare root.
+        await (0, tim_store_1.ensureProjectSchema)(store, entry.id);
         return { ...entry, mode };
     }
     if (store.getDatabasePath() === ':memory:') {
@@ -216,6 +220,9 @@ async function createProjectCoordinated(store, args, deps = {}) {
         metadata: { ...(args.metadata ?? {}), path: projectPath },
         aliases: args.aliases,
     });
+    // Materialize before marker publication: the DB row exists from here on, so if
+    // publication fails the recovered project is still structurally complete.
+    await (0, tim_store_1.ensureProjectSchema)(store, entry.id);
     try {
         runtime.writeExclusive(projectPath, markerInput(args.label));
     }

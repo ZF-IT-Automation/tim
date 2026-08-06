@@ -42,6 +42,12 @@ import {
   cmdSetupHermesStatusline,
 } from './hermes-statusline-install.js';
 import { cmdConsolidate } from './consolidate.js';
+import {
+  collectProjectSchemaReport,
+  formatProjectSchemaFindingLine,
+  formatProjectSchemaOutcomeLine,
+  repairProjectSchemas,
+} from './project-schema-repair.js';
 import { cmdSecret } from './secret.js';
 import { runReleaseCheck } from './release-check.js';
 import { cmdMigrateFromHmem } from './migrate-from-hmem.js';
@@ -81,7 +87,7 @@ function hasHelpFlag(args: string[], command: string, subcommand?: string): bool
 
 const COMMAND_HELP: Record<string, string> = {
   init: 'Usage: tim init',
-  doctor: 'Usage: tim doctor [--bind]',
+  doctor: 'Usage: tim doctor [--bind] [--repair-schema] [--project <P00XX>]',
   stats: 'Usage: tim stats',
   'resolve-project':
     'Usage: tim resolve-project [--cwd <dir>] [--walk-up] [--format label|json|directive]',
@@ -255,8 +261,10 @@ async function cmdInit() {
 }
 
 async function cmdDoctor(args: string[] = []) {
-  const { flags } = parseArgs(args);
+  const { flags } = parseArgs(args, { valueOptions: valueOptionsFor('doctor') });
   const doBind = flags.bind === 'true';
+  const doRepairSchema = flags['repair-schema'] === 'true';
+  const projectFilter = flags.project;
   const config = loadConfig();
   const store = new TimStore(getDbPath(config));
   const health = await store.health();
@@ -302,6 +310,37 @@ async function cmdDoctor(args: string[] = []) {
     } else {
       for (const outcome of outcomes) {
         console.log(formatBindOutcomeLine(outcome));
+      }
+    }
+  }
+
+  // Projects created before the schema became authoritative are missing sections.
+  // Report always; only change the DB behind the explicit --repair-schema opt-in.
+  const schemaReport = await collectProjectSchemaReport(store, projectFilter);
+  console.log('\nProject schema:');
+  if (schemaReport.length === 0) {
+    console.log('  (none)');
+  } else {
+    const incomplete = schemaReport.filter(f => f.missing.length > 0);
+    for (const finding of schemaReport) {
+      console.log(formatProjectSchemaFindingLine(finding));
+    }
+    if (incomplete.length > 0 && !doRepairSchema) {
+      console.log(
+        `  Fix: tim doctor --repair-schema${projectFilter ? ` --project ${projectFilter}` : ''} ` +
+          '(adds missing sections only; custom sections are kept)',
+      );
+    }
+  }
+
+  if (doRepairSchema) {
+    const outcomes = await repairProjectSchemas(store, schemaReport);
+    console.log('\nSchema repair:');
+    if (outcomes.length === 0) {
+      console.log('  (nothing to add)');
+    } else {
+      for (const outcome of outcomes) {
+        console.log(formatProjectSchemaOutcomeLine(outcome));
       }
     }
   }

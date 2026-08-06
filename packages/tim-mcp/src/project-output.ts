@@ -1,21 +1,15 @@
-import type { Entry } from 'tim-core';
+import type { Entry, ProjectSchema } from 'tim-core';
+import { findSchemaSection } from 'tim-core';
 import type { LoadProjectResult } from 'tim-store';
 import { isTaskMarker } from 'tim-store';
 import { resolveEntryTaskStatus } from './task-status.js';
 
 const FORMAT_SEP = '─'.repeat(40);
 
-export interface ProjectSchemaSection {
-  name: string;
-  description?: string;
-  render_depth?: number | 'full';
-  render_tail?: boolean;
-  children?: ProjectSchemaSection[];
-}
-
-export interface ProjectSchema {
-  sections: ProjectSchemaSection[];
-}
+// The schema shape and its traversal live in tim-core — the same definition the
+// creation paths materialize from. Re-exported here so existing importers of
+// './project-output.js' keep working.
+export type { ProjectSchema, ProjectSchemaSection } from 'tim-core';
 
 function truncText(s: string, max: number): string {
   const t = s.replace(/\s+/g, ' ').trim();
@@ -376,19 +370,6 @@ function resolveRenderTail(entry: Entry, schemaDefault?: boolean): boolean {
   if (override === 'false') return false;
   if (schemaDefault !== undefined) return schemaDefault;
   return false;
-}
-
-function findSchemaSection(
-  sections: ProjectSchemaSection[] | undefined,
-  name: string,
-): ProjectSchemaSection | undefined {
-  if (!sections?.length) return undefined;
-  for (const section of sections) {
-    if (section.name === name) return section;
-    const nested = findSchemaSection(section.children, name);
-    if (nested) return nested;
-  }
-  return undefined;
 }
 
 function shouldRenderChildren(depth: number | 'full'): boolean {
