@@ -461,23 +461,72 @@ export function findMarker(startCwd: string, options?: FindMarkerOptions): Marke
 }
 
 /**
+ * Substance carried by a start directive, pre-assembled by the caller. marker.ts is
+ * imported by hooks that must stay fast, so it never touches the store itself — the
+ * CLI reads the store and hands the finished text in (see tim-cli/session-briefing.ts).
+ */
+export interface DirectiveBriefing {
+  /** Heading detail for the previous session, e.g. "2026-08-05 · 42 exchanges". */
+  previousSessionLabel?: string;
+  /** Condensed previous-session summary; newlines are preserved verbatim. */
+  previousSessionSummary?: string;
+  /** Open work lines (tasks, next steps), already formatted and bounded. */
+  openWork?: string[];
+}
+
+/** Renders the content half of a directive; empty when there is nothing to say. */
+function briefingBlock(briefing?: DirectiveBriefing): string[] {
+  if (!briefing) return [];
+  const out: string[] = [];
+
+  const summary = briefing.previousSessionSummary?.trim();
+  if (summary) {
+    const label = briefing.previousSessionLabel?.trim();
+    out.push('', `── Previous session${label ? ` (${label})` : ''} ──`, summary);
+  }
+
+  const openWork = (briefing.openWork ?? []).map(l => l.trimEnd()).filter(l => l.trim());
+  if (openWork.length > 0) {
+    out.push('', '── Open work ──', ...openWork);
+  }
+  return out;
+}
+
+function actionLine(projectLabel: string, tail: string, hasBriefing: boolean): string {
+  const lead = hasBriefing
+    ? `ACTION: the context above is already loaded — do NOT re-fetch it. Call ` +
+      `tim_load_project(label="${projectLabel}") now to bind this session and pull the ` +
+      `full project brief, then run the tim-session-start skill.`
+    : `ACTION: call tim_load_project(label="${projectLabel}") now to load the project ` +
+      `brief from the TIM store, then run the tim-session-start skill.`;
+  return `${lead} ${tail}`;
+}
+
+/**
  * Shared, harness-agnostic directive text. Every start hook emits exactly this.
+ * With a `briefing` it carries the previous session and open work inline, so the
+ * next session is briefed even if the model never makes the tim_load_project call.
  */
 export function buildLoadDirective(
   projectLabel: string,
   markerDir: string,
   bindingLabel?: string,
+  briefing?: DirectiveBriefing,
 ): string {
   const display = bindingLabel?.trim() || projectLabel;
+  const block = briefingBlock(briefing);
   return [
     `📍 TIM project marker detected (.tim-project in ${markerDir}).`,
     `This session is bound to TIM project ${display}.`,
+    ...block,
     ``,
-    `ACTION: call tim_load_project(label="${projectLabel}") now to load the project ` +
-      `brief from the TIM store, then run the tim-session-start skill. STEP 1 ` +
-      `(project binding) is already decided by this marker — do NOT ask which ` +
-      `project, and do NOT run any hmem/active-project cwd→project resolution. ` +
-      `The TIM marker is authoritative for this turn.`,
+    actionLine(
+      projectLabel,
+      `STEP 1 (project binding) is already decided by this marker — do NOT ask which ` +
+        `project, and do NOT run any hmem/active-project cwd→project resolution. ` +
+        `The TIM marker is authoritative for this turn.`,
+      block.length > 0,
+    ),
   ].join('\n');
 }
 
@@ -486,16 +535,21 @@ export function buildSessionDirective(
   projectLabel: string,
   cwd: string,
   bindingLabel?: string,
+  briefing?: DirectiveBriefing,
 ): string {
   const display = bindingLabel?.trim() || projectLabel;
+  const block = briefingBlock(briefing);
   return [
     `📍 TIM session bound to project ${display} (TIM store, cwd ${cwd}).`,
     `This session is bound to TIM project ${display}.`,
+    ...block,
     ``,
-    `ACTION: call tim_load_project(label="${projectLabel}") now to load the project ` +
-      `brief from the TIM store, then run the tim-session-start skill. STEP 1 ` +
-      `is already decided by this TIM session — do NOT ask which project, and do NOT ` +
-      `run any hmem/active-project cwd→project resolution. The TIM binding is authoritative ` +
-      `for this turn.`,
+    actionLine(
+      projectLabel,
+      `STEP 1 is already decided by this TIM session — do NOT ask which project, and do NOT ` +
+        `run any hmem/active-project cwd→project resolution. The TIM binding is authoritative ` +
+        `for this turn.`,
+      block.length > 0,
+    ),
   ].join('\n');
 }

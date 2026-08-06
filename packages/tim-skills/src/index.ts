@@ -10,6 +10,7 @@ import { TIM_SYNC_TRIAGE_SKILL } from './tim-sync-triage.js';
 import { TIM_SECRET_AUDIT_SKILL } from './tim-secret-audit.js';
 import { TIM_MCP_SMOKE_SKILL } from './tim-mcp-smoke.js';
 import { TIM_NEW_PROJECT_SKILL } from './tim-new-project.js';
+import { TIM_RESUME_SKILL } from './tim-resume.js';
 
 export { TIM_HANDOFF_SKILL } from './tim-handoff.js';
 export { TIM_EXPLAIN_SKILL } from './tim-explain.js';
@@ -23,6 +24,7 @@ export { TIM_SYNC_TRIAGE_SKILL } from './tim-sync-triage.js';
 export { TIM_SECRET_AUDIT_SKILL } from './tim-secret-audit.js';
 export { TIM_MCP_SMOKE_SKILL } from './tim-mcp-smoke.js';
 export { TIM_NEW_PROJECT_SKILL } from './tim-new-project.js';
+export { TIM_RESUME_SKILL } from './tim-resume.js';
 
 export interface TimSkill {
   name: string;
@@ -30,6 +32,9 @@ export interface TimSkill {
   content: string;
 }
 
+// Mirror of skills/<name>/SKILL.md, which is what `tim update-skills` actually
+// installs. The on-disk files are authoritative; skill-parity.test.ts fails if the
+// two sets ever drift, because a TS-only skill can be referenced but never installed.
 export const ALL_TIM_SKILLS: TimSkill[] = [
   TIM_HANDOFF_SKILL,
   TIM_EXPLAIN_SKILL,
@@ -43,6 +48,7 @@ export const ALL_TIM_SKILLS: TimSkill[] = [
   TIM_SECRET_AUDIT_SKILL,
   TIM_MCP_SMOKE_SKILL,
   TIM_NEW_PROJECT_SKILL,
+  TIM_RESUME_SKILL,
 ];
 
 export function getSkill(name: string): TimSkill | undefined {

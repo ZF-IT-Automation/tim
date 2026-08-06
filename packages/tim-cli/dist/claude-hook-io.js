@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.readJsonStdin = readJsonStdin;
 exports.promptSubmitEnvelope = promptSubmitEnvelope;
+exports.sessionStartEnvelope = sessionStartEnvelope;
 const DEFAULT_MAX_STDIN_BYTES = 1024 * 1024;
 async function readJsonStdin(maxBytes = DEFAULT_MAX_STDIN_BYTES) {
     const chunks = [];
@@ -35,6 +36,14 @@ function promptSubmitEnvelope(context) {
     return {
         hookSpecificOutput: {
             hookEventName: 'UserPromptSubmit',
+            additionalContext: context,
+        },
+    };
+}
+function sessionStartEnvelope(context) {
+    return {
+        hookSpecificOutput: {
+            hookEventName: 'SessionStart',
             additionalContext: context,
         },
     };

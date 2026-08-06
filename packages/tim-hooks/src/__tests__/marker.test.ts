@@ -15,6 +15,7 @@ import {
   DEFAULT_MARKER_DISCOVERY_POLICY,
   syncNearestProjectMarker,
   buildLoadDirective,
+  buildSessionDirective,
   acquireLock,
   releaseLock,
   summarizerLockPath,
@@ -307,6 +308,42 @@ describe('marker', () => {
     const d = buildLoadDirective('P0062', '/repo', 'P0062 — bbbee PM Workflow');
     expect(d).toContain('TIM project P0062 — bbbee PM Workflow');
     expect(d).toContain('tim_load_project(label="P0062")');
+  });
+
+  it('buildLoadDirective injects the briefing as content, not just an instruction', () => {
+    const d = buildLoadDirective('P0063', '/repo', undefined, {
+      previousSessionLabel: '2026-08-05 · 42 exchanges',
+      previousSessionSummary: '- fixed the chain\n- next: install the hook',
+      openWork: ['- [in_progress, high] Ship the SessionStart hook'],
+    });
+    expect(d).toContain('── Previous session (2026-08-05 · 42 exchanges) ──');
+    // Multi-line summaries keep their line structure.
+    expect(d).toContain('- fixed the chain\n- next: install the hook');
+    expect(d).toContain('── Open work ──');
+    expect(d).toContain('- [in_progress, high] Ship the SessionStart hook');
+    // Binding must still happen, and the model must not re-fetch what it already has.
+    expect(d).toContain('tim_load_project(label="P0063")');
+    expect(d).toContain('already loaded');
+  });
+
+  it('buildLoadDirective ignores an empty briefing and keeps the plain directive', () => {
+    const plain = buildLoadDirective('P0063', '/repo');
+    expect(buildLoadDirective('P0063', '/repo', undefined, {})).toBe(plain);
+    expect(
+      buildLoadDirective('P0063', '/repo', undefined, {
+        previousSessionSummary: '   ',
+        openWork: ['', '  '],
+      }),
+    ).toBe(plain);
+  });
+
+  it('buildSessionDirective carries the same briefing block', () => {
+    const d = buildSessionDirective('P0063', '/repo', undefined, {
+      previousSessionSummary: 'we shipped the renderer fix',
+    });
+    expect(d).toContain('── Previous session ──');
+    expect(d).toContain('we shipped the renderer fix');
+    expect(d).toContain('tim_load_project(label="P0063")');
   });
 
   it('syncNearestProjectMarker overwrites project on nearest marker', () => {

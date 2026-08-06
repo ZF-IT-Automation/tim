@@ -84,6 +84,7 @@ const DEFAULT_CONFIG = {
     },
     briefing: {
         maxTokens: 9000,
+        recentSessions: 5,
     },
 };
 function getTimDir() {

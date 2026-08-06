@@ -10,6 +10,7 @@ export interface ClaudeHookMatcher {
 export interface ClaudeSettings {
     permissions?: Record<string, unknown>;
     hooks?: {
+        SessionStart?: ClaudeHookMatcher[];
         UserPromptSubmit?: ClaudeHookMatcher[];
         Stop?: ClaudeHookMatcher[];
         [event: string]: ClaudeHookMatcher[] | undefined;

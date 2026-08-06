@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.formatProjectOutput = formatProjectOutput;
 const tim_store_1 = require("tim-store");
+const tim_hooks_1 = require("tim-hooks");
 const task_status_js_1 = require("./task-status.js");
 const FORMAT_SEP = '─'.repeat(40);
 function truncText(s, max) {
@@ -53,11 +54,48 @@ function sectionPreview(entry) {
 function isEmptyBody(entry) {
     return sectionPreview(entry) === '';
 }
-// ponytail: single-line-ish cap; raise if session lines should show more.
-const SESSION_SUMMARY_MAX = 400;
+// A session summary is an LLM-condensed rollup (a handful of bullets), not a
+// headline: 400 chars cut it mid-thought. Sized for a full condensed rollup.
+const SESSION_SUMMARY_MAX = 1500;
 // Only dedup section bodies with real substance — short/empty bodies ("No entries",
 // a one-line preview) may coincidentally match and shouldn't collapse.
 const DEDUP_MIN_CHARS = 80;
+const ELIDED_MARKER = '…';
+/**
+ * Clamp a session summary while keeping its line structure. When it does not fit,
+ * drop from the middle rather than the tail — the last bullets carry the handoff
+ * ("next: …"), which is exactly what the next session needs.
+ */
+function clampSummaryLines(text, max) {
+    const lines = text
+        .split('\n')
+        .map(l => l.replace(/[ \t]+/g, ' ').trim())
+        .filter(l => l.length > 0);
+    if (lines.length === 0)
+        return [];
+    const cost = (ls) => ls.reduce((n, l) => n + l.length + 1, -1);
+    if (cost(lines) <= max)
+        return lines;
+    // Single blob (no line structure to preserve) — keep head and tail around the marker.
+    if (lines.length === 1) {
+        const only = lines[0];
+        const head = Math.max(0, Math.floor(max * 0.5));
+        const tail = Math.max(0, max - head - ELIDED_MARKER.length);
+        return [`${only.slice(0, head).trimEnd()} ${ELIDED_MARKER} ${only.slice(only.length - tail).trimStart()}`];
+    }
+    // First line is the topic; then fill backwards from the newest content.
+    const head = lines[0];
+    const tail = [];
+    let used = head.length + 1 + ELIDED_MARKER.length + 1;
+    for (let i = lines.length - 1; i >= 1; i--) {
+        const next = lines[i].length + 1;
+        if (used + next > max)
+            break;
+        used += next;
+        tail.unshift(lines[i]);
+    }
+    return tail.length > 0 ? [head, ELIDED_MARKER, ...tail] : [head, ELIDED_MARKER];
+}
 function parseSessionEntry(entry) {
     const date = entry.createdAt.slice(0, 10);
     const combined = entry.content ? `${entry.title}\n${entry.content}` : entry.title;
@@ -73,7 +111,7 @@ function parseSessionEntry(entry) {
     if (!metaSummary && exMatch) {
         summary = combined.replace(/\s*[—–-]\s*\d+\s+exchanges?.*$/i, '').trim();
     }
-    return { exchanges, summary: truncText(summary, SESSION_SUMMARY_MAX), date };
+    return { exchanges, summary: clampSummaryLines(summary, SESSION_SUMMARY_MAX), date };
 }
 function compareEntryOrder(a, b) {
     const oa = Number(a.metadata.order);
@@ -166,7 +204,8 @@ const MAX_CHILDREN_PER_LEVEL = 10;
 const MAX_CHILDREN_PROTECTED_SECTIONS = 50;
 const PROTECTED_CHILD_SECTIONS = new Set(['Bugs', 'Next Steps']);
 const PROJECT_SUMMARY_MARKER = '## Project Summary';
-const RECENT_SESSIONS_COUNT = 5; // TODO: read from config
+// Fallback only — callers pass the configured value (briefing.recentSessions).
+const RECENT_SESSIONS_COUNT = tim_hooks_1.DEFAULT_BRIEFING_RECENT_SESSIONS;
 const CLOSED_TASK_STATUSES = new Set(['done', 'cancelled']);
 const CLOSED_BUG_STATUSES = new Set(['fixed', 'closed', 'resolved', 'wontfix', 'done']);
 const TASK_STATUS_SORT = {
@@ -411,7 +450,7 @@ function formatSectionLineSuffix(section, subkids, renderDepth) {
     }
     return sectionContentBody(section);
 }
-function formatProjectOutput(result, budget, schema, renderMode) {
+function formatProjectOutput(result, budget, schema, renderMode, recentSessionsCount = RECENT_SESSIONS_COUNT) {
     const { project, children, truncated } = result;
     const label = String(project.metadata.label ?? project.id);
     // Strip the auto-generated Project Summary out before parsing the header,
@@ -503,14 +542,21 @@ function formatProjectOutput(result, budget, schema, renderMode) {
         }
     }
     if (sessions.length > 0) {
-        const recent = sessions.slice(0, RECENT_SESSIONS_COUNT);
+        const shown = recentSessionsCount > 0 ? recentSessionsCount : RECENT_SESSIONS_COUNT;
+        const recent = sessions.slice(0, shown);
         lines.push('', `── Recent Sessions (${recent.length}/${sessions.length}) ──`, '');
         for (const session of recent) {
             const { exchanges, summary, date } = parseSessionEntry(session);
-            lines.push(`  ${exchanges} exchanges · ${date}  "${summary}"`);
+            // Header line, then the summary's own lines indented — a condensed rollup is
+            // multi-bullet and becomes unreadable when folded onto one line.
+            lines.push(`  ${exchanges} exchanges · ${date}`);
+            for (const line of summary)
+                lines.push(`    ${line}`);
+            if (summary.length === 0)
+                lines.push('    (no summary)');
         }
-        if (sessions.length > RECENT_SESSIONS_COUNT) {
-            lines.push(`  … ${sessions.length - RECENT_SESSIONS_COUNT} older sessions`);
+        if (sessions.length > shown) {
+            lines.push(`  … ${sessions.length - shown} older sessions`);
         }
     }
     lines.push('', FORMAT_SEP);

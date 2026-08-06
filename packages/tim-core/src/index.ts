@@ -325,6 +325,8 @@ export interface TimConfig {
   };
   briefing?: {
     maxTokens?: number;
+    /** How many recent sessions the project brief lists (default 5). */
+    recentSessions?: number;
   };
 }
 

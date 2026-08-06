@@ -5,4 +5,10 @@ export declare function promptSubmitEnvelope(context: string): {
         additionalContext: string;
     };
 };
+export declare function sessionStartEnvelope(context: string): {
+    hookSpecificOutput: {
+        hookEventName: string;
+        additionalContext: string;
+    };
+};
 //# sourceMappingURL=claude-hook-io.d.ts.map
