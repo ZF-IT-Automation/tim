@@ -46,6 +46,7 @@ const COMMAND_VALUE_OPTIONS: Record<string, ReadonlySet<string>> = {
   'sync dev': new Set(['port']),
   'root-entries': new Set(['type', 'tag', 'format']),
   consolidate: new Set(['project', 'threshold', 'access-days', 'access-count', 'verified-days']),
+  viewer: new Set(['port', 'host', 'db']),
 };
 
 export const NEW_PROJECT_ALIASES: Readonly<Record<string, string>> = {

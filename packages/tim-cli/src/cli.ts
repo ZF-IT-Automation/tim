@@ -55,6 +55,7 @@ import { runReleaseCheck } from './release-check.js';
 import { cmdMigrateFromHmem } from './migrate-from-hmem.js';
 import { cmdSetupAgent } from './setup-agent.js';
 import { collectDirectiveBriefing } from './session-briefing.js';
+import { cmdViewer } from './viewer.js';
 import { NEW_PROJECT_ALIASES, hasBooleanFlag, parseArgs, valueOptionsFor } from './args.js';
 import { promptSubmitEnvelope, sessionStartEnvelope, readJsonStdin } from './claude-hook-io.js';
 import * as fs from 'fs';
@@ -154,6 +155,8 @@ const COMMAND_HELP: Record<string, string> = {
   'secret set': 'Usage: tim secret set <id>',
   'secret status': 'Usage: tim secret status <id>',
   'secret list': 'Usage: tim secret list',
+  viewer:
+    'Usage: tim viewer [--port <number>] [--host 127.0.0.1] [--db <path>] [--show-secrets]',
   user: 'Usage: tim user <init|profile>',
   'user init': 'Usage: tim user init',
   'user profile': 'Usage: tim user profile',
@@ -218,6 +221,7 @@ Commands:
   root-entries             List root entries
   consolidate              Run memory consolidation
   secret                   Manage secret entry metadata
+  viewer                   Browse the entry tree in a local read-only web UI
   --help                   Show this help`);
 }
 
@@ -1077,6 +1081,9 @@ async function main() {
       break;
     case 'secret':
       await cmdSecret(rest);
+      break;
+    case 'viewer':
+      await cmdViewer(rest);
       break;
     case 'user': {
       const sub = rest[0];

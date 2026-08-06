@@ -41,6 +41,7 @@ const COMMAND_VALUE_OPTIONS = {
     'sync dev': new Set(['port']),
     'root-entries': new Set(['type', 'tag', 'format']),
     consolidate: new Set(['project', 'threshold', 'access-days', 'access-count', 'verified-days']),
+    viewer: new Set(['port', 'host', 'db']),
 };
 exports.NEW_PROJECT_ALIASES = {
     p: 'path',

@@ -57,6 +57,7 @@ const release_check_js_1 = require("./release-check.js");
 const migrate_from_hmem_js_1 = require("./migrate-from-hmem.js");
 const setup_agent_js_1 = require("./setup-agent.js");
 const session_briefing_js_1 = require("./session-briefing.js");
+const viewer_js_1 = require("./viewer.js");
 const args_js_1 = require("./args.js");
 const claude_hook_io_js_1 = require("./claude-hook-io.js");
 const fs = __importStar(require("fs"));
@@ -131,6 +132,7 @@ const COMMAND_HELP = {
     'secret set': 'Usage: tim secret set <id>',
     'secret status': 'Usage: tim secret status <id>',
     'secret list': 'Usage: tim secret list',
+    viewer: 'Usage: tim viewer [--port <number>] [--host 127.0.0.1] [--db <path>] [--show-secrets]',
     user: 'Usage: tim user <init|profile>',
     'user init': 'Usage: tim user init',
     'user profile': 'Usage: tim user profile',
@@ -191,6 +193,7 @@ Commands:
   root-entries             List root entries
   consolidate              Run memory consolidation
   secret                   Manage secret entry metadata
+  viewer                   Browse the entry tree in a local read-only web UI
   --help                   Show this help`);
 }
 async function cmdInit() {
@@ -967,6 +970,9 @@ async function main() {
             break;
         case 'secret':
             await (0, secret_js_1.cmdSecret)(rest);
+            break;
+        case 'viewer':
+            await (0, viewer_js_1.cmdViewer)(rest);
             break;
         case 'user': {
             const sub = rest[0];

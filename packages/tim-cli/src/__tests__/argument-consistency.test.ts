@@ -11,6 +11,7 @@ const HANDLERS = [
   'restore.ts',
   'new-project.ts',
   'hermes-statusline-install.ts',
+  'viewer.ts',
 ];
 
 describe('CLI argument parsing consistency', () => {
