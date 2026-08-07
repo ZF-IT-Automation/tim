@@ -3,7 +3,7 @@ import * as fs from 'node:fs';
 import type { TimStore } from 'tim-store';
 import { SessionManager, deriveCounters } from 'tim-store';
 import { afterExchangeLogged, type CadenceResult } from './cadence-runner.js';
-import { findMarker } from './marker.js';
+import { ensureHookSession } from './hook-session.js';
 
 /** Tail window, not a file-size limit: only the last turn is needed. */
 export const MAX_TRANSCRIPT_BYTES = 1024 * 1024;
@@ -168,32 +168,6 @@ export function readLastExchange(
   return lastTurn;
 }
 
-async function ensureSessionForStop(
-  store: TimStore,
-  sessions: SessionManager,
-  sessionId: string,
-  cwd: string,
-): Promise<boolean> {
-  const existing = await store.read(sessionId);
-  if (existing?.metadata.kind === 'session') return true;
-
-  const marker = findMarker(cwd)?.marker;
-  if (!marker?.project) return false;
-
-  try {
-    await sessions.startProjectSession({
-      sessionId,
-      projectId: marker.project,
-      agentName: 'claude',
-      cwd,
-      harness: 'claude-code',
-    });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 export async function runClaudeStop(
   store: TimStore,
   payload: ClaudeStopPayload,
@@ -212,7 +186,10 @@ export async function runClaudeStop(
     .digest('hex');
 
   const sessions = new SessionManager(store);
-  const ready = await ensureSessionForStop(store, sessions, sessionId, options.cwd);
+  const ready = await ensureHookSession(store, sessions, sessionId, options.cwd, {
+    agentName: 'claude',
+    harness: 'claude-code',
+  });
   if (!ready) return { logged: false };
 
   let logged: Awaited<ReturnType<SessionManager['logExchangeOnce']>>;

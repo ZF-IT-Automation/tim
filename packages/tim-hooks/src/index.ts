@@ -48,6 +48,15 @@ export {
   type ClaudeStopResult,
 } from './claude-stop.js';
 
+export { ensureHookSession } from './hook-session.js';
+
+export {
+  runCodexNotify,
+  parseCodexNotifyArgs,
+  type CodexNotifyPayload,
+  type CodexNotifyResult,
+} from './codex-notify.js';
+
 export {
   readMarker,
   writeMarker,

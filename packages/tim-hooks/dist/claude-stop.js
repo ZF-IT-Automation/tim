@@ -41,7 +41,7 @@ const node_crypto_1 = require("node:crypto");
 const fs = __importStar(require("node:fs"));
 const tim_store_1 = require("tim-store");
 const cadence_runner_js_1 = require("./cadence-runner.js");
-const marker_js_1 = require("./marker.js");
+const hook_session_js_1 = require("./hook-session.js");
 /** Tail window, not a file-size limit: only the last turn is needed. */
 exports.MAX_TRANSCRIPT_BYTES = 1024 * 1024;
 exports.MAX_EXCHANGE_CHARS = 64 * 1024;
@@ -183,27 +183,6 @@ function readLastExchange(transcriptPath, maxBytes = exports.MAX_TRANSCRIPT_BYTE
     commitTurn();
     return lastTurn;
 }
-async function ensureSessionForStop(store, sessions, sessionId, cwd) {
-    const existing = await store.read(sessionId);
-    if (existing?.metadata.kind === 'session')
-        return true;
-    const marker = (0, marker_js_1.findMarker)(cwd)?.marker;
-    if (!marker?.project)
-        return false;
-    try {
-        await sessions.startProjectSession({
-            sessionId,
-            projectId: marker.project,
-            agentName: 'claude',
-            cwd,
-            harness: 'claude-code',
-        });
-        return true;
-    }
-    catch {
-        return false;
-    }
-}
 async function runClaudeStop(store, payload, options) {
     const sessionId = typeof payload.session_id === 'string' ? payload.session_id.trim() : '';
     const transcriptPath = typeof payload.transcript_path === 'string' ? payload.transcript_path.trim() : '';
@@ -216,7 +195,10 @@ async function runClaudeStop(store, payload, options) {
         .update(`${sessionId}\0${turn.identity}`)
         .digest('hex');
     const sessions = new tim_store_1.SessionManager(store);
-    const ready = await ensureSessionForStop(store, sessions, sessionId, options.cwd);
+    const ready = await (0, hook_session_js_1.ensureHookSession)(store, sessions, sessionId, options.cwd, {
+        agentName: 'claude',
+        harness: 'claude-code',
+    });
     if (!ready)
         return { logged: false };
     let logged;

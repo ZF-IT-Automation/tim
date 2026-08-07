@@ -94,13 +94,14 @@ const COMMAND_HELP = {
     'bind-project': 'Usage: tim bind-project --label <P00XX> [--cwd <dir>]',
     'new-project': 'Usage: tim new-project --path <dir> --name <string> [--no-git] [--confirm]',
     'record-commit': 'Usage: tim record-commit [--cwd <dir>] [--project <label>] [--session <id>] [--hash <sha>] [--message <text>] [--diff <stat>] [--author <name>] [--date <iso>] [--branch <name>]',
-    hook: 'Usage: tim hook <session-start|session-end|log|prompt-submit|claude-session-start|claude-stop> [options]',
+    hook: 'Usage: tim hook <session-start|session-end|log|prompt-submit|claude-session-start|claude-stop|codex-notify> [options]',
     'hook session-start': 'Usage: tim hook session-start --session <id> [--agent <name>] [--cwd <path>] [--harness <name>] [--project <label>] [--tool <name>] [--model <name>] [--task-summary <text>]',
     'hook session-end': 'Usage: tim hook session-end --session <id>',
     'hook log': 'Usage: tim hook log --session <id> --user <text> --agent <text> [--cwd <path>]',
     'hook prompt-submit': 'Usage: tim hook prompt-submit < Claude UserPromptSubmit JSON',
     'hook claude-session-start': 'Usage: tim hook claude-session-start < Claude SessionStart JSON',
     'hook claude-stop': 'Usage: tim hook claude-stop < Claude Stop JSON',
+    'hook codex-notify': "Usage: tim hook codex-notify '<Codex agent-turn-complete JSON>'",
     checkpoint: 'Usage: tim checkpoint --session <id> [--handoff-note <text>]',
     rebalance: 'Usage: tim rebalance --session <id> [--cwd <dir>]',
     statusline: 'Usage: tim statusline [--cwd <dir>] [--session <id>] [--format text|hermes]',
@@ -582,6 +583,38 @@ async function cmdHook(args) {
         }
         return;
     }
+    if (sub === 'codex-notify') {
+        try {
+            const payload = (0, tim_hooks_1.parseCodexNotifyArgs)(args);
+            if (!payload)
+                return;
+            const cwd = typeof payload.cwd === 'string' ? payload.cwd.trim() : '';
+            if (!cwd)
+                return;
+            const marker = (0, tim_hooks_1.findMarker)(cwd);
+            if (!marker)
+                return;
+            const config = (0, tim_core_1.loadConfig)();
+            const store = new tim_store_1.TimStore(getDbPath(config));
+            try {
+                const result = await (0, tim_hooks_1.runCodexNotify)(store, payload, { cwd });
+                // Same reason as claude-stop: this is the only writer of Codex exchanges,
+                // so it is also the only place that learns a batch just filled.
+                if (result.logged) {
+                    const sessionId = String(payload['thread-id'] ?? '').trim();
+                    if (sessionId)
+                        await (0, tim_hooks_1.maybeSpawnSummarizer)(store, cwd, { sessionId });
+                }
+            }
+            finally {
+                store.close();
+            }
+        }
+        catch {
+            // Codex notify fails soft: never block the harness.
+        }
+        return;
+    }
     const { flags } = (0, args_js_1.parseArgs)(args.slice(1), {
         valueOptions: (0, args_js_1.valueOptionsFor)('hook', sub),
     });
@@ -648,7 +681,7 @@ async function cmdHook(args) {
             }
             default:
                 console.error(`Unknown hook: ${sub ?? '(none)'}`);
-                console.error('Usage: tim hook <session-start|session-end|log|prompt-submit|claude-session-start|claude-stop> [options]');
+                console.error('Usage: tim hook <session-start|session-end|log|prompt-submit|claude-session-start|claude-stop|codex-notify> [options]');
                 process.exit(1);
         }
     }
