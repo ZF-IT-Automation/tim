@@ -784,10 +784,20 @@ actually invoked settles it differently:
              {"command":"HMEM_PATH=… hmem v2-checkpoint"}]
 ```
 
-Those are **hmem's hooks, not TIM's**. `tim hook claude-stop` does not appear in any MAIMO
-transcript. P0054 is empty because no session has yet run there under TIM's hooks — the
-memory system changed over, and MAIMO has not been worked in since. That is expected state,
-not a defect, and it is no evidence about the size guard either way.
+Those are **hmem's hooks, not TIM's**. `tim hook claude-stop` appears in no MAIMO transcript,
+and the newest of them is 2026-07-15 — MAIMO has not been worked in since the changeover.
+(Stated as what was checked: three transcripts, none containing TIM's hook. The exact date
+TIM's hooks were installed was not established; `~/.claude/settings.json`'s mtime is only its
+last edit.)
+
+The history is not lost, it is in the other system. `~/.hmem/Agents/DEVELOPER/DEVELOPER.hmem`
+is a 57 MB SQLite file last written 2026-07-17, carrying ~3 500 references to MAIMO and ~400
+strings dated 2026-07-14/15 — the very sessions above. Read-only probe via `strings`; per the
+global rules hmem is a read-only archive and its MCP tools are not to be used.
+
+So P0054 being empty in TIM is expected state, not a defect, and it says nothing about the
+size guard in either direction. What it does raise is a migration question — MAIMO's recorded
+history lives in hmem and has never been brought across.
 
 **Still not verified:** the tail-read fix has never been exercised against a >1 MiB
 transcript from a live session. That remains a genuine gap; MAIMO simply cannot be cited as
