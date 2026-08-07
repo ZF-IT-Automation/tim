@@ -179,9 +179,28 @@ describe('session resume', () => {
     });
 
     it('respects the limit', async () => {
-      for (let i = 0; i < 4; i++) await startSession(`sess-l${i}`);
+      for (let i = 0; i < 4; i++) {
+        await startSession(`sess-l${i}`);
+        await sessions.logExchange(`sess-l${i}`, [
+          { role: 'user', content: `q${i}` },
+          { role: 'agent', content: `a${i}` },
+        ]);
+      }
       const list = await sessions.listResumableSessions('P0099', 2);
       expect(list).toHaveLength(2);
+    });
+
+    it('skips sessions that logged nothing, so a sub-agent run cannot mask the real one', async () => {
+      await startSession('sess-real');
+      await sessions.logExchange('sess-real', [
+        { role: 'user', content: 'the work' },
+        { role: 'agent', content: 'done' },
+      ]);
+      // Newer than sess-real and empty — what a summarizer sub-agent leaves behind.
+      await startSession('sess-subagent');
+
+      const list = await sessions.listResumableSessions('P0099', 1);
+      expect(list.map(s => s.sessionId)).toEqual(['sess-real']);
     });
 
     it('returns empty array for a project without sessions', async () => {
