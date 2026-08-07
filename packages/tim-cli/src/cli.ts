@@ -26,6 +26,7 @@ import {
   writeMarker,
   runPromptSubmit,
   runClaudeStop,
+  maybeSpawnSummarizer,
   type ProjectMarker,
 } from 'tim-hooks';
 import { buildTimMcpEntry, installMcpEntryForHosts } from './install.js';
@@ -618,7 +619,7 @@ async function cmdHook(args: string[]) {
       const config = loadConfig();
       const store = new TimStore(getDbPath(config));
       try {
-        await runClaudeStop(
+        const result = await runClaudeStop(
           store,
           {
             session_id: sessionId,
@@ -628,6 +629,13 @@ async function cmdHook(args: string[]) {
           },
           { cwd },
         );
+        // This hook is the only writer of exchanges for Claude Code, so it is also the
+        // only place that learns a batch just filled. Without this the summarizer is
+        // never spawned and every session-summary-root stays empty. The spawn is
+        // detached and gated on pending >= batch_size, so most turns do nothing.
+        if (result.logged) {
+          await maybeSpawnSummarizer(store, cwd, { sessionId });
+        }
       } finally {
         store.close();
       }

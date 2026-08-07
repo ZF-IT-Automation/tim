@@ -559,12 +559,19 @@ async function cmdHook(args) {
             const config = (0, tim_core_1.loadConfig)();
             const store = new tim_store_1.TimStore(getDbPath(config));
             try {
-                await (0, tim_hooks_1.runClaudeStop)(store, {
+                const result = await (0, tim_hooks_1.runClaudeStop)(store, {
                     session_id: sessionId,
                     transcript_path: transcriptPath,
                     cwd,
                     stop_hook_active: payload.stop_hook_active === true,
                 }, { cwd });
+                // This hook is the only writer of exchanges for Claude Code, so it is also the
+                // only place that learns a batch just filled. Without this the summarizer is
+                // never spawned and every session-summary-root stays empty. The spawn is
+                // detached and gated on pending >= batch_size, so most turns do nothing.
+                if (result.logged) {
+                    await (0, tim_hooks_1.maybeSpawnSummarizer)(store, cwd, { sessionId });
+                }
             }
             finally {
                 store.close();
