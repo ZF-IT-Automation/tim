@@ -16,11 +16,14 @@ Background: `VALIDATION-REPORT.md`, `TODO-session-continuity.md`, `docs/OPEN-POI
 > never fires after `/clear`. That was a measurement taken too early and is **wrong**; the
 > hook fires on every turn but the first.
 >
-> The finding that survived is bigger: **P0054 (MAIMO) has zero recorded sessions**, because
-> its 1.78 MB transcript tripped the old 1 MiB guard while the hook ran nine times. `3d883f5`
-> should fix that, but has never been tested against a real oversized transcript. See
-> `VALIDATION-REPORT.md` section 7 and the `P0063/Bugs` entry "Stop hook misses only the
-> first turn after /clear — and P0054 shows what the 1 MiB guard cost". Start there.
+> It then briefly believed **P0054 (MAIMO) proved what the old 1 MiB guard cost**. Also
+> wrong: MAIMO's transcripts run *hmem's* hooks, not TIM's, so P0054 is empty simply because
+> no session has run there under TIM. Expected state, not a defect.
+>
+> What is genuinely still open: the tail-read fix (`3d883f5`) has never been exercised
+> against a >1 MiB transcript from a live session. Verify that before trusting long sessions.
+> Both retractions and the method note are in `VALIDATION-REPORT.md` section 7 and the
+> `P0063/Bugs` entry "Stop hook misses only the first turn after /clear". Start there.
 
 ## First thing: did the briefing arrive?
 

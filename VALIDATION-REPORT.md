@@ -757,36 +757,57 @@ Method note, since this cost a wrong conclusion: count `stop_hook_summary","hook
 in the transcript and a bare grep matches it — 21 apparent hits, 2 real ones. And take the
 reading several turns in, not during the turn you are measuring.
 
-### The real finding: P0054 logged nothing while its hook ran fine
+### P0054 as a control: empty, but for a boring reason
 
-Checked as a control, since MAIMO-RPG is a second project with the same setup:
+MAIMO-RPG was checked as a second project with the same marker setup:
 
 ```
 $ listProjectSessionsByActivity('01KSJ85W6KXSNN2H9ZHAP5QMPA', 6)   # P0054 root
 (empty)
 ```
 
-No recorded session history at all. It is not misconfiguration:
-`~/projects/maimo-rpg/.tim-project` exists and resolves to P0054, and the newest MAIMO
-transcript (`86fdb3fb-…`, 2026-07-15) shows the hooks running normally — `Stop` ×6,
-`UserPromptSubmit` ×10, and **9** genuine `stop_hook_summary` records.
+No recorded session history at all, while `~/projects/maimo-rpg/.tim-project` exists and
+resolves to P0054. Its three most recent transcripts:
 
-So the harness called `tim hook claude-stop` nine times and TIM stored nothing. That
-transcript is **1 781 502 bytes**, over the 1 MiB ceiling `claude-stop.ts:94` enforced at the
-time, so `readLastExchange` returned `null` on every call.
+| Transcript | Bytes | Stop-hook runs | TIM session node |
+|---|---|---|---|
+| `86fdb3fb-…` (2026-07-15) | 1 781 502 | 9 | none |
+| `b9f86789-…` (2026-07-14) | 2 104 714 | 17 | none |
+| `427e3161-…` (2026-07-14) | 130 888 | 0 | none |
 
-This is break #1 caught in the wild, and it sizes the damage: an entire project's session
-history lost silently, with `tim doctor` green throughout. It also explains the 203 empty
-`session-summary-root` bodies and the one-or-two-exchange history in section 4 far better
-than any `/clear` story — those sessions were the ones whose transcripts had grown past a
-megabyte.
+Two of them are over 1 MiB with the hook running, which looks exactly like break #1 in the
+wild — and that is what an earlier revision of this section claimed. Reading what those runs
+actually invoked settles it differently:
 
-**Not yet verified:** the tail-read fix has never been exercised against a >1 MiB transcript
-from a live session. MAIMO is the natural regression case — its next session in
-`~/projects/maimo-rpg` should record exchanges. Check it rather than assume it.
+```
+"hookInfos":[{"command":"HMEM_PATH=~/.hmem/Agents/DEVELOPER/DEVELOPER.hmem hmem log-exchange"},
+             {"command":"HMEM_PATH=… hmem v2-checkpoint"}]
+```
 
-Filed in `P0063/Bugs` as "Stop hook misses only the first turn after /clear — and P0054
-shows what the 1 MiB guard cost".
+Those are **hmem's hooks, not TIM's**. `tim hook claude-stop` does not appear in any MAIMO
+transcript. P0054 is empty because no session has yet run there under TIM's hooks — the
+memory system changed over, and MAIMO has not been worked in since. That is expected state,
+not a defect, and it is no evidence about the size guard either way.
+
+**Still not verified:** the tail-read fix has never been exercised against a >1 MiB
+transcript from a live session. That remains a genuine gap; MAIMO simply cannot be cited as
+evidence of what it costs. The next long session in any TIM-bound project is the regression
+case — check that logging continues past the megabyte mark rather than assuming it.
+
+Filed in `P0063/Bugs` as "Stop hook misses only the first turn after /clear".
+
+### Two retractions in one section — read the method note
+
+This section reached two wrong conclusions before this one, and both failed the same way:
+a confident claim from a partial read.
+
+1. "The Stop hook never fires after `/clear`" — measured during the turn being measured, and
+   the grep counted the assistant's own prose alongside real records.
+2. "P0054 proves what the 1 MiB guard cost" — counted Stop-hook runs without reading which
+   command they ran.
+
+Both were cheap to falsify and expensive to have published. The check that would have caught
+either one is the same: before concluding, read the raw record rather than the aggregate.
 
 **Consequence for the PR:** the four commits are real fixes, the render path is proven, and
 the Stop hook does record exchanges — this session reached `exchange_count: 3` unattended.
@@ -872,10 +893,10 @@ Reachable over an SSH tunnel with `ssh -L 7373:127.0.0.1:7373 bbbee@<host>`.
    section 7's resolution note.
 9. **118 phantom session nodes remain in the database**, and the render used by
    `tim_load_project` still shows them. `e69e997` fixed only the resumable-sessions query.
-10. **Exercise the tail-read fix against a >1 MiB transcript.** P0054 has zero recorded
-    sessions because its 1.78 MB transcript tripped the old size guard while the hook ran
-    nine times. `3d883f5` should fix that, but it has never been tested on a real oversized
-    transcript. MAIMO's next session is the regression case. See section 7.
+10. **Exercise the tail-read fix against a >1 MiB transcript.** `3d883f5` replaced the size
+    guard with a tail read, but no live session has yet crossed a megabyte and kept logging.
+    P0054 cannot serve as the case — its transcripts predate TIM's hooks entirely. See
+    section 7.
 11. **One Stop does not fire — the first turn after `/clear`.** Near-zero cost, since
     `readLastExchange` lags one turn regardless. Noted so the next investigator does not
     rediscover it as something larger, which is what happened here.
