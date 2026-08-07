@@ -129,8 +129,24 @@ function readLastExchange(transcriptPath, maxBytes = exports.MAX_TRANSCRIPT_BYTE
     // The window cuts mid-line; that first fragment is not a whole JSON record.
     if (start > 0)
         raw = raw.slice(raw.indexOf('\n') + 1);
-    let lastUser = null;
+    let pendingUser = null;
+    // One turn emits many assistant records (text, thinking, tool_use); the text ones
+    // all belong to the same answer and are collected until the next user message.
+    let pendingAssistant = null;
     let lastTurn = null;
+    // The uuid pair stays the first of each side, so a re-fired hook derives the same key.
+    const commitTurn = () => {
+        if (pendingUser && pendingAssistant) {
+            const assistant = pendingAssistant.parts.join('\n\n');
+            lastTurn = {
+                user: pendingUser.text,
+                assistant,
+                identity: turnIdentity(pendingUser.uuid, pendingAssistant.uuid, pendingUser.text, assistant),
+            };
+        }
+        pendingUser = null;
+        pendingAssistant = null;
+    };
     for (const line of raw.split(/\r?\n/)) {
         if (!line.trim())
             continue;
@@ -154,18 +170,17 @@ function readLastExchange(transcriptPath, maxBytes = exports.MAX_TRANSCRIPT_BYTE
             continue;
         const uuid = typeof record.uuid === 'string' ? record.uuid : null;
         if (role === 'user') {
-            lastUser = { text, uuid };
+            commitTurn();
+            pendingUser = { text, uuid };
             continue;
         }
-        if (role === 'assistant' && lastUser) {
-            lastTurn = {
-                user: lastUser.text,
-                assistant: text,
-                identity: turnIdentity(lastUser.uuid, uuid, lastUser.text, text),
-            };
-            lastUser = null;
+        if (role === 'assistant' && pendingUser) {
+            if (!pendingAssistant)
+                pendingAssistant = { parts: [], uuid };
+            pendingAssistant.parts.push(text);
         }
     }
+    commitTurn();
     return lastTurn;
 }
 async function ensureSessionForStop(store, sessions, sessionId, cwd) {

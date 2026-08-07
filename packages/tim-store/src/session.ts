@@ -139,6 +139,19 @@ export interface UntaggedBatch {
   seqTo: number;
 }
 
+/**
+ * Exchanges are stored through splitTitleBody, so the first line of the message
+ * lives in the title and only the remainder in the content. Reading the content
+ * alone silently drops that first line — for an agent answer that is its lead.
+ */
+export function exchangeText(entry: Entry): string {
+  const title = entry.title.trim();
+  const body = entry.content.trim();
+  if (!body) return title;
+  if (!title) return body;
+  return `${title}\n${body}`;
+}
+
 const DEFAULT_SUMMARIZER: Summarizer = async (exchanges) => {
   if (exchanges.length === 0) return 'Empty session — no exchanges to checkpoint.';
 
@@ -148,7 +161,7 @@ const DEFAULT_SUMMARIZER: Summarizer = async (exchanges) => {
   const topics = userMsgs
     .slice(0, 5)
     .map(e => {
-      const text = (e.content || e.title || '').trim();
+      const text = exchangeText(e);
       // Extract first sentence or first 120 chars as topic indicator
       const firstSentence = text.split(/[.!?\n]/)[0]?.trim() ?? text;
       return firstSentence.length > 120 ? firstSentence.slice(0, 117) + '…' : firstSentence;
@@ -158,7 +171,7 @@ const DEFAULT_SUMMARIZER: Summarizer = async (exchanges) => {
   const decisionHints = agentMsgs
     .slice(0, 3)
     .map(e => {
-      const text = (e.content || e.title || '').trim();
+      const text = exchangeText(e);
       return text.length > 100 ? text.slice(0, 97) + '…' : text;
     })
     .filter(Boolean);
@@ -541,9 +554,9 @@ export class SessionManager {
         exchanges.push({
           seq,
           userId: u.id,
-          userContent: u.content || u.title,
+          userContent: exchangeText(u),
           agentId: agent?.id ?? null,
-          agentContent: agent ? (agent.content || agent.title) : null,
+          agentContent: agent ? exchangeText(agent) : null,
         });
       }
     }
@@ -1013,8 +1026,8 @@ export class SessionManager {
       const agent = replies.find(r => r.metadata.role === 'agent') ?? null;
       recentExchanges.push({
         seq: Number(u.metadata.seq),
-        userContent: u.content || u.title,
-        agentContent: agent ? (agent.content || agent.title) : null,
+        userContent: exchangeText(u),
+        agentContent: agent ? exchangeText(agent) : null,
       });
     }
 

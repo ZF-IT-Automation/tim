@@ -104,6 +104,12 @@ export interface UntaggedBatch {
     seqFrom: number;
     seqTo: number;
 }
+/**
+ * Exchanges are stored through splitTitleBody, so the first line of the message
+ * lives in the title and only the remainder in the content. Reading the content
+ * alone silently drops that first line — for an agent answer that is its lead.
+ */
+export declare function exchangeText(entry: Entry): string;
 export declare class SessionManager {
     private store;
     private onBatchFull?;

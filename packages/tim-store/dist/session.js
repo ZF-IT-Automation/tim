@@ -34,6 +34,7 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.SessionManager = void 0;
+exports.exchangeText = exchangeText;
 exports.resolveCurrentSession = resolveCurrentSession;
 exports.ensureProjectForPath = ensureProjectForPath;
 const tim_core_1 = require("tim-core");
@@ -42,6 +43,20 @@ const os = __importStar(require("os"));
 const path = __importStar(require("path"));
 const session_tree_js_1 = require("./session-tree.js");
 const project_schema_init_js_1 = require("./project-schema-init.js");
+/**
+ * Exchanges are stored through splitTitleBody, so the first line of the message
+ * lives in the title and only the remainder in the content. Reading the content
+ * alone silently drops that first line — for an agent answer that is its lead.
+ */
+function exchangeText(entry) {
+    const title = entry.title.trim();
+    const body = entry.content.trim();
+    if (!body)
+        return title;
+    if (!title)
+        return body;
+    return `${title}\n${body}`;
+}
 const DEFAULT_SUMMARIZER = async (exchanges) => {
     if (exchanges.length === 0)
         return 'Empty session — no exchanges to checkpoint.';
@@ -50,7 +65,7 @@ const DEFAULT_SUMMARIZER = async (exchanges) => {
     const topics = userMsgs
         .slice(0, 5)
         .map(e => {
-        const text = (e.content || e.title || '').trim();
+        const text = exchangeText(e);
         // Extract first sentence or first 120 chars as topic indicator
         const firstSentence = text.split(/[.!?\n]/)[0]?.trim() ?? text;
         return firstSentence.length > 120 ? firstSentence.slice(0, 117) + '…' : firstSentence;
@@ -59,7 +74,7 @@ const DEFAULT_SUMMARIZER = async (exchanges) => {
     const decisionHints = agentMsgs
         .slice(0, 3)
         .map(e => {
-        const text = (e.content || e.title || '').trim();
+        const text = exchangeText(e);
         return text.length > 100 ? text.slice(0, 97) + '…' : text;
     })
         .filter(Boolean);
@@ -385,9 +400,9 @@ class SessionManager {
                 exchanges.push({
                     seq,
                     userId: u.id,
-                    userContent: u.content || u.title,
+                    userContent: exchangeText(u),
                     agentId: agent?.id ?? null,
-                    agentContent: agent ? (agent.content || agent.title) : null,
+                    agentContent: agent ? exchangeText(agent) : null,
                 });
             }
         }
@@ -793,8 +808,8 @@ class SessionManager {
             const agent = replies.find(r => r.metadata.role === 'agent') ?? null;
             recentExchanges.push({
                 seq: Number(u.metadata.seq),
-                userContent: u.content || u.title,
-                agentContent: agent ? (agent.content || agent.title) : null,
+                userContent: exchangeText(u),
+                agentContent: agent ? exchangeText(agent) : null,
             });
         }
         const freshSession = (await this.store.read(canonical));

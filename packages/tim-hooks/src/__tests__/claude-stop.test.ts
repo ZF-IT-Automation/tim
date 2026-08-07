@@ -110,6 +110,27 @@ describe('runClaudeStop', () => {
     expect(texts.join('\n')).not.toContain('skill preamble');
   });
 
+  it('keeps every text block of a turn, not just the one before the first tool call', async () => {
+    writeTranscript(cwd, [
+      userMsg('u1', 'do the thing'),
+      assistantMsg('a1', [{ type: 'text', text: 'opening line before the tools' }]),
+      assistantMsg('a2', [{ type: 'thinking', thinking: 'private reasoning' }]),
+      assistantMsg('a3', [{ type: 'tool_use', id: 't1', name: 'Bash', input: {} }]),
+      userMsg('tr1', [{ type: 'tool_result', tool_use_id: 't1', content: 'output' }]),
+      assistantMsg('a4', [{ type: 'text', text: 'the actual answer' }]),
+    ]);
+
+    const result = await runClaudeStop(store, payload(), { cwd });
+    expect(result.logged).toBe(true);
+    expect(result.exchangeCount).toBe(1);
+
+    const logged = await sessions.showUnsummarized('claude-stop-sess');
+    const agent = logged.exchanges.map((ex) => ex.agentContent ?? '').join('\n');
+    expect(agent).toContain('opening line before the tools');
+    expect(agent).toContain('the actual answer');
+    expect(agent).not.toContain('private reasoning');
+  });
+
   it('ignores malformed JSONL lines and returns not-logged when no turn exists', async () => {
     writeTranscript(cwd, [
       'not-json',
