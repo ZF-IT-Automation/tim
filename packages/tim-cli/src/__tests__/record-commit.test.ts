@@ -2,10 +2,11 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as os from 'os';
 import { TimStore, CommitManager, SessionManager } from 'tim-store';
 
 const CLI = path.resolve(__dirname, '../../dist/cli.js');
-const TEST_ROOT = path.join('/home/bbbee', '.tim-test-runs');
+const TEST_ROOT = path.join(os.tmpdir(), 'tim-test-runs');
 
 function run(args: string[], env: Record<string, string> = {}): string {
   try {

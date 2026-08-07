@@ -16,7 +16,7 @@ import type { UnsummarizedBatch } from '../mcp-client.js';
 import * as mcpClient from '../mcp-client.js';
 import { runSummarizerLoop, mergeProjectSummary } from '../summarize.js';
 
-const TEST_ROOT = path.join('/home/bbbee', '.tim-test-runs');
+const TEST_ROOT = path.join(os.tmpdir(), 'tim-test-runs');
 const SESSION_ID = 'sess-e2e';
 const PROJECT_ID = 'P0063';
 

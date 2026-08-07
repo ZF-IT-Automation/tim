@@ -102,8 +102,8 @@ describe('session-end checkpoint orchestration', () => {
   it('session-start runs configured hook', async () => {
     const store = new TimStore(':memory:');
     await store.createProject('P0099', { content: 'hook test' });
-    fs.mkdirSync('/home/bbbee/.tim-test-runs', { recursive: true });
-    const tmpDir = fs.mkdtempSync(path.join('/home/bbbee/.tim-test-runs', 'tim-start-'));
+    fs.mkdirSync(path.join(os.tmpdir(), 'tim-test-runs'), { recursive: true });
+    const tmpDir = fs.mkdtempSync(path.join(path.join(os.tmpdir(), 'tim-test-runs'), 'tim-start-'));
     const marker = path.join(tmpDir, 'started.txt');
     const script = `touch "${marker}"`;
 
@@ -166,7 +166,7 @@ describe('session-end checkpoint orchestration', () => {
   it('runSessionStart does not rewrite an existing .tim-project marker', async () => {
     const store = new TimStore(':memory:');
     await store.createProject('P0042');
-    const dir = fs.mkdtempSync(path.join('/home/bbbee/.tim-test-runs', 'tim-marker-keep-'));
+    const dir = fs.mkdtempSync(path.join(path.join(os.tmpdir(), 'tim-test-runs'), 'tim-marker-keep-'));
     const markerPath = path.join(dir, '.tim-project');
     const markerBody = JSON.stringify({ version: 3, project: 'P0042' }, null, 2);
     fs.writeFileSync(markerPath, markerBody);
@@ -186,7 +186,7 @@ describe('session-end checkpoint orchestration', () => {
   });
 
   it('runSessionStart writes a v3 marker when cwd has none and projectId is explicit', async () => {
-    const dir = fs.mkdtempSync(path.join('/home/bbbee/.tim-test-runs', 'tim-marker-write-'));
+    const dir = fs.mkdtempSync(path.join(path.join(os.tmpdir(), 'tim-test-runs'), 'tim-marker-write-'));
     const store = new TimStore(path.join(dir, 'test.db'));
     await store.createProject('P0099');
 
@@ -207,7 +207,7 @@ describe('session-end checkpoint orchestration', () => {
   it('runSessionStart skips marker writes for :memory: stores even with explicit projectId', async () => {
     const store = new TimStore(':memory:');
     await store.createProject('P0099');
-    const dir = fs.mkdtempSync(path.join('/home/bbbee/.tim-test-runs', 'tim-marker-mem-'));
+    const dir = fs.mkdtempSync(path.join(path.join(os.tmpdir(), 'tim-test-runs'), 'tim-marker-mem-'));
 
     await runSessionStart(store, {
       sessionId: 'mem-marker',
@@ -225,7 +225,7 @@ describe('session-end checkpoint orchestration', () => {
   it('runSessionStart cadence reminder uses deriveCounters, not marker fields', async () => {
     const store = new TimStore(':memory:');
     await store.createProject('P0077');
-    const dir = fs.mkdtempSync(path.join('/home/bbbee/.tim-test-runs', 'tim-cadence-'));
+    const dir = fs.mkdtempSync(path.join(path.join(os.tmpdir(), 'tim-test-runs'), 'tim-cadence-'));
     fs.writeFileSync(
       path.join(dir, '.tim-project'),
       JSON.stringify({ version: 3, project: 'P0077' }),
@@ -262,7 +262,7 @@ describe('session-end checkpoint orchestration', () => {
     // resolveActiveProjectFromCwd in checkpoint.ts.
     const store = new TimStore(':memory:');
     await store.createProject('P0042');
-    const root = fs.mkdtempSync(path.join('/home/bbbee', '.tim-test-runs', 'sess-'));
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tim-test-runs', 'sess-'));
     fs.writeFileSync(
       path.join(root, '.tim-project'),
       JSON.stringify({ project: 'P0042', session: 'old', exchanges: 0, batch_size: 5, batches_summarized: 0 }),
