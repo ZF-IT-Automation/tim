@@ -757,7 +757,7 @@ Method note, since this cost a wrong conclusion: count `stop_hook_summary","hook
 in the transcript and a bare grep matches it — 21 apparent hits, 2 real ones. And take the
 reading several turns in, not during the turn you are measuring.
 
-### P0054 as a control: empty, but for a boring reason
+### P0054: Codex registers sessions and never logs a single exchange
 
 MAIMO-RPG was checked as a second project with the same marker setup:
 
@@ -766,8 +766,47 @@ $ listProjectSessionsByActivity('01KSJ85W6KXSNN2H9ZHAP5QMPA', 6)   # P0054 root
 (empty)
 ```
 
-No recorded session history at all, while `~/projects/maimo-rpg/.tim-project` exists and
-resolves to P0054. Its three most recent transcripts:
+That reads as "no session history", and two revisions of this section drew conclusions from
+it. **It was the wrong query.** `listProjectSessionsByActivity` is the function `e69e997`
+taught to skip sessions with `exchange_count = 0` — so it hides exactly the nodes that matter
+here. Asking for the raw children instead:
+
+```
+$ getChildByKindSync(sessionsRoot, 'session')      # ubun-0807-ns-01KZEJQ61HMANGAMAP94Z8B1KS
+2026-08-07T19:11:37.048Z  ex=0  impl_player_process   codex  codex-player-process
+2026-08-07T17:01:49.600Z  ex=0  security_ops_review   codex  codex-maimo-security
+2026-08-07T17:01:45.326Z  ex=0  test_quality_review   codex  codex-20260807-test-
+2026-08-07T17:00:49.587Z  ex=0  Codex                 codex  codex-P0054-20260807
+```
+
+Four session nodes, all from today, all from Codex, all empty. MAIMO is being worked in right
+now — `codex --yolo`, pid 3287547, `cwd = /home/bbbee/projects/maimo-rpg`, started 18:58:53
+local, which lines up with the 17:00:49 UTC node.
+
+The mechanism is in the configuration, not in inference. `~/.codex/hooks.json` declares
+exactly two events:
+
+```
+SessionStart :: tim-session-start.sh, o9k-core-session.sh, o9k-memory-session.sh, o9k-update-check.sh
+PreCompact   :: o9k-memory-precompact.sh
+```
+
+There is no turn-end hook. `tim-session-start.sh` registers the session node, and nothing
+ever logs an exchange into it, so every Codex session leaves a `0 exchanges` node and no
+content. Whether Codex offers a turn-end event that simply is not configured, or offers none
+at all, was not established.
+
+This is break #5's phantom-node population seen at its source, and it is broader than the
+`e69e997` note assumed: it is not only the sub-agent the summarizer spawns, it is *every*
+Codex session. For a project worked primarily through Codex — as MAIMO currently is — TIM
+accumulates empty nodes and records nothing.
+
+Filed in `P0063/Bugs`.
+
+### The Claude Code side of P0054, for completeness
+
+`~/projects/maimo-rpg/.tim-project` exists and resolves to P0054. Its three most recent
+Claude Code transcripts:
 
 | Transcript | Bytes | Stop-hook runs | TIM session node |
 |---|---|---|---|
@@ -785,19 +824,19 @@ actually invoked settles it differently:
 ```
 
 Those are **hmem's hooks, not TIM's**. `tim hook claude-stop` appears in no MAIMO transcript,
-and the newest of them is 2026-07-15 — MAIMO has not been worked in since the changeover.
-(Stated as what was checked: three transcripts, none containing TIM's hook. The exact date
-TIM's hooks were installed was not established; `~/.claude/settings.json`'s mtime is only its
-last edit.)
+and the newest of them is 2026-07-15 — MAIMO has not been worked *through Claude Code* since
+the changeover. (Stated as what was checked: three transcripts, none containing TIM's hook.
+The date TIM's hooks were installed was not established; `~/.claude/settings.json`'s mtime is
+only its last edit.)
 
-The history is not lost, it is in the other system. `~/.hmem/Agents/DEVELOPER/DEVELOPER.hmem`
+That history is not lost, it is in the other system. `~/.hmem/Agents/DEVELOPER/DEVELOPER.hmem`
 is a 57 MB SQLite file last written 2026-07-17, carrying ~3 500 references to MAIMO and ~400
 strings dated 2026-07-14/15 — the very sessions above. Read-only probe via `strings`; per the
-global rules hmem is a read-only archive and its MCP tools are not to be used.
+global rules hmem is a read-only archive and its MCP tools are not to be used. Bringing it
+across is a migration question that has never been answered.
 
-So P0054 being empty in TIM is expected state, not a defect, and it says nothing about the
-size guard in either direction. What it does raise is a migration question — MAIMO's recorded
-history lives in hmem and has never been brought across.
+So the Claude Code side of P0054 says nothing about the size guard in either direction. The
+Codex side, above, is where the live defect is.
 
 **Still not verified:** the tail-read fix has never been exercised against a >1 MiB
 transcript from a live session. That remains a genuine gap; MAIMO simply cannot be cited as
@@ -808,16 +847,23 @@ Filed in `P0063/Bugs` as "Stop hook misses only the first turn after /clear".
 
 ### Two retractions in one section — read the method note
 
-This section reached two wrong conclusions before this one, and both failed the same way:
-a confident claim from a partial read.
+This section reached three wrong conclusions before this one, and all three failed the same
+way: a confident claim from an aggregate, without reading the record underneath it.
 
-1. "The Stop hook never fires after `/clear`" — measured during the turn being measured, and
-   the grep counted the assistant's own prose alongside real records.
+1. "The Stop hook never fires after `/clear`" — measured during the very turn being measured,
+   and the grep counted the assistant's own prose alongside the real records: 21 apparent
+   hits, 2 real.
 2. "P0054 proves what the 1 MiB guard cost" — counted Stop-hook runs without reading which
-   command they ran.
+   command they invoked. They were hmem's.
+3. "P0054 has no sessions, so MAIMO has not been worked in" — asked
+   `listProjectSessionsByActivity`, which is precisely the function `e69e997` taught to hide
+   `exchange_count = 0` nodes. There were four, from today, and the project was being worked
+   in while the claim was written.
 
-Both were cheap to falsify and expensive to have published. The check that would have caught
-either one is the same: before concluding, read the raw record rather than the aggregate.
+Each was cheap to falsify and expensive to have published; the first two went into commits.
+The check that would have caught any of them is the same: read one raw record before
+concluding from a count. Retraction 3 also carries its own lesson — when a query returns
+nothing, confirm the query can return anything.
 
 **Consequence for the PR:** the four commits are real fixes, the render path is proven, and
 the Stop hook does record exchanges — this session reached `exchange_count: 3` unattended.
