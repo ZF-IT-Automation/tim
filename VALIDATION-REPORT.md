@@ -652,7 +652,7 @@ running. The delivery path — `collectDirectiveBriefing` → `buildLoadDirectiv
 `tim-session-start.sh` → harness context — is confirmed. It was the last unwitnessed link,
 and it works.
 
-### Cause 2 is not fixed: the successor session recorded nothing either
+### Cause 2, re-examined — first read wrong, second read useful
 
 Checked in that same successor session, roughly seven turns in:
 
@@ -689,11 +689,15 @@ second-to-last turn, so any turn after the first would have created a node. The 
 absence means either the hook never executed, or it exited before
 `claude-stop.ts:208`/`:216`. Discriminator run: with the node now in place,
 `ensureSessionForStop` short-circuits at `:178`, so a firing hook would advance the counter.
-Four further assistant turns left `exchange_count` at 1 and `updatedAt` unchanged. **The
-hook is not executing.**
+Four further assistant turns left `exchange_count` at 1 and `updatedAt` unchanged, which
+read as **the hook is not executing**.
 
-Confirmed independently: the harness records every Stop-hook run in the transcript as a
-`stop_hook_summary` entry, so no wrapper script is needed. Comparing the two transcripts in
+> **That reading was wrong — see "Correction" at the end of this section.** Everything from
+> here to that heading is a snapshot taken too early in the session, kept because the method
+> is sound even where the conclusion was not.
+
+The harness records every Stop-hook run in the transcript as a `stop_hook_summary` entry, so
+no wrapper script is needed. Comparing the two transcripts in
 `~/.claude/projects/-home-bbbee-projects-tim/`:
 
 | Session | SessionStart variants | `stop_hook_summary` records | exchanges recorded |
@@ -724,24 +728,71 @@ restart as such does not disable the hook, and "Stop fires only until the first 
 falsified. What distinguishes the two restarts is that compaction keeps the same session id
 and the same transcript file, while `/clear` mints a new id and a new file.
 
-**Hypothesis: the Stop hook stops firing once a running process moves to a new session id,
-as `/clear` does.** That is precisely the flow session continuity depends on — `/clear` is
-how a session ends and its successor begins — so the successor records nothing and can
-never brief the session after it. Whether the trigger is the `clear` kind specifically or
-any new session id mid-process cannot be separated from these two transcripts; both are
-harness-side and have the same practical consequence.
+That pointed at a hypothesis — that the Stop hook stops firing once a running process moves
+to a new session id, as `/clear` does — which was written up here and committed in
+`eb16664`.
 
-Not established — it rests on one working and one failing session. Falsifying it costs one
-`/clear`, a few turns, and a grep for `stop_hook_summary` in the new transcript. It may also
-contribute to the 203 empty `session-summary-root` bodies, though section 7 already
-attributes those to the 1 MiB size guard and the four other breaks, all of which predate
-it. If it holds, the fix is a catch-up triggered from `SessionStart:clear` rather than
-anything in `claude-stop.ts`. Filed in `P0063/Bugs` as "Stop hook never fires in sessions
-started by /clear".
+### Correction: the hook does fire, and the `/clear` hypothesis is dead
 
-**Consequence for the PR:** the four commits are real fixes and the render path is proven,
-but "session end → summary → briefing" is not yet a property this branch delivers on every
-session. It has been observed working exactly once.
+Re-measured about ninety minutes later, the same session's `exchange_count` had moved from 1
+to **3**, and its transcript had grown two genuine Stop records:
+
+```
+line 256   2026-08-07T18:45:02.673Z   [{"command":"tim hook claude-stop","durationMs":211}]
+line 282   2026-08-07T19:59:52.324Z   [{"command":"tim hook claude-stop","durationMs":189}]
+```
+
+The session had four user turns. Turn 1 produced no record; turns 2 and 3 did. The hook is
+alive and fires on every turn after the first, so the zero in the table above was a
+measurement taken during turn 2 — before that turn's Stop had had a chance to run.
+
+Two things follow. The manual invocation at 18:38:58 did not unblock anything;
+`ensureSessionForStop` would have created the same node at 18:45 by itself, and the apparent
+cause-and-effect was coincidence. And what survives of the finding is small: exactly one Stop
+did not fire, on the first turn after `/clear`, at near-zero cost because `readLastExchange`
+returns the *second-to-last* turn anyway — the first Stop that does fire picks turn 1 up.
+
+Method note, since this cost a wrong conclusion: count `stop_hook_summary","hookCount"`, not
+`stop_hook_summary`. Once the assistant has discussed the topic in-session, its own prose is
+in the transcript and a bare grep matches it — 21 apparent hits, 2 real ones. And take the
+reading several turns in, not during the turn you are measuring.
+
+### The real finding: P0054 logged nothing while its hook ran fine
+
+Checked as a control, since MAIMO-RPG is a second project with the same setup:
+
+```
+$ listProjectSessionsByActivity('01KSJ85W6KXSNN2H9ZHAP5QMPA', 6)   # P0054 root
+(empty)
+```
+
+No recorded session history at all. It is not misconfiguration:
+`~/projects/maimo-rpg/.tim-project` exists and resolves to P0054, and the newest MAIMO
+transcript (`86fdb3fb-…`, 2026-07-15) shows the hooks running normally — `Stop` ×6,
+`UserPromptSubmit` ×10, and **9** genuine `stop_hook_summary` records.
+
+So the harness called `tim hook claude-stop` nine times and TIM stored nothing. That
+transcript is **1 781 502 bytes**, over the 1 MiB ceiling `claude-stop.ts:94` enforced at the
+time, so `readLastExchange` returned `null` on every call.
+
+This is break #1 caught in the wild, and it sizes the damage: an entire project's session
+history lost silently, with `tim doctor` green throughout. It also explains the 203 empty
+`session-summary-root` bodies and the one-or-two-exchange history in section 4 far better
+than any `/clear` story — those sessions were the ones whose transcripts had grown past a
+megabyte.
+
+**Not yet verified:** the tail-read fix has never been exercised against a >1 MiB transcript
+from a live session. MAIMO is the natural regression case — its next session in
+`~/projects/maimo-rpg` should record exchanges. Check it rather than assume it.
+
+Filed in `P0063/Bugs` as "Stop hook misses only the first turn after /clear — and P0054
+shows what the 1 MiB guard cost".
+
+**Consequence for the PR:** the four commits are real fixes, the render path is proven, and
+the Stop hook does record exchanges — this session reached `exchange_count: 3` unattended.
+What remains unproven is the tail-read fix against a transcript over 1 MiB, which is the
+condition that cost P0054 its entire history. Until a session crosses that line and still
+logs, "session end → summary → briefing" is demonstrated only for small transcripts.
 
 ### Caveats that stand regardless
 
@@ -821,8 +872,10 @@ Reachable over an SSH tunnel with `ssh -L 7373:127.0.0.1:7373 bbbee@<host>`.
    section 7's resolution note.
 9. **118 phantom session nodes remain in the database**, and the render used by
    `tim_load_project` still shows them. `e69e997` fixed only the resumable-sessions query.
-10. **Cause 2 is still live and is now the top item.** The Stop hook records nothing
-    automatically; it works only when invoked by hand. Until that is understood, the chain
-    briefs a successor only by luck. Diagnosing it needs a wrapper script around
-    `tim hook claude-stop` that logs every invocation with its stdin — harness-side
-    observation, which no amount of reading `claude-stop.ts` replaces. See section 7.
+10. **Exercise the tail-read fix against a >1 MiB transcript.** P0054 has zero recorded
+    sessions because its 1.78 MB transcript tripped the old size guard while the hook ran
+    nine times. `3d883f5` should fix that, but it has never been tested on a real oversized
+    transcript. MAIMO's next session is the regression case. See section 7.
+11. **One Stop does not fire — the first turn after `/clear`.** Near-zero cost, since
+    `readLastExchange` lags one turn regardless. Noted so the next investigator does not
+    rediscover it as something larger, which is what happened here.
