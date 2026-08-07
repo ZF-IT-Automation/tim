@@ -1,7 +1,11 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import {
   generateSummaryHeuristic,
   extractTags,
+  tryCli,
   FALLBACK_MARKER,
 } from '../generate-summary.js';
 import type { UnsummarizedBatch } from '../mcp-client.js';
@@ -50,5 +54,45 @@ describe('extractTags', () => {
     const { body, tags } = extractTags(FALLBACK_MARKER);
     expect(body).toBe(FALLBACK_MARKER);
     expect(tags).toEqual([]);
+  });
+});
+
+/**
+ * A stub on PATH that echoes its own argv, so the argv tryCli builds is
+ * observable without invoking a real model.
+ */
+describe('tryCli argv', () => {
+  let binDir: string;
+  let originalPath: string | undefined;
+
+  beforeAll(() => {
+    binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tim-trycli-'));
+    for (const name of ['opencode', 'codex']) {
+      const stub = path.join(binDir, name);
+      fs.writeFileSync(stub, '#!/bin/sh\ncat >/dev/null\necho "$@"\n');
+      fs.chmodSync(stub, 0o755);
+    }
+    originalPath = process.env.PATH;
+    process.env.PATH = `${binDir}${path.delimiter}${originalPath ?? ''}`;
+  });
+
+  afterAll(() => {
+    process.env.PATH = originalPath;
+    fs.rmSync(binDir, { recursive: true, force: true });
+  });
+
+  it('passes --pure to opencode so plugin output cannot leak into the summary', async () => {
+    const out = await tryCli('opencode', 'deepseek-v4-flash-free', 'opencode', 'prompt', 30);
+    expect(out).toContain('--pure');
+    expect(out).toContain('opencode/deepseek-v4-flash-free');
+  });
+
+  it('appends chain-entry args verbatim', async () => {
+    const out = await tryCli('codex', 'gpt-5.6-luna', undefined, 'prompt', 30, undefined, [
+      '-c',
+      'model_reasoning_effort=max',
+    ]);
+    expect(out).toContain('--model gpt-5.6-luna');
+    expect(out).toContain('-c model_reasoning_effort=max');
   });
 });

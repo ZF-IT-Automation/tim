@@ -200,6 +200,12 @@ export interface TimConfig {
             model: string;
             provider?: string;
             label?: string;
+            /**
+             * Extra CLI flags appended verbatim, for options this shape cannot express —
+             * e.g. `["-c", "model_reasoning_effort=max"]` for codex, or
+             * `["--variant", "max"]` for opencode.
+             */
+            args?: string[];
         }>;
     };
     projectSummary?: {

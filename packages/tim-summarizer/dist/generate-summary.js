@@ -188,7 +188,7 @@ function runCliProcess(command, args, prompt, timeoutSec) {
         });
     });
 }
-async function tryCli(cli, model, provider, prompt, timeoutSec, onError) {
+async function tryCli(cli, model, provider, prompt, timeoutSec, onError, extraArgs = []) {
     const label = provider ? `${cli}/${provider}/${model}` : `${cli}/${model}`;
     let command;
     let args;
@@ -201,7 +201,11 @@ async function tryCli(cli, model, provider, prompt, timeoutSec, onError) {
     else if (cli === 'opencode') {
         const fullModel = provider ? `${provider}/${model}` : model;
         command = 'opencode';
-        args = ['run', '-m', fullModel, '--print-logs'];
+        // --pure disables external plugins. Without it, anything a plugin prints on
+        // session.created lands in stdout ahead of the model's answer and gets stored
+        // as the summary — including TIM's own session-start directive, which is how
+        // a briefing ended up saved as a session summary.
+        args = ['run', '-m', fullModel, '--pure', '--print-logs'];
         stdinPrompt = prompt;
     }
     else if (cli === 'curl-openrouter') {
@@ -235,7 +239,7 @@ async function tryCli(cli, model, provider, prompt, timeoutSec, onError) {
         stdinPrompt = null;
     }
     try {
-        const { stdout, stderr, code, signal, timedOut } = await runCliProcess(command, args, stdinPrompt, timeoutSec);
+        const { stdout, stderr, code, signal, timedOut } = await runCliProcess(command, [...args, ...extraArgs], stdinPrompt, timeoutSec);
         if (timedOut || code !== 0 || signal) {
             const detail = [
                 timedOut ? `timeout=${timeoutSec}s` : null,
@@ -337,7 +341,7 @@ async function generateSessionRollup(batchSummaries, onError) {
     const prompt = buildSessionRollupPrompt(batchSummaries);
     const timeoutSec = config.summarizer?.timeout_sec ?? 600;
     for (const entry of chain) {
-        const result = await tryCli(entry.cli, entry.model, entry.provider, prompt, timeoutSec, onError);
+        const result = await tryCli(entry.cli, entry.model, entry.provider, prompt, timeoutSec, onError, entry.args);
         if (result) {
             if (process.env.TIM_SUMMARIZER_VERBOSE) {
                 console.error(`tim-summarizer: session rollup via ${entry.label || entry.cli}/${entry.model}`);
@@ -377,7 +381,7 @@ async function generateProjectSummary(sessionSummaries, onError) {
     const prompt = buildProjectSummaryPrompt(sessionSummaries);
     const timeoutSec = config.summarizer?.timeout_sec ?? 600;
     for (const entry of chain) {
-        const result = await tryCli(entry.cli, entry.model, entry.provider, prompt, timeoutSec, onError);
+        const result = await tryCli(entry.cli, entry.model, entry.provider, prompt, timeoutSec, onError, entry.args);
         if (result) {
             if (process.env.TIM_SUMMARIZER_VERBOSE) {
                 console.error(`tim-summarizer: project summary via ${entry.label || entry.cli}/${entry.model}`);
@@ -405,7 +409,7 @@ async function generateSummaryDetailed(batch, onError) {
     const prompt = buildPrompt(batch);
     const timeoutSec = config.summarizer?.timeout_sec ?? 600;
     for (const entry of chain) {
-        const result = await tryCli(entry.cli, entry.model, entry.provider, prompt, timeoutSec, onError);
+        const result = await tryCli(entry.cli, entry.model, entry.provider, prompt, timeoutSec, onError, entry.args);
         if (result) {
             if (process.env.TIM_SUMMARIZER_VERBOSE) {
                 console.error(`tim-summarizer: used ${entry.label || entry.cli}/${entry.model}`);
