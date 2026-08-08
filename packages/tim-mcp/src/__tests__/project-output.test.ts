@@ -325,7 +325,7 @@ describe('formatProjectOutput entry badges', () => {
     expect(out).toMatch(/Legacy str task \[todo\]/);
   });
 
-  it('renders [done] badge when task is boolean true (regression)', () => {
+  it('treats a done legacy task (task boolean true) as closed', () => {
     const children = [
       section,
       {
@@ -340,9 +340,10 @@ describe('formatProjectOutput entry badges', () => {
     ] as any[];
 
     const out = formatProjectOutput({ project, children, truncated: false }, 200);
-    // task:true is a marker but with no task.status object → falls back
-    // to 'todo'. The legacy top-level status='done' is ignored (T3 fix).
-    expect(out).toMatch(/Bool task \[todo\]/);
+    // task:true is the legacy marker shape, which stores its status top-level.
+    // Reading it makes the task closed, so it drops out of the open Tasks list
+    // instead of rendering as [todo] forever.
+    expect(out).not.toMatch(/Bool task/);
   });
 
   it('omits badge for false-like task values', () => {
