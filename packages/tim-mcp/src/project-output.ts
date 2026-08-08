@@ -325,6 +325,9 @@ interface PreparedSectionChildren {
 }
 
 function prepareSectionChildren(children: Entry[], sectionName: string): PreparedSectionChildren {
+  // 'Next Steps' left the project schema — Tasks holds every work item now.
+  // This branch stays for projects that still carry the legacy section, so their
+  // open tasks keep sorting to the top instead of rendering as a flat list.
   if (sectionName === 'Next Steps') {
     const tasks = children.filter(c => isTaskMarker(c.metadata.task));
     const active = tasks.filter(c => !isClosedTask(c)).sort(compareTaskEntries);

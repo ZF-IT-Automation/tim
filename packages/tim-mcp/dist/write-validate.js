@@ -2,11 +2,77 @@
 // TIM MCP — write validation helpers
 // Pure functions (no DB, no transport) so they can be unit-tested without MCP plumbing.
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.MIN_TAGS_FOR_USER_CONTENT = exports.SCHEMA_KINDS = void 0;
+exports.MIN_TAGS_FOR_USER_CONTENT = exports.CLOSED_BUG_STATUSES = exports.SCHEMA_KINDS = void 0;
+exports.applySectionEntryType = applySectionEntryType;
+exports.validateBugStatus = validateBugStatus;
 exports.validateWriteTags = validateWriteTags;
 exports.supplementWriteTags = supplementWriteTags;
 const tim_core_1 = require("tim-core");
 Object.defineProperty(exports, "SCHEMA_KINDS", { enumerable: true, get: function () { return tim_core_1.SCHEMA_KINDS; } });
+/**
+ * What each schema `entry_type` stamps on a child: the marker field that makes
+ * the listings find it, and the status it starts in.
+ */
+const ENTRY_TYPE_MARKERS = {
+    task: { field: 'task', defaults: { status: 'todo', priority: 'medium' } },
+    bug: { field: 'bug', defaults: { status: 'open' } },
+    idea: { field: 'idea', defaults: { status: 'new' } },
+};
+/** Bug statuses that mean the bug is no longer open. */
+exports.CLOSED_BUG_STATUSES = new Set(['fixed', 'documented', 'wontfix', 'duplicate']);
+/**
+ * Stamp the section's declared entry type on a new child.
+ *
+ * A child of `Bugs` is a bug, a child of `Tasks` is a task — that should not
+ * depend on whether whoever wrote it remembered the right metadata field. The
+ * caller always wins: an explicit `type`, an existing marker object, or a schema
+ * kind (sections, sessions, …) is left exactly as it came in.
+ */
+function applySectionEntryType(metadata, sectionName, parentKind) {
+    if (!sectionName || parentKind !== 'section')
+        return metadata;
+    const entryType = (0, tim_core_1.findSchemaSection)(tim_core_1.PROJECT_SCHEMA.sections, sectionName)?.entry_type;
+    if (!entryType)
+        return metadata;
+    const marker = ENTRY_TYPE_MARKERS[entryType];
+    const meta = metadata ? { ...metadata } : {};
+    const kind = typeof meta.kind === 'string' ? meta.kind : undefined;
+    if (kind && tim_core_1.SCHEMA_KINDS.has(kind))
+        return metadata;
+    if (typeof meta.type === 'string' && meta.type)
+        return metadata;
+    // Already classified as any of the three — don't add a second marker.
+    if (Object.values(ENTRY_TYPE_MARKERS).some(m => meta[m.field] !== undefined))
+        return metadata;
+    meta.type = entryType;
+    meta[marker.field] = { ...marker.defaults };
+    return meta;
+}
+/**
+ * A bug may only claim `fixed` with the commit that fixed it. The other closing
+ * statuses are the honest way out for a bug that was closed without a change.
+ *
+ * Legacy bugs (`bug.legacy: true`) predate the rule and are exempt — their fix
+ * commit is prose in the body, and reopening a dozen finished bugs to enforce a
+ * rule retroactively would make the listing useless, which is what this is
+ * meant to fix.
+ */
+function validateBugStatus(metadata) {
+    const bug = metadata?.bug;
+    if (bug === null || typeof bug !== 'object' || Array.isArray(bug))
+        return { ok: true };
+    const { status, commit, legacy } = bug;
+    if (status !== 'fixed' || legacy === true)
+        return { ok: true };
+    if (typeof commit === 'string' && commit.trim())
+        return { ok: true };
+    return {
+        ok: false,
+        message: "a bug closes as 'fixed' only with the commit that fixed it — pass metadata.bug.commit. " +
+            "If it was closed without a fix, use status 'documented', 'wontfix' or 'duplicate' instead. " +
+            'Note that metadata.provenance.commit is HEAD when the bug was filed, not the fix.',
+    };
+}
 /** Minimum number of tags required on non-schema entries. */
 exports.MIN_TAGS_FOR_USER_CONTENT = 2;
 /**

@@ -14,11 +14,25 @@
  * `node scripts/sync-project-schema.mjs`; a test fails if the two drift apart.
  */
 
+/** Entry types a collection section can stamp on its children. */
+export type SectionEntryType = 'task' | 'bug' | 'idea';
+
 export interface ProjectSchemaSection {
   name: string;
   description?: string;
   render_depth?: number | 'full';
   render_tail?: boolean;
+  /**
+   * Collection sections whose children are all the same kind of thing. A child
+   * written here without its own classification gets `metadata.type` plus the
+   * matching marker object (`task`/`bug`/`idea`) filled in with its default
+   * status, so what an entry *is* stops depending on who wrote it.
+   *
+   * Only set where a renderer actually reads the type. Sections whose children
+   * are individual prose (Log, Roadmap, Decisions, Codebase, Usage, Rules)
+   * deliberately have none — stamping a type nobody reads is noise.
+   */
+  entry_type?: SectionEntryType;
   /**
    * Materialized on demand by a subsystem that owns its own metadata.kind
    * (Sessions → sessions-root, Commits → commits-root). `ensureProjectSchema`
@@ -97,19 +111,52 @@ export const PROJECT_SCHEMA: ProjectSchema = {
       },
     },
     render_rules: {
-      todo: 'Prominent in Next Steps, sorted by priority (high first), overdue due dates in red',
+      todo: 'Prominent in Tasks, sorted by priority (high first), overdue due dates in red',
       in_progress: 'Highlighted, sorted above todo with same priority',
-      changes_pending: 'Highlighted in Next Steps (post-review rework), same sort bucket as in_progress',
+      changes_pending: 'Highlighted in Tasks (post-review rework), same sort bucket as in_progress',
       pushed: 'Coding + vcs=git: commits pushed to remote; intermediate gate before reviewed/done',
       reviewed: 'Coding: review passed; required in history before done',
-      done: 'Collapsed under Previous Steps, sorted by done_at descending',
-      cancelled: 'Collapsed under Previous Steps, greyed out, below done items',
+      done: 'Collapsed at the end of Tasks, sorted by done_at descending',
+      cancelled: 'Collapsed at the end of Tasks, greyed out, below done items',
     },
   },
   idea_annotation: {
     description: 'metadata.idea marks an Idea. status=planned promotes in-place to a Task under Tasks.',
     fields: {
       status: { type: 'enum', values: ['new', 'planned', 'parked', 'rejected'], default: 'new' },
+    },
+  },
+  bug_annotation: {
+    description:
+      'metadata.bug marks a Bug. Bugs carry metadata.bug, tasks carry metadata.task — never both, ' +
+      'since which of the two an entry carries is what decides whether it appears in the bug listing ' +
+      'or the task listing. Open means status=open (or no metadata.bug at all); every other status is closed.',
+    fields: {
+      status: {
+        type: 'enum',
+        values: ['open', 'fixed', 'documented', 'wontfix', 'duplicate'],
+        default: 'open',
+        description:
+          "Only 'fixed' claims the bug is gone; 'documented'/'wontfix'/'duplicate' close it without a fix.",
+      },
+      severity: { type: 'enum', values: ['low', 'medium', 'high', 'critical'], optional: true },
+      commit: {
+        type: 'string',
+        optional: true,
+        description:
+          "Git SHA of the commit that fixed it. Required for status='fixed' — a bug is only gone when " +
+          'something changed. Not the same as metadata.provenance.commit, which is HEAD when the bug ' +
+          'was *filed*. The other closing statuses need no commit: a bug deliberately left unfixed has ' +
+          'no fix commit, and demanding one only produces invented hashes.',
+      },
+      legacy: {
+        type: 'boolean',
+        optional: true,
+        description:
+          'Set by the migration on bugs that were already closed before commit was required. Their fix ' +
+          'commit, if any, is prose in the body. Marks them as unverified closures rather than silently ' +
+          'blessing them.',
+      },
     },
   },
   sections: [
@@ -129,19 +176,6 @@ export const PROJECT_SCHEMA: ProjectSchema = {
         { name: 'Git Rules', description: 'Branch-Strategie, Commit-Konventionen', render_depth: 2 },
         { name: 'Style Rules', description: 'Code-Style, Naming, Linting', render_depth: 1 },
         { name: 'Do Not', description: 'Explizit verbotene Aktionen', render_depth: 'full' },
-      ],
-    },
-    {
-      name: 'Next Steps',
-      description:
-        'Aktive Tasks. Kinder mit task: true werden nach Status/Priority gerendert — todo/in_progress hier, done/cancelled unter Previous Steps.',
-      render_depth: 2,
-      children: [
-        {
-          name: 'Previous Steps',
-          description: 'Erledigte Tasks (status=done/cancelled). Automatisch befüllt vom Renderer.',
-          render_depth: 0,
-        },
       ],
     },
     {
@@ -188,6 +222,7 @@ export const PROJECT_SCHEMA: ProjectSchema = {
       name: 'Bugs',
       description: 'Bekannte Probleme, Workarounds, offene Issues.',
       render_depth: 1,
+      entry_type: 'bug',
       children: [],
     },
     {
@@ -200,13 +235,15 @@ export const PROJECT_SCHEMA: ProjectSchema = {
       name: 'Ideas',
       description: 'Brainstorming, Zukunftsideen, ungefiltert.',
       render_depth: 1,
+      entry_type: 'idea',
       children: [],
     },
     {
       name: 'Tasks',
       description:
-        'Work-Items mit task-Attribut. Sortiert nach Status > Priority > Due. Der Renderer zeigt todo/in_progress in Next Steps, done/cancelled hier.',
+        'Alle Work-Items mit task-Attribut. Sortiert nach Status > Priority > Due. Offene Tasks stehen oben, done/cancelled werden am Ende eingeklappt.',
       render_depth: 1,
+      entry_type: 'task',
       children: [],
     },
     {

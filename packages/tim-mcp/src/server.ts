@@ -50,7 +50,12 @@ import {
 } from 'tim-hooks';
 import { tim_export, tim_import, inspectHmemManifest } from 'tim-migrate';
 import { autoPush, autoPull, resetSyncCooldowns, loadConfig as loadSyncConfig } from 'tim-sync-client';
-import { validateWriteTags, supplementWriteTags } from './write-validate.js';
+import {
+  validateWriteTags,
+  supplementWriteTags,
+  applySectionEntryType,
+  validateBugStatus,
+} from './write-validate.js';
 import { handleTimRemember } from './remember-handler.js';
 import { buildInboxFallbackGuidance } from './session-guidance.js';
 import { formatResumeList, formatResumePayload } from './resume-output.js';
@@ -2012,13 +2017,25 @@ export async function createMcpServer(
           // checkpoints) are exempt — everything else is user content and
           // must carry at least 2 tags for discoverability.
           let parentKind: string | undefined;
+          let parentEntryTitle: string | undefined;
           if (writeOpts.parentId) {
             const parent = await s.read(writeOpts.parentId, { includeChildren: false });
             parentKind = typeof parent?.metadata?.kind === 'string' ? parent.metadata.kind : undefined;
+            parentEntryTitle = parent?.title;
           }
           const supplemented = supplementWriteTags(writeOpts.tags, writeOpts.metadata, parentKind);
           writeOpts.tags = supplemented.tags;
           writeOpts.metadata = supplemented.metadata ?? {};
+
+          // A child of a collection section is what that section collects —
+          // see entry_type in the project schema.
+          writeOpts.metadata =
+            applySectionEntryType(writeOpts.metadata, parentEntryTitle, parentKind) ?? writeOpts.metadata;
+
+          const bugValidation = validateBugStatus(writeOpts.metadata);
+          if (!bugValidation.ok) {
+            return errorResult(bugValidation.message);
+          }
 
           const tagWarnings = validateTagsDeprecated(writeOpts.tags ?? []);
           const { clean: cleanWriteTags } = stripDeprecatedTags(writeOpts.tags ?? []);
@@ -2306,6 +2323,10 @@ export async function createMcpServer(
           const usageSid = await usageSessionId();
           const resolved = await s.read(id, { showIrrelevant: true, includeChildren: false });
           if (!resolved) return errorResult(`Entry not found: ${id}`);
+          if (patch.metadata !== undefined) {
+            const bugValidation = validateBugStatus(patch.metadata as Record<string, unknown>);
+            if (!bugValidation.ok) return errorResult(bugValidation.message);
+          }
           const projectPath = callerProjectPath;
           if (patch.tags !== undefined) {
             const tagWarnings = validateTagsDeprecated(patch.tags);

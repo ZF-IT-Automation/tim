@@ -34,6 +34,7 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.SessionManager = void 0;
+exports.assertSessionId = assertSessionId;
 exports.exchangeText = exchangeText;
 exports.resolveCurrentSession = resolveCurrentSession;
 exports.ensureProjectForPath = ensureProjectForPath;
@@ -43,6 +44,17 @@ const os = __importStar(require("os"));
 const path = __importStar(require("path"));
 const session_tree_js_1 = require("./session-tree.js");
 const project_schema_init_js_1 = require("./project-schema-init.js");
+/**
+ * A session node is keyed by its id, so a blank one produces an unaddressable
+ * node that no turn-end hook can ever find again — the database already holds
+ * one written with the empty string. Callers pass a harness session id or an
+ * id of their own; either way it has to be usable as a key.
+ */
+function assertSessionId(sessionId) {
+    if (typeof sessionId !== 'string' || sessionId.trim() === '') {
+        throw new Error('sessionId must be a non-empty string');
+    }
+}
 /**
  * Exchanges are stored through splitTitleBody, so the first line of the message
  * lives in the title and only the remainder in the content. Reading the content
@@ -99,6 +111,7 @@ class SessionManager {
     }
     async sessionStart(params) {
         const { sessionId, agentName, cwd, harness } = params;
+        assertSessionId(sessionId);
         const existing = await this.store.read(sessionId);
         if (existing?.metadata.kind === 'session') {
             return existing;
@@ -117,6 +130,7 @@ class SessionManager {
     }
     async startProjectSession(params) {
         const { sessionId, projectId, agentName, cwd, harness, tool, model, taskSummary } = params;
+        assertSessionId(sessionId);
         const existing = await this.store.read(sessionId);
         if (existing?.metadata.kind === session_tree_js_1.KIND_SESSION) {
             if (existing.metadata.project_ref !== projectId) {

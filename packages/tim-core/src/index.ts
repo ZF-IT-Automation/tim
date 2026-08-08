@@ -368,5 +368,6 @@ export {
   schemaSectionNames,
   type ProjectSchema,
   type ProjectSchemaSection,
+  type SectionEntryType,
 } from './project-schema.js';
 export { isStale, staleDays, daysSinceLastVerified } from './staleness.js';

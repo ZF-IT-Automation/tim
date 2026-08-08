@@ -1810,13 +1810,23 @@ async function createMcpServer(options = {}) {
                     // checkpoints) are exempt — everything else is user content and
                     // must carry at least 2 tags for discoverability.
                     let parentKind;
+                    let parentEntryTitle;
                     if (writeOpts.parentId) {
                         const parent = await s.read(writeOpts.parentId, { includeChildren: false });
                         parentKind = typeof parent?.metadata?.kind === 'string' ? parent.metadata.kind : undefined;
+                        parentEntryTitle = parent?.title;
                     }
                     const supplemented = (0, write_validate_js_1.supplementWriteTags)(writeOpts.tags, writeOpts.metadata, parentKind);
                     writeOpts.tags = supplemented.tags;
                     writeOpts.metadata = supplemented.metadata ?? {};
+                    // A child of a collection section is what that section collects —
+                    // see entry_type in the project schema.
+                    writeOpts.metadata =
+                        (0, write_validate_js_1.applySectionEntryType)(writeOpts.metadata, parentEntryTitle, parentKind) ?? writeOpts.metadata;
+                    const bugValidation = (0, write_validate_js_1.validateBugStatus)(writeOpts.metadata);
+                    if (!bugValidation.ok) {
+                        return errorResult(bugValidation.message);
+                    }
                     const tagWarnings = (0, tim_store_1.validateTagsDeprecated)(writeOpts.tags ?? []);
                     const { clean: cleanWriteTags } = (0, tim_core_1.stripDeprecatedTags)(writeOpts.tags ?? []);
                     writeOpts.tags = cleanWriteTags;
@@ -2085,6 +2095,11 @@ async function createMcpServer(options = {}) {
                     const resolved = await s.read(id, { showIrrelevant: true, includeChildren: false });
                     if (!resolved)
                         return errorResult(`Entry not found: ${id}`);
+                    if (patch.metadata !== undefined) {
+                        const bugValidation = (0, write_validate_js_1.validateBugStatus)(patch.metadata);
+                        if (!bugValidation.ok)
+                            return errorResult(bugValidation.message);
+                    }
                     const projectPath = callerProjectPath;
                     if (patch.tags !== undefined) {
                         const tagWarnings = (0, tim_store_1.validateTagsDeprecated)(patch.tags);

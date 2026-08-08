@@ -1,5 +1,31 @@
 import { SCHEMA_KINDS } from 'tim-core';
 export { SCHEMA_KINDS };
+/** Bug statuses that mean the bug is no longer open. */
+export declare const CLOSED_BUG_STATUSES: Set<string>;
+/**
+ * Stamp the section's declared entry type on a new child.
+ *
+ * A child of `Bugs` is a bug, a child of `Tasks` is a task — that should not
+ * depend on whether whoever wrote it remembered the right metadata field. The
+ * caller always wins: an explicit `type`, an existing marker object, or a schema
+ * kind (sections, sessions, …) is left exactly as it came in.
+ */
+export declare function applySectionEntryType(metadata: Record<string, unknown> | undefined, sectionName: string | undefined, parentKind: string | undefined): Record<string, unknown> | undefined;
+/**
+ * A bug may only claim `fixed` with the commit that fixed it. The other closing
+ * statuses are the honest way out for a bug that was closed without a change.
+ *
+ * Legacy bugs (`bug.legacy: true`) predate the rule and are exempt — their fix
+ * commit is prose in the body, and reopening a dozen finished bugs to enforce a
+ * rule retroactively would make the listing useless, which is what this is
+ * meant to fix.
+ */
+export declare function validateBugStatus(metadata: Record<string, unknown> | undefined): {
+    ok: true;
+} | {
+    ok: false;
+    message: string;
+};
 /** Minimum number of tags required on non-schema entries. */
 export declare const MIN_TAGS_FOR_USER_CONTENT = 2;
 export interface WriteTagsValidationOk {

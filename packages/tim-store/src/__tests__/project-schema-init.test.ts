@@ -71,10 +71,9 @@ describe('ensureProjectSchema', () => {
     expect(log.metadata.render_depth).toBe(1);
     expect(log.metadata.render_tail).toBe(true);
 
-    const nextSteps = children.find(c => c.title === 'Next Steps')!;
-    const previous = (await store.getChildren(nextSteps.id))[0]!;
-    expect(previous.title).toBe('Previous Steps');
-    expect(previous.metadata.render_depth).toBe(0);
+    const rules = children.find(c => c.title === 'Rules')!;
+    const doNot = (await store.getChildren(rules.id)).find(c => c.title === 'Do Not')!;
+    expect(doNot.metadata.render_depth).toBe('full');
   });
 
   it('writes sections with title=name so resolveSectionByTitle finds them', async () => {
@@ -161,7 +160,7 @@ describe('ensureProjectSchema migration of legacy projects', () => {
       expect.arrayContaining(['Tasks', 'Ideas', 'Decisions', 'Log']),
     );
     expect(result.created).toEqual(
-      expect.arrayContaining(['Overview', 'Rules', 'Next Steps', 'Codebase', 'Usage', 'Bugs', 'Roadmap']),
+      expect.arrayContaining(['Overview', 'Rules', 'Codebase', 'Usage', 'Bugs', 'Roadmap']),
     );
     expect(result.created).not.toContain('Tasks');
     expect(result.unknown.sort()).toEqual(['Errors', 'Learnings', 'Testing']);

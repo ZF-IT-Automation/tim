@@ -22,9 +22,9 @@ describe('PROJECT_SCHEMA', () => {
     expect(doc).toEqual(JSON.parse(JSON.stringify(PROJECT_SCHEMA)));
   });
 
-  it('declares the 13 standard sections in order', () => {
+  it('declares the 12 standard sections in order', () => {
     expect(PROJECT_SCHEMA.sections.map(s => s.name)).toEqual([
-      'Overview', 'Rules', 'Next Steps', 'Log', 'Decisions', 'Codebase',
+      'Overview', 'Rules', 'Log', 'Decisions', 'Codebase',
       'Usage', 'Bugs', 'Roadmap', 'Ideas', 'Tasks', 'Sessions', 'Commits',
     ]);
   });
@@ -37,8 +37,11 @@ describe('PROJECT_SCHEMA', () => {
   it('finds nested sections by name at any depth', () => {
     expect(findSchemaSection(PROJECT_SCHEMA.sections, 'Git Rules')?.render_depth).toBe(2);
     expect(findSchemaSection(PROJECT_SCHEMA.sections, 'Functions')?.render_depth).toBe(1);
-    expect(findSchemaSection(PROJECT_SCHEMA.sections, 'Previous Steps')?.render_depth).toBe(0);
+    expect(findSchemaSection(PROJECT_SCHEMA.sections, 'Install')?.render_depth).toBe('full');
     expect(findSchemaSection(PROJECT_SCHEMA.sections, 'Errors')).toBeUndefined();
+    // Next Steps and its Previous Steps child left the schema — Tasks holds every work item.
+    expect(findSchemaSection(PROJECT_SCHEMA.sections, 'Next Steps')).toBeUndefined();
+    expect(findSchemaSection(PROJECT_SCHEMA.sections, 'Previous Steps')).toBeUndefined();
   });
 
   it('flattens every section name including children', () => {

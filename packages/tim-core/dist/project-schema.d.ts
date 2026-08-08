@@ -13,11 +13,24 @@
  * `docs/project-schema.json` is a generated mirror for humans — regenerate it with
  * `node scripts/sync-project-schema.mjs`; a test fails if the two drift apart.
  */
+/** Entry types a collection section can stamp on its children. */
+export type SectionEntryType = 'task' | 'bug' | 'idea';
 export interface ProjectSchemaSection {
     name: string;
     description?: string;
     render_depth?: number | 'full';
     render_tail?: boolean;
+    /**
+     * Collection sections whose children are all the same kind of thing. A child
+     * written here without its own classification gets `metadata.type` plus the
+     * matching marker object (`task`/`bug`/`idea`) filled in with its default
+     * status, so what an entry *is* stops depending on who wrote it.
+     *
+     * Only set where a renderer actually reads the type. Sections whose children
+     * are individual prose (Log, Roadmap, Decisions, Codebase, Usage, Rules)
+     * deliberately have none — stamping a type nobody reads is noise.
+     */
+    entry_type?: SectionEntryType;
     /**
      * Materialized on demand by a subsystem that owns its own metadata.kind
      * (Sessions → sessions-root, Commits → commits-root). `ensureProjectSchema`

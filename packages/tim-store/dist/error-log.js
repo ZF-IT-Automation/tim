@@ -3,6 +3,8 @@
 // Structured error logging with stats, rotation, and alert thresholds.
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ErrorLogger = void 0;
+/** Burst window for the alert threshold, independent of any stats window. */
+const ALERT_WINDOW_HOURS = 1;
 class ErrorLogger {
     db;
     maxEntries;
@@ -49,7 +51,10 @@ class ErrorLogger {
       GROUP BY tool
       ORDER BY count DESC
     `).all(since);
-        const alerts = this.getAlertThresholds(hours);
+        // The alert threshold is "more than 5 of the same error within an hour",
+        // which is a burst detector — it does not widen with the reporting window.
+        // Stats over 24h still alert on the last hour only.
+        const alerts = this.getAlertThresholds(ALERT_WINDOW_HOURS);
         return {
             totalErrors,
             periodHours: hours,

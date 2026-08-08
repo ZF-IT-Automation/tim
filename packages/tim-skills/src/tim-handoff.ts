@@ -1,7 +1,7 @@
 export const TIM_HANDOFF_SKILL = {
   name: 'tim-handoff',
   description:
-    'Prep for /clear — save handoff note via tim_checkpoint, update Next Steps, then clear. Use before ending long sessions.',
+    'Prep for /clear — save handoff note via tim_checkpoint, update the open tasks, then clear. Use before ending long sessions.',
   content: `# TIM Handoff
 
 Before \`/clear\`, leave a durable handoff so the next session starts better.
@@ -13,7 +13,7 @@ Before \`/clear\`, leave a durable handoff so the next session starts better.
    \`\`\`
    tim_checkpoint(sessionId, handoff_note="done: … | wip: … | next: …")
    \`\`\`
-3. **Next Steps:** Update the project's Next Steps section via \`tim_update\` (read → merge → update).
+3. **Tasks:** Update the project's Tasks section via \`tim_update\` (read → merge → update).
 4. Tell the user to \`/clear\` when the checkpoint confirms.
 
 Keep the note short. Do not duplicate auto-checkpoint content.

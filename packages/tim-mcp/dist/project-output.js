@@ -288,6 +288,9 @@ function compareBugEntries(a, b) {
     return compareEntryOrder(a, b);
 }
 function prepareSectionChildren(children, sectionName) {
+    // 'Next Steps' left the project schema — Tasks holds every work item now.
+    // This branch stays for projects that still carry the legacy section, so their
+    // open tasks keep sorting to the top instead of rendering as a flat list.
     if (sectionName === 'Next Steps') {
         const tasks = children.filter(c => (0, tim_store_1.isTaskMarker)(c.metadata.task));
         const active = tasks.filter(c => !isClosedTask(c)).sort(compareTaskEntries);
