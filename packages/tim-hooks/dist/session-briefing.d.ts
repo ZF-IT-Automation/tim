@@ -1,5 +1,5 @@
 import { type TimStore } from 'tim-store';
-import type { DirectiveBriefing } from 'tim-hooks';
+import type { DirectiveBriefing } from './marker.js';
 /**
  * Clamp a summary to a char budget without losing its end. The last lines of a
  * condensed rollup are the handoff ("next: …") — cutting from the front would drop

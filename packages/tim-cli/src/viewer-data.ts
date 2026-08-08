@@ -78,6 +78,8 @@ export interface ViewerNode {
   childCount: number;
   /** Children excluded by the store's read paths (irrelevant or tombstoned). */
   hiddenChildCount: number;
+  /** This node is itself soft-deleted or tombstoned — the store's read paths skip it. */
+  hidden: boolean;
   secret: boolean;
   redacted: boolean;
   createdAt: string;
@@ -264,6 +266,7 @@ export class ViewerData {
       contentChars: row.content ? row.content.length : 0,
       childCount: counts.visible,
       hiddenChildCount: counts.hidden,
+      hidden: row.irrelevant === 1 || row.tombstoned_at !== null,
       secret,
       redacted,
       createdAt: row.created_at,
@@ -293,19 +296,57 @@ export class ViewerData {
   }
 
   /**
+   * Top-level entries that are not projects. `listProjects` only ever offered
+   * `kind='project'` as an entry point, which left every other parentless
+   * entry — imports, stray roots, sections whose project was retired —
+   * invisible in the tree even though the store still holds them.
+   *
+   * IFNULL, not a bare `!= 'project'`: json_extract returns NULL when the key
+   * is absent, and `NULL != 'project'` is NULL, so the plain comparison would
+   * filter out exactly the kind-less roots this exists to surface.
+   */
+  otherRoots(): ViewerNode[] {
+    const rows = this.db.prepare(`
+      SELECT ${ENTRY_COLUMNS} FROM entries
+      WHERE parent_id IS NULL
+        AND IFNULL(json_extract(metadata, '$.kind'), '') != 'project'
+        AND irrelevant = 0
+        AND tombstoned_at IS NULL
+      ORDER BY created_at ASC
+    `).all() as EntryRow[];
+
+    const roots = rows.map(parseRow);
+    const counts = this.childCounts(roots.map(r => r.row.id));
+    return roots.map(r =>
+      this.toNode(
+        r,
+        counts.get(r.row.id) ?? { visible: 0, hidden: 0 },
+        isSecret(this.db, r.row.id),
+      ),
+    );
+  }
+
+  /**
    * Children of `id` — all of them, in tree order. `id` may be an entry id
    * or a project label.
+   *
+   * `includeHidden` drops the store's visibility filter so soft-deleted and
+   * tombstoned children come back too, flagged rather than merely counted:
+   * the viewer exists to explain what the store does, and "42 hidden" is not
+   * an answer to which 42.
    */
-  children(id: string): ViewerChildren | null {
+  children(id: string, options: { includeHidden?: boolean } = {}): ViewerChildren | null {
     const parent = this.readEntry(id);
     if (!parent) return null;
 
-    // Same visibility filter as store.getChildren().
+    // Same visibility filter as store.getChildren(), unless asked otherwise.
+    const visibility = options.includeHidden === true
+      ? ''
+      : 'AND irrelevant = 0 AND tombstoned_at IS NULL';
     const rows = this.db.prepare(`
       SELECT ${ENTRY_COLUMNS} FROM entries
       WHERE parent_id = ?
-        AND irrelevant = 0
-        AND tombstoned_at IS NULL
+        ${visibility}
     `).all(parent.row.id) as EntryRow[];
 
     const children = sortChildren(rows.map(parseRow));

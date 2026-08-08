@@ -56,7 +56,6 @@ const secret_js_1 = require("./secret.js");
 const release_check_js_1 = require("./release-check.js");
 const migrate_from_hmem_js_1 = require("./migrate-from-hmem.js");
 const setup_agent_js_1 = require("./setup-agent.js");
-const session_briefing_js_1 = require("./session-briefing.js");
 const viewer_js_1 = require("./viewer.js");
 const args_js_1 = require("./args.js");
 const claude_hook_io_js_1 = require("./claude-hook-io.js");
@@ -383,7 +382,7 @@ async function buildStartDirectiveForCwd(cwd, walkUp) {
         // The directive must carry substance, not just an instruction — a model that
         // never calls tim_load_project still gets briefed. Failure stays silent so a
         // start hook is never blocked by a briefing problem.
-        const briefing = await (0, session_briefing_js_1.collectDirectiveBriefing)(store, projectLabel, (0, tim_hooks_1.getBriefingMaxTokens)(config)).catch(() => undefined);
+        const briefing = await (0, tim_hooks_1.collectDirectiveBriefing)(store, projectLabel, (0, tim_hooks_1.getBriefingMaxTokens)(config)).catch(() => undefined);
         return (0, tim_hooks_1.buildLoadDirective)(projectLabel, dir, binding, briefing);
     }
     finally {
@@ -459,7 +458,7 @@ async function cmdResolveSession(args) {
         }
         else if (format === 'directive') {
             const binding = await (0, tim_store_1.resolveProjectBindingLabel)(store, projectRef);
-            const briefing = await (0, session_briefing_js_1.collectDirectiveBriefing)(store, projectRef, (0, tim_hooks_1.getBriefingMaxTokens)(config)).catch(() => undefined);
+            const briefing = await (0, tim_hooks_1.collectDirectiveBriefing)(store, projectRef, (0, tim_hooks_1.getBriefingMaxTokens)(config)).catch(() => undefined);
             process.stdout.write((0, tim_hooks_1.buildSessionDirective)(projectRef, cwd, binding, briefing));
         }
         else {

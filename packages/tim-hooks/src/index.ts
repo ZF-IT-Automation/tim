@@ -12,10 +12,12 @@ export {
   runCheckpoint,
   runSessionStart,
   runSessionEnd,
+  previewSessionStart,
   loadProjectContext,
   getActiveProjectLabel,
   type SessionEndOptions,
   type SessionStartResult,
+  type SessionStartPreview,
 } from './checkpoint.js';
 
 export { getDeltaBriefing, type DeltaBriefingOptions } from './delta.js';
@@ -95,6 +97,8 @@ export {
   type FindMarkerOptions,
   type MarkerDiscoveryPolicy,
 } from './marker.js';
+
+export { collectDirectiveBriefing, clampSummary } from './session-briefing.js';
 
 export {
   rebalanceBatch,

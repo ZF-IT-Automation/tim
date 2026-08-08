@@ -45,6 +45,7 @@ import {
   getBriefingMaxTokens,
   getBriefingRecentSessions,
   maybeSpawnSummarizer,
+  previewSessionStart,
   runPromptSubmit,
   syncNearestProjectMarker,
 } from 'tim-hooks';
@@ -384,6 +385,17 @@ const TimResumeListSchema = z.object({
   limit: z.number().int().min(1).max(25).optional().default(10),
 });
 
+const TimPreviewBriefingSchema = z.object({
+  project: z.string().describe('Project label, e.g. P0063'),
+  sessionId: z.string().optional()
+    .describe('Session the delta is computed against; defaults to the project\'s most recent'),
+  maxTokens: z.number().int().min(0).max(4000).optional()
+    .describe('Budget for the injected briefing; defaults to the configured value'),
+  origin: z.enum(['marker', 'session']).optional()
+    .describe('Directive flavour: "marker" (.tim-project) or "session" (TIM session metadata)'),
+  cwd: z.string().optional().describe('Directory named in the directive text'),
+});
+
 const TimSessionResumeSchema = z.object({
   sessionId: z.string().describe('Canonical session id to resume (pick from tim_resume_list)'),
   rawCount: z.number().int().min(1).max(50).optional().default(10),
@@ -552,6 +564,21 @@ const TimShowUntaggedSchema = z.object({});
 
 // ─── ListTools registry (single source of truth) ────────
 
+export interface ToolInputSchema {
+  type: 'object';
+  properties?: Record<string, unknown>;
+  required?: string[];
+}
+
+/**
+ * A tool's parameters as JSON Schema. Shared by the ListTools handler and by
+ * `tim viewer`, which builds its parameter forms from the same output — so a
+ * form field can never describe a parameter the server would reject.
+ */
+export function toolInputSchema(schema: z.ZodObject<z.ZodRawShape>): ToolInputSchema {
+  return zodToJsonSchema(schema, { target: 'openApi3' }) as ToolInputSchema;
+}
+
 export const TOOL_DEFS: Array<{
   name: string;
   description: string;
@@ -712,6 +739,14 @@ export const TOOL_DEFS: Array<{
       'List resumable sessions of the bound project (most recent activity first) with date, tool, ' +
       'task summary, and exchange count. Follow the ACTION line: present to the user, then call tim_session_resume.',
     schema: TimResumeListSchema,
+  },
+  {
+    name: 'tim_preview_briefing',
+    description:
+      'Show what a session start would say for a project, without starting one: the directive text a ' +
+      'start hook emits plus the delta/update/cadence briefing. Creates no session, writes no marker, ' +
+      'runs no configured hooks — use it to inspect a briefing, not to begin work.',
+    schema: TimPreviewBriefingSchema,
   },
   {
     name: 'tim_session_resume',
@@ -1602,6 +1637,7 @@ const READ_TOOLS = new Set([
   'tim_show_unsummarized', 'tim_show_all_unsummarized', 'tim_show_untagged',
   'tim_resume_list',
   'tim_hook_prompt_submit',
+  'tim_preview_briefing',
 ]);
 
 const REMEMBER_TOOLS = new Set(['tim_remember']);
@@ -1738,11 +1774,7 @@ export async function createMcpServer(
     const allTools = defs.map(def => ({
       name: def.name,
       description: def.description,
-      inputSchema: zodToJsonSchema(def.schema, { target: 'openApi3' }) as {
-        type: 'object';
-        properties?: Record<string, unknown>;
-        required?: string[];
-      },
+      inputSchema: toolInputSchema(def.schema),
       internal: def.internal,
     }));
     const exposeInternal = process.env.TIM_EXPOSE_INTERNAL_TOOLS === '1';
@@ -2862,6 +2894,29 @@ export async function createMcpServer(
           }
           const list = await getSessions().listResumableSessions(label, limit);
           return { content: [{ type: 'text', text: formatResumeList(label, list) }] };
+        }
+
+        case 'tim_preview_briefing': {
+          const { project, sessionId, maxTokens, origin, cwd } =
+            TimPreviewBriefingSchema.parse(args);
+          const preview = await previewSessionStart(s, {
+            projectId: project,
+            maxTokens: maxTokens ?? getBriefingMaxTokens(loadConfig()),
+            ...(sessionId ? { sessionId } : {}),
+            ...(origin ? { origin } : {}),
+            ...(cwd ? { cwd } : {}),
+          });
+          const text = [
+            `project: ${preview.projectLabel} (${preview.binding})`,
+            `session used for delta/cadence: ${preview.sessionId ?? '(none — project has no sessions)'}`,
+            '',
+            '── directive (what a start hook emits) ──',
+            preview.directive,
+            '',
+            '── briefing (what tim_session_start returns) ──',
+            preview.briefing ?? '(none)',
+          ].join('\n');
+          return { content: [{ type: 'text', text }] };
         }
 
         case 'tim_session_resume': {

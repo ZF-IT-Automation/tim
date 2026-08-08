@@ -81,6 +81,7 @@ export const VIEWER_PAGE = `<!doctype html>
   <span style="flex:1"></span>
   <input id="jump" placeholder="entry id or label (P0001)" autocomplete="off">
   <button id="jumpbtn">Go</button>
+  <label class="meta"><input type="checkbox" id="showhidden"> show deleted</label>
   <button id="reload">Reload projects</button>
 </header>
 <main>
@@ -115,7 +116,19 @@ export const VIEWER_PAGE = `<!doctype html>
     row.appendChild(el('span', 'b ' + (cls || ''), text));
   }
 
+  // Whether the "show deleted" toggle is on. Read live rather than captured:
+  // the same predicate decides which children get fetched and whether a row
+  // offers a caret at all.
+  function showHidden() {
+    return document.getElementById('showhidden').checked;
+  }
+
+  function expandableCount(n) {
+    return n.childCount + (showHidden() ? n.hiddenChildCount : 0);
+  }
+
   function decorate(row, n) {
+    if (n.hidden) badge(row, 'deleted', 'hidden');
     if (n.kind) badge(row, n.kind, 'kind');
     if (n.label) badge(row, n.label);
     if (n.type && n.type !== n.kind) badge(row, 'type=' + n.type);
@@ -135,12 +148,13 @@ export const VIEWER_PAGE = `<!doctype html>
   function makeRow(n, container) {
     var wrap = el('div');
     var row = el('div', 'row');
-    var caret = el('span', 'caret' + (n.childCount ? '' : ' leaf'), n.childCount ? '+' : '·');
+    var open = expandableCount(n);
+    var caret = el('span', 'caret' + (open ? '' : ' leaf'), open ? '+' : '·');
     var kids = el('div', 'kids');
     kids.style.display = 'none';
 
     caret.onclick = function () {
-      if (!n.childCount) return;
+      if (!expandableCount(n)) return;
       if (kids.style.display === 'none') {
         kids.style.display = '';
         caret.textContent = '−';
@@ -169,7 +183,8 @@ export const VIEWER_PAGE = `<!doctype html>
   function loadChildren(id, kids) {
     kids.dataset.loaded = '1';
     kids.appendChild(el('div', 'empty', 'loading…'));
-    return api('/api/children?id=' + encodeURIComponent(id)).then(function (data) {
+    var q = '/api/children?id=' + encodeURIComponent(id) + (showHidden() ? '&hidden=1' : '');
+    return api(q).then(function (data) {
       kids.textContent = '';
       if (!data.children.length) kids.appendChild(el('div', 'empty', '(no children)'));
       // Every child is rendered — no cap, no budget, no render_depth skip.
@@ -277,11 +292,20 @@ export const VIEWER_PAGE = `<!doctype html>
     treeEl.textContent = '';
     rows = {}; boxes = {};
     return api('/api/projects').then(function (data) {
-      if (!data.projects.length) {
-        treeEl.appendChild(el('div', 'empty', 'No entries with metadata.kind="project".'));
+      var others = data.otherRoots || [];
+      if (!data.projects.length && !others.length) {
+        treeEl.appendChild(el('div', 'empty', 'No root entries.'));
         return;
       }
       data.projects.forEach(function (p) { makeRow(p, treeEl); });
+      // Parentless non-project entries: reachable from nowhere else, which is
+      // exactly why they are worth showing.
+      if (others.length) {
+        var head = el('div', 'empty', 'other roots (no metadata.kind="project")');
+        head.style.paddingTop = '10px';
+        treeEl.appendChild(head);
+        others.forEach(function (r) { makeRow(r, treeEl); });
+      }
     }).catch(function (e) {
       treeEl.appendChild(el('div', 'err', e.message));
     });
@@ -306,6 +330,9 @@ export const VIEWER_PAGE = `<!doctype html>
     if (e.key === 'Enter') document.getElementById('jumpbtn').onclick();
   });
   document.getElementById('reload').onclick = function () { loadStats(); loadProjects(); };
+  // Toggling rebuilds the tree: already-loaded child lists were fetched under
+  // the old filter, so patching them in place would leave a mixed view.
+  document.getElementById('showhidden').onchange = function () { loadProjects(); };
 
   loadStats();
   loadProjects();

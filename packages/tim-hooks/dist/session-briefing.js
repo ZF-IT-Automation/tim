@@ -2,9 +2,9 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.clampSummary = clampSummary;
 exports.collectDirectiveBriefing = collectDirectiveBriefing;
-// Assembles the substance carried by a session-start directive. Lives in tim-cli
-// (not tim-hooks/marker.ts) because it needs an open TimStore, and marker.ts is on
-// the fast path of every hook.
+// Assembles the substance carried by a session-start directive. Kept out of
+// marker.ts because it needs an open TimStore, and marker.ts is on the fast path
+// of every hook — importing this module is a deliberate act, never incidental.
 const tim_store_1 = require("tim-store");
 const CLOSED_TASK_STATUSES = new Set(['done', 'cancelled', 'closed', 'wontfix']);
 const MAX_OPEN_WORK_ITEMS = 12;

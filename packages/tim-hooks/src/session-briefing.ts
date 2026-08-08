@@ -1,6 +1,6 @@
-// Assembles the substance carried by a session-start directive. Lives in tim-cli
-// (not tim-hooks/marker.ts) because it needs an open TimStore, and marker.ts is on
-// the fast path of every hook.
+// Assembles the substance carried by a session-start directive. Kept out of
+// marker.ts because it needs an open TimStore, and marker.ts is on the fast path
+// of every hook — importing this module is a deliberate act, never incidental.
 import {
   SessionManager,
   findChildByKind,
@@ -8,7 +8,7 @@ import {
   CHARS_PER_TOKEN,
   type TimStore,
 } from 'tim-store';
-import type { DirectiveBriefing } from 'tim-hooks';
+import type { DirectiveBriefing } from './marker.js';
 
 const CLOSED_TASK_STATUSES = new Set(['done', 'cancelled', 'closed', 'wontfix']);
 const MAX_OPEN_WORK_ITEMS = 12;

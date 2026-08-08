@@ -91,7 +91,7 @@ export function createViewerServer(data: ViewerData): http.Server {
       }
 
       if (url.pathname === '/api/projects') {
-        sendJson(res, 200, { projects: data.listProjects() });
+        sendJson(res, 200, { projects: data.listProjects(), otherRoots: data.otherRoots() });
         return;
       }
 
@@ -101,7 +101,9 @@ export function createViewerServer(data: ViewerData): http.Server {
           sendJson(res, 400, { error: 'id required' });
           return;
         }
-        const result = data.children(id);
+        const result = data.children(id, {
+          includeHidden: url.searchParams.get('hidden') === '1',
+        });
         if (!result) {
           sendJson(res, 404, { error: `No entry with id or label "${id}"` });
           return;

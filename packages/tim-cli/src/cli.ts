@@ -12,6 +12,7 @@ import {
   getBriefingMaxTokens,
   buildLoadDirective,
   buildSessionDirective,
+  collectDirectiveBriefing,
   recoverProjectBinding,
   collectBindingReport,
   bindUnboundBindings,
@@ -58,7 +59,6 @@ import { cmdSecret } from './secret.js';
 import { runReleaseCheck } from './release-check.js';
 import { cmdMigrateFromHmem } from './migrate-from-hmem.js';
 import { cmdSetupAgent } from './setup-agent.js';
-import { collectDirectiveBriefing } from './session-briefing.js';
 import { cmdViewer } from './viewer.js';
 import { NEW_PROJECT_ALIASES, hasBooleanFlag, parseArgs, valueOptionsFor } from './args.js';
 import { promptSubmitEnvelope, sessionStartEnvelope, readJsonStdin } from './claude-hook-io.js';

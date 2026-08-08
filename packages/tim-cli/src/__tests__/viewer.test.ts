@@ -81,6 +81,19 @@ async function seed(): Promise<void> {
   });
   await store.delete('NOTE-DELETED');
 
+  // Parentless entries that are not projects. ROOT-BARE carries no `kind` at
+  // all, which is the case a plain `json_extract(...) != 'project'` silently
+  // drops (NULL != 'project' is NULL, not true).
+  await store.write('loose root with a kind', {
+    id: 'ROOT-KINDED',
+    title: 'Loose Root With Kind',
+    metadata: { kind: 'note' },
+  });
+  await store.write('loose root without a kind', {
+    id: 'ROOT-BARE',
+    title: 'Loose Root Without Kind',
+  });
+
   // Session subtree: Sessions -> session -> Summary/Exchanges -> batches -> turns.
   await store.write('Sessions', {
     id: 'SESSIONS',
@@ -188,6 +201,25 @@ describe('viewer children endpoint', () => {
     expect(body.children.some((c: Json) => c.id === 'NOTE-DELETED')).toBe(false);
     expect(body.parent.hiddenChildCount).toBe(1);
     expect(body.parent.childCount).toBe(WIDE_CHILD_COUNT);
+  });
+
+  it('lists soft-deleted children on request, flagged rather than merely counted', async () => {
+    const { body } = await get('/api/children?id=SEC-NOTES&hidden=1');
+    expect(body.children).toHaveLength(WIDE_CHILD_COUNT + 1);
+    const deleted = body.children.find((c: Json) => c.id === 'NOTE-DELETED');
+    expect(deleted.hidden).toBe(true);
+    // Live siblings must not pick up the flag.
+    expect(body.children.find((c: Json) => c.id === 'NOTE-1').hidden).toBe(false);
+  });
+
+  it('offers parentless non-project entries as roots, including kind-less ones', async () => {
+    const { body } = await get('/api/projects');
+    const ids = body.otherRoots.map((r: Json) => r.id);
+    expect(ids).toContain('ROOT-KINDED');
+    expect(ids).toContain('ROOT-BARE');
+    // Projects stay in their own list; a root must not appear twice.
+    expect(ids).not.toContain('PROJ-1');
+    expect(body.projects.map((p: Json) => p.id)).toContain('PROJ-1');
   });
 
   it('shows render_depth=0 nodes and their subtree, exposing render_depth as data', async () => {

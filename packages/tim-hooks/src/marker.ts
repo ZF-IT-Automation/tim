@@ -463,7 +463,7 @@ export function findMarker(startCwd: string, options?: FindMarkerOptions): Marke
 /**
  * Substance carried by a start directive, pre-assembled by the caller. marker.ts is
  * imported by hooks that must stay fast, so it never touches the store itself — the
- * CLI reads the store and hands the finished text in (see tim-cli/session-briefing.ts).
+ * caller reads the store and hands the finished text in (see ./session-briefing.ts).
  */
 export interface DirectiveBriefing {
   /** Heading detail for the previous session, e.g. "2026-08-05 · 42 exchanges". */

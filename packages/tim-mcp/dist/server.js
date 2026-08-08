@@ -37,6 +37,7 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.TOOL_DEFS = void 0;
+exports.toolInputSchema = toolInputSchema;
 exports.createMcpServer = createMcpServer;
 exports.createHttpServer = createHttpServer;
 exports.startServer = startServer;
@@ -336,6 +337,16 @@ const TimResumeListSchema = zod_1.z.object({
     projectId: zod_1.z.string().optional().describe('Project label, e.g. P0063; defaults to the bound project'),
     limit: zod_1.z.number().int().min(1).max(25).optional().default(10),
 });
+const TimPreviewBriefingSchema = zod_1.z.object({
+    project: zod_1.z.string().describe('Project label, e.g. P0063'),
+    sessionId: zod_1.z.string().optional()
+        .describe('Session the delta is computed against; defaults to the project\'s most recent'),
+    maxTokens: zod_1.z.number().int().min(0).max(4000).optional()
+        .describe('Budget for the injected briefing; defaults to the configured value'),
+    origin: zod_1.z.enum(['marker', 'session']).optional()
+        .describe('Directive flavour: "marker" (.tim-project) or "session" (TIM session metadata)'),
+    cwd: zod_1.z.string().optional().describe('Directory named in the directive text'),
+});
 const TimSessionResumeSchema = zod_1.z.object({
     sessionId: zod_1.z.string().describe('Canonical session id to resume (pick from tim_resume_list)'),
     rawCount: zod_1.z.number().int().min(1).max(50).optional().default(10),
@@ -470,7 +481,14 @@ const TimErrorLogSchema = zod_1.z.object({
 const TimHealthSchema = zod_1.z.object({});
 const TimShowAllUnsummarizedSchema = zod_1.z.object({});
 const TimShowUntaggedSchema = zod_1.z.object({});
-// ─── ListTools registry (single source of truth) ────────
+/**
+ * A tool's parameters as JSON Schema. Shared by the ListTools handler and by
+ * `tim viewer`, which builds its parameter forms from the same output — so a
+ * form field can never describe a parameter the server would reject.
+ */
+function toolInputSchema(schema) {
+    return (0, zod_to_json_schema_1.zodToJsonSchema)(schema, { target: 'openApi3' });
+}
 exports.TOOL_DEFS = [
     {
         name: 'tim_read',
@@ -625,6 +643,13 @@ exports.TOOL_DEFS = [
         description: 'List resumable sessions of the bound project (most recent activity first) with date, tool, ' +
             'task summary, and exchange count. Follow the ACTION line: present to the user, then call tim_session_resume.',
         schema: TimResumeListSchema,
+    },
+    {
+        name: 'tim_preview_briefing',
+        description: 'Show what a session start would say for a project, without starting one: the directive text a ' +
+            'start hook emits plus the delta/update/cadence briefing. Creates no session, writes no marker, ' +
+            'runs no configured hooks — use it to inspect a briefing, not to begin work.',
+        schema: TimPreviewBriefingSchema,
     },
     {
         name: 'tim_session_resume',
@@ -1433,6 +1458,7 @@ const READ_TOOLS = new Set([
     'tim_show_unsummarized', 'tim_show_all_unsummarized', 'tim_show_untagged',
     'tim_resume_list',
     'tim_hook_prompt_submit',
+    'tim_preview_briefing',
 ]);
 const REMEMBER_TOOLS = new Set(['tim_remember']);
 function scheduleAutoSync(toolName, s) {
@@ -1555,7 +1581,7 @@ async function createMcpServer(options = {}) {
         const allTools = defs.map(def => ({
             name: def.name,
             description: def.description,
-            inputSchema: (0, zod_to_json_schema_1.zodToJsonSchema)(def.schema, { target: 'openApi3' }),
+            inputSchema: toolInputSchema(def.schema),
             internal: def.internal,
         }));
         const exposeInternal = process.env.TIM_EXPOSE_INTERNAL_TOOLS === '1';
@@ -2594,6 +2620,27 @@ async function createMcpServer(options = {}) {
                     }
                     const list = await getSessions().listResumableSessions(label, limit);
                     return { content: [{ type: 'text', text: (0, resume_output_js_1.formatResumeList)(label, list) }] };
+                }
+                case 'tim_preview_briefing': {
+                    const { project, sessionId, maxTokens, origin, cwd } = TimPreviewBriefingSchema.parse(args);
+                    const preview = await (0, tim_hooks_1.previewSessionStart)(s, {
+                        projectId: project,
+                        maxTokens: maxTokens ?? (0, tim_hooks_1.getBriefingMaxTokens)((0, tim_core_1.loadConfig)()),
+                        ...(sessionId ? { sessionId } : {}),
+                        ...(origin ? { origin } : {}),
+                        ...(cwd ? { cwd } : {}),
+                    });
+                    const text = [
+                        `project: ${preview.projectLabel} (${preview.binding})`,
+                        `session used for delta/cadence: ${preview.sessionId ?? '(none — project has no sessions)'}`,
+                        '',
+                        '── directive (what a start hook emits) ──',
+                        preview.directive,
+                        '',
+                        '── briefing (what tim_session_start returns) ──',
+                        preview.briefing ?? '(none)',
+                    ].join('\n');
+                    return { content: [{ type: 'text', text }] };
                 }
                 case 'tim_session_resume': {
                     const { sessionId, rawCount } = TimSessionResumeSchema.parse(args);

@@ -4,7 +4,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { SessionManager, TimStore } from 'tim-store';
-import { clampSummary } from '../session-briefing.js';
+import { clampSummary } from 'tim-hooks';
 
 const CLI = path.resolve(__dirname, '../../dist/cli.js');
 

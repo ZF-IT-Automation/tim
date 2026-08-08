@@ -41,6 +41,8 @@ export interface ViewerNode {
     childCount: number;
     /** Children excluded by the store's read paths (irrelevant or tombstoned). */
     hiddenChildCount: number;
+    /** This node is itself soft-deleted or tombstoned — the store's read paths skip it. */
+    hidden: boolean;
     secret: boolean;
     redacted: boolean;
     createdAt: string;
@@ -109,10 +111,28 @@ export declare class ViewerData {
     /** Entry points: every live entry with metadata.kind='project'. */
     listProjects(): ViewerNode[];
     /**
+     * Top-level entries that are not projects. `listProjects` only ever offered
+     * `kind='project'` as an entry point, which left every other parentless
+     * entry — imports, stray roots, sections whose project was retired —
+     * invisible in the tree even though the store still holds them.
+     *
+     * IFNULL, not a bare `!= 'project'`: json_extract returns NULL when the key
+     * is absent, and `NULL != 'project'` is NULL, so the plain comparison would
+     * filter out exactly the kind-less roots this exists to surface.
+     */
+    otherRoots(): ViewerNode[];
+    /**
      * Children of `id` — all of them, in tree order. `id` may be an entry id
      * or a project label.
+     *
+     * `includeHidden` drops the store's visibility filter so soft-deleted and
+     * tombstoned children come back too, flagged rather than merely counted:
+     * the viewer exists to explain what the store does, and "42 hidden" is not
+     * an answer to which 42.
      */
-    children(id: string): ViewerChildren | null;
+    children(id: string, options?: {
+        includeHidden?: boolean;
+    }): ViewerChildren | null;
     node(id: string): ViewerNodeDetail | null;
     /** Root-first breadcrumb, self excluded. */
     private ancestors;
