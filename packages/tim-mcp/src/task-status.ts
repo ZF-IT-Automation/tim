@@ -18,12 +18,24 @@ const TASK_STATUSES = new Set([
  * finished legacy tasks render as 'todo' forever. Only canonical status values are
  * accepted from the legacy field; other vocabularies there (metadata.status of
  * 'fixed'/'documented' on bug entries) are not task statuses.
+ *
+ * Bugs carry metadata.bug instead of metadata.task, with their own status
+ * vocabulary. The open/done distinction the listings filter on is shared, so
+ * bug statuses are mapped onto it here: 'open' (or missing) is still open work,
+ * 'wontfix'/'duplicate' are closed without a fix, everything else is done.
  */
 export function resolveEntryTaskStatus(metadata: Record<string, unknown>): string {
   const task = metadata.task;
   if (typeof task === 'object' && task !== null && !Array.isArray(task)) {
     const st = (task as { status?: unknown }).status;
     if (typeof st === 'string') return st;
+    return 'todo';
+  }
+  const bug = metadata.bug;
+  if (typeof bug === 'object' && bug !== null && !Array.isArray(bug)) {
+    const st = (bug as { status?: unknown }).status;
+    if (st === 'wontfix' || st === 'duplicate') return 'cancelled';
+    if (typeof st === 'string' && st !== 'open') return 'done';
     return 'todo';
   }
   const legacy = metadata.status;

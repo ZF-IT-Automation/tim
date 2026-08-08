@@ -265,7 +265,7 @@ describe('tim_search extended', () => {
     expect(missResponse.results).toHaveLength(0);
   });
 
-  it('rejects requested excerpts above 500 Unicode code points', async () => {
+  it('clamps requested excerpts above 500 Unicode code points and says so', async () => {
     client.kill();
     const store = new TimStore(dbPath);
     try {
@@ -281,8 +281,10 @@ describe('tim_search extended', () => {
       excerptChars: 501,
     });
 
-    expect(result.result?.isError).toBe(true);
-    expect(result.result?.content[0].text).toContain('500');
+    expect(result.result?.isError).toBeFalsy();
+    const response = JSON.parse(result.result!.content[0].text);
+    expect(response.clamped).toContain('excerptChars clamped from 501 to 500');
+    expect(response.results).toHaveLength(1);
   });
 
   it('marks a shortened excerpt truncated when no results are omitted', async () => {

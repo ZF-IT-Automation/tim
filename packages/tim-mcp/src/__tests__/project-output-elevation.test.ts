@@ -2,9 +2,11 @@
  * B4 task/bug elevation (self-improving-loop iteration 4).
  *
  * - Task-bearing sections: open tasks first, done/cancelled collapsed
- * - Next Steps: only metadata.task children (no philosophy notes)
  * - Bugs: open bugs first with status/severity badges
- * - Bugs & Next Steps: higher child cap (no premature "… N more")
+ * - Bugs: higher child cap (no premature "… N more")
+ *
+ * The 'Next Steps' cases are gone with the section itself — it left the schema
+ * and its children were moved into Tasks, so the renderer has one task branch.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -78,31 +80,18 @@ describe('formatProjectOutput task elevation (B4)', () => {
     expect(out).toMatch(/2 completed tasks \(done\/cancelled\)/);
   });
 
-  it('Next Steps shows only task-marked children', () => {
+  it('keeps non-task children visible below the tasks', () => {
     const children = [
-      section('next', 'Next Steps', 0),
-      child('n1', 'next', 'Philosophy note', { order: 0 }),
-      child('n2', 'next', 'Design spec', { order: 1, kind: 'note' }),
-      child('n3', 'next', 'Real task', { order: 2, task: { status: 'todo' } }),
+      section('tasks', 'Tasks', 0),
+      child('t1', 'tasks', 'Philosophy note', { order: 0 }),
+      child('t2', 'tasks', 'Real task', { order: 1, task: { status: 'todo' } }),
     ];
 
     const out = formatProjectOutput({ project, children, truncated: false }, 200);
-    expect(out).toMatch(/Real task \[todo\]/);
-    expect(out).not.toMatch(/Philosophy note/);
-    expect(out).not.toMatch(/Design spec/);
-  });
-
-  it('Next Steps hides done tasks and collapses them', () => {
-    const children = [
-      section('next', 'Next Steps', 0),
-      child('n1', 'next', 'Active', { order: 0, task: { status: 'in_progress' } }),
-      child('n2', 'next', 'Finished', { order: 1, task: { status: 'done' } }),
-    ];
-
-    const out = formatProjectOutput({ project, children, truncated: false }, 200);
-    expect(out).toMatch(/Active \[in_progress\]/);
-    expect(out).not.toMatch(/Finished \[done\]/);
-    expect(out).toMatch(/1 completed task \(done\/cancelled\)/);
+    const taskPos = out.indexOf('Real task [todo]');
+    const notePos = out.indexOf('Philosophy note');
+    expect(taskPos).toBeGreaterThan(-1);
+    expect(notePos).toBeGreaterThan(taskPos);
   });
 });
 
@@ -146,17 +135,6 @@ describe('formatProjectOutput bug elevation (B4)', () => {
 });
 
 describe('formatProjectOutput protected section child cap (B4)', () => {
-  it('does not truncate Next Steps at the default 10-child cap', () => {
-    const children = [section('next', 'Next Steps', 0)];
-    for (let i = 0; i < 15; i++) {
-      children.push(child(`n${i}`, 'next', `Task ${i}`, { order: i, task: { status: 'todo' } }));
-    }
-
-    const out = formatProjectOutput({ project, children, truncated: false }, 500);
-    expect(out).toMatch(/Task 14 \[todo\]/);
-    expect(out).not.toMatch(/… \d+ more/);
-  });
-
   it('does not truncate Bugs at the default 10-child cap', () => {
     const children = [section('bugs', 'Bugs', 0)];
     for (let i = 0; i < 12; i++) {

@@ -231,7 +231,10 @@ interface FormatBudget {
 
 const MAX_CHILDREN_PER_LEVEL = 10;
 const MAX_CHILDREN_PROTECTED_SECTIONS = 50;
-const PROTECTED_CHILD_SECTIONS = new Set(['Bugs', 'Next Steps']);
+// Tasks inherits the higher cap that 'Next Steps' used to hold: the work queue
+// moved there when that section was retired, and the default 10-child cap would
+// hide most of it in the brief.
+const PROTECTED_CHILD_SECTIONS = new Set(['Bugs', 'Tasks']);
 const PROJECT_SUMMARY_MARKER = '## Project Summary';
 // Fallback only — callers pass the configured value (briefing.recentSessions).
 const RECENT_SESSIONS_COUNT = DEFAULT_BRIEFING_RECENT_SESSIONS;
@@ -325,22 +328,6 @@ interface PreparedSectionChildren {
 }
 
 function prepareSectionChildren(children: Entry[], sectionName: string): PreparedSectionChildren {
-  // 'Next Steps' left the project schema — Tasks holds every work item now.
-  // This branch stays for projects that still carry the legacy section, so their
-  // open tasks keep sorting to the top instead of rendering as a flat list.
-  if (sectionName === 'Next Steps') {
-    const tasks = children.filter(c => isTaskMarker(c.metadata.task));
-    const active = tasks.filter(c => !isClosedTask(c)).sort(compareTaskEntries);
-    const collapsed = tasks.filter(c => isClosedTask(c));
-    return {
-      visible: active,
-      collapsedCount: collapsed.length,
-      collapsedLabel: collapsed.length === 1
-        ? '1 completed task (done/cancelled)'
-        : `${collapsed.length} completed tasks (done/cancelled)`,
-    };
-  }
-
   if (sectionName === 'Tasks') {
     const tasks = children.filter(c => isTaskMarker(c.metadata.task));
     const nonTasks = children.filter(c => !isTaskMarker(c.metadata.task));

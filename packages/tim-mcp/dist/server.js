@@ -168,9 +168,11 @@ const TimWriteSchema = zod_1.z.object({
 });
 const TimSearchSchema = zod_1.z.object({
     query: zod_1.z.string().describe('FTS5 search query'),
-    topK: zod_1.z.number().min(1).max(100).optional().default(10),
-    excerptChars: zod_1.z.number().int().min(0).max(500).optional().default(500)
-        .describe('Maximum Unicode code points per result excerpt'),
+    topK: zod_1.z.number().min(1).optional().default(10)
+        .describe('Maximum results; values above 100 are clamped to 100, not rejected'),
+    excerptChars: zod_1.z.number().int().min(0).optional().default(500)
+        .describe('Maximum Unicode code points per result excerpt; values above 500 are clamped to 500, ' +
+        'not rejected — the 24 KiB response budget truncates first either way'),
     searchType: zod_1.z.enum(['fts', 'vector', 'hybrid']).optional().default('fts'),
     root: zod_1.z.string().optional().describe('Scope to project (label/alias/name)'),
     type: zod_1.z.string().optional().describe('Filter metadata.type'),
@@ -1124,8 +1126,13 @@ async function fetchByWhat(store, what, labels) {
             const b = await store.getByTag('#error');
             return scopeEntries(store, dedupeById([...a, ...b]), labels);
         }
-        case 'bugs':
-            return scopeEntries(store, await store.getByTag('#bug'), labels);
+        case 'bugs': {
+            // Bugs are marked by metadata.type='bug' since the schema change; the tag
+            // is the older marker and still the only one some entries carry.
+            const a = await store.getByMetadataType('bug');
+            const b = await store.getByTag('#bug');
+            return scopeEntries(store, dedupeById([...a, ...b]), labels);
+        }
         case 'decisions':
             return scopeEntries(store, await store.getByTag('#decision'), labels);
         case 'learnings':
@@ -1911,7 +1918,9 @@ async function createMcpServer(options = {}) {
                     };
                 }
                 case 'tim_search': {
-                    const { query, topK, excerptChars, root, type, tag, status } = TimSearchSchema.parse(args);
+                    const parsed = TimSearchSchema.parse(args);
+                    const { query, root, type, tag, status } = parsed;
+                    const { topK, excerptChars, clamped } = (0, search_response_js_1.clampSearchRequest)(parsed.topK, parsed.excerptChars);
                     const usageSid = await usageSessionId();
                     const hasFilters = Boolean(root || type || tag || status);
                     let results = await s.search({ query, topK: hasFilters ? 1000 : topK });
@@ -1938,7 +1947,10 @@ async function createMcpServer(options = {}) {
                     if (hasFilters) {
                         results = results.slice(0, topK);
                     }
-                    const response = (0, search_response_js_1.buildBoundedSearchResponse)(results, excerptChars);
+                    const response = {
+                        ...(0, search_response_js_1.buildBoundedSearchResponse)(results, excerptChars),
+                        ...(clamped ? { clamped } : {}),
+                    };
                     bestEffortTelemetry('recordRead', () => s.recordRead(response.results.map(e => e.id), usageSid));
                     return {
                         content: [{ type: 'text', text: JSON.stringify(response) }],

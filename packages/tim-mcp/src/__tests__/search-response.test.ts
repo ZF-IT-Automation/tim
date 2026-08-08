@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Entry } from 'tim-core';
-import { buildBoundedSearchResponse } from '../search-response.js';
+import { buildBoundedSearchResponse, clampSearchRequest } from '../search-response.js';
 
 const MAX_SEARCH_TITLE_CODE_POINTS = 256;
 const MAX_SEARCH_TAGS = 16;
@@ -128,5 +128,22 @@ describe('buildBoundedSearchResponse', () => {
     expect(Buffer.byteLength(JSON.stringify(response), 'utf8')).toBeLessThanOrEqual(
       SEARCH_RESPONSE_MIN_BYTES,
     );
+  });
+});
+
+describe('clampSearchRequest', () => {
+  it('leaves in-range requests alone and reports nothing', () => {
+    expect(clampSearchRequest(10, 500)).toEqual({ topK: 10, excerptChars: 500 });
+  });
+
+  it('clamps oversized values and names the adjustment', () => {
+    expect(clampSearchRequest(2000, 5000)).toEqual({
+      topK: 100,
+      excerptChars: 500,
+      clamped: [
+        'topK clamped from 2000 to 100',
+        'excerptChars clamped from 5000 to 500',
+      ],
+    });
   });
 });
