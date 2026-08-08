@@ -355,12 +355,17 @@ class TimStore {
         }
         const needle = q.toLowerCase();
         const rows = this.db.prepare(`
-      SELECT metadata FROM entries
+      SELECT metadata, title FROM entries
       WHERE json_extract(metadata, '$.kind') = 'project'
         AND irrelevant = 0
         AND tombstoned_at IS NULL
     `).all();
+        // Aliases beat names, an exact name beats a partial one. Anything the
+        // caller could reasonably have typed should land somewhere — and when it
+        // lands on several projects, the ambiguous branch names them all.
         const matches = [];
+        const exactName = [];
+        const partialName = [];
         for (const row of rows) {
             const meta = JSON.parse(row.metadata);
             const label = typeof meta.label === 'string' ? meta.label : '';
@@ -370,13 +375,28 @@ class TimStore {
             if (aliases.some(a => String(a).toLowerCase() === needle)) {
                 if (!matches.includes(label))
                     matches.push(label);
+                continue;
+            }
+            const name = projectDisplayName(row.title);
+            if (!name)
+                continue;
+            if (name === needle) {
+                if (!exactName.includes(label))
+                    exactName.push(label);
+            }
+            else if (name.includes(needle)) {
+                if (!partialName.includes(label))
+                    partialName.push(label);
             }
         }
-        if (matches.length === 0)
+        const resolvedBy = matches.length > 0 ? matches
+            : exactName.length > 0 ? exactName
+                : partialName;
+        if (resolvedBy.length === 0)
             return { status: 'not_found', query: q };
-        if (matches.length === 1)
-            return { status: 'found', label: matches[0] };
-        return { status: 'ambiguous', query: q, labels: matches.sort() };
+        if (resolvedBy.length === 1)
+            return { status: 'found', label: resolvedBy[0] };
+        return { status: 'ambiguous', query: q, labels: resolvedBy.sort() };
     }
     /**
      * Resolve a section by (projectId, title) within a project root.
@@ -2925,6 +2945,23 @@ function normalizeProjectAliases(aliases) {
         out.push(a);
     }
     return out;
+}
+/**
+ * The part of a project title a human would call the project's name, lowercased.
+ *
+ * Project titles carry a status line — "MAIMO-RPG | Active | TS/Node/SQLite | …"
+ * or "TIM — Theoretically Infinite Memory | Active | …" — so matching the whole
+ * title would make "active" resolve to twenty projects. Only the leading segment
+ * is the name.
+ *
+ * Returns '' for projects marked [OBSOLETE], which stay reachable by label but
+ * are kept out of name matching so they don't crowd the ambiguous list.
+ */
+function projectDisplayName(title) {
+    const t = (title ?? '').trim();
+    if (!t || t.toUpperCase().startsWith('[OBSOLETE]'))
+        return '';
+    return t.split(/\s+[—|]\s*|\s*\|\s*/)[0].trim().toLowerCase();
 }
 function splitTitleBody(content, explicitTitle) {
     if (explicitTitle !== undefined) {

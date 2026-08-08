@@ -47,14 +47,25 @@ describe('explainMissingParams', () => {
   const schema = z.object({ label: z.string(), depth: z.number().optional() });
 
   it('names the missing parameter, what was sent, and what is valid', () => {
+    const err = schema.safeParse({ sections: [] });
+    const msg = explainMissingParams('tim_load_project', (err as any).error, { sections: [] }, [
+      'label',
+      'depth',
+    ]);
+    expect(msg).toBe(
+      "tim_load_project: missing required parameter 'label'. Received: sections. Valid parameters: label, depth."
+    );
+  });
+
+  it('tells a caller who sent a directory how to get from it to a label', () => {
     const err = schema.safeParse({ cwd: '/tmp/x' });
     const msg = explainMissingParams('tim_load_project', (err as any).error, { cwd: '/tmp/x' }, [
       'label',
       'depth',
     ]);
-    expect(msg).toBe(
-      "tim_load_project: missing required parameter 'label'. Received: cwd. Valid parameters: label, depth."
-    );
+    expect(msg).toContain("Received: cwd.");
+    expect(msg).toContain('the project name (TIM)');
+    expect(msg).toContain('.tim-project');
   });
 
   it('returns null for failures that are not a missing parameter', () => {

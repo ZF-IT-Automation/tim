@@ -60,9 +60,18 @@ export function explainMissingParams(
     ? Object.keys(args as Record<string, unknown>)
     : [];
 
+  // A caller who sent a directory instead of a name wanted marker resolution.
+  // Naming the file is cheaper than teaching every tool to walk the tree.
+  const sentCwd = tool === 'tim_load_project' && unique.includes('label') && passed.includes('cwd');
+
   return [
     `${tool}: missing required parameter${unique.length > 1 ? 's' : ''} ${unique.map(k => `'${k}'`).join(', ')}.`,
     passed.length > 0 ? ` Received: ${passed.join(', ')}.` : ' Received no arguments.',
     ` Valid parameters: ${validKeys.join(', ')}.`,
+    sentCwd
+      ? " 'label' takes a label (P0063), an alias, or the project name (TIM) — a directory is not one." +
+        ' To go from a directory to a project, read the nearest .tim-project file walking up from it' +
+        ' and pass the label it names.'
+      : '',
   ].join('');
 }

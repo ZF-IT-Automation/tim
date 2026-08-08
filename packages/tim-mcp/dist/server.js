@@ -421,7 +421,8 @@ const TimCreateProjectSchema = zod_1.z.object({
         .describe('Must be true, and only for an intentional database-only project; mutually exclusive with path'),
 });
 const TimLoadProjectSchema = zod_1.z.object({
-    label: zod_1.z.string().describe('Project label, e.g. P0062'),
+    label: zod_1.z.string()
+        .describe('Project label (P0062), alias, or name (TIM). Several matches list the candidates.'),
     depth: zod_1.z.number().min(1).max(5).optional().default(3)
         .describe('How many child levels to load (1-5)'),
     budget: zod_1.z.number().min(1).max(1000).optional().default(200)
@@ -433,7 +434,8 @@ const TimLoadProjectSchema = zod_1.z.object({
         .describe('false = cross-project read without binding the session (replaces tim_read_project)'),
 });
 const TimReadProjectSchema = zod_1.z.object({
-    label: zod_1.z.string().describe('Project label, e.g. P0062'),
+    label: zod_1.z.string()
+        .describe('Project label (P0062), alias, or name (TIM). Several matches list the candidates.'),
     depth: zod_1.z.number().min(1).max(5).optional().default(3)
         .describe('How many child levels to load (1-5)'),
     budget: zod_1.z.number().min(1).max(1000).optional().default(200)
@@ -792,10 +794,23 @@ function metadataString(value) {
 function metadataKind(entry) {
     return metadataString(entry.metadata.kind);
 }
+/**
+ * "P0060 (Hermes Fork), P0061 (Hermes live CTX compression)" — a list the caller
+ * can actually choose from. Bare labels are useless for picking when the query
+ * that produced them was a name.
+ */
+async function describeProjectCandidates(store, labels) {
+    const described = await Promise.all(labels.map(async (label) => {
+        const entry = await store.read(label, { includeChildren: false });
+        const name = entry?.title?.split(/\s+[—|]\s*|\s*\|\s*/)[0]?.trim();
+        return name ? `${label} (${name})` : label;
+    }));
+    return described.join(', ');
+}
 async function resolveProjectEntry(store, query) {
     const resolved = await store.resolveProjectLabel(query);
     if (resolved.status === 'ambiguous') {
-        throw new Error(`ambiguous project: ${resolved.labels.join(', ')}`);
+        throw new Error(`'${query}' matches ${await describeProjectCandidates(store, resolved.labels)} — repeat with one label.`);
     }
     if (resolved.status !== 'found') {
         throw new Error(`project not found: ${query}`);
@@ -2781,7 +2796,8 @@ async function createMcpServer(options = {}) {
                     const { label, depth, budget, sections, sessionId: sessionIdArg, bind } = TimLoadProjectSchema.parse(args);
                     const resolved = await s.resolveProjectLabel(label);
                     if (resolved.status === 'ambiguous') {
-                        return errorResult(`Ambiguous alias: matches ${resolved.labels.join(', ')}. Use label.`);
+                        return errorResult(`'${label}' matches ${await describeProjectCandidates(s, resolved.labels)} — ` +
+                            'repeat with the one you meant.');
                     }
                     if (resolved.status === 'not_found') {
                         return errorResult(`Project not found: ${label}`);
@@ -2855,7 +2871,8 @@ async function createMcpServer(options = {}) {
                     const { label, depth, budget, sections } = TimReadProjectSchema.parse(args);
                     const resolved = await s.resolveProjectLabel(label);
                     if (resolved.status === 'ambiguous') {
-                        return errorResult(`Ambiguous alias: matches ${resolved.labels.join(', ')}. Use label.`);
+                        return errorResult(`'${label}' matches ${await describeProjectCandidates(s, resolved.labels)} — ` +
+                            'repeat with the one you meant.');
                     }
                     if (resolved.status === 'not_found') {
                         return errorResult(`Project not found: ${label}`);
