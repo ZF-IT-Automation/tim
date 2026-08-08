@@ -21,6 +21,10 @@
  *
  * Usage:
  *   node scripts/migrate-bugs.mjs --project P0063 [--db PATH] [--apply]
+ *   node scripts/migrate-bugs.mjs --section <sectionId> [--db PATH] [--apply]
+ *
+ * --section takes a Bugs section id directly, for projects whose label resolves
+ * to a different tree than the one holding the section (P0062 has two).
  */
 
 import path from 'node:path';
@@ -31,6 +35,7 @@ const defaultDb = path.join(process.env.HOME ?? '', '.tim', 'tim.db');
 function parseArgs(argv) {
   let dbPath = defaultDb;
   let project = null;
+  let sectionId = null;
   let apply = false;
 
   for (let i = 2; i < argv.length; i++) {
@@ -39,6 +44,8 @@ function parseArgs(argv) {
       apply = true;
     } else if (arg === '--project') {
       project = argv[++i];
+    } else if (arg === '--section') {
+      sectionId = argv[++i];
     } else if (arg === '--db') {
       dbPath = argv[++i];
     } else if (arg === '--help' || arg === '-h') {
@@ -50,11 +57,11 @@ function parseArgs(argv) {
     }
   }
 
-  if (!project) {
-    console.error('--project is required (e.g. --project P0063)');
+  if (!project && !sectionId) {
+    console.error('--project or --section is required (e.g. --project P0063)');
     process.exit(1);
   }
-  return { dbPath, project, apply };
+  return { dbPath, project, sectionId, apply };
 }
 
 const CLOSED_STATUS = { done: 'fixed', fixed: 'fixed', documented: 'documented', cancelled: 'wontfix' };
@@ -83,25 +90,32 @@ function plan(entry) {
 }
 
 async function main() {
-  const { dbPath, project, apply } = parseArgs(process.argv);
+  const { dbPath, project, sectionId, apply } = parseArgs(process.argv);
   const store = new TimStore(dbPath);
 
   try {
-    const resolved = await store.resolveProjectLabel(project);
-    if (resolved.status !== 'found') {
-      console.error(`Project not resolvable: ${project} (${resolved.status})`);
-      process.exit(1);
-    }
-    const root = await store.read(resolved.label);
-    const section = await store.resolveSectionByTitle(root.id, 'Bugs');
-    if (section.status !== 'found') {
-      console.error(`No unique 'Bugs' section in ${project} (${section.status})`);
-      process.exit(1);
+    let sectionRef = sectionId;
+    let label = sectionId;
+
+    if (!sectionRef) {
+      const resolved = await store.resolveProjectLabel(project);
+      if (resolved.status !== 'found') {
+        console.error(`Project not resolvable: ${project} (${resolved.status})`);
+        process.exit(1);
+      }
+      const root = await store.read(resolved.label);
+      const section = await store.resolveSectionByTitle(root.id, 'Bugs');
+      if (section.status !== 'found') {
+        console.error(`No unique 'Bugs' section in ${project} (${section.status})`);
+        process.exit(1);
+      }
+      sectionRef = section.id;
+      label = `${resolved.label} (root ${root.id})`;
     }
 
-    const children = await store.getChildren(section.id);
+    const children = await store.getChildren(sectionRef);
     console.log(`DB: ${dbPath}`);
-    console.log(`Project: ${resolved.label} · Bugs children: ${children.length}`);
+    console.log(`Bugs section: ${label} · children: ${children.length}`);
     console.log(`Mode: ${apply ? 'WRITE' : 'dry-run'}\n`);
 
     let migrated = 0;

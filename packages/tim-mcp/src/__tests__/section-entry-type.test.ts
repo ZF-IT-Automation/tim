@@ -50,6 +50,17 @@ describe('applySectionEntryType', () => {
     expect(applySectionEntryType(explicitMarker, 'Bugs', 'section')).toBe(explicitMarker);
   });
 
+  it("adds the missing type when the caller passed the section's own marker", () => {
+    expect(applySectionEntryType({ bug: { status: 'open' } }, 'Bugs', 'section')).toEqual({
+      type: 'bug',
+      bug: { status: 'open' },
+    });
+    expect(applySectionEntryType({ task: { status: 'todo' } }, 'Tasks', 'section')).toEqual({
+      type: 'task',
+      task: { status: 'todo' },
+    });
+  });
+
   it('leaves schema entries and untyped sections alone', () => {
     const sectionMeta = { kind: 'section' };
     expect(applySectionEntryType(sectionMeta, 'Bugs', 'section')).toBe(sectionMeta);

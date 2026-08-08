@@ -41,11 +41,18 @@ function applySectionEntryType(metadata, sectionName, parentKind) {
         return metadata;
     if (typeof meta.type === 'string' && meta.type)
         return metadata;
-    // Already classified as any of the three — don't add a second marker.
-    if (Object.values(ENTRY_TYPE_MARKERS).some(m => meta[m.field] !== undefined))
+    // Classified as something else already — don't add a second marker.
+    const foreignMarkers = Object.entries(ENTRY_TYPE_MARKERS)
+        .filter(([type]) => type !== entryType)
+        .map(([, m]) => m.field);
+    if (foreignMarkers.some(field => meta[field] !== undefined))
         return metadata;
+    // A caller who passed the section's own marker (metadata.bug under Bugs) still
+    // needs `type` — the listings select on it, so without it the entry is written
+    // into the section and then invisible in the section's listing.
     meta.type = entryType;
-    meta[marker.field] = { ...marker.defaults };
+    if (meta[marker.field] === undefined)
+        meta[marker.field] = { ...marker.defaults };
     return meta;
 }
 /**
