@@ -1,4 +1,6 @@
-// Read-only projection of the entry tree for `tim viewer`.
+// Read-only projection of the entry tree for `tim viewer`. This module never
+// writes; the viewer's tool panel reaches a writable store only by forwarding
+// to the MCP server (see viewer-tools.ts), never through here.
 //
 // Two deliberate departures from the rest of the CLI:
 //

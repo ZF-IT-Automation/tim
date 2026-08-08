@@ -44,7 +44,30 @@ export const VIEWER_PAGE = `<!doctype html>
   button:hover { border-color: var(--accent); color: var(--accent); }
   main { flex: 1; display: flex; min-height: 0; }
   #tree { width: 55%; overflow: auto; padding: 8px 12px; border-right: 1px solid var(--line); }
-  #inspector { flex: 1; overflow: auto; padding: 12px; background: var(--panel); }
+  #right { flex: 1; display: flex; flex-direction: column; min-width: 0; background: var(--panel); }
+  #tabs { display: flex; gap: 4px; padding: 6px 12px 0; border-bottom: 1px solid var(--line); }
+  #tabs button { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+  #tabs button.on { color: var(--accent); border-color: var(--accent); border-bottom-color: var(--panel); }
+  .pane { flex: 1; overflow: auto; padding: 12px; }
+  .pane[hidden] { display: none; }
+  #toolpane { display: flex; gap: 12px; align-items: flex-start; }
+  #toollist { width: 190px; flex: none; overflow: auto; }
+  #toollist div {
+    padding: 2px 4px; border-radius: 3px; cursor: pointer; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis;
+  }
+  #toollist div:hover { background: rgba(127,127,127,.12); }
+  #toollist div.on { background: rgba(111,178,255,.18); color: var(--accent); }
+  #toolform { flex: 1; min-width: 0; }
+  .field { margin-bottom: 6px; }
+  .field label { display: block; color: var(--dim); font-size: 11px; }
+  .field input, .field textarea, #simpane input, #simpane select {
+    width: 100%; background: var(--bg); color: var(--fg); border: 1px solid var(--line);
+    border-radius: 3px; padding: 3px 6px; font: inherit; min-width: 0;
+  }
+  .field textarea { min-height: 48px; resize: vertical; }
+  .req { color: var(--warn); }
+  .forced { color: var(--warn); font-size: 11px; margin-bottom: 6px; }
   .kids { margin-left: 14px; border-left: 1px dotted var(--line); padding-left: 8px; }
   .row { display: flex; align-items: baseline; gap: 6px; padding: 1px 3px; border-radius: 3px; cursor: default; }
   .row:hover { background: rgba(127,127,127,.12); }
@@ -86,7 +109,41 @@ export const VIEWER_PAGE = `<!doctype html>
 </header>
 <main>
   <div id="tree"></div>
-  <div id="inspector"><span class="k">Select a node.</span></div>
+  <div id="right">
+    <div id="tabs">
+      <button data-pane="inspector" class="on">Node</button>
+      <button data-pane="toolpane">Read tools</button>
+      <button data-pane="simpane">Session start</button>
+    </div>
+    <div id="inspector" class="pane"><span class="k">Select a node.</span></div>
+    <div id="toolpane" class="pane" hidden>
+      <div id="toollist"></div>
+      <div id="toolform"></div>
+    </div>
+    <div id="simpane" class="pane" hidden>
+      <div class="field">
+        <label for="simproject">project</label>
+        <select id="simproject"></select>
+      </div>
+      <div class="field">
+        <label for="simtokens">maxTokens (blank = configured default)</label>
+        <input id="simtokens" placeholder="e.g. 700" autocomplete="off">
+      </div>
+      <div class="field">
+        <label for="simsession">sessionId (blank = the project's most recent; the result names it)</label>
+        <input id="simsession" placeholder="from tim_resume_list" autocomplete="off">
+      </div>
+      <div class="field">
+        <label for="simorigin">directive origin</label>
+        <select id="simorigin">
+          <option value="marker">marker (.tim-project)</option>
+          <option value="session">session (TIM session metadata)</option>
+        </select>
+      </div>
+      <button id="simrun">Simulate session start</button>
+      <div id="simout"></div>
+    </div>
+  </div>
 </main>
 <script>
 (function () {
@@ -208,6 +265,9 @@ export const VIEWER_PAGE = `<!doctype html>
   }
 
   function select(id) {
+    // Clicking a node means "show me this node", even from another tab.
+    var nodeTab = document.querySelector('#tabs button[data-pane="inspector"]');
+    if (nodeTab && inspEl.hidden) nodeTab.click();
     inspEl.textContent = '';
     inspEl.appendChild(el('div', 'k', 'loading…'));
     return api('/api/node?id=' + encodeURIComponent(id)).then(function (data) {
@@ -329,6 +389,163 @@ export const VIEWER_PAGE = `<!doctype html>
   document.getElementById('jump').addEventListener('keydown', function (e) {
     if (e.key === 'Enter') document.getElementById('jumpbtn').onclick();
   });
+  // ── Read-tool panel ─────────────────────────────────────────────────────
+  // Forms are generated from the JSON Schema the MCP server itself answers
+  // ListTools with, so a field can never describe a parameter the server would
+  // reject. Values are typed as JSON when the schema says non-string, because
+  // "5" and 5 are different arguments and the server checks.
+
+  var toolListEl = document.getElementById('toollist');
+  var toolFormEl = document.getElementById('toolform');
+  var toolsLoaded = false;
+
+  function schemaOf(tool, key) {
+    return (tool.inputSchema.properties || {})[key] || {};
+  }
+
+  function isRequired(tool, key) {
+    return (tool.inputSchema.required || []).indexOf(key) !== -1;
+  }
+
+  function fieldValue(tool, key, raw) {
+    var text = raw.trim();
+    if (!text) return undefined;
+    var spec = schemaOf(tool, key);
+    if (spec.type === 'string') return raw;
+    // Numbers, booleans, arrays and objects arrive as text; parse so the
+    // server sees the type its schema asks for. Unparseable text is passed
+    // through unchanged so the server's own error explains the problem.
+    try { return JSON.parse(text); } catch (e) { return raw; }
+  }
+
+  function renderTool(tool) {
+    toolFormEl.textContent = '';
+    toolFormEl.appendChild(el('h2', null, tool.name));
+    toolFormEl.appendChild(el('div', 'k', tool.description));
+
+    if (tool.forced) {
+      toolFormEl.appendChild(el('div', 'forced',
+        'the viewer pins ' + JSON.stringify(tool.forced) + ' on this call'));
+    }
+
+    var keys = Object.keys(tool.inputSchema.properties || {});
+    var inputs = {};
+    keys.forEach(function (key) {
+      var spec = schemaOf(tool, key);
+      if (tool.forced && tool.forced[key] !== undefined) return;
+      var wrap = el('div', 'field');
+      var label = el('label', null, key + (spec.type ? ' : ' + spec.type : ''));
+      if (isRequired(tool, key)) label.appendChild(el('span', 'req', ' *'));
+      if (spec.description) label.appendChild(el('span', 'k', ' — ' + spec.description));
+      var input = el(spec.type === 'object' || spec.type === 'array' ? 'textarea' : 'input');
+      if (spec.default !== undefined) input.placeholder = 'default: ' + JSON.stringify(spec.default);
+      wrap.appendChild(label);
+      wrap.appendChild(input);
+      toolFormEl.appendChild(wrap);
+      inputs[key] = input;
+    });
+    if (!keys.length) toolFormEl.appendChild(el('div', 'k', '(no parameters)'));
+
+    var run = el('button', null, 'Call ' + tool.name);
+    var out = el('div');
+    run.onclick = function () {
+      var args = {};
+      Object.keys(inputs).forEach(function (key) {
+        var v = fieldValue(tool, key, inputs[key].value);
+        if (v !== undefined) args[key] = v;
+      });
+      out.textContent = '';
+      out.appendChild(el('div', 'k', 'calling…'));
+      api('/api/tool?name=' + encodeURIComponent(tool.name) +
+          '&args=' + encodeURIComponent(JSON.stringify(args)))
+        .then(function (data) {
+          out.textContent = '';
+          out.appendChild(el('pre', null, data.text || '(empty response)'));
+        })
+        .catch(function (e) {
+          out.textContent = '';
+          out.appendChild(el('div', 'err', e.message));
+        });
+    };
+    toolFormEl.appendChild(run);
+    toolFormEl.appendChild(out);
+  }
+
+  function loadTools() {
+    if (toolsLoaded) return Promise.resolve();
+    toolsLoaded = true;
+    return api('/api/tools').then(function (data) {
+      toolListEl.textContent = '';
+      data.tools.forEach(function (tool) {
+        var item = el('div', null, tool.name);
+        item.onclick = function () {
+          Array.prototype.forEach.call(toolListEl.children, function (c) { c.className = ''; });
+          item.className = 'on';
+          renderTool(tool);
+        };
+        toolListEl.appendChild(item);
+      });
+    }).catch(function (e) {
+      toolsLoaded = false;
+      toolListEl.appendChild(el('div', 'err', e.message));
+    });
+  }
+
+  // ── Session-start simulation ────────────────────────────────────────────
+  // Read-only by construction: tim_preview_briefing assembles the text a start
+  // hook would emit without creating a session, writing a marker, or running
+  // configured hooks.
+
+  function loadSimProjects() {
+    var sel = document.getElementById('simproject');
+    if (sel.options.length) return Promise.resolve();
+    return api('/api/projects').then(function (data) {
+      data.projects.forEach(function (p) {
+        var o = document.createElement('option');
+        o.value = p.label || p.id;
+        o.textContent = (p.label ? p.label + ' — ' : '') + p.title;
+        sel.appendChild(o);
+      });
+    });
+  }
+
+  document.getElementById('simrun').onclick = function () {
+    var out = document.getElementById('simout');
+    var args = {
+      project: document.getElementById('simproject').value,
+      origin: document.getElementById('simorigin').value,
+    };
+    var tokens = document.getElementById('simtokens').value.trim();
+    if (tokens) args.maxTokens = Number(tokens);
+    var session = document.getElementById('simsession').value.trim();
+    if (session) args.sessionId = session;
+
+    out.textContent = '';
+    out.appendChild(el('div', 'k', 'simulating…'));
+    api('/api/tool?name=tim_preview_briefing&args=' + encodeURIComponent(JSON.stringify(args)))
+      .then(function (data) {
+        out.textContent = '';
+        out.appendChild(el('pre', null, data.text));
+      })
+      .catch(function (e) {
+        out.textContent = '';
+        out.appendChild(el('div', 'err', e.message));
+      });
+  };
+
+  Array.prototype.forEach.call(document.querySelectorAll('#tabs button'), function (btn) {
+    btn.onclick = function () {
+      Array.prototype.forEach.call(document.querySelectorAll('#tabs button'), function (b) {
+        b.className = b === btn ? 'on' : '';
+      });
+      Array.prototype.forEach.call(document.querySelectorAll('.pane'), function (p) {
+        p.hidden = p.id !== btn.dataset.pane;
+      });
+      if (btn.dataset.pane === 'toolpane') loadTools();
+      if (btn.dataset.pane === 'simpane') loadSimProjects();
+    };
+  });
+
   document.getElementById('reload').onclick = function () { loadStats(); loadProjects(); };
   // Toggling rebuilds the tree: already-loaded child lists were fetched under
   // the old filter, so patching them in place would leave a mixed view.

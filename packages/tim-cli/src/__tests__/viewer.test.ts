@@ -10,6 +10,7 @@ import {
   type ViewerHandle,
 } from '../viewer-server.js';
 import { ViewerData, REDACTED_TITLE } from '../viewer-data.js';
+import { inspectorToolArgs } from '../viewer-tools.js';
 
 // Deliberately wider than the MCP renderer's MAX_CHILDREN_PER_LEVEL (10).
 const WIDE_CHILD_COUNT = 25;
@@ -332,6 +333,75 @@ describe('viewer secret handling', () => {
       expect(node!.metadata).toMatchObject({ secret: true });
     } finally {
       data.close();
+    }
+  });
+});
+
+describe('viewer tool panel', () => {
+  it('offers read tools only — no writes, no tim_sync, no tim_export', async () => {
+    const { body } = await get('/api/tools');
+    const names = body.tools.map((t: Json) => t.name);
+    expect(names).toContain('tim_read');
+    expect(names).toContain('tim_preview_briefing');
+    // tim_sync pushes to the sync server; tim_export writes a file to disk.
+    // Both sit in the server's READ_TOOLS, which is why the allowlist is its own.
+    for (const denied of ['tim_write', 'tim_update', 'tim_delete', 'tim_sync', 'tim_export']) {
+      expect(names).not.toContain(denied);
+    }
+  });
+
+  it('ships a JSON schema for every tool it offers', async () => {
+    const { body } = await get('/api/tools');
+    expect(body.tools.length).toBeGreaterThan(0);
+    for (const tool of body.tools) {
+      expect(tool.inputSchema.type).toBe('object');
+      expect(typeof tool.description).toBe('string');
+    }
+  });
+
+  it('refuses a tool outside the allowlist before any connection is attempted', async () => {
+    const { status, body } = await get(
+      '/api/tool?name=tim_write&args=' + encodeURIComponent('{"content":"x"}'),
+    );
+    // 403, not 502: the refusal is the viewer's, and it happens whether or not
+    // an MCP server is running.
+    expect(status).toBe(403);
+    expect(body.error).toMatch(/not callable from the viewer/);
+  });
+
+  it('rejects args that are not a JSON object', async () => {
+    expect((await get('/api/tool?name=tim_read&args=%5B1%5D')).status).toBe(400);
+    expect((await get('/api/tool?name=tim_read&args=notjson')).status).toBe(400);
+    expect((await get('/api/tool')).status).toBe(400);
+  });
+
+  it('pins bind:false on tim_load_project even when the form asks to bind', () => {
+    // bind:true would start a project session and write a .tim-project marker.
+    expect(inspectorToolArgs('tim_load_project', { label: 'P0001', bind: true }))
+      .toEqual({ label: 'P0001', bind: false });
+    // Other tools pass through untouched.
+    expect(inspectorToolArgs('tim_read', { id: 'P0001' })).toEqual({ id: 'P0001' });
+  });
+
+  it('declares the pinned argument instead of applying it invisibly', async () => {
+    const { body } = await get('/api/tools');
+    const load = body.tools.find((t: Json) => t.name === 'tim_load_project');
+    expect(load.forced).toEqual({ bind: false });
+  });
+
+  it('reports an unreachable MCP server as 502 with an actionable message', async () => {
+    // Port 1 is never the MCP server; the panel must fail loudly, and must say
+    // that the tree is unaffected.
+    const previous = process.env.TIM_MCP_PORT;
+    process.env.TIM_MCP_PORT = '1';
+    try {
+      const { status, body } = await get('/api/tool?name=tim_stats&args=%7B%7D');
+      expect(status).toBe(502);
+      expect(body.error).toMatch(/Cannot reach the TIM MCP server/);
+      expect(body.error).toMatch(/the tree does not/);
+    } finally {
+      if (previous === undefined) delete process.env.TIM_MCP_PORT;
+      else process.env.TIM_MCP_PORT = previous;
     }
   });
 });
