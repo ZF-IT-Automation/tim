@@ -1,114 +1,118 @@
 # Handoff — next session
 
-Written 2026-08-07 ~22:50 local. Repo `/home/bbbee/projects/tim`, branch
-`claude/tim-hmem-analysis-xt5j59` (PR #11). Committed as `7e2b138`, not yet pushed.
+Written 2026-08-08 ~07:05 local. Repo `/home/bbbee/projects/tim`, branch
+`claude/tim-hmem-analysis-xt5j59` (PR #11). Committed and pushed as `10778a6`.
 
-The previous handoff asked for the Codex hook. It is done, built, installed on this host
-and verified against the live database. This file is the short version; the full trail is
-in TIM under `P0063/Bugs` and `P0063/Next Steps`.
+The previous handoff asked for Cursor exchange logging. It is done, built, installed on
+this host and verified against the live database. The full trail is in TIM under
+`P0063/Next Steps` (the task node) and `P0063/Bugs`.
 
 ---
 
-## Your job: work through the open task nodes
+## Your job: keep working through the open task nodes
 
-Benni's instruction at the end of the last session: **"als nächstes arbeiten wir noch offene
-Task-Nodes ab"**. So this is not a single-topic session. Start with `tim_show kind="tasks"`
-and work the list, highest priority first.
+Benni's standing instruction: **"als nächstes arbeiten wir noch offene Task-Nodes ab"**.
+Start with `tim_show what="tasks"` and work the list, highest priority first. The
+session-continuity work (Claude, Codex, Cursor) is finished; what remains is a mixed bag.
 
-The one that should go first, because it is where the active work actually happens:
+Highest-priority open node right now:
 
-**Cursor exchange logging** (`P0063/Next Steps`, high). Benni moved MAIMO (P0054) off Codex
-onto Cursor mid-session. Cursor session nodes show the same signature Codex did — registered,
-then empty:
+**I6: task/bug body preview in project-output briefing** (`P0063/Tasks`, high). Not looked
+at this session.
 
-```
-2026-06-17  ex=0  cursor-agent  44111352-9ccc-4655-bf36-365fd987ff41
-2026-07-16  ex=0  cursor        fix-open-issues-8-11
-2026-07-17  ex=0  cursor        cursor-tim-2026-07-17-push-check
-```
+Also open and cheap, both raised by the harness work and both independent of everything
+else:
 
-The first has a real UUID, so something on the Cursor side does hand over a harness session
-id — a different starting point from Codex, where every id was invented by the agent.
-
-The task node carries the probe recipe. Read it before designing anything.
-
-### What the Codex work taught, and Cursor should reuse
-
-The method mattered more than the code. Both wrong turns in that investigation came from
-reasoning about configuration instead of running the thing:
-
-1. **Do not conclude an event does not exist from config or `strings` alone.** The binary
-   listed no turn-end hook — true — but `notify` in `config.toml` is a turn-end callback
-   outside the hook system entirely, and that is what ended up working.
-2. **Do not conclude an event cannot fire because a probe saw nothing.** Codex silently
-   skipped every hook until trust was granted. Zero invocations from a valid config looked
-   exactly like "this harness has no hooks".
-3. **Probe with a throwaway home** (`CODEX_HOME=<tmp>`, copy `auth.json`) and dump every
-   candidate event's payload to a file. Four small `codex exec` runs settled everything.
-
-Reusable pieces: `ensureHookSession` (`packages/tim-hooks/src/hook-session.ts`),
-`SessionManager.logExchangeOnce`, `afterExchangeLogged`. `codex-notify.ts` is the smaller of
-the two logger templates — payload already contains the exchange, no transcript parsing.
-`codex-hooks-install.ts` is the installer shape: never overwrite a config another tool owns,
-be idempotent, and say out loud what the user still has to do by hand.
+- **`tim_session_start` accepts agent-invented session ids** (`P0063/Bugs`, medium). The
+  cheapest partial fix is to reject an empty-string session id.
+- **Codex skips untrusted hooks silently** (`P0063/Bugs`, medium). Whether this host's
+  `~/.codex/hooks.json` carries persisted trust was never checked. Hypothesis, not a
+  measurement.
 
 ---
 
 ## What shipped this session
 
-`7e2b138` — Codex exchange logging via `notify`, plus its installer.
+`10778a6` — Cursor exchange logging, plus its installer.
 
-- `packages/tim-hooks/src/codex-notify.ts` — `runCodexNotify`, `parseCodexNotifyArgs`.
-  Session keyed on `thread-id`, dedupe on `sha256(thread-id \0 turn-id)`.
-- `packages/tim-hooks/src/hook-session.ts` — `ensureHookSession`, lifted out of
-  `claude-stop.ts` and parameterized by agent/harness. Both loggers use it.
-- `packages/tim-cli/src/cli.ts` — `tim hook codex-notify`; payload read from the **last**
-  argv element, because `notify` appends it there.
-- `packages/tim-cli/src/codex-hooks-install.ts` — wired into `setup-agent.ts` under
-  `host === 'codex'`.
+Cursor turned out to be the opposite case to Codex. It has a proper hook system with a
+real turn-end event; nothing was logged because of two defects on TIM's side, and the
+second one hid the first:
 
-Findings behind it, all measured against Codex 0.147.0:
+1. `readLastExchange` recognized a record's role from `type` or `message.role`. Cursor
+   writes the role at the **top level**, so every Cursor record was skipped.
+2. The `tim hook claude-stop` CLI branch required `payload.cwd`, which Cursor never sends
+   — it sends `workspace_roots` — so it returned before parsing anything.
 
-- **No turn-end hook event exists.** Full surface: `pre_tool_use, permission_request,
-  post_tool_use, pre_compact, post_compact, session_start, session_end, user_prompt_submit,
-  subagent_start, subagent_stop`.
-- **Hooks are skipped silently without persisted trust.** Two `codex exec` runs with a valid
-  `hooks.json` produced zero invocations; `--dangerously-bypass-hook-trust` made SessionStart,
-  UserPromptSubmit and SessionEnd fire immediately.
-- **`notify` fires at turn end, needs no trust, works under `codex exec`**, and carries
-  `thread-id`, `turn-id`, `cwd`, `input-messages`, `last-assistant-message`.
-- `input-messages` holds only the human's prompt — Codex's `<recommended_plugins>` injection
-  shows up in the rollout transcript but never in that field.
+Point 2 is not hypothetical. cursor-agent also loads Claude's hook config
+(`~/.claude/settings.json` → `claudeUserHooks`, `Stop → stop`), so it has been invoking
+`tim hook claude-stop` on this host all along and getting a silent no-op.
 
-Suite: **1546 passed, 2 skipped, 0 failed**, re-run after the final change.
+### Measured against cursor-agent 2026.08.04-aaa8809
 
-### Installed on this host
+The shipped "binary" is plain minified JavaScript under
+`~/.local/share/cursor-agent/versions/<v>/` — greppable, so the full hook surface came out
+of the bundle rather than out of `strings`. Everything below was then confirmed by running
+it, with a throwaway workspace whose project-level `.cursor/hooks.json` dumped every
+candidate payload to a file.
 
-`installCodexHooks()` was run against the live `~/.codex/`. Backups in
-`/tmp/claude-1000/-home-bbbee-projects-tim/9f310419-.../scratchpad/codex-backup/` plus the
-installer's own `.backup.<ts>` files.
+- **Interactive TUI:** `beforeSubmitPrompt` → `stop` → `afterAgentResponse`, per turn. When
+  `stop` fires the transcript already contains that turn's user *and* assistant text —
+  no one-turn lag of the kind the Claude logger has.
+- **`cursor-agent -p`:** none of those fire at all. The only turn-end signal is
+  `sessionEnd`, once per invocation, carrying the same `transcript_path`. `--continue`
+  keeps the `conversation_id`, so consecutive `-p` runs append to one session node.
+- Every payload carries `session_id` (= `conversation_id`), `transcript_path`,
+  `workspace_roots`, `cursor_version`, `hook_event_name`. There is **no `cwd`**.
+- Transcripts: `~/.cursor/projects/<slug>/agent-transcripts/<id>/<id>.jsonl`, records of
+  `{"role":…,"message":{"content":[{"type":"text","text":…}]}}`, no per-record uuid,
+  closed by `{"type":"turn_ended","status":…}`.
+- Full event list: `beforeShellExecution, beforeMCPExecution, afterShellExecution,
+  afterMCPExecution, beforeReadFile, afterFileEdit, beforeTabFileRead, afterTabFileEdit,
+  stop, beforeSubmitPrompt, afterAgentResponse, afterAgentThought, sessionStart,
+  sessionEnd, preCompact, subagentStart, subagentStop, preToolUse, postToolUse,
+  postToolUseFailure, workspaceOpen`.
 
-- `config.toml`: one line added at the top, nothing else touched.
+### The code
 
-  ```
-  notify = ["/home/bbbee/.nvm/versions/node/v24.14.0/bin/node",
-            "/home/bbbee/projects/tim/packages/tim-cli/dist/cli.js", "hook", "codex-notify"]
-  ```
+- `packages/tim-hooks/src/claude-stop.ts` — `messageRole` also accepts a top-level `role`
+  (additive; Claude records never carry one). `runClaudeStop` takes an optional agent
+  identity instead of hardcoding `claude` / `claude-code`.
+- `packages/tim-cli/src/cli.ts` — one branch serves `hook claude-stop` and
+  `hook cursor-stop`: workspace falls back to `workspace_roots[0]`, and the agent identity
+  comes from the **payload** (`cursor_version` present → `agent=cursor, harness=cursor`).
+  Deriving it from the payload rather than the command name is what stops the
+  Claude-config invocation from stamping `harness=claude-code` on a Cursor session — the
+  two hooks race, and either order now produces the same label.
+- `packages/tim-cli/src/cursor-hooks-install.ts` — registers the same command on **both
+  `stop` and `sessionEnd`**, covering the TUI and `-p` respectively; when a TUI session
+  ends both fire on the same last turn and `logExchangeOnce` absorbs the second. Merges,
+  never overwrites; matches session-start on script name; backs up; writes atomically;
+  refuses invalid JSON; idempotent. Cursor's `hooks.json` is flat — event name to command
+  list — unlike Claude's and Codex's matcher groups.
+- Wired into `setup-agent.ts` under `host === 'cursor'`.
 
-- `hooks.json`: **byte-identical** — the hand-placed `tim-session-start.sh` was recognized,
-  the four o9k entries untouched.
+Suite: **1553 passed, 2 skipped, 0 failed.**
 
-Live verification, real database:
+### Installed on this host, and live-verified
+
+`installCursorHooks()` ran against the real `~/.cursor/hooks.json`. Backup:
+`/tmp/claude-1000/-home-bbbee-projects-tim/4af8408b-.../scratchpad/cursor-hooks.json.pre-install`
+plus the installer's own `.backup.<ts>` file.
+
+- Added one entry to `stop` (after hmem's two) and a new `sessionEnd` array. The four o9k
+  entries and hmem's hooks are untouched; `sessionStart` came out `unchanged` because the
+  hand-placed `tim-session-start.sh` was recognized.
+
+Live database, one real `cursor-agent -p` run in this repo:
 
 ```
-2026-08-07T20:45:16 | harness=codex | agent=codex | ex=1 | id=019fddf8-e249-72a2-8a43-71607892dd73
-2026-08-07T20:17:30 | harness=codex | agent=Codex | ex=0 | id=codex-2026-08-07
+2026-08-08T06:58:29 | harness=cursor | agent=cursor | ex=1 | id=5854b89f-1a19-4bc2-99ab-aa3f9a8c0aa8
 ```
 
-**Caveat worth carrying:** that `notify` path points into this dev worktree on a feature
-branch. Correct for development, wrong after a global npm install. Same tradeoff the MCP
-installer already makes, so it was left consistent rather than special-cased — but if TIM
-ever ships as a global package, this is the line that breaks.
+**Same caveat as the Codex install:** the hook command points at `dist/cli.js` inside this
+dev worktree on a feature branch. Correct for development, wrong after a global npm
+install. Left consistent with the MCP and Codex installers rather than special-cased.
 
 ---
 
@@ -116,37 +120,36 @@ ever ships as a global package, this is the line that breaks.
 
 New this session:
 
-1. **Codex skips untrusted hooks silently** (`P0063/Bugs`, medium). Whether the live
-   `~/.codex/hooks.json` carries persisted trust was never checked. If it does not, the TIM
-   session-start briefing has never fired for a single Codex session on this host, and
-   neither have the three o9k hooks. Hypothesis, not a measurement — check before repeating.
-2. **`tim_session_start` accepts agent-invented session ids** (`P0063/Bugs`, medium). Ids
-   like `codex-2026-08-07`, `batch-1`, and one that is the empty string. A turn-end hook keys
-   on the harness id, so it registers a *second* node beside the agent's. Accepted knowingly
-   for Codex; it means fixing a logger holds the phantom count steady rather than reducing it.
-   Cheapest partial fix, independent of the rest: reject an empty-string session id.
+1. **`stop` is suppressed past `loop_limit`** (`skipHookDueToLoopLimit` in the bundle) —
+   the same silent-skip class as Codex's trust gate. A very long agentic run can lose a
+   turn; `sessionEnd` still catches the last one. Not filed as a bug, noted in the commit.
+2. **`listProjectSessionsByActivity('P0001', 20)` returned 0 rows** on the isolated probe
+   database while the session nodes were plainly present in the tree. Not investigated.
+   It is the same listing that hides `exchange_count = 0`, so it may carry a second filter.
 
 Carried over, unchanged:
 
-3. **Tail-read fix untested above 1 MiB.** `3d883f5` replaced the size guard with a tail read;
-   no live session has crossed a megabyte and kept logging.
-4. **No `SessionEnd` hook, so a session's last partial batch is never summarized.**
-   `claude-hooks-install.ts:69` registers SessionStart, UserPromptSubmit, Stop only. This
-   misinforms rather than merely truncating — a successor that trusts its brief redoes
-   finished work.
-5. **One Stop does not fire**, on the first turn after `/clear`. Near-zero cost;
-   `readLastExchange` lags a turn regardless.
-6. **118 phantom session nodes still in the database.** `e69e997` fixed the consumer side only;
-   `tim_load_project`'s "Recent Sessions" render still lists `0 exchanges` nodes first.
-7. **MAIMO's real history is in hmem**, not TIM — `~/.hmem/Agents/DEVELOPER/DEVELOPER.hmem`,
+3. **Codex skips untrusted hooks silently** (`P0063/Bugs`, medium) — never checked against
+   this host's live `~/.codex/hooks.json`.
+4. **`tim_session_start` accepts agent-invented session ids** (`P0063/Bugs`, medium).
+5. **Tail-read fix untested above 1 MiB.** `3d883f5` replaced the size guard with a tail
+   read; no live session has crossed a megabyte and kept logging.
+6. **No `SessionEnd` hook for Claude Code**, so a session's last partial batch is never
+   summarized. `claude-hooks-install.ts:69` registers SessionStart, UserPromptSubmit, Stop
+   only. (Cursor now registers `sessionEnd`, but only as a turn-end logger, not a
+   summarizer flush.)
+7. **One Stop does not fire**, on the first turn after `/clear`.
+8. **118 phantom session nodes still in the database.** `e69e997` fixed the consumer side
+   only; `tim_load_project`'s "Recent Sessions" render still lists `0 exchanges` first.
+9. **MAIMO's real history is in hmem**, not TIM — `~/.hmem/Agents/DEVELOPER/DEVELOPER.hmem`,
    57 MB, ~3 500 MAIMO references. Migration question, never answered. hmem stays read-only.
-8. `tim doctor` crash repaired in data only; two code fixes outstanding (`store.ts:250-252`
-   vs `store.ts:412-418`, and a per-project `try/catch` in `collectBindingReport`).
-9. **Do not run `tim doctor --repair-schema`** on this database — see `TODO-session-continuity.md`.
-10. `P0062` has two live project trees (184 and 1552 nodes). Needs a merge decision from Benni.
-11. `tim_load_project(label="P0054", bind:false)` touched `~/projects/maimo-rpg/.tim-project`'s
-    mtime. Content unchanged, but the bug "schreibt Marker auch bei bind:false" is marked done
-    and this suggests otherwise.
+10. `tim doctor` crash repaired in data only; two code fixes outstanding (`store.ts:250-252`
+    vs `store.ts:412-418`, and a per-project `try/catch` in `collectBindingReport`).
+11. **Do not run `tim doctor --repair-schema`** on this database — see
+    `TODO-session-continuity.md`.
+12. `P0062` has two live project trees (184 and 1552 nodes). Needs a merge decision.
+13. `tim_load_project(label="P0054", bind:false)` touched `~/projects/maimo-rpg/.tim-project`'s
+    mtime, though the bug "schreibt Marker auch bei bind:false" is marked done.
 
 ---
 
@@ -161,3 +164,6 @@ Carried over, unchanged:
 - Restart the MCP server after deploying — it loads `dist/` at process start.
 - Report defects with `file:line` rather than fixing them silently; ask before committing.
 - When a query returns nothing, first confirm it can return anything.
+- Reason from a run, not from a config — but note the inverse also paid off here: Cursor
+  ships its CLI as readable JavaScript, and reading the bundle produced the complete event
+  list in minutes. Read the source to form the hypothesis, then run it to confirm.
