@@ -62,6 +62,7 @@ const remember_handler_js_1 = require("./remember-handler.js");
 const session_guidance_js_1 = require("./session-guidance.js");
 const resume_output_js_1 = require("./resume-output.js");
 const auto_init_js_1 = require("./auto-init.js");
+const arg_aliases_js_1 = require("./arg-aliases.js");
 const fs = __importStar(require("fs"));
 const os = __importStar(require("os"));
 const path = __importStar(require("path"));
@@ -1479,6 +1480,11 @@ async function usageSessionId() {
         return null;
     }
 }
+/** The parameter names a tool actually accepts, for error messages. */
+function validParamNames(tool) {
+    const def = exports.TOOL_DEFS.find(d => d.name === tool);
+    return def ? Object.keys(def.schema.shape) : [];
+}
 /** Telemetry must never fail a user-facing tool response. */
 function bestEffortTelemetry(label, fn) {
     try {
@@ -1537,7 +1543,8 @@ async function createMcpServer(options = {}) {
     // ─── Tool Handler ────────────────────────────────────
     server.setRequestHandler(types_js_1.CallToolRequestSchema, async (request) => {
         const s = getStore();
-        const { name, arguments: args } = request.params;
+        const { name, arguments: rawArgs } = request.params;
+        const args = (0, arg_aliases_js_1.applyArgAliases)(name, rawArgs);
         scheduleAutoSync(name, s);
         try {
             switch (name) {
@@ -2945,14 +2952,16 @@ async function createMcpServer(options = {}) {
             }
         }
         catch (error) {
+            const explained = (0, arg_aliases_js_1.explainMissingParams)(name, error, args, validParamNames(name));
             getErrorLogger().logError({
                 tool: name,
                 args,
-                error: error.message ?? String(error),
+                error: explained ?? error.message ?? String(error),
                 stack: error.stack,
+                sessionId: (await usageSessionId()) ?? undefined,
             });
             return {
-                content: [{ type: 'text', text: `Error: ${error.message}` }],
+                content: [{ type: 'text', text: `Error: ${explained ?? error.message}` }],
                 isError: true,
             };
         }

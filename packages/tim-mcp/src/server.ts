@@ -55,6 +55,7 @@ import { handleTimRemember } from './remember-handler.js';
 import { buildInboxFallbackGuidance } from './session-guidance.js';
 import { formatResumeList, formatResumePayload } from './resume-output.js';
 import { runAutoInit } from './auto-init.js';
+import { applyArgAliases, explainMissingParams } from './arg-aliases.js';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -1641,6 +1642,12 @@ async function usageSessionId(): Promise<string | null> {
   }
 }
 
+/** The parameter names a tool actually accepts, for error messages. */
+function validParamNames(tool: string): string[] {
+  const def = TOOL_DEFS.find(d => d.name === tool);
+  return def ? Object.keys(def.schema.shape) : [];
+}
+
 /** Telemetry must never fail a user-facing tool response. */
 function bestEffortTelemetry(label: string, fn: () => void): void {
   try {
@@ -1715,7 +1722,8 @@ export async function createMcpServer(
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const s = getStore();
-    const { name, arguments: args } = request.params;
+    const { name, arguments: rawArgs } = request.params;
+    const args = applyArgAliases(name, rawArgs);
     scheduleAutoSync(name, s);
 
     try {
@@ -3254,14 +3262,16 @@ export async function createMcpServer(
           };
       }
     } catch (error: any) {
+      const explained = explainMissingParams(name, error, args, validParamNames(name));
       getErrorLogger().logError({
         tool: name,
         args,
-        error: error.message ?? String(error),
+        error: explained ?? error.message ?? String(error),
         stack: error.stack,
+        sessionId: (await usageSessionId()) ?? undefined,
       });
       return {
-        content: [{ type: 'text', text: `Error: ${error.message}` }],
+        content: [{ type: 'text', text: `Error: ${explained ?? error.message}` }],
         isError: true,
       };
     }
