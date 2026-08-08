@@ -94,6 +94,19 @@ candidate payload to a file.
 
 Suite: **1553 passed, 2 skipped, 0 failed.**
 
+Two claims behind that code were checked against reality rather than fixtures, because both
+touch the Claude path that already works:
+
+- *"Claude records never carry a top-level `role`"* — the new branch is only reached when
+  `type` is neither `user` nor `assistant` **and** `message.role` is neither. Scanned all
+  1 446 transcripts under `~/.claude/projects/`: **0 records reach it.** Additive confirmed.
+- *"the dedupe absorbs the second fire"* — on this host both hooks fire on the same TUI turn
+  (`~/.cursor/hooks.json` and Claude's `Stop`, which cursor-agent also loads), so they race
+  as two processes rather than in sequence. `logExchangeOnce` does its existence check and
+  its insert inside `store.runExclusive`, which is `db.transaction(fn).exclusive()` — a
+  SQLite `BEGIN EXCLUSIVE`, so the two serialize across processes and the loser sees the
+  row. Concurrent double-logging is not possible; the worst case is a busy-timeout skip.
+
 ### Installed on this host, and live-verified
 
 `installCursorHooks()` ran against the real `~/.cursor/hooks.json`. Backup:
