@@ -44,6 +44,50 @@ to its session. One argument at the call site.
 
 ---
 
+## Second: the brief lies about session logging — fix it this way
+
+**`Project brief reports "0 exchanges" for every session`** (`P0063/Bugs`,
+`ubun-0808-ns-01KZGD85QN75J0T8YRPGZ61XTP`, high).
+
+Found because the brief made a working system look broken: it says every recent session
+recorded nothing, and that reading was believed for a moment before it was checked.
+**Session logging is fine** — `tim_resume_list` shows this session at 7 exchanges and
+MAIMO's most recent at 6. Only the display is wrong.
+
+There are two nodes per session. The **session node** is the log: the exchanges hang off it
+and it carries the live counter, `metadata.exchange_count`, maintained by the logger
+(`session.ts:445`). Its child **Summary node** is the summarizer's output: it is created
+with `exchanges: 0` and `summary: ''` (`session.ts:301`) and only filled when a summary is
+generated (`session.ts:804`).
+
+The brief's Recent Sessions block collects entries tagged `#session-summary`
+(`packages/tim-mcp/src/project-output.ts:551`) — the Summary nodes — and then reads
+`metadata.exchanges` and `metadata.summary` off them (`parseSessionEntry`, line 121). So it
+reports the summarizer's state while claiming to report the logger's: `0 exchanges` until a
+summary exists, and the literal word `Summary` as the summary line, because the fallback
+takes the node's title.
+
+**Fix it on the read side: resolve the session node and read `exchange_count` from it.**
+That is what `tim_resume_list` already does (`session.ts:1060`, `:1090`), so the two
+displays stop disagreeing, and no new state is introduced. The alternative — having the
+logger keep the Summary node's `exchanges` in step — duplicates a counter that already
+exists in one place, and a duplicated counter drifts. Do not take it.
+
+Specifics worth having in the fix:
+
+- The Summary node's parent is the session node; the block already has the children list,
+  so the lookup is local.
+- Keep reading `metadata.summary` from the Summary node — that part is correct. Only the
+  *fallback* is wrong: when it is empty, print nothing (or the session's own task summary),
+  never the node title.
+- Test both shapes: a session with exchanges and **no** summary yet must show its real
+  count, and a summarized session must keep showing its summary.
+- `packages/tim-store/src/project-output.ts:329` holds a second copy of the same block. It
+  is not exported from that package's `index.ts` and only its own tests import it, so it
+  reads as dead code — verify that before fixing it twice, and prefer deleting it.
+
+---
+
 ## What shipped this session
 
 ### `2e60328` — queue item 1: the backlog stops lying
