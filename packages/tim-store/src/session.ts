@@ -50,6 +50,18 @@ export interface SessionStartParams {
   harness: string;
 }
 
+/**
+ * A session node is keyed by its id, so a blank one produces an unaddressable
+ * node that no turn-end hook can ever find again — the database already holds
+ * one written with the empty string. Callers pass a harness session id or an
+ * id of their own; either way it has to be usable as a key.
+ */
+export function assertSessionId(sessionId: string): void {
+  if (typeof sessionId !== 'string' || sessionId.trim() === '') {
+    throw new Error('sessionId must be a non-empty string');
+  }
+}
+
 export interface ProjectSessionParams extends SessionStartParams {
   projectId: string;
   batchSize?: number;
@@ -199,6 +211,7 @@ export class SessionManager {
 
   async sessionStart(params: SessionStartParams): Promise<Entry> {
     const { sessionId, agentName, cwd, harness } = params;
+    assertSessionId(sessionId);
     const existing = await this.store.read(sessionId);
     if (existing?.metadata.kind === 'session') {
       return existing;
@@ -219,6 +232,7 @@ export class SessionManager {
 
   async startProjectSession(params: ProjectSessionParams): Promise<Entry> {
     const { sessionId, projectId, agentName, cwd, harness, tool, model, taskSummary } = params;
+    assertSessionId(sessionId);
 
     const existing = await this.store.read(sessionId);
     if (existing?.metadata.kind === KIND_SESSION) {

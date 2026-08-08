@@ -34,6 +34,22 @@ describe('SessionManager', () => {
       expect(entry.metadata.cwd).toBe('/tmp/project');
     });
 
+    it('rejects a blank session id', async () => {
+      await expect(sessions.sessionStart({
+        sessionId: '',
+        agentName: 'codex',
+        cwd: '/tmp/project',
+        harness: 'codex',
+      })).rejects.toThrow(/non-empty/);
+
+      await expect(sessions.sessionStart({
+        sessionId: '   ',
+        agentName: 'codex',
+        cwd: '/tmp/project',
+        harness: 'codex',
+      })).rejects.toThrow(/non-empty/);
+    });
+
     it('is idempotent on repeat', async () => {
       const first = await sessions.sessionStart({
         sessionId: 'sess-002',
@@ -740,6 +756,20 @@ describe('SessionManager', () => {
   });
 
   describe('startProjectSession', () => {
+    it('rejects a blank session id before touching the project', async () => {
+      await store.createProject('P0098');
+      await expect(sessions.startProjectSession({
+        sessionId: '',
+        projectId: 'P0098',
+        agentName: 'codex',
+        cwd: '/p',
+        harness: 'codex',
+      })).rejects.toThrow(/non-empty/);
+
+      const project = await store.read('P0098');
+      expect(await store.getChildByKind(project!.id, 'sessions-root')).toHaveLength(0);
+    });
+
     it('creates Sessions section + session node + Summary + Exchanges', async () => {
       await store.createProject('P0099');
       const session = await sessions.startProjectSession({
