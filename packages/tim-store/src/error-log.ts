@@ -3,6 +3,9 @@
 
 import type Database from 'better-sqlite3';
 
+/** Burst window for the alert threshold, independent of any stats window. */
+const ALERT_WINDOW_HOURS = 1;
+
 export interface ErrorLogEntry {
   id: number;
   timestamp: string;
@@ -87,7 +90,10 @@ export class ErrorLogger {
       ORDER BY count DESC
     `).all(since) as { tool: string; count: number }[];
 
-    const alerts = this.getAlertThresholds(hours);
+    // The alert threshold is "more than 5 of the same error within an hour",
+    // which is a burst detector — it does not widen with the reporting window.
+    // Stats over 24h still alert on the last hour only.
+    const alerts = this.getAlertThresholds(ALERT_WINDOW_HOURS);
 
     return {
       totalErrors,

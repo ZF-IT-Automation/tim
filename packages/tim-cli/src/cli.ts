@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // TIM CLI — v0.1.0-alpha
 
-import { TimStore, SessionManager, resolveProjectBindingLabel } from 'tim-store';
+import { TimStore, SessionManager, ErrorLogger, resolveProjectBindingLabel } from 'tim-store';
 import { loadConfig, getTimDir, normalizeLegacyTypeTag, type TimConfigFile } from 'tim-core';
 import {
   runCheckpoint,
@@ -304,6 +304,14 @@ async function cmdDoctor(args: string[] = []) {
     health.issues.forEach(i => console.log(`  - ${i}`));
   }
   console.log(`\nTop tags: ${stats.topTags.slice(0, 5).map(t => `${t.tag}(${t.count})`).join(', ') || 'none'}`);
+
+  const errorStats = new ErrorLogger(store.getDb()).getStats({ hours: 24, limit: 5 });
+  console.log(`\nErrors (24h): ${errorStats.totalErrors} | Rate: ${errorStats.errorRate}/h`);
+  errorStats.alerts.forEach(a => console.log(`  ⚠ ${a}`));
+  // Zod validation errors are pretty-printed JSON; flattened they stay scannable.
+  errorStats.topErrors.forEach(e =>
+    console.log(`  ${e.count}x ${e.error.replace(/\s+/g, ' ').slice(0, 120)}`),
+  );
 
   console.log('\nBindings:');
   if (bindingReport.projects.length === 0 && bindingReport.stalePaths.length === 0) {

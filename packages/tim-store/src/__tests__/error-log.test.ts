@@ -131,6 +131,30 @@ describe('ErrorLogger', () => {
       expect(stats.alerts[0]).toContain('6x');
     });
 
+    it('alerts on a burst even when stats are requested over 24h', () => {
+      for (let i = 0; i < 6; i++) {
+        logger.logError({ tool: 'tim_sync', error: 'Connection refused' });
+      }
+
+      const stats = logger.getStats({ hours: 24 });
+      expect(stats.alerts).toHaveLength(1);
+      expect(stats.alerts[0]).toContain('last 1h');
+    });
+
+    it('does not alert when the same 6 errors are spread beyond the burst window', () => {
+      const twoHoursAgo = new Date(Date.now() - 2 * 3600 * 1000).toISOString();
+      for (let i = 0; i < 6; i++) {
+        db.prepare(`
+          INSERT INTO error_log (timestamp, tool, args_json, error)
+          VALUES (?, 'tim_sync', '{}', 'Connection refused')
+        `).run(twoHoursAgo);
+      }
+
+      const stats = logger.getStats({ hours: 24 });
+      expect(stats.totalErrors).toBe(6);
+      expect(stats.alerts).toHaveLength(0);
+    });
+
     it('should not flag <=5 identical errors', () => {
       const error = 'Timeout';
       for (let i = 0; i < 5; i++) {
