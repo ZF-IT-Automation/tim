@@ -62,6 +62,9 @@ function messageRole(record: Record<string, unknown>): 'user' | 'assistant' | nu
     const role = (message as Record<string, unknown>).role;
     if (role === 'user' || role === 'assistant') return role;
   }
+  // Cursor writes the role at the top level and the content one level down;
+  // Claude's records never carry a top-level role, so this stays additive.
+  if (record.role === 'user' || record.role === 'assistant') return record.role;
   return null;
 }
 
@@ -171,7 +174,7 @@ export function readLastExchange(
 export async function runClaudeStop(
   store: TimStore,
   payload: ClaudeStopPayload,
-  options: { cwd: string },
+  options: { cwd: string; agent?: { agentName: string; harness: string } },
 ): Promise<ClaudeStopResult> {
   const sessionId = typeof payload.session_id === 'string' ? payload.session_id.trim() : '';
   const transcriptPath =
@@ -186,7 +189,7 @@ export async function runClaudeStop(
     .digest('hex');
 
   const sessions = new SessionManager(store);
-  const ready = await ensureHookSession(store, sessions, sessionId, options.cwd, {
+  const ready = await ensureHookSession(store, sessions, sessionId, options.cwd, options.agent ?? {
     agentName: 'claude',
     harness: 'claude-code',
   });

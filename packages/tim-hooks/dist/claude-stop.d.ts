@@ -27,6 +27,10 @@ interface TranscriptTurn {
 export declare function readLastExchange(transcriptPath: string, maxBytes?: number): TranscriptTurn | null;
 export declare function runClaudeStop(store: TimStore, payload: ClaudeStopPayload, options: {
     cwd: string;
+    agent?: {
+        agentName: string;
+        harness: string;
+    };
 }): Promise<ClaudeStopResult>;
 /** Test helper: expose counters after stop logging. */
 export declare function stopExchangeCount(store: TimStore, sessionId: string): Promise<number>;

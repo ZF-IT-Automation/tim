@@ -48,6 +48,7 @@ const update_skills_js_1 = require("./update-skills.js");
 const hermes_statusline_install_js_1 = require("./hermes-statusline-install.js");
 const claude_hooks_install_js_1 = require("./claude-hooks-install.js");
 const codex_hooks_install_js_1 = require("./codex-hooks-install.js");
+const cursor_hooks_install_js_1 = require("./cursor-hooks-install.js");
 const args_js_1 = require("./args.js");
 function buildSetupAgentPlan(opts) {
     assertAgentHost(opts.host);
@@ -330,7 +331,9 @@ async function cmdSetupAgent(args) {
                         ? 'would-install-claude-hooks'
                         : host === 'codex'
                             ? 'would-install-codex-notify-and-session-start-hook'
-                            : 'not-required',
+                            : host === 'cursor'
+                                ? 'would-install-cursor-turn-end-and-session-start-hooks'
+                                : 'not-required',
             },
             smoke: { action: 'would-run-health-check', command: 'tim doctor' },
         }, null, 2));
@@ -355,7 +358,9 @@ async function cmdSetupAgent(args) {
             ? (0, claude_hooks_install_js_1.installClaudeHooks)()
             : host === 'codex'
                 ? (0, codex_hooks_install_js_1.installCodexHooks)()
-                : { ok: true, steps: [{ step: 'hooks', status: 'skip', detail: 'No host hook install needed' }] };
+                : host === 'cursor'
+                    ? (0, cursor_hooks_install_js_1.installCursorHooks)()
+                    : { ok: true, steps: [{ step: 'hooks', status: 'skip', detail: 'No host hook install needed' }] };
     const store = new tim_store_1.TimStore(dbPath);
     try {
         const health = await store.health();

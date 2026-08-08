@@ -94,13 +94,14 @@ const COMMAND_HELP = {
     'bind-project': 'Usage: tim bind-project --label <P00XX> [--cwd <dir>]',
     'new-project': 'Usage: tim new-project --path <dir> --name <string> [--no-git] [--confirm]',
     'record-commit': 'Usage: tim record-commit [--cwd <dir>] [--project <label>] [--session <id>] [--hash <sha>] [--message <text>] [--diff <stat>] [--author <name>] [--date <iso>] [--branch <name>]',
-    hook: 'Usage: tim hook <session-start|session-end|log|prompt-submit|claude-session-start|claude-stop|codex-notify> [options]',
+    hook: 'Usage: tim hook <session-start|session-end|log|prompt-submit|claude-session-start|claude-stop|cursor-stop|codex-notify> [options]',
     'hook session-start': 'Usage: tim hook session-start --session <id> [--agent <name>] [--cwd <path>] [--harness <name>] [--project <label>] [--tool <name>] [--model <name>] [--task-summary <text>]',
     'hook session-end': 'Usage: tim hook session-end --session <id>',
     'hook log': 'Usage: tim hook log --session <id> --user <text> --agent <text> [--cwd <path>]',
     'hook prompt-submit': 'Usage: tim hook prompt-submit < Claude UserPromptSubmit JSON',
     'hook claude-session-start': 'Usage: tim hook claude-session-start < Claude SessionStart JSON',
     'hook claude-stop': 'Usage: tim hook claude-stop < Claude Stop JSON',
+    'hook cursor-stop': 'Usage: tim hook cursor-stop < Cursor stop/sessionEnd JSON',
     'hook codex-notify': "Usage: tim hook codex-notify '<Codex agent-turn-complete JSON>'",
     checkpoint: 'Usage: tim checkpoint --session <id> [--handoff-note <text>]',
     rebalance: 'Usage: tim rebalance --session <id> [--cwd <dir>]',
@@ -542,7 +543,10 @@ async function cmdHook(args) {
         }
         return;
     }
-    if (sub === 'claude-stop') {
+    // One branch for both harnesses: cursor-agent also runs the Stop hook out of
+    // ~/.claude/settings.json, so the identity has to come from the payload rather
+    // than from which command name was invoked.
+    if (sub === 'claude-stop' || sub === 'cursor-stop') {
         try {
             const payload = await (0, claude_hook_io_js_1.readJsonStdin)();
             if (!payload)
@@ -551,9 +555,16 @@ async function cmdHook(args) {
                 return;
             const sessionId = typeof payload.session_id === 'string' ? payload.session_id.trim() : '';
             const transcriptPath = typeof payload.transcript_path === 'string' ? payload.transcript_path.trim() : '';
-            const cwd = typeof payload.cwd === 'string' ? payload.cwd.trim() : '';
+            // Cursor payloads carry no cwd — the workspace arrives as workspace_roots.
+            const roots = Array.isArray(payload.workspace_roots) ? payload.workspace_roots : [];
+            const cwd = typeof payload.cwd === 'string' && payload.cwd.trim()
+                ? payload.cwd.trim()
+                : typeof roots[0] === 'string' ? roots[0].trim() : '';
             if (!sessionId || !transcriptPath || !cwd)
                 return;
+            const agent = typeof payload.cursor_version === 'string'
+                ? { agentName: 'cursor', harness: 'cursor' }
+                : undefined;
             const marker = (0, tim_hooks_1.findMarker)(cwd);
             if (!marker)
                 return;
@@ -565,7 +576,7 @@ async function cmdHook(args) {
                     transcript_path: transcriptPath,
                     cwd,
                     stop_hook_active: payload.stop_hook_active === true,
-                }, { cwd });
+                }, { cwd, agent });
                 // This hook is the only writer of exchanges for Claude Code, so it is also the
                 // only place that learns a batch just filled. Without this the summarizer is
                 // never spawned and every session-summary-root stays empty. The spawn is
@@ -681,7 +692,7 @@ async function cmdHook(args) {
             }
             default:
                 console.error(`Unknown hook: ${sub ?? '(none)'}`);
-                console.error('Usage: tim hook <session-start|session-end|log|prompt-submit|claude-session-start|claude-stop|codex-notify> [options]');
+                console.error('Usage: tim hook <session-start|session-end|log|prompt-submit|claude-session-start|claude-stop|cursor-stop|codex-notify> [options]');
                 process.exit(1);
         }
     }

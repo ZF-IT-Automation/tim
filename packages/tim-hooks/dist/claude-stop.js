@@ -81,6 +81,10 @@ function messageRole(record) {
         if (role === 'user' || role === 'assistant')
             return role;
     }
+    // Cursor writes the role at the top level and the content one level down;
+    // Claude's records never carry a top-level role, so this stays additive.
+    if (record.role === 'user' || record.role === 'assistant')
+        return record.role;
     return null;
 }
 function messageContent(record) {
@@ -195,7 +199,7 @@ async function runClaudeStop(store, payload, options) {
         .update(`${sessionId}\0${turn.identity}`)
         .digest('hex');
     const sessions = new tim_store_1.SessionManager(store);
-    const ready = await (0, hook_session_js_1.ensureHookSession)(store, sessions, sessionId, options.cwd, {
+    const ready = await (0, hook_session_js_1.ensureHookSession)(store, sessions, sessionId, options.cwd, options.agent ?? {
         agentName: 'claude',
         harness: 'claude-code',
     });

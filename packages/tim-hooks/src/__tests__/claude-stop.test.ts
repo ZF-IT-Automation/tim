@@ -198,4 +198,36 @@ describe('runClaudeStop', () => {
       else process.env.HOME = prevHome;
     }
   });
+
+  // Cursor's transcript puts the role at the top level and has no uuid per record;
+  // records shaped exactly like ~/.cursor/projects/*/agent-transcripts/*.jsonl.
+  it('reads a Cursor transcript and labels the session from the passed agent identity', async () => {
+    const transcript = writeTranscript(cwd, [
+      { role: 'user', message: { content: [{ type: 'text', text: 'first cursor question' }] } },
+      { role: 'assistant', message: { content: [{ type: 'text', text: 'first cursor answer' }] } },
+      { role: 'user', message: { content: [{ type: 'text', text: 'second cursor question' }] } },
+      { role: 'assistant', message: { content: [{ type: 'text', text: 'second cursor answer' }] } },
+      { type: 'turn_ended', status: 'success' },
+    ]);
+
+    const p = payload({ transcript_path: transcript });
+    const agent = { agentName: 'cursor', harness: 'cursor' };
+    const first = await runClaudeStop(store, p, { cwd, agent });
+    // The TUI fires `stop` and a run under -p fires `sessionEnd`; a session that
+    // ends right after a turn hits both with the same last turn.
+    const second = await runClaudeStop(store, p, { cwd, agent });
+
+    expect(first.logged).toBe(true);
+    expect(second).toMatchObject({ logged: false, duplicate: true });
+    expect((await deriveCounters(store, p.session_id)).exchangeCount).toBe(1);
+
+    const logged = await sessions.showUnsummarized(p.session_id);
+    const texts = logged.exchanges.flatMap((ex) => [ex.userContent, ex.agentContent ?? '']).join('\n');
+    expect(texts).toContain('second cursor question');
+    expect(texts).toContain('second cursor answer');
+    expect(texts).not.toContain('first cursor question');
+
+    const session = await store.read(p.session_id);
+    expect(session?.metadata.harness).toBe('cursor');
+  });
 });
