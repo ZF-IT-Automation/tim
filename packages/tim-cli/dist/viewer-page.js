@@ -52,7 +52,10 @@ exports.VIEWER_PAGE = `<!doctype html>
   #tabs button.on { color: var(--accent); border-color: var(--accent); border-bottom-color: var(--panel); }
   .pane { flex: 1; overflow: auto; padding: 12px; }
   .pane[hidden] { display: none; }
-  #toolpane { display: flex; gap: 12px; align-items: flex-start; }
+  /* :not([hidden]) is load-bearing: an id selector outranks .pane[hidden], so a
+     bare "#toolpane { display: flex }" would override the hide and leave two
+     panes on screen at once. */
+  #toolpane:not([hidden]) { display: flex; gap: 12px; align-items: flex-start; }
   #toollist { width: 190px; flex: none; overflow: auto; }
   #toollist div {
     padding: 2px 4px; border-radius: 3px; cursor: pointer; white-space: nowrap;
