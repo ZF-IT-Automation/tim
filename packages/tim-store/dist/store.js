@@ -194,9 +194,15 @@ class TimStore {
     }
     async read(id, options = {}) {
         let entry = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(id);
-        // Label-based fallback for hmem compatibility (e.g., "P0062", "L0042")
+        // Label-based fallback for hmem compatibility (e.g., "P0062", "L0042").
+        // A label should be unique, but when it is not, prefer the live entry and
+        // otherwise stay deterministic — an unordered .get() here silently picked
+        // a different row than the project resolvers did.
+        // ponytail: two *live* rows sharing a label still resolve to the older one;
+        // resolveProjectLabel and tim doctor refuse loudly in that case instead.
         if (!entry && /^[A-Z]\d{4}$/.test(id)) {
-            entry = this.db.prepare("SELECT * FROM entries WHERE json_extract(metadata, '$.label') = ? AND tombstoned_at IS NULL").get(id);
+            entry = this.db.prepare(`SELECT * FROM entries WHERE json_extract(metadata, '$.label') = ? AND tombstoned_at IS NULL
+         ORDER BY irrelevant ASC, created_at ASC`).get(id);
         }
         if (!entry)
             return null;
@@ -329,6 +335,25 @@ class TimStore {
         return result;
     }
     /**
+     * Every live project root carrying this metadata.label, oldest first.
+     *
+     * A label is supposed to identify exactly one project, but nothing in the
+     * schema enforces it, and two roots did share P0062 for two months. Callers
+     * must branch on `length > 1` instead of taking the first row: which row
+     * SQLite hands back is arbitrary, so a `.get()` here turns every lookup into
+     * a coin flip and lets writes land in the wrong tree.
+     */
+    projectRootsByLabelSync(label) {
+        return this.db.prepare(`
+      SELECT id, metadata FROM entries
+      WHERE json_extract(metadata, '$.kind') = 'project'
+        AND json_extract(metadata, '$.label') = ?
+        AND irrelevant = 0
+        AND tombstoned_at IS NULL
+      ORDER BY created_at ASC
+    `).all(label);
+    }
+    /**
      * Resolve a project label or alias to a canonical P-label.
      * Direct label/id lookup first, then metadata.aliases scan.
      */
@@ -336,20 +361,21 @@ class TimStore {
         const q = query.trim();
         if (!q)
             return { status: 'not_found', query: q };
+        // Duplicate labels are checked before anything else: read() resolves labels
+        // too, and a root whose id *is* its label answers there — so a later check
+        // would never see the second root. Reporting the ids, not the label, is
+        // what the caller needs, since the label no longer names one project.
+        const labelRows = this.projectRootsByLabelSync(q);
+        if (labelRows.length > 1) {
+            return { status: 'ambiguous', query: q, labels: labelRows.map(r => r.id) };
+        }
         const direct = await this.read(q);
         if (direct?.metadata.kind === 'project') {
             const label = typeof direct.metadata.label === 'string' ? direct.metadata.label : q;
             return { status: 'found', label };
         }
-        const labelRow = this.db.prepare(`
-      SELECT metadata FROM entries
-      WHERE json_extract(metadata, '$.kind') = 'project'
-        AND json_extract(metadata, '$.label') = ?
-        AND irrelevant = 0
-        AND tombstoned_at IS NULL
-    `).get(q);
-        if (labelRow) {
-            const meta = JSON.parse(labelRow.metadata);
+        if (labelRows.length === 1) {
+            const meta = JSON.parse(labelRows[0].metadata);
             const label = typeof meta.label === 'string' ? meta.label : q;
             return { status: 'found', label };
         }
@@ -421,14 +447,18 @@ class TimStore {
             return { status: 'not_found', project: projectId, title, candidates: [] };
         }
         const projectLabel = resolved.label;
-        // Find the project root entry.
-        const projectRow = this.db.prepare(`
-      SELECT id FROM entries
-      WHERE json_extract(metadata, '$.kind') = 'project'
-        AND json_extract(metadata, '$.label') = ?
-        AND irrelevant = 0
-        AND tombstoned_at IS NULL
-    `).get(projectLabel);
+        // Find the project root entry. resolveProjectLabel above may have arrived
+        // here through the id-direct path, which never sees a duplicate label — so
+        // this is the point where two same-label roots actually diverge.
+        const projectRoots = this.projectRootsByLabelSync(projectLabel);
+        // Same convention as the ambiguous-project branch above: no section answer
+        // can be right while the project itself is ambiguous, and `ambiguous` here
+        // means "several sections", so a caller must not read project roots out of
+        // it as if they were sections.
+        if (projectRoots.length > 1) {
+            return { status: 'not_found', project: projectLabel, title, candidates: [] };
+        }
+        const projectRow = projectRoots[0];
         if (!projectRow) {
             return { status: 'not_found', project: projectLabel, title, candidates: [] };
         }
@@ -1309,13 +1339,12 @@ class TimStore {
      * that need not_found/ambiguous handling should use the async version.
      */
     resolveSectionIdByTitleSync(projectLabel, title) {
-        const projectRow = this.db.prepare(`
-      SELECT id FROM entries
-      WHERE json_extract(metadata, '$.kind') = 'project'
-        AND json_extract(metadata, '$.label') = ?
-        AND irrelevant = 0
-        AND tombstoned_at IS NULL
-    `).get(projectLabel);
+        const projectRoots = this.projectRootsByLabelSync(projectLabel);
+        if (projectRoots.length > 1) {
+            throw new Error(`Duplicate project label ${projectLabel}: ${projectRoots.length} live project entries ` +
+                `(${projectRoots.map(r => r.id).join(', ')}). Resolve the duplicate before writing.`);
+        }
+        const projectRow = projectRoots[0];
         if (!projectRow) {
             throw new Error(`Project not found: ${projectLabel}`);
         }
@@ -2621,6 +2650,25 @@ class TimStore {
         if (orphans.count > 0) {
             const message = `${orphans.count} orphan entries`;
             warnings.push(message);
+            issues.push(message);
+        }
+        // Duplicate project labels: two live roots claiming the same P-label make
+        // every lookup a coin flip, and the resolvers now refuse rather than pick.
+        // Only live roots count — a merged-away tree keeps its label because no
+        // MCP path can unset a metadata key.
+        const duplicateLabels = this.db.prepare(`
+      SELECT json_extract(metadata, '$.label') AS label, COUNT(*) AS count
+      FROM entries
+      WHERE json_extract(metadata, '$.kind') = 'project'
+        AND json_extract(metadata, '$.label') IS NOT NULL
+        AND irrelevant = 0
+        AND tombstoned_at IS NULL
+      GROUP BY label
+      HAVING count > 1
+    `).all();
+        for (const dup of duplicateLabels) {
+            const message = `duplicate project label ${dup.label} (${dup.count} live project entries)`;
+            blockers.push(message);
             issues.push(message);
         }
         // FTS integrity

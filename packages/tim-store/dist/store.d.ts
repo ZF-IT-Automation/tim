@@ -106,6 +106,16 @@ export declare class TimStore implements MemoryInterface {
     allocateNextProjectLabel(): string;
     createProject(label: string, options?: CreateProjectOptions): Promise<Entry>;
     /**
+     * Every live project root carrying this metadata.label, oldest first.
+     *
+     * A label is supposed to identify exactly one project, but nothing in the
+     * schema enforces it, and two roots did share P0062 for two months. Callers
+     * must branch on `length > 1` instead of taking the first row: which row
+     * SQLite hands back is arbitrary, so a `.get()` here turns every lookup into
+     * a coin flip and lets writes land in the wrong tree.
+     */
+    private projectRootsByLabelSync;
+    /**
      * Resolve a project label or alias to a canonical P-label.
      * Direct label/id lookup first, then metadata.aliases scan.
      */
