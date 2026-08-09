@@ -1,5 +1,0 @@
-import type { ProjectSchema } from 'tim-core';
-import type { LoadProjectResult } from './store.js';
-export type { ProjectSchema, ProjectSchemaSection } from 'tim-core';
-export declare function formatProjectOutput(result: LoadProjectResult, budget: number, schema?: ProjectSchema, renderMode?: 'load' | 'read'): string;
-//# sourceMappingURL=project-output.d.ts.map
