@@ -1,6 +1,6 @@
 import type { Entry } from 'tim-core';
 import type { TimStore } from './store.js';
-import { findChildByKind } from './session-tree.js';
+import { findManagedRoot } from './session-tree.js';
 import {
   COMMITS_SECTION_ORDER,
   COMMITS_SECTION_TITLE,
@@ -26,7 +26,7 @@ export class CommitManager {
   async ensureCommitsSection(projectId: string): Promise<Entry> {
     const project = await this.store.requireProject(projectId);
 
-    const existing = await findChildByKind(this.store, project.id, KIND_COMMITS_ROOT);
+    const existing = await findManagedRoot(this.store, project.id, KIND_COMMITS_ROOT);
     if (existing) return existing;
 
     return this.store.write(COMMITS_SECTION_TITLE, {

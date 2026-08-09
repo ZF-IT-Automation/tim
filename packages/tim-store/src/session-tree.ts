@@ -74,6 +74,31 @@ export async function findChildByKind(
   return kids[0] ?? null;
 }
 
+/**
+ * Find a project's managed root (`sessions-root`, `commits-root`), un-hiding it if
+ * it was flagged irrelevant.
+ *
+ * Deliberately looks past the `irrelevant = 0` filter every other lookup applies. A
+ * structural root is not content: when a migration or a bad bulk update flags a
+ * project's children invisible, a filtered lookup misses the root that exists and
+ * its caller creates a second one. Repairing the flag afterwards leaves both behind
+ * — which is how P0063 collected three "Commits" and two "Sessions" roots on
+ * 2026-06-03, the day its whole tree was flagged irrelevant. Callers that create the
+ * root when the lookup returns null must use this, not `findChildByKind`.
+ */
+export async function findManagedRoot(
+  store: TimStore,
+  projectId: string,
+  kind: string,
+): Promise<Entry | null> {
+  const visible = await store.getChildByKind(projectId, kind);
+  if (visible[0]) return visible[0];
+
+  const hidden = (await store.getChildByKind(projectId, kind, { includeIrrelevant: true }))[0];
+  if (!hidden) return null;
+  return store.update(hidden.id, { irrelevant: false });
+}
+
 /** Re-derive counters from the DB tree. Authoritative — never trusts caches. */
 export async function deriveCounters(
   store: TimStore,

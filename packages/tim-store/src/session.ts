@@ -10,6 +10,7 @@ import {
   deriveCountersSync,
   EXCHANGES_NODE_TITLE,
   findChildByKind,
+  findManagedRoot,
   KIND_BATCH,
   KIND_EXCHANGE,
   KIND_EXCHANGE_BATCH,
@@ -239,7 +240,7 @@ export class SessionManager {
       if (existing.metadata.project_ref !== projectId) {
         const newProject = await this.store.requireProject(projectId);
 
-        let newSessionsSection = await findChildByKind(
+        let newSessionsSection = await findManagedRoot(
           this.store,
           newProject.id,
           KIND_SESSIONS_ROOT,
@@ -262,7 +263,7 @@ export class SessionManager {
 
     const project = await this.store.requireProject(projectId);
 
-    let sessionsSection = await findChildByKind(this.store, project.id, KIND_SESSIONS_ROOT);
+    let sessionsSection = await findManagedRoot(this.store, project.id, KIND_SESSIONS_ROOT);
     if (!sessionsSection) {
       sessionsSection = await this.store.write(SESSIONS_SECTION_TITLE, {
         parentId: project.id,

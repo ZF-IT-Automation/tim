@@ -860,12 +860,12 @@ class TimStore {
         const rows = this.db.prepare(sql).all(...params);
         return rows.map(rowToEntry);
     }
-    async getChildByKind(parentId, kind) {
+    async getChildByKind(parentId, kind, options = {}) {
         const rows = this.db.prepare(`
       SELECT * FROM entries
       WHERE parent_id = ?
         AND json_extract(metadata, '$.kind') = ?
-        AND irrelevant = 0
+        AND (irrelevant = 0 OR ${options.includeIrrelevant ? '1' : '0'})
         AND tombstoned_at IS NULL
       ORDER BY COALESCE(CAST(json_extract(metadata, '$.seq') AS INTEGER), 999999),
                COALESCE(CAST(json_extract(metadata, '$.order') AS INTEGER), 999999),

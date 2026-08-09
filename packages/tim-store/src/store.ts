@@ -992,12 +992,16 @@ export class TimStore implements MemoryInterface {
     return rows.map(rowToEntry);
   }
 
-  async getChildByKind(parentId: string, kind: string): Promise<Entry[]> {
+  async getChildByKind(
+    parentId: string,
+    kind: string,
+    options: { includeIrrelevant?: boolean } = {},
+  ): Promise<Entry[]> {
     const rows = this.db.prepare(`
       SELECT * FROM entries
       WHERE parent_id = ?
         AND json_extract(metadata, '$.kind') = ?
-        AND irrelevant = 0
+        AND (irrelevant = 0 OR ${options.includeIrrelevant ? '1' : '0'})
         AND tombstoned_at IS NULL
       ORDER BY COALESCE(CAST(json_extract(metadata, '$.seq') AS INTEGER), 999999),
                COALESCE(CAST(json_extract(metadata, '$.order') AS INTEGER), 999999),

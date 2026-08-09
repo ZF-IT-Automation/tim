@@ -59,6 +59,7 @@ export {
   deriveCounters,
   findChildByKind,
   getCurrentBatch,
+  findManagedRoot,
   ensureInboxProject,
   foldBatchSummaries,
   type DerivedCounters,

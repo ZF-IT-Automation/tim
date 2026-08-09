@@ -196,7 +196,9 @@ export declare class TimStore implements MemoryInterface {
         sessionId?: string;
         root?: string;
     }): Promise<Entry[]>;
-    getChildByKind(parentId: string, kind: string): Promise<Entry[]>;
+    getChildByKind(parentId: string, kind: string, options?: {
+        includeIrrelevant?: boolean;
+    }): Promise<Entry[]>;
     getChildrenBySeq(parentId: string): Promise<Entry[]>;
     /**
      * Query root-level entries (parent_id IS NULL) that are not projects.
