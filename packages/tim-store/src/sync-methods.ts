@@ -25,6 +25,11 @@ export function getUnackedStaging(db: Database.Database): StagingRow[] {
  * Matching is by key *and* timestamp, not by key alone: a local write that
  * lands while the push is in flight stages a newer record for the same key,
  * and that one has to stay unacked so the next cycle picks it up.
+ *
+ * ponytail: `<=` means two writes to one key inside the same millisecond, one
+ * of them mid-push, still ack the newer record. `<` would be worse (the pushed
+ * record would never ack at all). Give staging a monotonic sequence if that
+ * millisecond ever matters.
  */
 export function ackStaging(
   db: Database.Database,
