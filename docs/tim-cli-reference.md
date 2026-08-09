@@ -70,7 +70,7 @@ node packages/tim-cli/dist/cli.js statusline
 | 33 | `tim root-entries` | List root entries |
 | 34 | `tim consolidate` | Run memory consolidation |
 | 35 | `tim secret` | Manage secret entry metadata |
-| 36 | `tim viewer` | Browse the entry tree in a local read-only web UI |
+| 36 | `tim viewer` | Browse the entry tree in a local web UI; move and soft-delete nodes |
 | 37 | `tim --help` | Show top-level help |
 
 ---
@@ -657,12 +657,26 @@ boundary and check whether an entry inherits secrecy from an ancestor.
 ### 36. `tim viewer [--port <number>] [--host 127.0.0.1] [--db <path>] [--show-secrets]`
 
 Start a local HTTP server (default port 7373, loopback only) serving a
-self-contained browser UI over the entry tree. The database is opened
-read-only and only GET/HEAD are answered, so browsing can never mutate
-memory. Unlike the MCP project renderer the viewer applies no child cap,
-no token budget and no truncation, and it renders nodes whose
-`render_depth` is 0 — `render_depth` is shown as data instead. Secret
-subtrees are structure-only unless `--show-secrets` is passed.
+self-contained browser UI over the entry tree. The viewer's own database
+handle is opened read-only, so browsing can never mutate memory. Unlike the
+MCP project renderer the viewer applies no child cap, no token budget and no
+truncation, and it renders nodes whose `render_depth` is 0 — `render_depth`
+is shown as data instead. Secret subtrees are structure-only unless
+`--show-secrets` is passed.
+
+Structure edits — move a node, soft-delete a node or a subtree — are available
+from the node pane and go out as `POST /api/mutate`, forwarded to the MCP
+server on `TIM_MCP_PORT`, which owns the writable store. Three guards apply:
+only `tim_move_entry`, `tim_delete` and `tim_update_many` may be called (none
+of them can change what an entry says), the request must be same-origin, and
+the MCP server must be working on the very database the viewer is showing —
+otherwise the edit is refused with 409 rather than landing in another
+database. Deletes are soft (`irrelevant`), reversible via "show deleted", and
+they sync like any other change.
+
+Deleting a node with children asks first, because a delete does not cascade:
+either the children are moved up to the deleted node's parent, or the whole
+subtree is flagged. There is no third option that leaves them reachable.
 
 ### 37. `tim --help`
 

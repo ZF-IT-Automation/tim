@@ -1,17 +1,34 @@
 // `tim viewer` HTTP server — plain node:http, same idiom as tim-sync-server.
 //
-// Read-only, with one honest qualifier. The store handle is opened readonly and
-// the router answers GET/HEAD only, so nothing served from this process can
-// mutate the database. /api/tool is the exception worth naming: it forwards to
-// the MCP server, which holds a writable store. It is confined to the allowlist
-// in viewer-tools.ts, whose members change no memory — but they do touch
-// accessed_at and usage telemetry, so the guarantee is "no memory changes",
-// not "no bytes written".
+// This process never writes the database: the store handle is opened readonly, and
+// every GET route is served from it. Two routes forward to the MCP server, which
+// holds the writable store:
+//
+//   GET  /api/tool    read tools (INSPECTOR_TOOLS). They change no memory, but do
+//                     touch accessed_at and usage telemetry — the guarantee is
+//                     "no memory changes", not "no bytes written".
+//   POST /api/mutate  structure edits (MUTATION_TOOLS): move a node, soft-delete a
+//                     node or a subtree. Nothing on that list can change what an
+//                     entry says, and assertSameDatabase refuses the call unless
+//                     that server holds the very database the viewer is rendering.
+//
+// The POST route is the reason this file has a CSRF guard. The viewer binds
+// loopback and has no authentication, so any page in the user's browser can send
+// it a cross-origin POST; requireSameOrigin below is what stops one from
+// rearranging the memory tree. GET stays free of it — reads were already
+// reachable by navigation.
 
 import http from 'node:http';
 import { ViewerData } from './viewer-data.js';
 import { VIEWER_PAGE } from './viewer-page.js';
-import { callInspectorTool, listInspectorTools } from './viewer-tools.js';
+import {
+  assertSameDatabase,
+  callInspectorTool,
+  callMutationTool,
+  listInspectorTools,
+  MUTATION_TOOLS,
+  ToolNotAllowedError,
+} from './viewer-tools.js';
 
 /** Hosts that resolve to the loopback interface. Nothing else may bind. */
 export const LOOPBACK_HOSTS: ReadonlySet<string> = new Set([
@@ -74,19 +91,122 @@ function sendHtml(res: http.ServerResponse, status: number, body: string): void 
   res.end(body);
 }
 
+/**
+ * Whether a mutating request came from the viewer's own page.
+ *
+ * Two independent checks, because either one alone has a gap:
+ *   - `Origin` is sent on every cross-origin POST, so a mismatch is decisive —
+ *     but same-origin fetches may omit it entirely, which is why absence passes.
+ *   - `Sec-Fetch-Site` closes that gap in browsers that send it. A request with
+ *     no Origin *and* no Sec-Fetch-Site is not from a browser at all (curl, a
+ *     test) and is allowed: the viewer is loopback-only, so anything that can
+ *     open a socket to it can already read the whole database.
+ */
+export function requireSameOrigin(
+  headers: http.IncomingHttpHeaders,
+  port: number,
+): string | null {
+  const site = headers['sec-fetch-site'];
+  if (typeof site === 'string' && site !== 'same-origin' && site !== 'none') {
+    return `Cross-site request rejected (Sec-Fetch-Site: ${site})`;
+  }
+
+  const origin = headers.origin;
+  if (typeof origin !== 'string' || origin === '') return null;
+  let host: string;
+  try {
+    host = new URL(origin).hostname;
+  } catch {
+    return `Cross-origin request rejected (unparseable Origin: ${origin})`;
+  }
+  const expected = new URL(origin).port || (new URL(origin).protocol === 'https:' ? '443' : '80');
+  if (!LOOPBACK_HOSTS.has(host) || expected !== String(port)) {
+    return `Cross-origin request rejected (Origin: ${origin})`;
+  }
+  return null;
+}
+
+/** Read a JSON request body, bounded so a stuck client cannot grow the heap. */
+async function readJsonBody(req: http.IncomingMessage, limit = 256 * 1024): Promise<unknown> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of req) {
+    size += (chunk as Buffer).length;
+    if (size > limit) throw new Error('Request body too large');
+    chunks.push(chunk as Buffer);
+  }
+  const text = Buffer.concat(chunks).toString('utf8');
+  return text ? JSON.parse(text) : {};
+}
+
 export function createViewerServer(data: ViewerData): http.Server {
   return http.createServer(async (req, res) => {
     const url = new URL(req.url ?? '/', 'http://127.0.0.1');
 
-    // Read-only guarantee at the HTTP layer: no verb other than GET/HEAD
-    // reaches a handler, so there is no mutating endpoint to reach.
-    if (req.method !== 'GET' && req.method !== 'HEAD') {
-      res.setHeader('Allow', 'GET, HEAD');
-      sendJson(res, 405, { error: 'Read-only viewer: only GET and HEAD are allowed' });
+    // Everything except the one mutation route is GET/HEAD. Keeping the guard
+    // route-scoped rather than dropping it means a new endpoint is read-only
+    // unless someone deliberately adds it here.
+    const isMutate = req.method === 'POST' && url.pathname === '/api/mutate';
+    if (req.method !== 'GET' && req.method !== 'HEAD' && !isMutate) {
+      res.setHeader('Allow', 'GET, HEAD, POST');
+      sendJson(res, 405, { error: 'Only GET and HEAD are allowed, except POST /api/mutate' });
       return;
     }
 
     try {
+      if (isMutate) {
+        // The live socket's port, not a captured one: `--port 0` picks the port
+        // at listen time, so anything captured at construction would be 0.
+        const denied = requireSameOrigin(req.headers, req.socket.localPort ?? 0);
+        if (denied) {
+          sendJson(res, 403, { error: denied });
+          return;
+        }
+        // Requiring application/json is a second CSRF barrier, not politeness:
+        // it is not a CORS "simple" content type, so a cross-origin attempt
+        // needs a preflight this server never answers.
+        if (!String(req.headers['content-type'] ?? '').startsWith('application/json')) {
+          sendJson(res, 415, { error: 'Content-Type: application/json required' });
+          return;
+        }
+
+        let body: { name?: unknown; args?: unknown };
+        try {
+          body = (await readJsonBody(req)) as { name?: unknown; args?: unknown };
+        } catch (err) {
+          sendJson(res, 400, { error: `Bad body: ${(err as Error).message}` });
+          return;
+        }
+        const name = typeof body.name === 'string' ? body.name : '';
+        if (!name) {
+          sendJson(res, 400, { error: 'name required' });
+          return;
+        }
+        const args = body.args;
+        if (args !== undefined && (typeof args !== 'object' || args === null || Array.isArray(args))) {
+          sendJson(res, 400, { error: 'args must be a JSON object' });
+          return;
+        }
+        try {
+          // Allowlist before anything that touches the network: a denied tool
+          // must answer 403 whether or not an MCP server is reachable.
+          if (!MUTATION_TOOLS.has(name)) throw new ToolNotAllowedError(name);
+          // The tree on screen and the store that takes the write must be the
+          // same file. TIM_MCP_PORT can point at a server for an entirely
+          // different database, and without this an edit would land there while
+          // the viewer showed no change at all.
+          await assertSameDatabase(data.stats().databasePath);
+          const text = await callMutationTool(name, (args ?? {}) as Record<string, unknown>);
+          sendJson(res, 200, { text });
+        } catch (err) {
+          const kind = (err as Error).name;
+          const status =
+            kind === 'ToolNotAllowedError' ? 403 : kind === 'DatabaseMismatchError' ? 409 : 502;
+          sendJson(res, status, { error: (err as Error).message });
+        }
+        return;
+      }
+
       if (url.pathname === '/' || url.pathname === '/index.html') {
         sendHtml(res, 200, VIEWER_PAGE);
         return;

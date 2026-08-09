@@ -128,6 +128,14 @@ export const VIEWER_PAGE = `<!doctype html>
   td { padding: 1px 10px 1px 0; vertical-align: top; }
   .err { color: var(--secret); }
   .empty { color: var(--dim); padding: 2px 0 2px 18px; }
+  #actions { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 10px; }
+  #actions button { margin-right: 6px; }
+  #actions .danger { color: var(--secret); border-color: var(--secret); }
+  #actions .ask {
+    border: 1px solid var(--warn); border-radius: 3px; padding: 8px; margin-top: 8px;
+  }
+  #actions .ask p { margin: 0 0 8px; }
+  #movebar { color: var(--warn); }
 </style>
 </head>
 <body>
@@ -138,6 +146,7 @@ export const VIEWER_PAGE = `<!doctype html>
   <input id="jump" placeholder="entry id or label (P0001)" autocomplete="off">
   <button id="jumpbtn">Go</button>
   <label class="meta"><input type="checkbox" id="showhidden"> show deleted</label>
+  <span id="movebar" hidden></span>
   <button id="reload">Reload projects</button>
 </header>
 <main>
@@ -430,6 +439,201 @@ export const VIEWER_PAGE = `<!doctype html>
 
     inspEl.appendChild(el('div', 'k', 'metadata'));
     inspEl.appendChild(el('pre', null, JSON.stringify(n.metadata, null, 2)));
+
+    inspEl.appendChild(renderActions(n));
+  }
+
+  // ── Structure edits ─────────────────────────────────────────────────────
+  // Move and soft-delete only. Nothing here can change what an entry says, so
+  // the worst a misclick does is put a node in the wrong place — recoverable by
+  // moving it back, or by ticking "show deleted" and deleting it again with the
+  // flag cleared. Content edits stay out of the viewer on purpose.
+
+  var pendingMove = null;   // { id, title } of a node waiting for a destination
+
+  function mutate(name, args) {
+    return fetch('/api/mutate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ name: name, args: args }),
+    }).then(function (r) {
+      return r.json().then(function (body) {
+        if (!r.ok) throw new Error(body && body.error ? body.error : 'HTTP ' + r.status);
+        return body;
+      });
+    });
+  }
+
+  function renderMoveBar() {
+    var bar = document.getElementById('movebar');
+    bar.textContent = '';
+    if (!pendingMove) { bar.hidden = true; return; }
+    bar.hidden = false;
+    bar.appendChild(document.createTextNode('moving: ' + (pendingMove.title || pendingMove.id) + ' '));
+    var cancel = el('button', null, 'cancel');
+    cancel.onclick = function () { pendingMove = null; renderMoveBar(); if (selected) select(selected); };
+    bar.appendChild(cancel);
+  }
+
+  /**
+   * Every id below the given one, deepest last. Walks the same /api/children the
+   * tree uses,
+   * with hidden=1 always on: a subtree being deleted must take its already-hidden
+   * nodes with it, or they survive as children of a deleted parent.
+   */
+  function descendantIds(id) {
+    return api('/api/children?id=' + encodeURIComponent(id) + '&hidden=1').then(function (data) {
+      var kids = data.children || [];
+      var ids = kids.map(function (c) { return c.id; });
+      return kids.reduce(function (chain, c) {
+        return chain.then(function (acc) {
+          return descendantIds(c.id).then(function (more) { return acc.concat(more); });
+        });
+      }, Promise.resolve(ids));
+    });
+  }
+
+  /** Reload the board and put the caret back where the user was working. */
+  function afterMutation(focusId) {
+    pendingMove = null;
+    renderMoveBar();
+    return loadStats().then(loadProjects).then(function () {
+      if (focusId) return reveal(focusId);
+    });
+  }
+
+  function reportError(container, e) {
+    container.textContent = '';
+    container.appendChild(el('div', 'err', e.message));
+  }
+
+  function deleteNode(n, box) {
+    box.textContent = '';
+    box.appendChild(el('div', 'k', 'deleting…'));
+    mutate('tim_delete', { id: n.id })
+      .then(function () { return afterMutation(n.parentId); })
+      .catch(function (e) { reportError(box, e); });
+  }
+
+  function deleteSubtree(n, box) {
+    box.textContent = '';
+    box.appendChild(el('div', 'k', 'collecting descendants…'));
+    descendantIds(n.id).then(function (ids) {
+      box.textContent = '';
+      box.appendChild(el('div', 'k', 'deleting ' + (ids.length + 1) + ' nodes…'));
+      // The subtree first, the node itself last: an interrupted run then leaves
+      // a live parent over hidden children, which the tree still shows, rather
+      // than hidden children under nothing.
+      var step = ids.length
+        ? mutate('tim_update_many', { ids: ids, irrelevant: true })
+        : Promise.resolve();
+      return step.then(function () { return mutate('tim_delete', { id: n.id }); });
+    })
+      .then(function () { return afterMutation(n.parentId); })
+      .catch(function (e) { reportError(box, e); });
+  }
+
+  function reparentThenDelete(n, box) {
+    box.textContent = '';
+    box.appendChild(el('div', 'k', 'moving children up…'));
+    api('/api/children?id=' + encodeURIComponent(n.id) + '&hidden=1').then(function (data) {
+      var kids = data.children || [];
+      // Moves before the delete: if one fails, the tree is still intact and the
+      // node is still there to try again. The other order orphans the rest.
+      return kids.reduce(function (chain, c) {
+        return chain.then(function () {
+          return mutate('tim_move_entry', { id: c.id, newParentId: n.parentId });
+        });
+      }, Promise.resolve()).then(function () {
+        return mutate('tim_delete', { id: n.id });
+      });
+    })
+      .then(function () { return afterMutation(n.parentId); })
+      .catch(function (e) { reportError(box, e); });
+  }
+
+  function askAboutChildren(n, box, count) {
+    box.textContent = '';
+    var ask = el('div', 'ask');
+    ask.appendChild(el('p', null,
+      'This node has ' + count + ' child' + (count === 1 ? '' : 'ren') +
+      '. Deleting it does not delete them — they would stay in the database with no ' +
+      'reachable parent. Choose what happens to them:'));
+
+    var up = el('button', null, 'Move children up, then delete');
+    up.onclick = function () { reparentThenDelete(n, box); };
+    var down = el('button', 'danger', 'Delete children too');
+    down.onclick = function () { deleteSubtree(n, box); };
+    var cancel = el('button', null, 'Cancel');
+    cancel.onclick = function () { select(n.id); };
+
+    ask.appendChild(up);
+    ask.appendChild(down);
+    ask.appendChild(cancel);
+    box.appendChild(ask);
+    if (!n.parentId) {
+      box.appendChild(el('div', 'k',
+        'This is a root node: "move up" makes each child a root of its own.'));
+    }
+  }
+
+  function renderActions(n) {
+    var box = el('div');
+    box.id = 'actions';
+
+    if (pendingMove && pendingMove.id !== n.id) {
+      var here = el('button', null, 'Move "' + (pendingMove.title || pendingMove.id) + '" under this node');
+      var moving = pendingMove;
+      here.onclick = function () {
+        box.textContent = '';
+        box.appendChild(el('div', 'k', 'moving…'));
+        mutate('tim_move_entry', { id: moving.id, newParentId: n.id })
+          .then(function () { return afterMutation(moving.id); })
+          .catch(function (e) { reportError(box, e); });
+      };
+      box.appendChild(here);
+    }
+
+    var move = el('button', null, pendingMove && pendingMove.id === n.id ? 'Cancel move' : 'Move…');
+    move.onclick = function () {
+      pendingMove = pendingMove && pendingMove.id === n.id ? null : { id: n.id, title: n.title };
+      renderMoveBar();
+      select(n.id);
+    };
+    box.appendChild(move);
+
+    if (n.irrelevant) {
+      var undel = el('button', null, 'Undelete');
+      undel.onclick = function () {
+        box.textContent = '';
+        box.appendChild(el('div', 'k', 'restoring…'));
+        mutate('tim_update_many', { ids: [n.id], irrelevant: false })
+          .then(function () { return afterMutation(n.id); })
+          .catch(function (e) { reportError(box, e); });
+      };
+      box.appendChild(undel);
+    } else {
+      var total = n.childCount + n.hiddenChildCount;
+      var del = el('button', 'danger', 'Delete…');
+      del.onclick = function () {
+        if (total) askAboutChildren(n, box, total);
+        else {
+          box.textContent = '';
+          var confirmDel = el('button', 'danger', 'Confirm delete');
+          confirmDel.onclick = function () { deleteNode(n, box); };
+          var cancel = el('button', null, 'Cancel');
+          cancel.onclick = function () { select(n.id); };
+          box.appendChild(confirmDel);
+          box.appendChild(cancel);
+        }
+      };
+      box.appendChild(del);
+    }
+
+    box.appendChild(el('div', 'k',
+      'Delete is soft: the node is flagged irrelevant, stays in the database, and ' +
+      'reappears under "show deleted". It does sync to other devices.'));
+    return box;
   }
 
   // Expand the whole ancestor chain, then select — used by jump-to-id and
