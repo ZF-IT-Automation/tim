@@ -34,14 +34,21 @@ describe('tim resolve-project / bind-project', () => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
-  it('resolve-project prints the label (default format)', () => {
+  it('resolve-project prints the label (default format)', async () => {
+    await store.createProject('P0063');
     fs.writeFileSync(path.join(dir, '.tim-project'),
       JSON.stringify({ version: 3, project: 'P0063' }));
-    expect(run(['resolve-project', '--cwd', dir], { TIM_MARKER_MAX_ROOT: dir }).trim()).toBe('P0063');
+    expect(run(['resolve-project', '--cwd', dir], {
+      TIM_MARKER_MAX_ROOT: dir,
+      TIM_DB_PATH: dbPath,
+    }).trim()).toBe('P0063');
   });
 
   it('resolve-project prints nothing and exits 0 when no marker', () => {
-    expect(run(['resolve-project', '--cwd', dir], { TIM_MARKER_MAX_ROOT: dir }).trim()).toBe('');
+    expect(run(['resolve-project', '--cwd', dir], {
+      TIM_MARKER_MAX_ROOT: dir,
+      TIM_DB_PATH: dbPath,
+    }).trim()).toBe('');
   });
 
   it('resolve-project --format directive contains the load instruction', async () => {
