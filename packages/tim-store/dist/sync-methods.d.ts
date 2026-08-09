@@ -12,7 +12,17 @@ export interface StagingRow {
     acked: number;
 }
 export declare function getUnackedStaging(db: Database.Database): StagingRow[];
-export declare function ackStaging(db: Database.Database, keys: string[]): void;
+/**
+ * Mark pushed staging records as acknowledged.
+ *
+ * Matching is by key *and* timestamp, not by key alone: a local write that
+ * lands while the push is in flight stages a newer record for the same key,
+ * and that one has to stay unacked so the next cycle picks it up.
+ */
+export declare function ackStaging(db: Database.Database, acks: Array<{
+    key: string;
+    lww: number;
+}>): void;
 export declare function entryLocalLwwTimestamp(row: {
     updated_at?: string;
     created_at: string;

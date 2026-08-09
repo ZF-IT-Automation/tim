@@ -602,11 +602,12 @@ describe('SessionManager', () => {
           record.key === 'P0000'
         );
         expect(canonicalUpserts).toHaveLength(1);
+        // The legacy id keeps exactly one record, and it is the delete: the
+        // upsert staged when the legacy node was written is superseded by the
+        // tombstone, so there is nothing left for a replica to resurrect.
         expect(records.filter(record =>
-          record.entityType === 'entry' &&
-          record.operation === 'upsert' &&
-          record.key === legacyId
-        )).toHaveLength(1);
+          record.entityType === 'entry' && record.key === legacyId
+        )).toEqual([expect.objectContaining({ operation: 'delete' })]);
         expect(records).toEqual(expect.arrayContaining([
           expect.objectContaining({
             key: legacyId,

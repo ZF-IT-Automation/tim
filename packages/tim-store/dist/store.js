@@ -179,6 +179,9 @@ class TimStore {
         this.deviceId = options.deviceId ?? 'local';
         (0, schema_js_1.runMigrations)(this.db);
         (0, schema_js_1.createTriggers)(this.db);
+        // Acked staging records are push history that nothing reads back. Collect
+        // the old ones once per process — without a caller the table only grows.
+        void this.gcStaging(7);
     }
     emit(type, payload) {
         if (!this.emitter)

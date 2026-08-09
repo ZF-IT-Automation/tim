@@ -209,10 +209,10 @@ export async function pushCycle(
 ): Promise<{ pushed: number; queued: boolean }> {
   const db = store.getDb();
   const allRows = getUnackedStaging(db);
-  const placeholderKeys: string[] = [];
+  const placeholderKeys: Array<{ key: string; lww: number }> = [];
   const rows = allRows.filter((row) => {
     if (row.entity_type === 'entry' && isSecretPlaceholderPayload(row.payload)) {
-      placeholderKeys.push(row.key);
+      placeholderKeys.push({ key: row.key, lww: row.lww_timestamp });
       return false;
     }
     return true;
@@ -243,11 +243,13 @@ export async function pushCycle(
     });
   });
 
-  const keysToAck: string[] = [...placeholderKeys];
+  const keysToAck: Array<{ key: string; lww: number }> = [...placeholderKeys];
   let pushedCount = 0;
   for (const item of sent) {
     for (const e of item.envelopes) {
-      keysToAck.push(e.key);
+      // Envelopes carry the timestamp as ISO; staging stores epoch millis.
+      const lww = Date.parse(e.lww);
+      keysToAck.push({ key: e.key, lww: Number.isFinite(lww) ? lww : Date.now() });
       pushedCount++;
     }
   }

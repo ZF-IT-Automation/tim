@@ -12,11 +12,21 @@ const metadata_coerce_js_1 = require("./metadata-coerce.js");
 function getUnackedStaging(db) {
     return db.prepare('SELECT * FROM staging WHERE acked = 0 ORDER BY rowid').all();
 }
-function ackStaging(db, keys) {
-    if (keys.length === 0)
+/**
+ * Mark pushed staging records as acknowledged.
+ *
+ * Matching is by key *and* timestamp, not by key alone: a local write that
+ * lands while the push is in flight stages a newer record for the same key,
+ * and that one has to stay unacked so the next cycle picks it up.
+ */
+function ackStaging(db, acks) {
+    if (acks.length === 0)
         return;
-    const placeholders = keys.map(() => '?').join(',');
-    db.prepare(`UPDATE staging SET acked = 1 WHERE key IN (${placeholders})`).run(...keys);
+    const stmt = db.prepare('UPDATE staging SET acked = 1 WHERE key = ? AND lww_timestamp <= ?');
+    db.transaction(() => {
+        for (const ack of acks)
+            stmt.run(ack.key, ack.lww);
+    })();
 }
 function entryLocalLwwTimestamp(row) {
     return Date.parse(String(row.updated_at ?? row.created_at));

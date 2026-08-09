@@ -252,6 +252,24 @@ export const MIGRATIONS: { version: number; sql: string }[] = [
         AND irrelevant = 0;
     `,
   },
+  {
+    version: 13,
+    sql: `
+      -- One-time collapse of the duplicate staging records this table
+      -- accumulated before the staging_collapse trigger existed. Every
+      -- payload is a full snapshot and the merge is LWW, so for an unpushed
+      -- key only the newest record can ever matter.
+      DELETE FROM staging WHERE acked = 0 AND rowid NOT IN (
+        SELECT rowid FROM (
+          SELECT rowid, ROW_NUMBER() OVER (
+            PARTITION BY key, entity_type
+            ORDER BY lww_timestamp DESC, rowid DESC
+          ) AS rn
+          FROM staging WHERE acked = 0
+        ) WHERE rn = 1
+      );
+    `,
+  },
 ];
 
 export function getCurrentVersion(): number {
@@ -343,6 +361,24 @@ export function createTriggers(db: Database.Database): void {
       INSERT INTO fts_entries(rowid, title, content, tags)
       SELECT new.rowid, new.title, new.content, new.tags
       WHERE json_extract(new.metadata,'$.secret') IS NULL OR json_extract(new.metadata,'$.secret')=0;
+    END;
+  `);
+
+  // Keep at most one unpushed staging record per object. The payload is a
+  // full snapshot and the merge is last-writer-wins, so an older unacked
+  // record for the same key is dead weight the moment a newer one is staged.
+  // Acked records are left alone (gcStaging collects those), and a record
+  // that arrives out of order with an older timestamp evicts nothing.
+  db.exec(`
+    DROP TRIGGER IF EXISTS staging_collapse;
+
+    CREATE TRIGGER staging_collapse AFTER INSERT ON staging BEGIN
+      DELETE FROM staging
+       WHERE key = new.key
+         AND entity_type = new.entity_type
+         AND acked = 0
+         AND rowid <> new.rowid
+         AND lww_timestamp <= new.lww_timestamp;
     END;
   `);
 }
