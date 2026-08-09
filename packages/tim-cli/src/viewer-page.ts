@@ -43,8 +43,11 @@ export const VIEWER_PAGE = `<!doctype html>
   }
   button:hover { border-color: var(--accent); color: var(--accent); }
   main { flex: 1; display: flex; min-height: 0; }
-  #tree { width: 55%; overflow: auto; padding: 8px 12px; border-right: 1px solid var(--line); }
-  #right { flex: 1; display: flex; flex-direction: column; min-width: 0; background: var(--panel); }
+  #tree { flex: 1; overflow: auto; padding: 12px; border-right: 1px solid var(--line); min-width: 0; }
+  #right {
+    flex: 0 0 40%; min-width: 380px; display: flex; flex-direction: column;
+    background: var(--panel);
+  }
   #tabs { display: flex; gap: 4px; padding: 6px 12px 0; border-bottom: 1px solid var(--line); }
   #tabs button { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
   #tabs button.on { color: var(--accent); border-color: var(--accent); border-bottom-color: var(--panel); }
@@ -71,12 +74,39 @@ export const VIEWER_PAGE = `<!doctype html>
   .field textarea { min-height: 48px; resize: vertical; }
   .req { color: var(--warn); }
   .forced { color: var(--warn); font-size: 11px; margin-bottom: 6px; }
-  .kids { margin-left: 14px; border-left: 1px dotted var(--line); padding-left: 8px; }
-  .row { display: flex; align-items: baseline; gap: 6px; padding: 1px 3px; border-radius: 3px; cursor: default; }
-  .row:hover { background: rgba(127,127,127,.12); }
-  .row.sel { background: rgba(111,178,255,.18); outline: 1px solid var(--accent); }
-  .caret { width: 12px; color: var(--dim); cursor: pointer; user-select: none; flex: none; }
-  .caret.leaf { opacity: .25; cursor: default; }
+  /* Columns, not indentation: roots on the left, every child level its own
+     column. width:max-content is what makes the board scroll horizontally —
+     a plain flex container would shrink the columns to fit instead. */
+  #board {
+    position: relative; display: flex; align-items: flex-start; gap: 48px;
+    width: max-content; min-width: 100%; padding-bottom: 40px;
+  }
+  /* pointer-events:none is load-bearing: the SVG covers the whole board, so
+     without it every box below it stops being clickable. */
+  #wires {
+    position: absolute; top: 0; left: 0; pointer-events: none;
+    color: var(--accent); opacity: .5; overflow: visible;
+  }
+  .col { flex: none; width: 250px; display: flex; flex-direction: column; gap: 8px; }
+  .nwrap { display: flex; align-items: center; gap: 6px; }
+  .node {
+    flex: 1; min-width: 0; background: var(--panel); border: 1px solid var(--line);
+    border-left: 3px solid var(--line); border-radius: 4px; padding: 5px 8px; cursor: pointer;
+  }
+  .node:hover { border-color: var(--accent); }
+  .node.open { border-left-color: var(--accent); }
+  .node.sel { border-color: var(--accent); background: rgba(111,178,255,.12); }
+  .nmeta { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 3px; }
+  /* Clamped, not truncated in the data: an exchange title can be a whole
+     paragraph, and one such node would otherwise be taller than the twenty
+     around it. The full text is one click away in the detail pane. */
+  .ntitle {
+    overflow-wrap: anywhere; overflow: hidden;
+    display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical;
+  }
+  .kids { flex: none; font-size: 11px; color: var(--dim); cursor: pointer; white-space: nowrap; }
+  .kids:hover { color: var(--accent); text-decoration: underline; }
+  .kids.leaf { opacity: .35; cursor: default; text-decoration: none; }
   .title { cursor: pointer; white-space: pre-wrap; }
   .title:hover { text-decoration: underline; }
   .b {
@@ -111,7 +141,7 @@ export const VIEWER_PAGE = `<!doctype html>
   <button id="reload">Reload projects</button>
 </header>
 <main>
-  <div id="tree"></div>
+  <div id="tree"><div id="board"><svg id="wires"></svg></div></div>
   <div id="right">
     <div id="tabs">
       <button data-pane="inspector" class="on">Node</button>
@@ -150,10 +180,14 @@ export const VIEWER_PAGE = `<!doctype html>
 </main>
 <script>
 (function () {
-  var treeEl = document.getElementById('tree');
+  var boardEl = document.getElementById('board');
+  var wiresEl = document.getElementById('wires');
   var inspEl = document.getElementById('inspector');
-  var rows = {};      // entry id -> row element
-  var boxes = {};     // entry id -> children container
+  // One column per child level. columns[k].openId is the node in column k whose
+  // children column k+1 shows — at most one, which is what keeps a column's
+  // contents unambiguous.
+  var columns = [];
+  var nodeEls = {};   // entry id -> { wrap, box, kids, col }
   var selected = null;
 
   function api(path) {
@@ -187,84 +221,147 @@ export const VIEWER_PAGE = `<!doctype html>
     return n.childCount + (showHidden() ? n.hiddenChildCount : 0);
   }
 
-  function decorate(row, n) {
-    if (n.hidden) badge(row, 'deleted', 'hidden');
-    if (n.kind) badge(row, n.kind, 'kind');
-    if (n.label) badge(row, n.label);
-    if (n.type && n.type !== n.kind) badge(row, 'type=' + n.type);
-    if (n.taskStatus) badge(row, 'status=' + n.taskStatus);
-    // render_depth is DISPLAYED, never obeyed: nodes with 0 stay visible.
+  // Only what identifies a node at a glance. Everything else — seq, batch,
+  // type, char count, task status — is one click away in the detail pane.
+  // render_depth stays: surfacing it as data (never obeying it) is the reason
+  // this viewer exists, so it does not get demoted to a detail.
+  function decorate(box, n) {
+    var meta = el('div', 'nmeta');
+    if (n.label) badge(meta, n.label);
+    if (n.kind) badge(meta, n.kind, 'kind');
+    if (n.hidden) badge(meta, 'deleted', 'hidden');
+    if (n.secret) badge(meta, n.redacted ? 'secret (redacted)' : 'secret', 'secret');
     if (n.renderDepth !== null && n.renderDepth !== undefined) {
-      badge(row, 'render_depth=' + n.renderDepth, 'rd');
+      badge(meta, 'render_depth=' + n.renderDepth, 'rd');
     }
-    if (n.seq !== null && n.seq !== undefined) badge(row, 'seq=' + n.seq);
-    if (n.batchIndex !== null && n.batchIndex !== undefined) badge(row, 'batch=' + n.batchIndex);
-    if (n.secret) badge(row, n.redacted ? 'secret (redacted)' : 'secret', 'secret');
-    if (n.childCount) badge(row, n.childCount + ' children');
-    if (n.hiddenChildCount) badge(row, '+' + n.hiddenChildCount + ' deleted', 'hidden');
-    if (n.contentChars) badge(row, n.contentChars + ' chars');
+    if (meta.childNodes.length) box.appendChild(meta);
   }
 
-  function makeRow(n, container) {
-    var wrap = el('div');
-    var row = el('div', 'row');
+  function makeNode(n, col, rec, index) {
+    var wrap = el('div', 'nwrap');
+    var box = el('div', 'node');
+    decorate(box, n);
+    box.appendChild(el('div', 'ntitle', n.title || '(untitled)'));
+    box.onclick = function () { select(n.id); };
+
+    // Leaves still say "Children: 0" rather than vanishing — an empty node and
+    // a node whose children are merely collapsed look different that way.
     var open = expandableCount(n);
-    var caret = el('span', 'caret' + (open ? '' : ' leaf'), open ? '+' : '·');
-    var kids = el('div', 'kids');
-    kids.style.display = 'none';
+    var kids = el('span', 'kids' + (open ? '' : ' leaf'), 'Children: ' + open);
+    if (open) kids.onclick = function () { toggle(n.id, index); };
 
-    caret.onclick = function () {
-      if (!expandableCount(n)) return;
-      if (kids.style.display === 'none') {
-        kids.style.display = '';
-        caret.textContent = '−';
-        if (!kids.dataset.loaded) loadChildren(n.id, kids);
-      } else {
-        kids.style.display = 'none';
-        caret.textContent = '+';
-      }
-    };
-
-    var title = el('span', 'title', n.title || '(untitled)');
-    title.onclick = function () { select(n.id); };
-
-    row.appendChild(caret);
-    row.appendChild(title);
-    decorate(row, n);
-    wrap.appendChild(row);
+    wrap.appendChild(box);
     wrap.appendChild(kids);
-    container.appendChild(wrap);
-
-    rows[n.id] = row;
-    boxes[n.id] = { box: kids, caret: caret };
-    return kids;
+    col.appendChild(wrap);
+    rec.ids.push(n.id);
+    nodeEls[n.id] = { wrap: wrap, box: box, kids: kids, col: index };
+    return box;
   }
 
-  function loadChildren(id, kids) {
-    kids.dataset.loaded = '1';
-    kids.appendChild(el('div', 'empty', 'loading…'));
+  function addColumn() {
+    var rec = { el: el('div', 'col'), ids: [], openId: null };
+    boardEl.appendChild(rec.el);
+    columns.push(rec);
+    return rec;
+  }
+
+  /** Drop every column right of k, and clear k's expansion marker. */
+  function truncateTo(k) {
+    while (columns.length > k + 1) {
+      var gone = columns.pop();
+      gone.ids.forEach(function (id) { delete nodeEls[id]; });
+      gone.el.remove();
+    }
+    var col = columns[k];
+    if (col && col.openId) {
+      if (nodeEls[col.openId]) nodeEls[col.openId].box.classList.remove('open');
+      col.openId = null;
+    }
+  }
+
+  /* Line the column up with the parent it hangs off. Without this a root near
+     the bottom of a 776-entry first column opens its children at the very top
+     of the board — parent and children thousands of pixels apart. Measuring the
+     first box rather than the column keeps it right when the column has a
+     header above it. */
+  function alignColumn(k, parentId) {
+    var anchor = nodeEls[parentId];
+    var col = columns[k];
+    if (!anchor || !col) return;
+    col.el.style.marginTop = '0px';
+    var first = col.el.querySelector('.nwrap');
+    if (!first) return;
+    var delta = anchor.wrap.getBoundingClientRect().top - first.getBoundingClientRect().top;
+    col.el.style.marginTop = Math.max(0, delta) + 'px';
+  }
+
+  function wire(x1, y1, x2, y2) {
+    var p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    var dx = Math.max(16, (x2 - x1) / 2);
+    p.setAttribute('d', 'M' + x1 + ',' + y1 +
+      ' C' + (x1 + dx) + ',' + y1 + ' ' + (x2 - dx) + ',' + y2 + ' ' + x2 + ',' + y2);
+    p.setAttribute('fill', 'none');
+    p.setAttribute('stroke', 'currentColor');
+    p.setAttribute('stroke-width', '1.2');
+    return p;
+  }
+
+  // Geometry read straight from the laid-out DOM, so the curves cannot drift
+  // out of step with the boxes. The SVG lives inside the board and scrolls with
+  // it — no scroll handler needed, only a resize one.
+  function drawWires() {
+    wiresEl.textContent = '';
+    wiresEl.style.width = boardEl.offsetWidth + 'px';
+    wiresEl.style.height = boardEl.offsetHeight + 'px';
+    var br = boardEl.getBoundingClientRect();
+    for (var i = 0; i < columns.length - 1; i++) {
+      var src = columns[i].openId ? nodeEls[columns[i].openId] : null;
+      if (!src) continue;
+      var s = src.kids.getBoundingClientRect();
+      var x1 = s.right - br.left;
+      var y1 = s.top + s.height / 2 - br.top;
+      columns[i + 1].ids.forEach(function (cid) {
+        var target = nodeEls[cid];
+        if (!target) return;
+        var r = target.box.getBoundingClientRect();
+        wiresEl.appendChild(wire(x1, y1, r.left - br.left, r.top + r.height / 2 - br.top));
+      });
+    }
+  }
+
+  /** Open (or close) a node's children as the column to its right. */
+  function toggle(id, index) {
+    var col = columns[index];
+    if (!col) return Promise.resolve();
+    var wasOpen = col.openId === id;
+    truncateTo(index);
+    if (wasOpen) { drawWires(); return Promise.resolve(); }
+
+    col.openId = id;
+    if (nodeEls[id]) nodeEls[id].box.classList.add('open');
+    var rec = addColumn();
+    rec.el.appendChild(el('div', 'empty', 'loading…'));
     var q = '/api/children?id=' + encodeURIComponent(id) + (showHidden() ? '&hidden=1' : '');
     return api(q).then(function (data) {
-      kids.textContent = '';
-      if (!data.children.length) kids.appendChild(el('div', 'empty', '(no children)'));
+      rec.el.textContent = '';
       // Every child is rendered — no cap, no budget, no render_depth skip.
-      data.children.forEach(function (c) { makeRow(c, kids); });
+      data.children.forEach(function (c) { makeNode(c, rec.el, rec, index + 1); });
+      if (!data.children.length) rec.el.appendChild(el('div', 'empty', '(no children)'));
+      alignColumn(index + 1, id);
+      drawWires();
       return data;
     }).catch(function (e) {
-      kids.textContent = '';
-      kids.appendChild(el('div', 'empty err', e.message));
+      rec.el.textContent = '';
+      rec.el.appendChild(el('div', 'empty err', e.message));
+      drawWires();
     });
   }
 
   function expand(id) {
-    var entry = boxes[id];
+    var entry = nodeEls[id];
     if (!entry) return Promise.resolve();
-    if (entry.box.style.display === 'none') {
-      entry.box.style.display = '';
-      entry.caret.textContent = '−';
-    }
-    if (entry.box.dataset.loaded) return Promise.resolve();
-    return loadChildren(id, entry.box);
+    if (columns[entry.col] && columns[entry.col].openId === id) return Promise.resolve();
+    return toggle(id, entry.col);
   }
 
   function select(id) {
@@ -275,11 +372,11 @@ export const VIEWER_PAGE = `<!doctype html>
     inspEl.appendChild(el('div', 'k', 'loading…'));
     return api('/api/node?id=' + encodeURIComponent(id)).then(function (data) {
       var n = data.node;
-      if (selected && rows[selected]) rows[selected].classList.remove('sel');
+      if (selected && nodeEls[selected]) nodeEls[selected].box.classList.remove('sel');
       selected = n.id;
-      if (rows[n.id]) {
-        rows[n.id].classList.add('sel');
-        rows[n.id].scrollIntoView({ block: 'nearest' });
+      if (nodeEls[n.id]) {
+        nodeEls[n.id].box.classList.add('sel');
+        nodeEls[n.id].wrap.scrollIntoView({ block: 'nearest', inline: 'nearest' });
       }
       renderInspector(n);
       return n;
@@ -352,25 +449,28 @@ export const VIEWER_PAGE = `<!doctype html>
   }
 
   function loadProjects() {
-    treeEl.textContent = '';
-    rows = {}; boxes = {};
+    truncateTo(-1);            // drops every column, including the roots one
+    nodeEls = {}; selected = null;
+    var rec = addColumn();
+    drawWires();
     return api('/api/projects').then(function (data) {
       var others = data.otherRoots || [];
       if (!data.projects.length && !others.length) {
-        treeEl.appendChild(el('div', 'empty', 'No root entries.'));
+        rec.el.appendChild(el('div', 'empty', 'No root entries.'));
         return;
       }
-      data.projects.forEach(function (p) { makeRow(p, treeEl); });
+      data.projects.forEach(function (p) { makeNode(p, rec.el, rec, 0); });
       // Parentless non-project entries: reachable from nowhere else, which is
       // exactly why they are worth showing.
       if (others.length) {
         var head = el('div', 'empty', 'other roots (no metadata.kind="project")');
         head.style.paddingTop = '10px';
-        treeEl.appendChild(head);
-        others.forEach(function (r) { makeRow(r, treeEl); });
+        rec.el.appendChild(head);
+        others.forEach(function (r) { makeNode(r, rec.el, rec, 0); });
       }
+      drawWires();
     }).catch(function (e) {
-      treeEl.appendChild(el('div', 'err', e.message));
+      rec.el.appendChild(el('div', 'err', e.message));
     });
   }
 
@@ -553,6 +653,8 @@ export const VIEWER_PAGE = `<!doctype html>
   // Toggling rebuilds the tree: already-loaded child lists were fetched under
   // the old filter, so patching them in place would leave a mixed view.
   document.getElementById('showhidden').onchange = function () { loadProjects(); };
+  // The curves are absolute pixel geometry; a reflow invalidates them.
+  window.addEventListener('resize', drawWires);
 
   loadStats();
   loadProjects();
