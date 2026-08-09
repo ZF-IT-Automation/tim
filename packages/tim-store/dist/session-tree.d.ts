@@ -25,13 +25,6 @@ export interface DerivedCounters {
     exchangeCount: number;
     batchesSummarized: number;
 }
-export interface CurrentBatch {
-    batchNode: Entry;
-    usersInBatch: Entry[];
-    allBatches: Entry[];
-}
-/** Latest exchange-batch under Exchanges; creates Batch 1 if missing. */
-export declare function getCurrentBatch(store: TimStore, exchangesNodeId: string): Promise<CurrentBatch>;
 /** Locate the single child of `parentId` with the given metadata.kind, or null. */
 export declare function findChildByKind(store: TimStore, parentId: string, kind: string): Promise<Entry | null>;
 /**

@@ -58,12 +58,10 @@ export {
 export {
   deriveCounters,
   findChildByKind,
-  getCurrentBatch,
   findManagedRoot,
   ensureInboxProject,
   foldBatchSummaries,
   type DerivedCounters,
-  type CurrentBatch,
   SESSIONS_SECTION_TITLE,
   SUMMARY_NODE_TITLE,
   EXCHANGES_NODE_TITLE,

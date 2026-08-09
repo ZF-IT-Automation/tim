@@ -7,12 +7,20 @@
 // an agent actually receives — same handler, same formatting, same store. A
 // discrepancy between the two is exactly the class of bug the panel exists to
 // catch, so it must not be defined away.
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.ToolNotAllowedError = exports.INSPECTOR_TOOLS = void 0;
+exports.ToolNotAllowedError = exports.DatabaseMismatchError = exports.MUTATION_TOOLS = exports.INSPECTOR_TOOLS = void 0;
 exports.listInspectorTools = listInspectorTools;
 exports.inspectorToolArgs = inspectorToolArgs;
+exports.parseDoctorDbPath = parseDoctorDbPath;
+exports.assertSameDatabase = assertSameDatabase;
 exports.defaultMcpUrl = defaultMcpUrl;
 exports.callInspectorTool = callInspectorTool;
+exports.callMutationTool = callMutationTool;
+const node_fs_1 = __importDefault(require("node:fs"));
+const node_path_1 = __importDefault(require("node:path"));
 const tim_mcp_1 = require("tim-mcp");
 const index_js_1 = require("@modelcontextprotocol/sdk/client/index.js");
 const sse_js_1 = require("@modelcontextprotocol/sdk/client/sse.js");
@@ -63,6 +71,23 @@ exports.INSPECTOR_TOOLS = new Set([
 const FORCED_ARGS = {
     tim_load_project: { bind: false },
 };
+/**
+ * The write tools the viewer may call, kept deliberately tiny.
+ *
+ * Editing memory from the viewer is not the goal — fixing *structure* is: a node
+ * that landed in the wrong place, or one that should not exist. Move and soft-delete
+ * cover that and nothing else. No tool here can change what an entry says, so a
+ * misclick loses a node's position, never its content.
+ *
+ * tim_update_many is on the list only for its `irrelevant` flag: deleting a subtree
+ * means flagging every descendant, and the alternative is one HTTP round trip per
+ * node. It cannot touch content either.
+ */
+exports.MUTATION_TOOLS = new Set([
+    'tim_delete',
+    'tim_move_entry',
+    'tim_update_many',
+]);
 function listInspectorTools() {
     return tim_mcp_1.TOOL_DEFS.filter(def => exports.INSPECTOR_TOOLS.has(def.name) && !def.internal)
         .map(def => ({
@@ -81,10 +106,80 @@ function listInspectorTools() {
 function inspectorToolArgs(name, args) {
     return { ...args, ...(FORCED_ARGS[name] ?? {}) };
 }
+/**
+ * The database the MCP server is actually working on, read from tim_doctor's
+ * first line. Exported for the test, which should not have to run a server to
+ * check the parse.
+ */
+function parseDoctorDbPath(text) {
+    const match = /^TIM Doctor\s+—\s+(.+?)\s*$/m.exec(text);
+    return match ? match[1] : null;
+}
+class DatabaseMismatchError extends Error {
+    constructor(viewerDb, serverDb) {
+        super(`Refusing to edit: the viewer is showing ${viewerDb}, but the MCP server at ` +
+            `TIM_MCP_PORT is working on ${serverDb}. An edit would change a database you ` +
+            `are not looking at. Point the viewer and the server at the same file, or set ` +
+            `TIM_MCP_PORT to the server for this database.`);
+        this.name = 'DatabaseMismatchError';
+    }
+}
+exports.DatabaseMismatchError = DatabaseMismatchError;
+/** Cache per (server url, viewer db): neither path changes while a process lives. */
+const dbCheckCache = new Map();
+/**
+ * Refuse a mutation unless the MCP server holds the same database the viewer is
+ * rendering.
+ *
+ * Reads never needed this: the tool panel exists precisely to show what an agent
+ * sees, and a second database showing through it is informative rather than
+ * dangerous. A delete button is different — without this check, editing a viewer
+ * opened on one database silently rewrites whichever database happens to answer
+ * on TIM_MCP_PORT, and the tree on screen never moves.
+ */
+async function assertSameDatabase(viewerDbPath, options = {}) {
+    const url = options.url ?? defaultMcpUrl();
+    const key = url + '\0' + viewerDbPath;
+    let check = dbCheckCache.get(key);
+    if (!check) {
+        check = (async () => {
+            const text = await callTool('tim_doctor', {}, { url });
+            const serverDb = parseDoctorDbPath(text);
+            // An unreadable answer is not a pass. If tim_doctor's format ever changes,
+            // this fails closed rather than waving edits through unchecked.
+            if (!serverDb) {
+                throw new Error('Cannot confirm which database the MCP server is using (tim_doctor gave no ' +
+                    'path), so the edit is refused rather than aimed at an unknown target.');
+            }
+            if (real(serverDb) !== real(viewerDbPath)) {
+                throw new DatabaseMismatchError(viewerDbPath, serverDb);
+            }
+        })();
+        dbCheckCache.set(key, check);
+    }
+    try {
+        await check;
+    }
+    catch (err) {
+        // A failed check is not cached: the usual cause is the server being down or
+        // pointed elsewhere, both of which the user can fix without a restart.
+        dbCheckCache.delete(key);
+        throw err;
+    }
+}
+function real(p) {
+    try {
+        return node_fs_1.default.realpathSync(p);
+    }
+    catch {
+        return node_path_1.default.resolve(p);
+    }
+}
 class ToolNotAllowedError extends Error {
     constructor(name) {
-        super(`Tool "${name}" is not callable from the viewer. The viewer runs a read-only ` +
-            `allowlist; write tools, tim_sync and tim_export are excluded.`);
+        super(`Tool "${name}" is not callable from the viewer. The viewer runs two allowlists: ` +
+            `read tools on GET /api/tool, and structure edits (move, soft-delete) on ` +
+            `POST /api/mutate. Everything else — content writes, tim_sync, tim_export — is excluded.`);
         this.name = 'ToolNotAllowedError';
     }
 }
@@ -105,6 +200,20 @@ function defaultMcpUrl() {
 async function callInspectorTool(name, args, options = {}) {
     if (!exports.INSPECTOR_TOOLS.has(name))
         throw new ToolNotAllowedError(name);
+    return callTool(name, args, options);
+}
+/**
+ * Call one structure-editing tool. Same transport as the read path — the point of
+ * going over the wire holds twice over here: the MCP server owns the writable
+ * store, so the viewer's own handle stays read-only and there is exactly one
+ * process that can change the database.
+ */
+async function callMutationTool(name, args, options = {}) {
+    if (!exports.MUTATION_TOOLS.has(name))
+        throw new ToolNotAllowedError(name);
+    return callTool(name, args, options);
+}
+async function callTool(name, args, options) {
     const url = options.url ?? defaultMcpUrl();
     const client = new index_js_1.Client({ name: 'tim-viewer', version: '1' }, { capabilities: {} });
     try {
@@ -112,7 +221,7 @@ async function callInspectorTool(name, args, options = {}) {
     }
     catch (err) {
         throw new Error(`Cannot reach the TIM MCP server at ${url} (${err.message}). ` +
-            `The tool panel needs it running — the tree does not.`);
+            `The tool panel and the edit buttons need it running — the tree does not.`);
     }
     try {
         const result = await client.callTool({ name, arguments: inspectorToolArgs(name, args) });
