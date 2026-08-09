@@ -34,6 +34,22 @@ describe('SessionManager', () => {
       expect(entry.metadata.cwd).toBe('/tmp/project');
     });
 
+    it('rejects a blank session id', async () => {
+      await expect(sessions.sessionStart({
+        sessionId: '',
+        agentName: 'codex',
+        cwd: '/tmp/project',
+        harness: 'codex',
+      })).rejects.toThrow(/non-empty/);
+
+      await expect(sessions.sessionStart({
+        sessionId: '   ',
+        agentName: 'codex',
+        cwd: '/tmp/project',
+        harness: 'codex',
+      })).rejects.toThrow(/non-empty/);
+    });
+
     it('is idempotent on repeat', async () => {
       const first = await sessions.sessionStart({
         sessionId: 'sess-002',
@@ -586,11 +602,12 @@ describe('SessionManager', () => {
           record.key === 'P0000'
         );
         expect(canonicalUpserts).toHaveLength(1);
+        // The legacy id keeps exactly one record, and it is the delete: the
+        // upsert staged when the legacy node was written is superseded by the
+        // tombstone, so there is nothing left for a replica to resurrect.
         expect(records.filter(record =>
-          record.entityType === 'entry' &&
-          record.operation === 'upsert' &&
-          record.key === legacyId
-        )).toHaveLength(1);
+          record.entityType === 'entry' && record.key === legacyId
+        )).toEqual([expect.objectContaining({ operation: 'delete' })]);
         expect(records).toEqual(expect.arrayContaining([
           expect.objectContaining({
             key: legacyId,
@@ -740,6 +757,20 @@ describe('SessionManager', () => {
   });
 
   describe('startProjectSession', () => {
+    it('rejects a blank session id before touching the project', async () => {
+      await store.createProject('P0098');
+      await expect(sessions.startProjectSession({
+        sessionId: '',
+        projectId: 'P0098',
+        agentName: 'codex',
+        cwd: '/p',
+        harness: 'codex',
+      })).rejects.toThrow(/non-empty/);
+
+      const project = await store.read('P0098');
+      expect(await store.getChildByKind(project!.id, 'sessions-root')).toHaveLength(0);
+    });
+
     it('creates Sessions section + session node + Summary + Exchanges', async () => {
       await store.createProject('P0099');
       const session = await sessions.startProjectSession({

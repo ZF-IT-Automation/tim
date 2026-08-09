@@ -1,0 +1,244 @@
+"use strict";
+/**
+ * The standard TIM project schema — the single source of truth for "what sections
+ * a project has".
+ *
+ * It lives in tim-core (not in repo-root `docs/`, and not in tim-store or tim-mcp)
+ * for two reasons:
+ *   1. Shipping. Every package publishes only `dist/**`, so a JSON file under
+ *      repo-root `docs/` reaches no installed package. A compiled module does.
+ *   2. Dependency direction. The creation side (tim-store → tim-hooks → tim-cli)
+ *      and the render side (tim-mcp) both sit above tim-core, so both can import
+ *      this without a cycle.
+ *
+ * `docs/project-schema.json` is a generated mirror for humans — regenerate it with
+ * `node scripts/sync-project-schema.mjs`; a test fails if the two drift apart.
+ */
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.PROJECT_SCHEMA = void 0;
+exports.findSchemaSection = findSchemaSection;
+exports.schemaSectionNames = schemaSectionNames;
+exports.PROJECT_SCHEMA = {
+    generated_from: 'packages/tim-core/src/project-schema.ts — docs/project-schema.json is a generated mirror; regenerate with `node scripts/sync-project-schema.mjs`. Do not edit the JSON by hand.',
+    version: 1,
+    description: 'Standard project schema for TIM. Defines section ordering, nesting, and default render depth per node. Per-node override: set metadata.render_depth on any entry to override the schema default for that node.',
+    render_override: 'Nodes with metadata.render_depth override the schema default render_depth for that section/subnode.',
+    render_tail: 'When true on a section (or via metadata.render_tail on a node), the renderer shows the LAST N children instead of the first N — for chronological sections (Log, Sessions, Commits) where recent entries matter most. Per-node metadata.render_tail overrides the schema default.',
+    managed_sections: 'Sections marked managed: true are created on demand by the subsystem that owns them (Sessions by the session tree, Commits by the commit tree). ensureProjectSchema documents them but never materializes them.',
+    render_depth_legend: {
+        full: 'Node body + ALL children recursively with full bodies',
+        '0': 'Node body only, no children rendered',
+        '1': 'Node body + 1 level of child titles',
+        '2': 'Node body + 2 levels (titles, then child bodies)',
+    },
+    task_annotation: {
+        description: 'When a node has task: true in metadata, it behaves as a task with additional rendering and sorting rules.',
+        fields: {
+            status: {
+                type: 'enum',
+                values: ['todo', 'in_progress', 'changes_pending', 'pushed', 'reviewed', 'done', 'cancelled'],
+                default: 'todo',
+                description: 'Cache of last history entry status — updated on every append',
+            },
+            history: {
+                type: 'array',
+                items: {
+                    status: {
+                        type: 'enum',
+                        values: ['todo', 'in_progress', 'changes_pending', 'pushed', 'reviewed', 'done', 'cancelled'],
+                    },
+                    at: { type: 'datetime', description: 'ISO 8601' },
+                    by: { type: 'string', optional: true },
+                    note: { type: 'string', optional: true },
+                },
+                description: 'Append-only status log. Never overwrite via normal update APIs.',
+            },
+            priority: { type: 'enum', values: ['high', 'medium', 'low'], default: 'medium' },
+            due: { type: 'date', optional: true, description: 'ISO 8601 date' },
+            done_at: { type: 'datetime', automatic: true, description: 'Set automatically when status → done' },
+            subtype: { type: 'enum', values: ['coding'], optional: true },
+            commits: {
+                type: 'array',
+                items: 'string',
+                optional: true,
+                description: 'Git SHAs — required before done when vcs=git',
+            },
+            vcs: {
+                type: 'enum',
+                values: ['git', 'none'],
+                optional: true,
+                description: "Set once: git worktree vs not. Not 'git installed'.",
+            },
+        },
+        render_rules: {
+            todo: 'Prominent in Tasks, sorted by priority (high first), overdue due dates in red',
+            in_progress: 'Highlighted, sorted above todo with same priority',
+            changes_pending: 'Highlighted in Tasks (post-review rework), same sort bucket as in_progress',
+            pushed: 'Coding + vcs=git: commits pushed to remote; intermediate gate before reviewed/done',
+            reviewed: 'Coding: review passed; required in history before done',
+            done: 'Collapsed at the end of Tasks, sorted by done_at descending',
+            cancelled: 'Collapsed at the end of Tasks, greyed out, below done items',
+        },
+    },
+    idea_annotation: {
+        description: 'metadata.idea marks an Idea. status=planned promotes in-place to a Task under Tasks.',
+        fields: {
+            status: { type: 'enum', values: ['new', 'planned', 'parked', 'rejected'], default: 'new' },
+        },
+    },
+    bug_annotation: {
+        description: 'metadata.bug marks a Bug. Bugs carry metadata.bug, tasks carry metadata.task — never both, ' +
+            'since which of the two an entry carries is what decides whether it appears in the bug listing ' +
+            'or the task listing. Open means status=open (or no metadata.bug at all); every other status is closed.',
+        fields: {
+            status: {
+                type: 'enum',
+                values: ['open', 'fixed', 'documented', 'wontfix', 'duplicate'],
+                default: 'open',
+                description: "Only 'fixed' claims the bug is gone; 'documented'/'wontfix'/'duplicate' close it without a fix.",
+            },
+            severity: { type: 'enum', values: ['low', 'medium', 'high', 'critical'], optional: true },
+            commit: {
+                type: 'string',
+                optional: true,
+                description: "Git SHA of the commit that fixed it. Required for status='fixed' — a bug is only gone when " +
+                    'something changed. Not the same as metadata.provenance.commit, which is HEAD when the bug ' +
+                    'was *filed*. The other closing statuses need no commit: a bug deliberately left unfixed has ' +
+                    'no fix commit, and demanding one only produces invented hashes.',
+            },
+            legacy: {
+                type: 'boolean',
+                optional: true,
+                description: 'Set by the migration on bugs that were already closed before commit was required. Their fix ' +
+                    'commit, if any, is prose in the body. Marks them as unverified closures rather than silently ' +
+                    'blessing them.',
+            },
+        },
+    },
+    sections: [
+        {
+            name: 'Overview',
+            description: 'Ein-Paragraf-Zusammenfassung: Was ist das Projekt, warum existiert es, aktueller Status.',
+            render_depth: 'full',
+            children: [],
+        },
+        {
+            name: 'Rules',
+            description: 'Constraints, Konventionen, Verbote — das Erste was ein neuer Agent lesen muss.',
+            render_depth: 'full',
+            children: [
+                { name: 'Agent Rules', description: 'Regeln für AI Coding Agents', render_depth: 'full' },
+                { name: 'Git Rules', description: 'Branch-Strategie, Commit-Konventionen', render_depth: 2 },
+                { name: 'Style Rules', description: 'Code-Style, Naming, Linting', render_depth: 1 },
+                { name: 'Do Not', description: 'Explizit verbotene Aktionen', render_depth: 'full' },
+            ],
+        },
+        {
+            name: 'Log',
+            description: 'Chronologie: Entscheidungen, Meilensteine, Richtungswechsel. Einträge als Datumszeilen.',
+            render_depth: 1,
+            render_tail: true,
+            children: [],
+        },
+        {
+            name: 'Decisions',
+            description: 'Wichtige Architektur- und Technologie-Entscheidungen mit Begründung.',
+            render_depth: 1,
+            children: [],
+        },
+        {
+            name: 'Codebase',
+            description: 'Code-Struktur, Tech-Stack, Repo-Organisation.',
+            render_depth: 2,
+            children: [
+                {
+                    name: 'Modules',
+                    description: 'Top-Level-Module und ihre Verantwortung',
+                    render_depth: 2,
+                    children: [{ name: 'Functions', description: 'Kern-Funktionen pro Modul', render_depth: 1 }],
+                },
+                { name: 'Stack', description: 'Sprachen, Frameworks, Laufzeitumgebung', render_depth: 'full' },
+                { name: 'Entry Points', description: 'CLI, API, Web, Binaries', render_depth: 1 },
+                { name: 'Dependencies', description: 'Runtime + Dev-Dependencies mit Begründung', render_depth: 1 },
+            ],
+        },
+        {
+            name: 'Usage',
+            description: 'Bauen, Testen, Deployen, Entwickler-Workflows.',
+            render_depth: 2,
+            children: [
+                { name: 'Install', description: 'Setup und Installation', render_depth: 'full' },
+                { name: 'Build', description: 'Build-Kommandos und Konfiguration', render_depth: 1 },
+                { name: 'Test', description: 'Test-Suite ausführen, Coverage, Test-Typen', render_depth: 1 },
+                { name: 'Deploy', description: 'Deployment-Prozess, Umgebungen', render_depth: 'full' },
+            ],
+        },
+        {
+            name: 'Bugs',
+            description: 'Bekannte Probleme, Workarounds, offene Issues.',
+            render_depth: 1,
+            entry_type: 'bug',
+            children: [],
+        },
+        {
+            name: 'Roadmap',
+            description: 'Geplante Features, Meilensteine, Vision.',
+            render_depth: 1,
+            children: [],
+        },
+        {
+            name: 'Ideas',
+            description: 'Brainstorming, Zukunftsideen, ungefiltert.',
+            render_depth: 1,
+            entry_type: 'idea',
+            children: [],
+        },
+        {
+            name: 'Tasks',
+            description: 'Alle Work-Items mit task-Attribut. Sortiert nach Status > Priority > Due. Offene Tasks stehen oben, done/cancelled werden am Ende eingeklappt.',
+            render_depth: 1,
+            entry_type: 'task',
+            children: [],
+        },
+        {
+            name: 'Sessions',
+            description: 'Agent session logs. Summary nodes roll up here; raw exchanges stay under per-session Exchanges (render_depth 0). P0000 Inbox uses render_depth 1 at project level to show summaries only.',
+            render_depth: 1,
+            render_tail: true,
+            managed: true,
+            children: [],
+        },
+        {
+            name: 'Commits',
+            description: "Git commits made in this project. Each entry: commit hash (title), message + diff summary (body). Linked via 'relates' edge to the session that produced it. Session links back via 'implements' edge. n:m relationship — one session can have multiple commits, one commit can span sessions.",
+            render_depth: 1,
+            render_tail: true,
+            managed: true,
+            children: [],
+        },
+    ],
+};
+/** Depth-first lookup of a schema section by exact name (matches nested children). */
+function findSchemaSection(sections, name) {
+    if (!sections?.length)
+        return undefined;
+    for (const section of sections) {
+        if (section.name === name)
+            return section;
+        const nested = findSchemaSection(section.children, name);
+        if (nested)
+            return nested;
+    }
+    return undefined;
+}
+/** Every section name in the schema, including nested children. */
+function schemaSectionNames(sections = exports.PROJECT_SCHEMA.sections) {
+    const names = [];
+    for (const section of sections) {
+        names.push(section.name);
+        if (section.children?.length)
+            names.push(...schemaSectionNames(section.children));
+    }
+    return names;
+}
+//# sourceMappingURL=project-schema.js.map

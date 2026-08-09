@@ -40,3 +40,12 @@ export function promptSubmitEnvelope(context: string) {
     },
   };
 }
+
+export function sessionStartEnvelope(context: string) {
+  return {
+    hookSpecificOutput: {
+      hookEventName: 'SessionStart',
+      additionalContext: context,
+    },
+  };
+}

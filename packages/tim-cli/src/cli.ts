@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // TIM CLI — v0.1.0-alpha
 
-import { TimStore, SessionManager, resolveProjectBindingLabel } from 'tim-store';
+import { TimStore, SessionManager, ErrorLogger, resolveProjectBindingLabel } from 'tim-store';
 import { loadConfig, getTimDir, normalizeLegacyTypeTag, type TimConfigFile } from 'tim-core';
 import {
   runCheckpoint,
@@ -9,8 +9,10 @@ import {
   runSessionStart,
   findMarker,
   findMarkerOptionsFromEnv,
+  getBriefingMaxTokens,
   buildLoadDirective,
   buildSessionDirective,
+  collectDirectiveBriefing,
   recoverProjectBinding,
   collectBindingReport,
   bindUnboundBindings,
@@ -25,6 +27,9 @@ import {
   writeMarker,
   runPromptSubmit,
   runClaudeStop,
+  runCodexNotify,
+  parseCodexNotifyArgs,
+  maybeSpawnSummarizer,
   type ProjectMarker,
 } from 'tim-hooks';
 import { buildTimMcpEntry, installMcpEntryForHosts } from './install.js';
@@ -42,12 +47,21 @@ import {
   cmdSetupHermesStatusline,
 } from './hermes-statusline-install.js';
 import { cmdConsolidate } from './consolidate.js';
+import { auditSummarizerHealth } from './summarizer-health.js';
+import {
+  collectProjectSchemaReport,
+  formatProjectSchemaFindingLine,
+  formatProjectSchemaOutcomeLine,
+  needsSchemaRepair,
+  repairProjectSchemas,
+} from './project-schema-repair.js';
 import { cmdSecret } from './secret.js';
 import { runReleaseCheck } from './release-check.js';
 import { cmdMigrateFromHmem } from './migrate-from-hmem.js';
 import { cmdSetupAgent } from './setup-agent.js';
+import { cmdViewer } from './viewer.js';
 import { NEW_PROJECT_ALIASES, hasBooleanFlag, parseArgs, valueOptionsFor } from './args.js';
-import { promptSubmitEnvelope, readJsonStdin } from './claude-hook-io.js';
+import { promptSubmitEnvelope, sessionStartEnvelope, readJsonStdin } from './claude-hook-io.js';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -81,7 +95,7 @@ function hasHelpFlag(args: string[], command: string, subcommand?: string): bool
 
 const COMMAND_HELP: Record<string, string> = {
   init: 'Usage: tim init',
-  doctor: 'Usage: tim doctor [--bind]',
+  doctor: 'Usage: tim doctor [--bind] [--repair-schema] [--project <P00XX>]',
   stats: 'Usage: tim stats',
   'resolve-project':
     'Usage: tim resolve-project [--cwd <dir>] [--walk-up] [--format label|json|directive]',
@@ -92,14 +106,18 @@ const COMMAND_HELP: Record<string, string> = {
     'Usage: tim new-project --path <dir> --name <string> [--no-git] [--confirm]',
   'record-commit':
     'Usage: tim record-commit [--cwd <dir>] [--project <label>] [--session <id>] [--hash <sha>] [--message <text>] [--diff <stat>] [--author <name>] [--date <iso>] [--branch <name>]',
-  hook: 'Usage: tim hook <session-start|session-end|log|prompt-submit|claude-stop> [options]',
+  hook: 'Usage: tim hook <session-start|session-end|log|prompt-submit|claude-session-start|claude-stop|cursor-stop|codex-notify> [options]',
   'hook session-start':
     'Usage: tim hook session-start --session <id> [--agent <name>] [--cwd <path>] [--harness <name>] [--project <label>] [--tool <name>] [--model <name>] [--task-summary <text>]',
   'hook session-end': 'Usage: tim hook session-end --session <id>',
   'hook log':
     'Usage: tim hook log --session <id> --user <text> --agent <text> [--cwd <path>]',
   'hook prompt-submit': 'Usage: tim hook prompt-submit < Claude UserPromptSubmit JSON',
+  'hook claude-session-start':
+    'Usage: tim hook claude-session-start < Claude SessionStart JSON',
   'hook claude-stop': 'Usage: tim hook claude-stop < Claude Stop JSON',
+  'hook cursor-stop': 'Usage: tim hook cursor-stop < Cursor stop/sessionEnd JSON',
+  'hook codex-notify': "Usage: tim hook codex-notify '<Codex agent-turn-complete JSON>'",
   checkpoint: 'Usage: tim checkpoint --session <id> [--handoff-note <text>]',
   rebalance: 'Usage: tim rebalance --session <id> [--cwd <dir>]',
   statusline:
@@ -143,6 +161,8 @@ const COMMAND_HELP: Record<string, string> = {
   'secret set': 'Usage: tim secret set <id>',
   'secret status': 'Usage: tim secret status <id>',
   'secret list': 'Usage: tim secret list',
+  viewer:
+    'Usage: tim viewer [--port <number>] [--host 127.0.0.1] [--db <path>] [--show-secrets]',
   user: 'Usage: tim user <init|profile>',
   'user init': 'Usage: tim user init',
   'user profile': 'Usage: tim user profile',
@@ -207,6 +227,7 @@ Commands:
   root-entries             List root entries
   consolidate              Run memory consolidation
   secret                   Manage secret entry metadata
+  viewer                   Browse the entry tree in a local read-only web UI
   --help                   Show this help`);
 }
 
@@ -255,8 +276,10 @@ async function cmdInit() {
 }
 
 async function cmdDoctor(args: string[] = []) {
-  const { flags } = parseArgs(args);
+  const { flags } = parseArgs(args, { valueOptions: valueOptionsFor('doctor') });
   const doBind = flags.bind === 'true';
+  const doRepairSchema = flags['repair-schema'] === 'true';
+  const projectFilter = flags.project;
   const config = loadConfig();
   const store = new TimStore(getDbPath(config));
   const health = await store.health();
@@ -282,6 +305,14 @@ async function cmdDoctor(args: string[] = []) {
   }
   console.log(`\nTop tags: ${stats.topTags.slice(0, 5).map(t => `${t.tag}(${t.count})`).join(', ') || 'none'}`);
 
+  const errorStats = new ErrorLogger(store.getDb()).getStats({ hours: 24, limit: 5 });
+  console.log(`\nErrors (24h): ${errorStats.totalErrors} | Rate: ${errorStats.errorRate}/h`);
+  errorStats.alerts.forEach(a => console.log(`  ⚠ ${a}`));
+  // Zod validation errors are pretty-printed JSON; flattened they stay scannable.
+  errorStats.topErrors.forEach(e =>
+    console.log(`  ${e.count}x ${e.error.replace(/\s+/g, ' ').slice(0, 120)}`),
+  );
+
   console.log('\nBindings:');
   if (bindingReport.projects.length === 0 && bindingReport.stalePaths.length === 0) {
     console.log('  (none)');
@@ -302,6 +333,50 @@ async function cmdDoctor(args: string[] = []) {
     } else {
       for (const outcome of outcomes) {
         console.log(formatBindOutcomeLine(outcome));
+      }
+    }
+  }
+
+  const summarizer = await auditSummarizerHealth(store, config);
+  console.log('\nSummarizer:');
+  if (summarizer.healthy) {
+    console.log(`  ✓ chain: ${summarizer.firstEntry} (+${summarizer.chainLength - 1} fallback(s))`);
+  } else {
+    console.log(
+      summarizer.chainLength === 0
+        ? '  ✗ no chain configured'
+        : `  ⚠ chain: ${summarizer.firstEntry} (+${summarizer.chainLength - 1} fallback(s))`,
+    );
+    summarizer.issues.forEach(i => console.log(`  - ${i}`));
+  }
+
+  // Projects created before the schema became authoritative are missing sections.
+  // Report always; only change the DB behind the explicit --repair-schema opt-in.
+  const schemaReport = await collectProjectSchemaReport(store, projectFilter);
+  console.log('\nProject schema:');
+  if (schemaReport.length === 0) {
+    console.log('  (none)');
+  } else {
+    const incomplete = schemaReport.filter(needsSchemaRepair);
+    for (const finding of schemaReport) {
+      console.log(formatProjectSchemaFindingLine(finding));
+    }
+    if (incomplete.length > 0 && !doRepairSchema) {
+      console.log(
+        `  Fix: tim doctor --repair-schema${projectFilter ? ` --project ${projectFilter}` : ''} ` +
+          '(adds missing sections only; custom sections are kept)',
+      );
+    }
+  }
+
+  if (doRepairSchema) {
+    const outcomes = await repairProjectSchemas(store, schemaReport);
+    console.log('\nSchema repair:');
+    if (outcomes.length === 0) {
+      console.log('  (nothing to add)');
+    } else {
+      for (const outcome of outcomes) {
+        console.log(formatProjectSchemaOutcomeLine(outcome));
       }
     }
   }
@@ -329,6 +404,48 @@ async function cmdStats() {
   store.close();
 }
 
+/**
+ * Marker at `cwd` → full session-start directive. Shared by `resolve-project
+ * --format directive` and the `hook claude-session-start` entry point. Returns null
+ * when there is no marker (callers stay silent and exit 0).
+ */
+async function buildStartDirectiveForCwd(cwd: string, walkUp?: boolean): Promise<string | null> {
+  const envOpts = findMarkerOptionsFromEnv() ?? {};
+  const located = findMarker(cwd, { ...envOpts, walkUp: walkUp ?? envOpts.walkUp ?? false });
+  if (!located) return null;
+
+  const { marker, dir } = located;
+  const config = loadConfig();
+  const store = new TimStore(getDbPath(config));
+  try {
+    const validated = await validateMarkerAgainstStore(marker, store);
+    let projectLabel = validated?.project ?? null;
+
+    if (!projectLabel) {
+      const recovered = await repairPhantomProjectBinding(store, dir);
+      if (recovered) {
+        writeMarker(dir, { project: recovered });
+        projectLabel = recovered;
+      }
+    }
+
+    if (!projectLabel) return buildStaleMarkerDirective(marker.project, dir);
+
+    const binding = await resolveProjectBindingLabel(store, projectLabel);
+    // The directive must carry substance, not just an instruction — a model that
+    // never calls tim_load_project still gets briefed. Failure stays silent so a
+    // start hook is never blocked by a briefing problem.
+    const briefing = await collectDirectiveBriefing(
+      store,
+      projectLabel,
+      getBriefingMaxTokens(config),
+    ).catch(() => undefined);
+    return buildLoadDirective(projectLabel, dir, binding, briefing);
+  } finally {
+    store.close();
+  }
+}
+
 async function cmdResolveProject(args: string[]) {
   const { flags } = parseArgs(args, { valueOptions: valueOptionsFor('resolve-project') });
   const cwd = flags.cwd ?? process.cwd();
@@ -337,6 +454,13 @@ async function cmdResolveProject(args: string[]) {
   const envOpts = findMarkerOptionsFromEnv() ?? {};
   const walkUp =
     flags['walk-up'] !== undefined ? flags['walk-up'] === 'true' : (envOpts.walkUp ?? false);
+
+  if (format === 'directive') {
+    const directive = await buildStartDirectiveForCwd(cwd, walkUp);
+    if (directive) process.stdout.write(directive);
+    return; // no marker → silent skip, exit 0
+  }
+
   const located = findMarker(cwd, { ...envOpts, walkUp });
   if (!located) return; // no marker (or corrupt nearest) → silent skip, exit 0
 
@@ -360,14 +484,7 @@ async function cmdResolveProject(args: string[]) {
       }
     }
 
-    if (format === 'directive') {
-      if (!projectLabel) {
-        process.stdout.write(buildStaleMarkerDirective(marker.project, dir));
-        return;
-      }
-      const binding = await resolveProjectBindingLabel(store, projectLabel);
-      process.stdout.write(buildLoadDirective(projectLabel, dir, binding));
-    } else if (!projectLabel) {
+    if (!projectLabel) {
       // Phantom and unrepaired — do not echo as a live binding.
       process.stdout.write(`${marker.project}?`);
     } else {
@@ -403,7 +520,12 @@ async function cmdResolveSession(args: string[]) {
       console.log(JSON.stringify({ sessionId, project: projectRef, cwd }));
     } else if (format === 'directive') {
       const binding = await resolveProjectBindingLabel(store, projectRef);
-      process.stdout.write(buildSessionDirective(projectRef, cwd, binding));
+      const briefing = await collectDirectiveBriefing(
+        store,
+        projectRef,
+        getBriefingMaxTokens(config),
+      ).catch(() => undefined);
+      process.stdout.write(buildSessionDirective(projectRef, cwd, binding, briefing));
     } else {
       process.stdout.write(projectRef);
     }
@@ -440,6 +562,24 @@ async function cmdBindProject(args: string[]) {
 async function cmdHook(args: string[]) {
   const sub = args[0];
 
+  if (sub === 'claude-session-start') {
+    try {
+      const payload = await readJsonStdin();
+      const cwd = typeof payload?.cwd === 'string' ? payload.cwd.trim() : '';
+      if (!cwd) return;
+
+      // Walk up: Claude reports the workspace root, but sessions often start in a
+      // subdirectory of the marked repo.
+      const directive = await buildStartDirectiveForCwd(cwd, true);
+      if (directive) {
+        process.stdout.write(JSON.stringify(sessionStartEnvelope(directive)));
+      }
+    } catch {
+      // Claude hooks fail soft: no context, diagnostics, or nonzero exit.
+    }
+    return;
+  }
+
   if (sub === 'prompt-submit') {
     try {
       const payload = await readJsonStdin();
@@ -473,7 +613,10 @@ async function cmdHook(args: string[]) {
     return;
   }
 
-  if (sub === 'claude-stop') {
+  // One branch for both harnesses: cursor-agent also runs the Stop hook out of
+  // ~/.claude/settings.json, so the identity has to come from the payload rather
+  // than from which command name was invoked.
+  if (sub === 'claude-stop' || sub === 'cursor-stop') {
     try {
       const payload = await readJsonStdin();
       if (!payload) return;
@@ -482,8 +625,16 @@ async function cmdHook(args: string[]) {
       const sessionId = typeof payload.session_id === 'string' ? payload.session_id.trim() : '';
       const transcriptPath =
         typeof payload.transcript_path === 'string' ? payload.transcript_path.trim() : '';
-      const cwd = typeof payload.cwd === 'string' ? payload.cwd.trim() : '';
+      // Cursor payloads carry no cwd — the workspace arrives as workspace_roots.
+      const roots = Array.isArray(payload.workspace_roots) ? payload.workspace_roots : [];
+      const cwd = typeof payload.cwd === 'string' && payload.cwd.trim()
+        ? payload.cwd.trim()
+        : typeof roots[0] === 'string' ? roots[0].trim() : '';
       if (!sessionId || !transcriptPath || !cwd) return;
+
+      const agent = typeof payload.cursor_version === 'string'
+        ? { agentName: 'cursor', harness: 'cursor' }
+        : undefined;
 
       const marker = findMarker(cwd);
       if (!marker) return;
@@ -491,7 +642,7 @@ async function cmdHook(args: string[]) {
       const config = loadConfig();
       const store = new TimStore(getDbPath(config));
       try {
-        await runClaudeStop(
+        const result = await runClaudeStop(
           store,
           {
             session_id: sessionId,
@@ -499,13 +650,50 @@ async function cmdHook(args: string[]) {
             cwd,
             stop_hook_active: payload.stop_hook_active === true,
           },
-          { cwd },
+          { cwd, agent },
         );
+        // This hook is the only writer of exchanges for Claude Code, so it is also the
+        // only place that learns a batch just filled. Without this the summarizer is
+        // never spawned and every session-summary-root stays empty. The spawn is
+        // detached and gated on pending >= batch_size, so most turns do nothing.
+        if (result.logged) {
+          await maybeSpawnSummarizer(store, cwd, { sessionId });
+        }
       } finally {
         store.close();
       }
     } catch {
       // Claude Stop hooks fail soft: never block the harness.
+    }
+    return;
+  }
+
+  if (sub === 'codex-notify') {
+    try {
+      const payload = parseCodexNotifyArgs(args);
+      if (!payload) return;
+
+      const cwd = typeof payload.cwd === 'string' ? payload.cwd.trim() : '';
+      if (!cwd) return;
+
+      const marker = findMarker(cwd);
+      if (!marker) return;
+
+      const config = loadConfig();
+      const store = new TimStore(getDbPath(config));
+      try {
+        const result = await runCodexNotify(store, payload, { cwd });
+        // Same reason as claude-stop: this is the only writer of Codex exchanges,
+        // so it is also the only place that learns a batch just filled.
+        if (result.logged) {
+          const sessionId = String(payload['thread-id'] ?? '').trim();
+          if (sessionId) await maybeSpawnSummarizer(store, cwd, { sessionId });
+        }
+      } finally {
+        store.close();
+      }
+    } catch {
+      // Codex notify fails soft: never block the harness.
     }
     return;
   }
@@ -585,7 +773,7 @@ async function cmdHook(args: string[]) {
 
       default:
         console.error(`Unknown hook: ${sub ?? '(none)'}`);
-        console.error('Usage: tim hook <session-start|session-end|log|prompt-submit|claude-stop> [options]');
+        console.error('Usage: tim hook <session-start|session-end|log|prompt-submit|claude-session-start|claude-stop|cursor-stop|codex-notify> [options]');
         process.exit(1);
     }
   } finally {
@@ -955,6 +1143,9 @@ async function main() {
       break;
     case 'secret':
       await cmdSecret(rest);
+      break;
+    case 'viewer':
+      await cmdViewer(rest);
       break;
     case 'user': {
       const sub = rest[0];

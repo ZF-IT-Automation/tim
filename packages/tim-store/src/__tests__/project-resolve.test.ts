@@ -45,6 +45,44 @@ describe('resolveProjectLabel', () => {
     }
   });
 
+  it('resolves the project name, with or without the status suffix', async () => {
+    await store.createProject('P0063', { content: 'TIM — Theoretically Infinite Memory | Active | TS' });
+    expect(await store.resolveProjectLabel('TIM')).toEqual({ status: 'found', label: 'P0063' });
+    expect(await store.resolveProjectLabel('tim')).toEqual({ status: 'found', label: 'P0063' });
+  });
+
+  it('resolves a partial name', async () => {
+    await store.createProject('P0054', { content: 'MAIMO-RPG | Active | TS/Node/SQLite' });
+    expect(await store.resolveProjectLabel('maimo')).toEqual({ status: 'found', label: 'P0054' });
+  });
+
+  it('lists every project a partial name hits', async () => {
+    await store.createProject('P0060', { content: 'Hermes Fork | Active | Python' });
+    await store.createProject('P0061', { content: 'Hermes live CTX compression | Active' });
+    const r = await store.resolveProjectLabel('hermes');
+    expect(r.status).toBe('ambiguous');
+    if (r.status === 'ambiguous') expect(r.labels).toEqual(['P0060', 'P0061']);
+  });
+
+  it('lets an exact name win over a partial one', async () => {
+    await store.createProject('P0060', { content: 'Hermes | Active | Python' });
+    await store.createProject('P0061', { content: 'Hermes live CTX compression | Active' });
+    expect(await store.resolveProjectLabel('hermes')).toEqual({ status: 'found', label: 'P0060' });
+  });
+
+  it('lets an alias win over a name that matches something else', async () => {
+    await store.createProject('P0048', { content: 'its-over-9k | Active', aliases: ['tim'] });
+    await store.createProject('P0063', { content: 'TIM — Theoretically Infinite Memory' });
+    expect(await store.resolveProjectLabel('tim')).toEqual({ status: 'found', label: 'P0048' });
+  });
+
+  it('keeps obsolete projects out of name matching but reachable by label', async () => {
+    await store.createProject('P0037', { content: '[OBSOLETE] Heimdall — MIGRATED to P0049' });
+    await store.createProject('P0049', { content: 'Heimdall CLI | Paused | TS/Bun' });
+    expect(await store.resolveProjectLabel('heimdall')).toEqual({ status: 'found', label: 'P0049' });
+    expect(await store.resolveProjectLabel('P0037')).toEqual({ status: 'found', label: 'P0037' });
+  });
+
   it('loadProject loads via alias', async () => {
     await store.createProject('P0048', { content: 'body', aliases: ['o9k'] });
     const loaded = await store.loadProject('o9k');

@@ -110,6 +110,27 @@ describe('runClaudeStop', () => {
     expect(texts.join('\n')).not.toContain('skill preamble');
   });
 
+  it('keeps every text block of a turn, not just the one before the first tool call', async () => {
+    writeTranscript(cwd, [
+      userMsg('u1', 'do the thing'),
+      assistantMsg('a1', [{ type: 'text', text: 'opening line before the tools' }]),
+      assistantMsg('a2', [{ type: 'thinking', thinking: 'private reasoning' }]),
+      assistantMsg('a3', [{ type: 'tool_use', id: 't1', name: 'Bash', input: {} }]),
+      userMsg('tr1', [{ type: 'tool_result', tool_use_id: 't1', content: 'output' }]),
+      assistantMsg('a4', [{ type: 'text', text: 'the actual answer' }]),
+    ]);
+
+    const result = await runClaudeStop(store, payload(), { cwd });
+    expect(result.logged).toBe(true);
+    expect(result.exchangeCount).toBe(1);
+
+    const logged = await sessions.showUnsummarized('claude-stop-sess');
+    const agent = logged.exchanges.map((ex) => ex.agentContent ?? '').join('\n');
+    expect(agent).toContain('opening line before the tools');
+    expect(agent).toContain('the actual answer');
+    expect(agent).not.toContain('private reasoning');
+  });
+
   it('ignores malformed JSONL lines and returns not-logged when no turn exists', async () => {
     writeTranscript(cwd, [
       'not-json',
@@ -134,12 +155,19 @@ describe('runClaudeStop', () => {
     expect((await store.read('claude-stop-sess'))?.metadata.harness).toBe('claude-code');
   });
 
-  it('returns not-logged when transcript exceeds 1 MiB', async () => {
-    const huge = 'x'.repeat(MAX_TRANSCRIPT_BYTES + 1);
-    const file = path.join(cwd, 'huge.jsonl');
-    fs.writeFileSync(file, huge);
+  it('logs the last turn of a transcript well past 1 MiB', async () => {
+    const filler = Array.from({ length: 40 }, (_, i) =>
+      userMsg(`old-${i}`, 'x'.repeat(32 * 1024)),
+    );
+    const file = writeTranscript(cwd, [
+      ...filler,
+      userMsg('u-last', 'question at the end'),
+      assistantMsg('a-last', 'answer at the end'),
+    ]);
+    expect(fs.statSync(file).size).toBeGreaterThan(MAX_TRANSCRIPT_BYTES);
+
     const result = await runClaudeStop(store, payload({ transcript_path: file }), { cwd });
-    expect(result).toEqual({ logged: false });
+    expect(result.logged).toBe(true);
   });
 
   it('produces counters 1-5 and exactly one configured checkpoint across five distinct exchanges', async () => {
@@ -169,5 +197,37 @@ describe('runClaudeStop', () => {
       if (prevHome === undefined) delete process.env.HOME;
       else process.env.HOME = prevHome;
     }
+  });
+
+  // Cursor's transcript puts the role at the top level and has no uuid per record;
+  // records shaped exactly like ~/.cursor/projects/*/agent-transcripts/*.jsonl.
+  it('reads a Cursor transcript and labels the session from the passed agent identity', async () => {
+    const transcript = writeTranscript(cwd, [
+      { role: 'user', message: { content: [{ type: 'text', text: 'first cursor question' }] } },
+      { role: 'assistant', message: { content: [{ type: 'text', text: 'first cursor answer' }] } },
+      { role: 'user', message: { content: [{ type: 'text', text: 'second cursor question' }] } },
+      { role: 'assistant', message: { content: [{ type: 'text', text: 'second cursor answer' }] } },
+      { type: 'turn_ended', status: 'success' },
+    ]);
+
+    const p = payload({ transcript_path: transcript });
+    const agent = { agentName: 'cursor', harness: 'cursor' };
+    const first = await runClaudeStop(store, p, { cwd, agent });
+    // The TUI fires `stop` and a run under -p fires `sessionEnd`; a session that
+    // ends right after a turn hits both with the same last turn.
+    const second = await runClaudeStop(store, p, { cwd, agent });
+
+    expect(first.logged).toBe(true);
+    expect(second).toMatchObject({ logged: false, duplicate: true });
+    expect((await deriveCounters(store, p.session_id)).exchangeCount).toBe(1);
+
+    const logged = await sessions.showUnsummarized(p.session_id);
+    const texts = logged.exchanges.flatMap((ex) => [ex.userContent, ex.agentContent ?? '']).join('\n');
+    expect(texts).toContain('second cursor question');
+    expect(texts).toContain('second cursor answer');
+    expect(texts).not.toContain('first cursor question');
+
+    const session = await store.read(p.session_id);
+    expect(session?.metadata.harness).toBe('cursor');
   });
 });

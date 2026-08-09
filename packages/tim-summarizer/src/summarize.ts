@@ -6,19 +6,29 @@ import {
   TimStore,
   SessionManager,
   findChildByKind,
+  KIND_BATCH,
   KIND_SUMMARY_ROOT,
   KIND_SESSION,
 } from 'tim-store';
 import { connectTimMcp, callTimTool, type UnsummarizedBatch } from './mcp-client.js';
 import {
   generateSummary,
+  generateSummaryDetailed,
   generateProjectSummary,
+  generateSessionRollup,
   generateSummaryHeuristic,
   extractTags,
   FALLBACK_MARKER,
+  type SummaryStatus,
 } from './generate-summary.js';
 
 export const PROJECT_SUMMARY_MARKER = '## Project Summary';
+
+/**
+ * Prefix of the placeholder stored when no CLI produced a summary. `tim doctor`
+ * scans stored summaries for it to surface previously-corrupted sessions.
+ */
+export const SUMMARY_FAILURE_MARKER = '[ALL SUMMARIZER CLIs FAILED';
 
 /**
  * Idempotently merge a project summary into the project content body.
@@ -212,6 +222,31 @@ export async function processCurationQueue(store: TimStore, projectLabel: string
   return processed;
 }
 
+/**
+ * Read this session's batch summaries in batch order — the input for the LLM rollup.
+ * Goes to the store directly (not MCP) so it also sees batches written by earlier
+ * summarizer runs for the same session. Returns [] on any read problem.
+ */
+async function collectBatchSummaries(sessionId: string): Promise<string[]> {
+  let store: TimStore | null = null;
+  try {
+    store = new TimStore(resolveDbPath());
+    const resolved = store.resolveSessionAlias(sessionId);
+    const summaryNode = await findChildByKind(store, resolved, KIND_SUMMARY_ROOT);
+    if (!summaryNode) return [];
+    const batches = await store.getChildByKind(summaryNode.id, KIND_BATCH);
+    return batches
+      .slice()
+      .sort((a, b) => (Number(a.metadata.batch_index) || 0) - (Number(b.metadata.batch_index) || 0))
+      .map(b => (b.content || '').trim())
+      .filter(Boolean);
+  } catch {
+    return [];
+  } finally {
+    store?.close();
+  }
+}
+
 async function postSummarizerHandoff(sessionId: string): Promise<void> {
   const store = new TimStore(resolveDbPath());
   try {
@@ -236,7 +271,15 @@ async function postSummarizerHandoff(sessionId: string): Promise<void> {
   }
 }
 
-export async function runSummarizerLoop(sessionId: string): Promise<number> {
+export interface SummarizerLoopOpts {
+  /** Called per batch that was stored degraded (marker or heuristic transcript). */
+  onDegraded?: (info: { batchIndex: number; status: SummaryStatus }) => void;
+}
+
+export async function runSummarizerLoop(
+  sessionId: string,
+  opts: SummarizerLoopOpts = {},
+): Promise<number> {
   const client = await connectTimMcp();
   let written = 0;
 
@@ -251,14 +294,15 @@ export async function runSummarizerLoop(sessionId: string): Promise<number> {
   try {
     let batch = await callTimTool<UnsummarizedBatch>(client, 'tim_show_unsummarized', { sessionId });
     while (batch.exchanges.length > 0) {
-      const raw = await generateSummary(batch, onMCPError);
+      const { text: raw, status } = await generateSummaryDetailed(batch, onMCPError);
+      if (status !== 'ok') opts.onDegraded?.({ batchIndex: batch.batchIndex, status });
       const { seqFrom, seqTo } = seqRange(batch);
       let summary: string;
       let tags: string[] | undefined;
 
       if (raw === FALLBACK_MARKER) {
         summary =
-          `[ALL SUMMARIZER CLIs FAILED — main agent please resummarize batch ${batch.batchIndex}]\n` +
+          `${SUMMARY_FAILURE_MARKER} — main agent please resummarize batch ${batch.batchIndex}]\n` +
           `${batch.exchanges.map(e => `Q: ${e.userContent.trim().slice(0, 200)}`).join('\n')}`;
         tags = undefined;
       } else {
@@ -281,7 +325,15 @@ export async function runSummarizerLoop(sessionId: string): Promise<number> {
     }
   } finally {
     try {
-      await callTimTool(client, 'tim_rollup_session_summary', { sessionId });
+      // Condense the batch summaries into a real handoff; the server falls back to
+      // concatenation when we cannot produce one.
+      const batchSummaries = await collectBatchSummaries(sessionId);
+      const rollup =
+        batchSummaries.length > 0 ? await generateSessionRollup(batchSummaries, onMCPError) : null;
+      await callTimTool(client, 'tim_rollup_session_summary', {
+        sessionId,
+        ...(rollup ? { summary: rollup } : {}),
+      });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       const stack = err instanceof Error ? err.stack : undefined;
@@ -324,8 +376,20 @@ async function main(): Promise<void> {
     process.exit(1);
   }
   try {
-    const count = await runSummarizerLoop(sessionId);
+    const degraded: SummaryStatus[] = [];
+    const count = await runSummarizerLoop(sessionId, {
+      onDegraded: ({ status }) => degraded.push(status),
+    });
     console.error(`tim-summarizer: wrote ${count} batch summary(ies) for ${sessionId}`);
+    if (degraded.length > 0) {
+      // Exit 2 = summaries were stored, but degraded — distinguishable from success (0)
+      // and from a hard failure (1). Run `tim doctor` for the cause.
+      console.error(
+        `tim-summarizer: ${degraded.length} of ${count} batch summary(ies) DEGRADED ` +
+          `(${[...new Set(degraded)].join(', ')}) — run 'tim doctor'`,
+      );
+      process.exit(2);
+    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`tim-summarizer failed: ${msg}`);

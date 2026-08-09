@@ -9,6 +9,31 @@ import {
 } from '../claude-hooks-install.js';
 
 describe('mergeClaudeHooks', () => {
+  it('installs the SessionStart briefing hook through the tim binary', () => {
+    const next = mergeClaudeHooks({});
+    const sessionStart = next.hooks?.SessionStart;
+    expect(sessionStart).toHaveLength(1);
+    expect(sessionStart?.[0].hooks[0]).toEqual({
+      type: 'command',
+      command: 'tim hook claude-session-start',
+      timeout: 10,
+    });
+  });
+
+  it('does not duplicate the SessionStart hook and keeps foreign ones', () => {
+    const existing: ClaudeSettings = {
+      hooks: {
+        SessionStart: [
+          { matcher: '', hooks: [{ type: 'command', command: 'echo other-start' }] },
+        ],
+      },
+    };
+    const once = mergeClaudeHooks(existing);
+    expect(once.hooks?.SessionStart).toHaveLength(2);
+    expect(once.hooks?.SessionStart?.[0].hooks[0].command).toBe('echo other-start');
+    expect(mergeClaudeHooks(once)).toEqual(once);
+  });
+
   it('appends TIM prompt-submit and Stop hooks once while preserving unrelated settings', () => {
     const existing: ClaudeSettings = {
       permissions: { allow: ['Bash(*)'] },
@@ -80,6 +105,15 @@ describe('installClaudeHooks', () => {
     const afterFirst = JSON.parse(fs.readFileSync(settingsPath, 'utf8')) as ClaudeSettings;
     expect(afterFirst.permissions).toEqual(existing.permissions);
     expect(afterFirst.hooks?.Notification).toEqual(existing.hooks?.Notification);
+    expect(afterFirst.hooks?.SessionStart).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          hooks: expect.arrayContaining([
+            expect.objectContaining({ command: 'tim hook claude-session-start' }),
+          ]),
+        }),
+      ]),
+    );
     expect(afterFirst.hooks?.UserPromptSubmit).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

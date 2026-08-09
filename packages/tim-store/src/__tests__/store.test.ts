@@ -274,11 +274,14 @@ describe('TimStore', () => {
       expect(staging[0].operation).toBe('upsert');
     });
 
-    it('should stage updates', async () => {
+    it('should stage updates, collapsing onto the newest snapshot', async () => {
       const entry = await store.write('Original');
       await store.update(entry.id, { content: 'Updated' });
       const staging = await store.getStaging();
-      expect(staging.length).toBe(2); // write + update
+      // The write's record is superseded: each payload is a full snapshot,
+      // so only the newest unpushed one can matter to an LWW merge.
+      expect(staging.length).toBe(1);
+      expect(JSON.parse(staging[0].payload).content).toBe('Updated');
     });
 
     it('should apply staging records', async () => {

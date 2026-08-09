@@ -8,6 +8,8 @@ import type { TimMcpServerOptions } from './mcp-command.js';
 import { updateSkillsForHost } from './update-skills.js';
 import { installHermesStatusline } from './hermes-statusline-install.js';
 import { installClaudeHooks } from './claude-hooks-install.js';
+import { installCodexHooks } from './codex-hooks-install.js';
+import { installCursorHooks } from './cursor-hooks-install.js';
 import { parseArgs, valueOptionsFor } from './args.js';
 
 export type AgentHost = 'claude' | 'codex' | 'cursor' | 'hermes';
@@ -319,7 +321,11 @@ export async function cmdSetupAgent(args: string[]): Promise<void> {
           ? 'would-install-hermes-statusline'
           : host === 'claude'
             ? 'would-install-claude-hooks'
-            : 'not-required',
+            : host === 'codex'
+              ? 'would-install-codex-notify-and-session-start-hook'
+              : host === 'cursor'
+                ? 'would-install-cursor-turn-end-and-session-start-hooks'
+                : 'not-required',
       },
       smoke: { action: 'would-run-health-check', command: 'tim doctor' },
     }, null, 2));
@@ -344,6 +350,10 @@ export async function cmdSetupAgent(args: string[]): Promise<void> {
     ? await installHermesStatusline({ skipBuild: true })
     : host === 'claude'
       ? installClaudeHooks()
+    : host === 'codex'
+      ? installCodexHooks()
+    : host === 'cursor'
+      ? installCursorHooks()
       : { ok: true, steps: [{ step: 'hooks', status: 'skip' as const, detail: 'No host hook install needed' }] };
 
   const store = new TimStore(dbPath);

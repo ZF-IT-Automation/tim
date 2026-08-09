@@ -35,9 +35,12 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.FALLBACK_MARKER = void 0;
 exports.generateSummaryHeuristic = generateSummaryHeuristic;
+exports.noChainHint = noChainHint;
 exports.extractTags = extractTags;
 exports.tryCli = tryCli;
+exports.generateSessionRollup = generateSessionRollup;
 exports.generateProjectSummary = generateProjectSummary;
+exports.generateSummaryDetailed = generateSummaryDetailed;
 exports.generateSummary = generateSummary;
 const child_process_1 = require("child_process");
 const fs = __importStar(require("fs"));
@@ -99,6 +102,12 @@ function buildPrompt(batch) {
         `End your response with a line: TAGS: #tag1 #tag2 ... (3-5 content hashtags, lowercase kebab-case, # prefix).`);
 }
 exports.FALLBACK_MARKER = 'TIM_SUMMARIZER_FALLBACK_NEEDED';
+/** Actionable operator message — a missing chain is config, not a transient CLI failure. */
+function noChainHint() {
+    return (`no summarizer chain configured — summaries are NOT being generated. ` +
+        `Add a "summarizer" block to ${(0, tim_core_1.getConfigPath)()}, e.g. ` +
+        `"summarizer": { "chain": [{ "cli": "opencode", "model": "claude-3-5-haiku", "provider": "anthropic" }], "timeout_sec": 600 }`);
+}
 function normalizeTag(raw) {
     let tag = raw.trim().toLowerCase();
     if (!tag.startsWith('#'))
@@ -179,7 +188,7 @@ function runCliProcess(command, args, prompt, timeoutSec) {
         });
     });
 }
-async function tryCli(cli, model, provider, prompt, timeoutSec, onError) {
+async function tryCli(cli, model, provider, prompt, timeoutSec, onError, extraArgs = []) {
     const label = provider ? `${cli}/${provider}/${model}` : `${cli}/${model}`;
     let command;
     let args;
@@ -192,7 +201,11 @@ async function tryCli(cli, model, provider, prompt, timeoutSec, onError) {
     else if (cli === 'opencode') {
         const fullModel = provider ? `${provider}/${model}` : model;
         command = 'opencode';
-        args = ['run', '-m', fullModel, '--print-logs'];
+        // --pure disables external plugins. Without it, anything a plugin prints on
+        // session.created lands in stdout ahead of the model's answer and gets stored
+        // as the summary — including TIM's own session-start directive, which is how
+        // a briefing ended up saved as a session summary.
+        args = ['run', '-m', fullModel, '--pure', '--print-logs'];
         stdinPrompt = prompt;
     }
     else if (cli === 'curl-openrouter') {
@@ -226,7 +239,7 @@ async function tryCli(cli, model, provider, prompt, timeoutSec, onError) {
         stdinPrompt = null;
     }
     try {
-        const { stdout, stderr, code, signal, timedOut } = await runCliProcess(command, args, stdinPrompt, timeoutSec);
+        const { stdout, stderr, code, signal, timedOut } = await runCliProcess(command, [...args, ...extraArgs], stdinPrompt, timeoutSec);
         if (timedOut || code !== 0 || signal) {
             const detail = [
                 timedOut ? `timeout=${timeoutSec}s` : null,
@@ -299,6 +312,45 @@ async function tryCli(cli, model, provider, prompt, timeoutSec, onError) {
         return null;
     }
 }
+function buildSessionRollupPrompt(batchSummaries) {
+    const joined = batchSummaries.join('\n\n---\n\n');
+    return (`You are condensing the batch summaries of ONE agent session into a handoff ` +
+        `for the next session on the same work.\n\n` +
+        `Cover, in this order:\n` +
+        `- What was done in this session\n` +
+        `- Current state (what works, what is half-finished)\n` +
+        `- Open threads / unresolved questions\n` +
+        `- The single most likely next step\n\n` +
+        `Format: 4-6 short bullets, 200 words max. Output ONLY the bullets, no preamble.\n\n` +
+        `Batch summaries (chronological):\n${joined}`);
+}
+/**
+ * Condense one session's batch summaries into a next-session handoff via the CLI chain.
+ * Returns null on total failure (no chain, no input, or every CLI failed) so the caller
+ * can fall back to plain concatenation instead of storing a degraded blob.
+ */
+async function generateSessionRollup(batchSummaries, onError) {
+    const config = (0, tim_core_1.loadConfig)();
+    const chain = config.summarizer?.chain;
+    if (!chain || chain.length === 0) {
+        appendSummarizerLog(`NO_CHAIN session rollup: ${noChainHint()}`);
+        return null;
+    }
+    if (batchSummaries.length === 0)
+        return null;
+    const prompt = buildSessionRollupPrompt(batchSummaries);
+    const timeoutSec = config.summarizer?.timeout_sec ?? 600;
+    for (const entry of chain) {
+        const result = await tryCli(entry.cli, entry.model, entry.provider, prompt, timeoutSec, onError, entry.args);
+        if (result) {
+            if (process.env.TIM_SUMMARIZER_VERBOSE) {
+                console.error(`tim-summarizer: session rollup via ${entry.label || entry.cli}/${entry.model}`);
+            }
+            return result;
+        }
+    }
+    return null;
+}
 function buildProjectSummaryPrompt(sessionSummaries) {
     const joined = sessionSummaries.join('\n\n---\n\n');
     return (`You are summarizing a project's progress across multiple sessions.\n` +
@@ -320,14 +372,16 @@ function buildProjectSummaryPrompt(sessionSummaries) {
 async function generateProjectSummary(sessionSummaries, onError) {
     const config = (0, tim_core_1.loadConfig)();
     const chain = config.summarizer?.chain;
-    if (!chain || chain.length === 0)
+    if (!chain || chain.length === 0) {
+        appendSummarizerLog(`NO_CHAIN project summary: ${noChainHint()}`);
         return null;
+    }
     if (sessionSummaries.length === 0)
         return null;
     const prompt = buildProjectSummaryPrompt(sessionSummaries);
     const timeoutSec = config.summarizer?.timeout_sec ?? 600;
     for (const entry of chain) {
-        const result = await tryCli(entry.cli, entry.model, entry.provider, prompt, timeoutSec, onError);
+        const result = await tryCli(entry.cli, entry.model, entry.provider, prompt, timeoutSec, onError, entry.args);
         if (result) {
             if (process.env.TIM_SUMMARIZER_VERBOSE) {
                 console.error(`tim-summarizer: project summary via ${entry.label || entry.cli}/${entry.model}`);
@@ -337,20 +391,30 @@ async function generateProjectSummary(sessionSummaries, onError) {
     }
     return null;
 }
-async function generateSummary(batch, onError) {
+/**
+ * Summarize a batch and report *how* it was produced, so a caller can tell a real
+ * summary apart from the marker / heuristic transcript that both get stored verbatim.
+ */
+async function generateSummaryDetailed(batch, onError) {
     const config = (0, tim_core_1.loadConfig)();
     const chain = config.summarizer?.chain;
-    if (!chain || chain.length === 0)
-        return exports.FALLBACK_MARKER;
+    if (!chain || chain.length === 0) {
+        // Config problem, not a CLI failure — say so on stderr and in the log instead
+        // of routing it through onError, which reports per-CLI failures.
+        const hint = noChainHint();
+        appendSummarizerLog(`NO_CHAIN batch ${batch.batchIndex}: ${hint}`);
+        console.error(`tim-summarizer: ${hint}`);
+        return { text: exports.FALLBACK_MARKER, status: 'no-chain' };
+    }
     const prompt = buildPrompt(batch);
     const timeoutSec = config.summarizer?.timeout_sec ?? 600;
     for (const entry of chain) {
-        const result = await tryCli(entry.cli, entry.model, entry.provider, prompt, timeoutSec, onError);
+        const result = await tryCli(entry.cli, entry.model, entry.provider, prompt, timeoutSec, onError, entry.args);
         if (result) {
             if (process.env.TIM_SUMMARIZER_VERBOSE) {
                 console.error(`tim-summarizer: used ${entry.label || entry.cli}/${entry.model}`);
             }
-            return result;
+            return { text: result, status: 'ok' };
         }
         if (process.env.TIM_SUMMARIZER_VERBOSE) {
             console.error(`tim-summarizer: ${entry.label || entry.cli}/${entry.model} failed, trying next`);
@@ -362,6 +426,9 @@ async function generateSummary(batch, onError) {
     }
     const heuristic = generateSummaryHeuristic(batch);
     appendSummarizerLog(`HEURISTIC batch ${batch.batchIndex}: ${heuristic.slice(0, 200)}`);
-    return heuristic;
+    return { text: heuristic, status: 'heuristic' };
+}
+async function generateSummary(batch, onError) {
+    return (await generateSummaryDetailed(batch, onError)).text;
 }
 //# sourceMappingURL=generate-summary.js.map

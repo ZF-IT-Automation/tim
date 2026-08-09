@@ -1,12 +1,14 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.DEFAULT_BRIEFING_MAX_TOKENS = exports.DEFAULT_CHECKPOINT_EVERY_N = void 0;
+exports.DEFAULT_BRIEFING_RECENT_SESSIONS = exports.DEFAULT_BRIEFING_MAX_TOKENS = exports.DEFAULT_CHECKPOINT_EVERY_N = void 0;
 exports.getCheckpointEveryN = getCheckpointEveryN;
 exports.getBriefingMaxTokens = getBriefingMaxTokens;
+exports.getBriefingRecentSessions = getBriefingRecentSessions;
 exports.shouldAutoCheckpoint = shouldAutoCheckpoint;
 exports.checkpointCadenceReminder = checkpointCadenceReminder;
 exports.DEFAULT_CHECKPOINT_EVERY_N = 20;
 exports.DEFAULT_BRIEFING_MAX_TOKENS = 9000;
+exports.DEFAULT_BRIEFING_RECENT_SESSIONS = 5;
 function getCheckpointEveryN(config) {
     const n = config.checkpoint?.everyN;
     if (typeof n === 'number' && n > 0)
@@ -18,6 +20,12 @@ function getBriefingMaxTokens(config) {
     if (typeof n === 'number' && n > 0)
         return n;
     return exports.DEFAULT_BRIEFING_MAX_TOKENS;
+}
+function getBriefingRecentSessions(config) {
+    const n = config.briefing?.recentSessions;
+    if (typeof n === 'number' && n > 0)
+        return Math.floor(n);
+    return exports.DEFAULT_BRIEFING_RECENT_SESSIONS;
 }
 /** True when an auto-checkpoint should fire after this exchange count. */
 function shouldAutoCheckpoint(exchangeCount, everyN) {

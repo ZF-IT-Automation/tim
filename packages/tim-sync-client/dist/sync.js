@@ -155,7 +155,7 @@ async function pushCycle(client, store, state, deviceId, encryptFn, secretEncryp
     const placeholderKeys = [];
     const rows = allRows.filter((row) => {
         if (row.entity_type === 'entry' && isSecretPlaceholderPayload(row.payload)) {
-            placeholderKeys.push(row.key);
+            placeholderKeys.push({ key: row.key, lww: row.lww_timestamp });
             return false;
         }
         return true;
@@ -187,7 +187,9 @@ async function pushCycle(client, store, state, deviceId, encryptFn, secretEncryp
     let pushedCount = 0;
     for (const item of sent) {
         for (const e of item.envelopes) {
-            keysToAck.push(e.key);
+            // Envelopes carry the timestamp as ISO; staging stores epoch millis.
+            const lww = Date.parse(e.lww);
+            keysToAck.push({ key: e.key, lww: Number.isFinite(lww) ? lww : Date.now() });
             pushedCount++;
         }
     }

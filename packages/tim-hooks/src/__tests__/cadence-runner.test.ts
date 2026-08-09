@@ -1,11 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as os from 'os';
 import { TimStore, SessionManager } from 'tim-store';
 import { afterExchangeLogged } from '../cadence-runner.js';
 import { writeMarker } from '../marker.js';
 
-const TEST_ROOT = path.join('/home/bbbee', '.tim-test-runs');
+const TEST_ROOT = path.join(os.tmpdir(), 'tim-test-runs');
 
 describe('afterExchangeLogged', () => {
   let dir: string;

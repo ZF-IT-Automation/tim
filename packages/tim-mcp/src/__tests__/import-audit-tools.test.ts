@@ -176,9 +176,13 @@ describe('hmem import audit MCP tools', () => {
       content: 'Loose child',
       force: true,
     }));
+    // 'Errors' is deliberately NOT in the standard schema — it is one of the legacy
+    // section names that only exists in imported/older projects. Repairing a schema
+    // section like 'Tasks' would report created:false now that project creation
+    // materializes it, which would no longer exercise the create path.
     const dry = parsePayload(await client.callTool('tim_repair_section', {
       project: 'P0200',
-      title: 'Tasks',
+      title: 'Errors',
       moveChildrenFromIds: [loose.id],
       dryRun: true,
     }));
@@ -188,15 +192,15 @@ describe('hmem import audit MCP tools', () => {
 
     const repaired = parsePayload(await client.callTool('tim_repair_section', {
       project: 'P0200',
-      title: 'Tasks',
+      title: 'Errors',
       moveChildrenFromIds: [loose.id],
     }));
     expect(repaired.created).toBe(true);
     expect(repaired.moves[0].moved).toBe(true);
 
     const structure = parsePayload(await client.callTool('tim_project_structure', { label: 'P0200' }));
-    const tasks = structure.sections.find((s: any) => s.title === 'Tasks');
-    expect(tasks.childCount).toBe(1);
+    const errors = structure.sections.find((s: any) => s.title === 'Errors');
+    expect(errors.childCount).toBe(1);
   });
 
   it('tim_dry_run_move reports move impact without writing', async () => {

@@ -325,7 +325,7 @@ describe('formatProjectOutput entry badges', () => {
     expect(out).toMatch(/Legacy str task \[todo\]/);
   });
 
-  it('renders [done] badge when task is boolean true (regression)', () => {
+  it('treats a done legacy task (task boolean true) as closed', () => {
     const children = [
       section,
       {
@@ -340,9 +340,10 @@ describe('formatProjectOutput entry badges', () => {
     ] as any[];
 
     const out = formatProjectOutput({ project, children, truncated: false }, 200);
-    // task:true is a marker but with no task.status object → falls back
-    // to 'todo'. The legacy top-level status='done' is ignored (T3 fix).
-    expect(out).toMatch(/Bool task \[todo\]/);
+    // task:true is the legacy marker shape, which stores its status top-level.
+    // Reading it makes the task closed, so it drops out of the open Tasks list
+    // instead of rendering as [todo] forever.
+    expect(out).not.toMatch(/Bool task/);
   });
 
   it('omits badge for false-like task values', () => {
@@ -453,5 +454,99 @@ describe('formatProjectOutput project summary', () => {
     } as any;
     const out = formatProjectOutput({ project, children: [], truncated: false }, 200);
     expect(out).not.toMatch(/── Project Summary ──/);
+  });
+});
+
+describe('formatProjectOutput session summary rendering', () => {
+  const project = {
+    id: 'P1',
+    metadata: { label: 'P1', kind: 'project' },
+    title: 'P1 — x',
+    content: '',
+    tags: [],
+    createdAt: '2026-06-01T00:00:00Z',
+  } as any;
+
+  function sessionWith(summary: string, id = 'sess-1') {
+    return {
+      id,
+      parentId: 'sess-root',
+      title: 'Summary',
+      metadata: { kind: 'session-summary-root', exchanges: 42, summary },
+      tags: ['#session-summary'],
+      content: summary,
+      createdAt: '2026-06-08T00:00:00Z',
+    } as any;
+  }
+
+  const CONDENSED = [
+    '- Repaired the summarization chain end to end.',
+    '- Added a default summarizer config so the CLI chain resolves.',
+    '- Renderer now preserves line structure.',
+    '- next: install the SessionStart hook so the briefing is emitted.',
+  ].join('\n');
+
+  it('keeps a multi-bullet summary on separate lines instead of one run-on line', () => {
+    const out = formatProjectOutput(
+      { project, children: [sessionWith(CONDENSED)], truncated: false },
+      500,
+    );
+    // Header carries the metadata; each bullet keeps its own indented line.
+    expect(out).toMatch(/^ {2}42 exchanges · 2026-06-08$/m);
+    for (const bullet of CONDENSED.split('\n')) {
+      expect(out).toContain(`    ${bullet}`);
+    }
+    // The old renderer collapsed whitespace and quoted the whole thing on one line.
+    expect(out).not.toContain(`"${CONDENSED.replace(/\n/g, ' ')}"`);
+  });
+
+  it('does not truncate a realistic condensed summary', () => {
+    // ~900 chars — well past the old 400-char cap, inside the new one.
+    const long = Array.from(
+      { length: 12 },
+      (_, i) => `- bullet ${i + 1}: ${'detail '.repeat(8)}`.trim(),
+    ).join('\n');
+    expect(long.length).toBeGreaterThan(400);
+    const out = formatProjectOutput(
+      { project, children: [sessionWith(long)], truncated: false },
+      500,
+    );
+    for (const bullet of long.split('\n')) {
+      expect(out).toContain(`    ${bullet}`);
+    }
+    expect(out).not.toContain('…\n');
+  });
+
+  it('elides from the middle so the newest lines survive a forced cut', () => {
+    // Far past the cap: the cut must keep the tail (the handoff), not the head.
+    const oversized = [
+      '- topic: renderer work',
+      ...Array.from({ length: 80 }, (_, i) => `- middle step ${i + 1}: ${'x'.repeat(60)}`),
+      '- next: wire the SessionStart hook into settings.json',
+    ].join('\n');
+
+    const out = formatProjectOutput(
+      { project, children: [sessionWith(oversized)], truncated: false },
+      500,
+    );
+    expect(out).toContain('- topic: renderer work');
+    expect(out).toContain('- next: wire the SessionStart hook into settings.json');
+    expect(out).toContain('    …');
+    // Something in the middle must actually be gone.
+    expect(out).not.toContain('- middle step 1:');
+  });
+
+  it('honours the caller-supplied recent-session count (briefing.recentSessions)', () => {
+    const sessions = Array.from({ length: 4 }, (_, i) =>
+      sessionWith(`summary ${i + 1}`, `sess-${i + 1}`));
+    const out = formatProjectOutput(
+      { project, children: sessions, truncated: false },
+      500,
+      undefined,
+      undefined,
+      2,
+    );
+    expect(out).toMatch(/── Recent Sessions \(2\/4\) ──/);
+    expect(out).toMatch(/… 2 older sessions/);
   });
 });

@@ -14,13 +14,15 @@ import {
   ensureProjectForPath,
   INBOX_PROJECT_LABEL,
   deriveCounters,
+  resolveProjectBindingLabel,
   type Summarizer,
   type TimStore,
 } from 'tim-store';
+import { collectDirectiveBriefing } from './session-briefing.js';
 import { runConfiguredHooks, type HookEnv } from './hooks.js';
 import { getDeltaBriefing } from './delta.js';
 import { getUpdateCheckLineBriefing } from './update-check.js';
-import { discoverMarker, CWD_ONLY_MARKER_DISCOVERY_POLICY, readMarker, writeMarker, validateMarkerAgainstStore } from './marker.js';
+import { discoverMarker, CWD_ONLY_MARKER_DISCOVERY_POLICY, readMarker, writeMarker, validateMarkerAgainstStore, buildLoadDirective, buildSessionDirective } from './marker.js';
 import {
   repairPhantomProjectBinding,
   markerWithRepairedProject,
@@ -237,6 +239,103 @@ export async function runSessionStart(
   if (briefingParts.length > 0) briefing = briefingParts.join('\n');
 
   return { session, project, briefing };
+}
+
+export interface SessionStartPreview {
+  projectLabel: string;
+  /** Display label the directive would use, e.g. "P0063 — TIM …". */
+  binding: string;
+  /** Session that fed the session-dependent half; null when the project has none. */
+  sessionId: string | null;
+  /** The directive text a start hook would emit for this project. */
+  directive: string;
+  /** What runSessionStart would return as `briefing`; null when there is nothing. */
+  briefing: string | null;
+}
+
+/**
+ * What a session start would *say*, without starting one.
+ *
+ * runSessionStart above does four writes before it assembles any text — it
+ * creates the session, may write a marker, runs configured hooks, and its delta
+ * is computed against a session that now exists. This reproduces only the
+ * assembly (lines 217-239 there) against a session that is already in the
+ * store, so the answer can be inspected without changing the thing being
+ * inspected: no session node, no marker, no configured hooks.
+ *
+ * Reads still touch `accessed_at`, and getUpdateCheckLineBriefing may refresh
+ * its own cache — this is "makes no memory changes", not "makes no writes".
+ */
+export async function previewSessionStart(
+  store: TimStore,
+  params: {
+    projectId: string;
+    maxTokens: number;
+    /** Defaults to the project's most recent session. */
+    sessionId?: string;
+    /** Directive flavour: from a .tim-project marker, or from session metadata. */
+    origin?: 'marker' | 'session';
+    cwd?: string;
+  },
+): Promise<SessionStartPreview> {
+  const resolved = await store.resolveProjectLabel(params.projectId);
+  if (resolved.status !== 'found') {
+    throw new Error(
+      resolved.status === 'ambiguous'
+        ? `Project "${params.projectId}" is ambiguous: ${resolved.labels.join(', ')}`
+        : `No project "${params.projectId}"`,
+    );
+  }
+  const projectLabel = resolved.label;
+  const binding = await resolveProjectBindingLabel(store, projectLabel);
+  const cwd = params.cwd ?? process.cwd();
+
+  const briefingParts: string[] = [];
+
+  // Which session the delta and the cadence reminder are computed against.
+  // Named in the result rather than silently chosen: the same project briefs
+  // differently depending on the session, and a simulation that hides that
+  // input is not reproducing anything.
+  let sessionId = params.sessionId ?? null;
+  if (!sessionId) {
+    const [latest] = await new SessionManager(store).listResumableSessions(projectLabel, 1);
+    sessionId = latest?.sessionId ?? null;
+  }
+
+  if (projectLabel !== INBOX_PROJECT_LABEL) {
+    const delta = await getDeltaBriefing(store, projectLabel, {
+      ...(sessionId ? { sessionId } : {}),
+    });
+    if (delta) briefingParts.push(delta);
+  }
+  const updateLine = await getUpdateCheckLineBriefing();
+  if (updateLine) briefingParts.push(updateLine);
+
+  if (sessionId) {
+    const { exchangeCount } = await deriveCounters(store, sessionId);
+    if (exchangeCount > 0) {
+      const reminder = checkpointCadenceReminder(exchangeCount, getCheckpointEveryN(loadConfig()));
+      if (reminder) briefingParts.push(reminder);
+    }
+  }
+
+  const directiveBriefing = await collectDirectiveBriefing(
+    store,
+    projectLabel,
+    params.maxTokens,
+  ).catch(() => undefined);
+
+  const directive = params.origin === 'session'
+    ? buildSessionDirective(projectLabel, cwd, binding, directiveBriefing)
+    : buildLoadDirective(projectLabel, cwd, binding, directiveBriefing);
+
+  return {
+    projectLabel,
+    binding,
+    sessionId,
+    directive,
+    briefing: briefingParts.length > 0 ? briefingParts.join('\n') : null,
+  };
 }
 
 export async function runSessionEnd(

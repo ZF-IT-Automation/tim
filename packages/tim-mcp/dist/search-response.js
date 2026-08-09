@@ -1,8 +1,10 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.MAX_SEARCH_TAG_CODE_POINTS = exports.MAX_SEARCH_TAGS = exports.MAX_SEARCH_TITLE_CODE_POINTS = exports.SEARCH_RESPONSE_MIN_BYTES = exports.SEARCH_RESPONSE_MAX_BYTES = exports.DEFAULT_SEARCH_EXCERPT_CODE_POINTS = void 0;
+exports.MAX_SEARCH_TAG_CODE_POINTS = exports.MAX_SEARCH_TAGS = exports.MAX_SEARCH_TITLE_CODE_POINTS = exports.SEARCH_RESPONSE_MIN_BYTES = exports.SEARCH_RESPONSE_MAX_BYTES = exports.SEARCH_MAX_TOP_K = exports.DEFAULT_SEARCH_EXCERPT_CODE_POINTS = void 0;
+exports.clampSearchRequest = clampSearchRequest;
 exports.buildBoundedSearchResponse = buildBoundedSearchResponse;
 exports.DEFAULT_SEARCH_EXCERPT_CODE_POINTS = 500;
+exports.SEARCH_MAX_TOP_K = 100;
 exports.SEARCH_RESPONSE_MAX_BYTES = 24 * 1024;
 exports.SEARCH_RESPONSE_MIN_BYTES = 128;
 exports.MAX_SEARCH_TITLE_CODE_POINTS = 256;
@@ -26,6 +28,25 @@ const SEARCH_METADATA_KEYS = [
     'project_ref',
     'task',
 ];
+/**
+ * Oversized `topK` / `excerptChars` are clamped, not rejected. The 24 KiB
+ * response budget truncates first, so a caller asking for 2000 excerpt chars
+ * was never going to get them — failing the call just returns nothing instead
+ * of something. The adjustment is reported back so nobody mistakes a trimmed
+ * result set for the full one.
+ */
+function clampSearchRequest(topK, excerptChars) {
+    const clamped = [];
+    if (topK > exports.SEARCH_MAX_TOP_K) {
+        clamped.push(`topK clamped from ${topK} to ${exports.SEARCH_MAX_TOP_K}`);
+        topK = exports.SEARCH_MAX_TOP_K;
+    }
+    if (excerptChars > exports.DEFAULT_SEARCH_EXCERPT_CODE_POINTS) {
+        clamped.push(`excerptChars clamped from ${excerptChars} to ${exports.DEFAULT_SEARCH_EXCERPT_CODE_POINTS}`);
+        excerptChars = exports.DEFAULT_SEARCH_EXCERPT_CODE_POINTS;
+    }
+    return clamped.length > 0 ? { topK, excerptChars, clamped } : { topK, excerptChars };
+}
 function unicodeExcerpt(text, maxCodePoints) {
     if (maxCodePoints <= 0)
         return { excerpt: '', truncated: text.length > 0 };

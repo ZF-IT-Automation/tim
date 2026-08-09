@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as os from 'os';
 import { TimStore, SessionManager, deriveCounters, foldBatchSummaries } from 'tim-store';
 import { formatProjectOutput } from 'tim-mcp';
 import { loadConfig } from 'tim-core';
@@ -15,7 +16,7 @@ import type { UnsummarizedBatch } from '../mcp-client.js';
 import * as mcpClient from '../mcp-client.js';
 import { runSummarizerLoop, mergeProjectSummary } from '../summarize.js';
 
-const TEST_ROOT = path.join('/home/bbbee', '.tim-test-runs');
+const TEST_ROOT = path.join(os.tmpdir(), 'tim-test-runs');
 const SESSION_ID = 'sess-e2e';
 const PROJECT_ID = 'P0063';
 
@@ -61,6 +62,8 @@ vi.mock('tim-core', () => ({
     deviceId: 'test',
     summarizer: { chain: [], timeout_sec: 5 },
   })),
+  getTimDir: vi.fn(() => os.tmpdir()),
+  getConfigPath: vi.fn(() => path.join(os.tmpdir(), 'config.json')),
 }));
 
 describe('pipeline e2e — happy path', () => {
@@ -157,8 +160,9 @@ describe('pipeline e2e — happy path', () => {
 
     const out = formatProjectOutput(depth3, 200);
     expect(out).toMatch(/── Recent Sessions \(1\/1\) ──/);
-    // parseSessionEntry reads title "Summary", not batch text (Finding B — no rollUp)
-    expect(out).toMatch(/0 exchanges · \d{4}-\d{2}-\d{2}  "Summary"/);
+    // parseSessionEntry reads title "Summary", not batch text (Finding B — no rollUp).
+    // The renderer now emits a header line plus the summary's own indented lines.
+    expect(out).toMatch(/0 exchanges · \d{4}-\d{2}-\d{2}\n {4}Summary/);
     expect(summaryRoot!.metadata.summary ?? '').toBe('');
   });
 

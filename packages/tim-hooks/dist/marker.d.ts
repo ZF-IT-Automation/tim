@@ -116,9 +116,24 @@ export declare function discoverMarker(startCwd: string, policy?: MarkerDiscover
  */
 export declare function findMarker(startCwd: string, options?: FindMarkerOptions): MarkerLocation | null;
 /**
- * Shared, harness-agnostic directive text. Every start hook emits exactly this.
+ * Substance carried by a start directive, pre-assembled by the caller. marker.ts is
+ * imported by hooks that must stay fast, so it never touches the store itself — the
+ * caller reads the store and hands the finished text in (see ./session-briefing.ts).
  */
-export declare function buildLoadDirective(projectLabel: string, markerDir: string, bindingLabel?: string): string;
+export interface DirectiveBriefing {
+    /** Heading detail for the previous session, e.g. "2026-08-05 · 42 exchanges". */
+    previousSessionLabel?: string;
+    /** Condensed previous-session summary; newlines are preserved verbatim. */
+    previousSessionSummary?: string;
+    /** Open work lines (tasks, next steps), already formatted and bounded. */
+    openWork?: string[];
+}
+/**
+ * Shared, harness-agnostic directive text. Every start hook emits exactly this.
+ * With a `briefing` it carries the previous session and open work inline, so the
+ * next session is briefed even if the model never makes the tim_load_project call.
+ */
+export declare function buildLoadDirective(projectLabel: string, markerDir: string, bindingLabel?: string, briefing?: DirectiveBriefing): string;
 /** Directive when project comes from TIM session metadata (no local .tim-project). */
-export declare function buildSessionDirective(projectLabel: string, cwd: string, bindingLabel?: string): string;
+export declare function buildSessionDirective(projectLabel: string, cwd: string, bindingLabel?: string, briefing?: DirectiveBriefing): string;
 //# sourceMappingURL=marker.d.ts.map

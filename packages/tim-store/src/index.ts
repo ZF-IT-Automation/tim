@@ -28,6 +28,13 @@ export {
 } from './project-display.js';
 export { runMigrations, getCurrentVersion, MIGRATIONS } from './schema.js';
 export {
+  ensureProjectSchema,
+  planProjectSchema,
+  SCHEMA_ORDER_STEP,
+  type EnsureProjectSchemaOptions,
+  type EnsureProjectSchemaResult,
+} from './project-schema-init.js';
+export {
   SessionManager,
   resolveCurrentSession,
   ensureProjectForPath,

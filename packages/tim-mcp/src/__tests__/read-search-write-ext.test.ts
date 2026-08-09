@@ -160,15 +160,12 @@ describe('tim_read extended', () => {
   });
 
   it('section returns section and children', async () => {
-    const proj = await client.callTool('tim_create_project', { label: 'P0501', content: 'Section Proj', memoryOnly: true });
-    const project = JSON.parse(proj.result!.content[0].text);
-    const secWrite = await client.callTool('tim_write', {
-      content: 'Tasks',
-      parentId: project.id,
-      metadata: { kind: 'section' },
-      tags: ['#section', '#schema'],
-    });
-    const section = JSON.parse(secWrite.result!.content[0].text);
+    await client.callTool('tim_create_project', { label: 'P0501', content: 'Section Proj', memoryOnly: true });
+    // Tasks is one of the standard sections tim_create_project now materializes.
+    // Reuse it — writing a second section with the same title would make every
+    // subsequent lookup ambiguous.
+    const secRead = await client.callTool('tim_read', { project: 'P0501', section: 'Tasks' });
+    const section = JSON.parse(secRead.result!.content[0].text).section;
     await client.callTool('tim_write', {
       content: 'Child task',
       parentId: section.id,
@@ -268,7 +265,7 @@ describe('tim_search extended', () => {
     expect(missResponse.results).toHaveLength(0);
   });
 
-  it('rejects requested excerpts above 500 Unicode code points', async () => {
+  it('clamps requested excerpts above 500 Unicode code points and says so', async () => {
     client.kill();
     const store = new TimStore(dbPath);
     try {
@@ -284,8 +281,10 @@ describe('tim_search extended', () => {
       excerptChars: 501,
     });
 
-    expect(result.result?.isError).toBe(true);
-    expect(result.result?.content[0].text).toContain('500');
+    expect(result.result?.isError).toBeFalsy();
+    const response = JSON.parse(result.result!.content[0].text);
+    expect(response.clamped).toContain('excerptChars clamped from 501 to 500');
+    expect(response.results).toHaveLength(1);
   });
 
   it('marks a shortened excerpt truncated when no results are omitted', async () => {
@@ -394,14 +393,8 @@ describe('tim_write where shorthand', () => {
   });
 
   it('where P0062/Tasks resolves project and section parent', async () => {
-    const proj = await client.callTool('tim_create_project', { label: 'P0600', content: 'Where Proj', memoryOnly: true });
-    const project = JSON.parse(proj.result!.content[0].text);
-    await client.callTool('tim_write', {
-      content: 'Tasks',
-      parentId: project.id,
-      metadata: { kind: 'section' },
-      tags: ['#section', '#schema'],
-    });
+    // Tasks comes from the standard schema at creation — no seeding needed.
+    await client.callTool('tim_create_project', { label: 'P0600', content: 'Where Proj', memoryOnly: true });
 
     const writeResp = await client.callTool('tim_write', {
       content: 'Task via where',
@@ -422,22 +415,12 @@ describe('tim_write where shorthand', () => {
   });
 
   it('explicit parentId overrides where', async () => {
-    const proj = await client.callTool('tim_create_project', { label: 'P0601', content: 'Override Proj', memoryOnly: true });
-    const project = JSON.parse(proj.result!.content[0].text);
-    const tasks = await client.callTool('tim_write', {
-      content: 'Tasks',
-      parentId: project.id,
-      metadata: { kind: 'section' },
-      tags: ['#section', '#schema'],
-    });
-    const tasksSec = JSON.parse(tasks.result!.content[0].text);
-    const ideas = await client.callTool('tim_write', {
-      content: 'Ideas',
-      parentId: project.id,
-      metadata: { kind: 'section' },
-      tags: ['#section', '#schema'],
-    });
-    const ideasSec = JSON.parse(ideas.result!.content[0].text);
+    await client.callTool('tim_create_project', { label: 'P0601', content: 'Override Proj', memoryOnly: true });
+    // Both sections ship with the project now; resolve them instead of adding twins.
+    const tasks = await client.callTool('tim_read', { project: 'P0601', section: 'Tasks' });
+    const tasksSec = JSON.parse(tasks.result!.content[0].text).section;
+    const ideas = await client.callTool('tim_read', { project: 'P0601', section: 'Ideas' });
+    const ideasSec = JSON.parse(ideas.result!.content[0].text).section;
 
     const writeResp = await client.callTool('tim_write', {
       content: 'Ideas child',

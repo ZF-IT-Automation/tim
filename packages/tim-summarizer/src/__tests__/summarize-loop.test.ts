@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import * as os from 'os';
+import * as path from 'path';
 import * as mcpClient from '../mcp-client.js';
 import { runSummarizerLoop } from '../summarize.js';
 
@@ -8,6 +10,8 @@ vi.mock('tim-core', () => ({
     deviceId: 'test',
     summarizer: { chain: [], timeout_sec: 5 },
   })),
+  getTimDir: vi.fn(() => os.tmpdir()),
+  getConfigPath: vi.fn(() => path.join(os.tmpdir(), 'config.json')),
 }));
 
 describe('runSummarizerLoop', () => {

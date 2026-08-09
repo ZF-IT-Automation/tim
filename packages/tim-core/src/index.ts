@@ -297,6 +297,12 @@ export interface TimConfig {
       model: string;
       provider?: string;
       label?: string;
+      /**
+       * Extra CLI flags appended verbatim, for options this shape cannot express —
+       * e.g. `["-c", "model_reasoning_effort=max"]` for codex, or
+       * `["--variant", "max"]` for opencode.
+       */
+      args?: string[];
     }>;
   };
   projectSummary?: {
@@ -325,6 +331,8 @@ export interface TimConfig {
   };
   briefing?: {
     maxTokens?: number;
+    /** How many recent sessions the project brief lists (default 5). */
+    recentSessions?: number;
   };
 }
 
@@ -354,4 +362,12 @@ export {
 } from './session-cache.js';
 export { evaluateLoadGate } from './load-gate.js';
 export { SCHEMA_KINDS } from './schema-kinds.js';
+export {
+  PROJECT_SCHEMA,
+  findSchemaSection,
+  schemaSectionNames,
+  type ProjectSchema,
+  type ProjectSchemaSection,
+  type SectionEntryType,
+} from './project-schema.js';
 export { isStale, staleDays, daysSinceLastVerified } from './staleness.js';

@@ -1,1 +1,1 @@
-{"root":["./src/config.ts","./src/event-bus.ts","./src/index.ts","./src/load-gate.ts","./src/lww.ts","./src/project.ts","./src/schema-kinds.ts","./src/session-cache.ts","./src/staleness.ts","./src/types.ts"],"version":"5.9.3"}
+{"root":["./src/config.ts","./src/event-bus.ts","./src/index.ts","./src/load-gate.ts","./src/lww.ts","./src/project-schema.ts","./src/project.ts","./src/schema-kinds.ts","./src/session-cache.ts","./src/staleness.ts","./src/types.ts"],"version":"5.9.3"}

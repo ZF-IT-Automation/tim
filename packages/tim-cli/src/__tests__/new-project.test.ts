@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as readline from 'readline';
+import { PROJECT_SCHEMA } from 'tim-core';
 import { TimStore } from 'tim-store';
 import { createProjectCoordinated, ProjectCreationPartialFailureError } from 'tim-hooks';
 import { cmdNewProject } from '../new-project.js';
@@ -335,9 +336,9 @@ describe('tim new-project', () => {
       .map(match => match[1]);
 
     expect(help.status).toBe(0);
-    expect(helpCommands).toHaveLength(36);
+    expect(helpCommands).toHaveLength(37);
     expect(documentedCommands).toEqual(helpCommands);
-    expect(reference).toContain('## Command Overview (36 commands)');
+    expect(reference).toContain('## Command Overview (37 commands)');
     expect(reference).toContain('### 7. `tim new-project --path <absolute-dir> --name <name>');
     expect(reference).toContain('`--path` must be absolute');
     expect(reference).toContain("TIM_DB_PATH='/exact/path/to/tim.db' tim bind-project");
@@ -459,10 +460,32 @@ describe('tim new-project', () => {
     const store = new TimStore(dbPath);
     const loaded = await store.loadProject('P0001', { depth: 1 });
     expect(loaded).not.toBeNull();
-    const sections = loaded!.children.filter(c => c.metadata.kind === 'section');
-    expect(sections).toHaveLength(7);
-    const labels = sections.map(s => s.metadata.label).sort();
-    expect(labels).toEqual(['Decisions', 'Errors', 'Ideas', 'Learnings', 'Log', 'Tasks', 'Testing']);
+    // Sections now come from PROJECT_SCHEMA (tim-core), which is what every other
+    // creation path uses too. Sessions/Commits are excluded — the session and commit
+    // trees create those roots on demand with their own metadata.kind.
+    const expected = PROJECT_SCHEMA.sections.filter(s => !s.managed).map(s => s.name);
+    const sections = loaded!.children.filter(
+      c => c.metadata.kind === 'section' && c.parentId === loaded!.project.id,
+    );
+    expect(sections.map(s => s.title)).toEqual(expected);
+    expect(sections.map(s => s.metadata.label)).toEqual(expected);
+    store.close();
+  });
+
+  it('carries schema render hints onto the created sections', async () => {
+    const target = path.join(workDir, 'render-hints');
+    const result = run(['new-project', '-p', target, '-n', 'Render Hints'], env);
+    expect(result.status).toBe(0);
+
+    const store = new TimStore(dbPath);
+    const project = await store.requireProject('P0001');
+    const sections = await store.getChildren(project.id);
+    expect(sections.find(s => s.title === 'Overview')!.metadata.render_depth).toBe('full');
+    expect(sections.find(s => s.title === 'Log')!.metadata.render_tail).toBe(true);
+
+    const rules = sections.find(s => s.title === 'Rules')!;
+    const ruleKids = await store.getChildren(rules.id);
+    expect(ruleKids.map(k => k.title)).toEqual(['Agent Rules', 'Git Rules', 'Style Rules', 'Do Not']);
     store.close();
   });
 

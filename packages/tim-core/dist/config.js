@@ -47,6 +47,12 @@ const DEFAULT_REMEMBER_CHAIN = [
     { cli: 'opencode', model: 'deepseek-v4-pro', provider: 'deepseek' },
     { cli: 'opencode', model: 'kimi', provider: 'moonshot' },
 ];
+/** Same shape/providers as the remember chain — the summarizer falls through it in order. */
+const DEFAULT_SUMMARIZER_CHAIN = [
+    { cli: 'opencode', model: 'claude-3-5-haiku', provider: 'anthropic' },
+    { cli: 'opencode', model: 'deepseek-v4-pro', provider: 'deepseek' },
+    { cli: 'opencode', model: 'kimi', provider: 'moonshot' },
+];
 const DEFAULT_CONFIG = {
     dbPath: path.join(os.homedir(), '.tim', 'tim.db'),
     deviceId: '',
@@ -57,6 +63,10 @@ const DEFAULT_CONFIG = {
     batch_size: 5,
     projectSummary: {
         sessions_threshold: 5,
+    },
+    summarizer: {
+        chain: DEFAULT_SUMMARIZER_CHAIN,
+        timeout_sec: 600,
     },
     remember: {
         enabled: true,
@@ -74,6 +84,7 @@ const DEFAULT_CONFIG = {
     },
     briefing: {
         maxTokens: 9000,
+        recentSessions: 5,
     },
 };
 function getTimDir() {
@@ -95,6 +106,12 @@ function loadConfig() {
             hooks: {
                 ...DEFAULT_CONFIG.hooks,
                 ...raw.hooks,
+            },
+            summarizer: {
+                ...DEFAULT_CONFIG.summarizer,
+                ...raw.summarizer,
+                // A user-supplied chain replaces the default wholesale — never merged element-wise.
+                chain: raw.summarizer?.chain ?? DEFAULT_SUMMARIZER_CHAIN,
             },
             remember: {
                 ...DEFAULT_CONFIG.remember,

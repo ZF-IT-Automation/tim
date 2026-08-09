@@ -12,10 +12,12 @@ export {
   runCheckpoint,
   runSessionStart,
   runSessionEnd,
+  previewSessionStart,
   loadProjectContext,
   getActiveProjectLabel,
   type SessionEndOptions,
   type SessionStartResult,
+  type SessionStartPreview,
 } from './checkpoint.js';
 
 export { getDeltaBriefing, type DeltaBriefingOptions } from './delta.js';
@@ -23,10 +25,12 @@ export { getDeltaBriefing, type DeltaBriefingOptions } from './delta.js';
 export {
   getCheckpointEveryN,
   getBriefingMaxTokens,
+  getBriefingRecentSessions,
   shouldAutoCheckpoint,
   checkpointCadenceReminder,
   DEFAULT_CHECKPOINT_EVERY_N,
   DEFAULT_BRIEFING_MAX_TOKENS,
+  DEFAULT_BRIEFING_RECENT_SESSIONS,
 } from './cadence.js';
 
 export { afterExchangeLogged, type CadenceResult } from './cadence-runner.js';
@@ -46,6 +50,15 @@ export {
   type ClaudeStopResult,
 } from './claude-stop.js';
 
+export { ensureHookSession } from './hook-session.js';
+
+export {
+  runCodexNotify,
+  parseCodexNotifyArgs,
+  type CodexNotifyPayload,
+  type CodexNotifyResult,
+} from './codex-notify.js';
+
 export {
   readMarker,
   writeMarker,
@@ -60,6 +73,7 @@ export {
   CWD_ONLY_MARKER_DISCOVERY_POLICY,
   buildLoadDirective,
   buildSessionDirective,
+  type DirectiveBriefing,
   syncNearestProjectMarker,
   validateMarkerAgainstStore,
   validateProjectLabel,
@@ -83,6 +97,8 @@ export {
   type FindMarkerOptions,
   type MarkerDiscoveryPolicy,
 } from './marker.js';
+
+export { collectDirectiveBriefing, clampSummary } from './session-briefing.js';
 
 export {
   rebalanceBatch,

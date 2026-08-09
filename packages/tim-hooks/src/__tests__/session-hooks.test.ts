@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as os from 'os';
 import {
   onSessionStop,
   buildSummarizerCommand,
@@ -11,7 +12,7 @@ import {
 import { writeMarker, summarizerLockPath } from '../marker.js';
 import { TimStore, SessionManager } from 'tim-store';
 
-const TEST_ROOT = path.join('/home/bbbee', '.tim-test-runs');
+const TEST_ROOT = path.join(os.tmpdir(), 'tim-test-runs');
 
 describe('onSessionStop', () => {
   let dir: string;

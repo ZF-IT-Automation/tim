@@ -451,34 +451,61 @@ function findMarker(startCwd, options) {
         ...(options.maxRoot ? { maxRoot: options.maxRoot } : {}),
     });
 }
+/** Renders the content half of a directive; empty when there is nothing to say. */
+function briefingBlock(briefing) {
+    if (!briefing)
+        return [];
+    const out = [];
+    const summary = briefing.previousSessionSummary?.trim();
+    if (summary) {
+        const label = briefing.previousSessionLabel?.trim();
+        out.push('', `── Previous session${label ? ` (${label})` : ''} ──`, summary);
+    }
+    const openWork = (briefing.openWork ?? []).map(l => l.trimEnd()).filter(l => l.trim());
+    if (openWork.length > 0) {
+        out.push('', '── Open work ──', ...openWork);
+    }
+    return out;
+}
+function actionLine(projectLabel, tail, hasBriefing) {
+    const lead = hasBriefing
+        ? `ACTION: the context above is already loaded — do NOT re-fetch it. Call ` +
+            `tim_load_project(label="${projectLabel}") now to bind this session and pull the ` +
+            `full project brief, then run the tim-session-start skill.`
+        : `ACTION: call tim_load_project(label="${projectLabel}") now to load the project ` +
+            `brief from the TIM store, then run the tim-session-start skill.`;
+    return `${lead} ${tail}`;
+}
 /**
  * Shared, harness-agnostic directive text. Every start hook emits exactly this.
+ * With a `briefing` it carries the previous session and open work inline, so the
+ * next session is briefed even if the model never makes the tim_load_project call.
  */
-function buildLoadDirective(projectLabel, markerDir, bindingLabel) {
+function buildLoadDirective(projectLabel, markerDir, bindingLabel, briefing) {
     const display = bindingLabel?.trim() || projectLabel;
+    const block = briefingBlock(briefing);
     return [
         `📍 TIM project marker detected (.tim-project in ${markerDir}).`,
         `This session is bound to TIM project ${display}.`,
+        ...block,
         ``,
-        `ACTION: call tim_load_project(label="${projectLabel}") now to load the project ` +
-            `brief from the TIM store, then run the tim-session-start skill. STEP 1 ` +
-            `(project binding) is already decided by this marker — do NOT ask which ` +
+        actionLine(projectLabel, `STEP 1 (project binding) is already decided by this marker — do NOT ask which ` +
             `project, and do NOT run any hmem/active-project cwd→project resolution. ` +
-            `The TIM marker is authoritative for this turn.`,
+            `The TIM marker is authoritative for this turn.`, block.length > 0),
     ].join('\n');
 }
 /** Directive when project comes from TIM session metadata (no local .tim-project). */
-function buildSessionDirective(projectLabel, cwd, bindingLabel) {
+function buildSessionDirective(projectLabel, cwd, bindingLabel, briefing) {
     const display = bindingLabel?.trim() || projectLabel;
+    const block = briefingBlock(briefing);
     return [
         `📍 TIM session bound to project ${display} (TIM store, cwd ${cwd}).`,
         `This session is bound to TIM project ${display}.`,
+        ...block,
         ``,
-        `ACTION: call tim_load_project(label="${projectLabel}") now to load the project ` +
-            `brief from the TIM store, then run the tim-session-start skill. STEP 1 ` +
-            `is already decided by this TIM session — do NOT ask which project, and do NOT ` +
+        actionLine(projectLabel, `STEP 1 is already decided by this TIM session — do NOT ask which project, and do NOT ` +
             `run any hmem/active-project cwd→project resolution. The TIM binding is authoritative ` +
-            `for this turn.`,
+            `for this turn.`, block.length > 0),
     ].join('\n');
 }
 //# sourceMappingURL=marker.js.map

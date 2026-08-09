@@ -41,7 +41,8 @@ const node_crypto_1 = require("node:crypto");
 const fs = __importStar(require("node:fs"));
 const tim_store_1 = require("tim-store");
 const cadence_runner_js_1 = require("./cadence-runner.js");
-const marker_js_1 = require("./marker.js");
+const hook_session_js_1 = require("./hook-session.js");
+/** Tail window, not a file-size limit: only the last turn is needed. */
 exports.MAX_TRANSCRIPT_BYTES = 1024 * 1024;
 exports.MAX_EXCHANGE_CHARS = 64 * 1024;
 function bounded(text, max = exports.MAX_EXCHANGE_CHARS) {
@@ -80,6 +81,10 @@ function messageRole(record) {
         if (role === 'user' || role === 'assistant')
             return role;
     }
+    // Cursor writes the role at the top level and the content one level down;
+    // Claude's records never carry a top-level role, so this stays additive.
+    if (record.role === 'user' || record.role === 'assistant')
+        return record.role;
     return null;
 }
 function messageContent(record) {
@@ -96,7 +101,8 @@ function turnIdentity(userUuid, assistantUuid, user, assistant) {
 }
 /**
  * Read a Claude Code transcript JSONL and return the last genuine user/assistant turn.
- * Skips isMeta, tool-only assistants, malformed lines, and files over the byte bound.
+ * Skips isMeta, tool-only assistants and malformed lines. Long transcripts are read
+ * from the tail — bailing on size logged nothing at all once a session got going.
  */
 function readLastExchange(transcriptPath, maxBytes = exports.MAX_TRANSCRIPT_BYTES) {
     let stat;
@@ -106,19 +112,45 @@ function readLastExchange(transcriptPath, maxBytes = exports.MAX_TRANSCRIPT_BYTE
     catch {
         return null;
     }
-    if (!stat.isFile() || stat.size <= 0 || stat.size > maxBytes)
+    if (!stat.isFile() || stat.size <= 0)
         return null;
+    const start = Math.max(0, stat.size - maxBytes);
     let raw;
     try {
-        raw = fs.readFileSync(transcriptPath, 'utf8');
+        const fd = fs.openSync(transcriptPath, 'r');
+        try {
+            const buf = Buffer.alloc(stat.size - start);
+            fs.readSync(fd, buf, 0, buf.length, start);
+            raw = buf.toString('utf8');
+        }
+        finally {
+            fs.closeSync(fd);
+        }
     }
     catch {
         return null;
     }
-    if (Buffer.byteLength(raw, 'utf8') > maxBytes)
-        return null;
-    let lastUser = null;
+    // The window cuts mid-line; that first fragment is not a whole JSON record.
+    if (start > 0)
+        raw = raw.slice(raw.indexOf('\n') + 1);
+    let pendingUser = null;
+    // One turn emits many assistant records (text, thinking, tool_use); the text ones
+    // all belong to the same answer and are collected until the next user message.
+    let pendingAssistant = null;
     let lastTurn = null;
+    // The uuid pair stays the first of each side, so a re-fired hook derives the same key.
+    const commitTurn = () => {
+        if (pendingUser && pendingAssistant) {
+            const assistant = pendingAssistant.parts.join('\n\n');
+            lastTurn = {
+                user: pendingUser.text,
+                assistant,
+                identity: turnIdentity(pendingUser.uuid, pendingAssistant.uuid, pendingUser.text, assistant),
+            };
+        }
+        pendingUser = null;
+        pendingAssistant = null;
+    };
     for (const line of raw.split(/\r?\n/)) {
         if (!line.trim())
             continue;
@@ -142,40 +174,18 @@ function readLastExchange(transcriptPath, maxBytes = exports.MAX_TRANSCRIPT_BYTE
             continue;
         const uuid = typeof record.uuid === 'string' ? record.uuid : null;
         if (role === 'user') {
-            lastUser = { text, uuid };
+            commitTurn();
+            pendingUser = { text, uuid };
             continue;
         }
-        if (role === 'assistant' && lastUser) {
-            lastTurn = {
-                user: lastUser.text,
-                assistant: text,
-                identity: turnIdentity(lastUser.uuid, uuid, lastUser.text, text),
-            };
-            lastUser = null;
+        if (role === 'assistant' && pendingUser) {
+            if (!pendingAssistant)
+                pendingAssistant = { parts: [], uuid };
+            pendingAssistant.parts.push(text);
         }
     }
+    commitTurn();
     return lastTurn;
-}
-async function ensureSessionForStop(store, sessions, sessionId, cwd) {
-    const existing = await store.read(sessionId);
-    if (existing?.metadata.kind === 'session')
-        return true;
-    const marker = (0, marker_js_1.findMarker)(cwd)?.marker;
-    if (!marker?.project)
-        return false;
-    try {
-        await sessions.startProjectSession({
-            sessionId,
-            projectId: marker.project,
-            agentName: 'claude',
-            cwd,
-            harness: 'claude-code',
-        });
-        return true;
-    }
-    catch {
-        return false;
-    }
 }
 async function runClaudeStop(store, payload, options) {
     const sessionId = typeof payload.session_id === 'string' ? payload.session_id.trim() : '';
@@ -189,7 +199,10 @@ async function runClaudeStop(store, payload, options) {
         .update(`${sessionId}\0${turn.identity}`)
         .digest('hex');
     const sessions = new tim_store_1.SessionManager(store);
-    const ready = await ensureSessionForStop(store, sessions, sessionId, options.cwd);
+    const ready = await (0, hook_session_js_1.ensureHookSession)(store, sessions, sessionId, options.cwd, options.agent ?? {
+        agentName: 'claude',
+        harness: 'claude-code',
+    });
     if (!ready)
         return { logged: false };
     let logged;

@@ -38,12 +38,14 @@ exports.resolveActiveProjectFromCwd = resolveActiveProjectFromCwd;
 exports.loadProjectContext = loadProjectContext;
 exports.runCheckpoint = runCheckpoint;
 exports.runSessionStart = runSessionStart;
+exports.previewSessionStart = previewSessionStart;
 exports.runSessionEnd = runSessionEnd;
 const tim_core_1 = require("tim-core");
 const cadence_js_1 = require("./cadence.js");
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
 const tim_store_1 = require("tim-store");
+const session_briefing_js_1 = require("./session-briefing.js");
 const hooks_js_1 = require("./hooks.js");
 const delta_js_1 = require("./delta.js");
 const update_check_js_1 = require("./update-check.js");
@@ -191,6 +193,69 @@ async function runSessionStart(store, params) {
     if (briefingParts.length > 0)
         briefing = briefingParts.join('\n');
     return { session, project, briefing };
+}
+/**
+ * What a session start would *say*, without starting one.
+ *
+ * runSessionStart above does four writes before it assembles any text — it
+ * creates the session, may write a marker, runs configured hooks, and its delta
+ * is computed against a session that now exists. This reproduces only the
+ * assembly (lines 217-239 there) against a session that is already in the
+ * store, so the answer can be inspected without changing the thing being
+ * inspected: no session node, no marker, no configured hooks.
+ *
+ * Reads still touch `accessed_at`, and getUpdateCheckLineBriefing may refresh
+ * its own cache — this is "makes no memory changes", not "makes no writes".
+ */
+async function previewSessionStart(store, params) {
+    const resolved = await store.resolveProjectLabel(params.projectId);
+    if (resolved.status !== 'found') {
+        throw new Error(resolved.status === 'ambiguous'
+            ? `Project "${params.projectId}" is ambiguous: ${resolved.labels.join(', ')}`
+            : `No project "${params.projectId}"`);
+    }
+    const projectLabel = resolved.label;
+    const binding = await (0, tim_store_1.resolveProjectBindingLabel)(store, projectLabel);
+    const cwd = params.cwd ?? process.cwd();
+    const briefingParts = [];
+    // Which session the delta and the cadence reminder are computed against.
+    // Named in the result rather than silently chosen: the same project briefs
+    // differently depending on the session, and a simulation that hides that
+    // input is not reproducing anything.
+    let sessionId = params.sessionId ?? null;
+    if (!sessionId) {
+        const [latest] = await new tim_store_1.SessionManager(store).listResumableSessions(projectLabel, 1);
+        sessionId = latest?.sessionId ?? null;
+    }
+    if (projectLabel !== tim_store_1.INBOX_PROJECT_LABEL) {
+        const delta = await (0, delta_js_1.getDeltaBriefing)(store, projectLabel, {
+            ...(sessionId ? { sessionId } : {}),
+        });
+        if (delta)
+            briefingParts.push(delta);
+    }
+    const updateLine = await (0, update_check_js_1.getUpdateCheckLineBriefing)();
+    if (updateLine)
+        briefingParts.push(updateLine);
+    if (sessionId) {
+        const { exchangeCount } = await (0, tim_store_1.deriveCounters)(store, sessionId);
+        if (exchangeCount > 0) {
+            const reminder = (0, cadence_js_1.checkpointCadenceReminder)(exchangeCount, (0, cadence_js_1.getCheckpointEveryN)((0, tim_core_1.loadConfig)()));
+            if (reminder)
+                briefingParts.push(reminder);
+        }
+    }
+    const directiveBriefing = await (0, session_briefing_js_1.collectDirectiveBriefing)(store, projectLabel, params.maxTokens).catch(() => undefined);
+    const directive = params.origin === 'session'
+        ? (0, marker_js_1.buildSessionDirective)(projectLabel, cwd, binding, directiveBriefing)
+        : (0, marker_js_1.buildLoadDirective)(projectLabel, cwd, binding, directiveBriefing);
+    return {
+        projectLabel,
+        binding,
+        sessionId,
+        directive,
+        briefing: briefingParts.length > 0 ? briefingParts.join('\n') : null,
+    };
 }
 async function runSessionEnd(store, sessionId, opts = {}) {
     const cwd = opts.env?.TIM_CWD ?? process.cwd();

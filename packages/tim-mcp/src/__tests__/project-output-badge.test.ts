@@ -7,8 +7,9 @@
  *          to the default) — making done tasks look open.
  *
  * Post-fix: the badge MUST read `entry.metadata.task.status` (the canonical
- *           task status). Legacy `metadata.status` is ignored — the fix
- *           is one-directional per Plan 7.
+ *           task status). Since 2026-08-08 it also falls back to the legacy
+ *           top-level `metadata.status` for legacy-shaped tasks
+ *           (`metadata.task = true`), which store their status nowhere else.
  *
  * These tests live at the new home of project-output.ts (tim-mcp), not
  * in tim-store, because the presentation code is moving to the MCP layer.
@@ -97,15 +98,15 @@ describe('formatProjectOutput task badge (T3 fix)', () => {
     expect(out).toMatch(/Completed task \[done\]/);
   });
 
-  it('IGNORES legacy metadata.status (one-directional fix)', () => {
-    // Legacy field present, but no metadata.task.status. The badge must
-    // NOT pick up the legacy 'done' value — that would be the bug we
-    // just fixed. The entry should fall back to [todo] default, NOT [done].
+  it('reads legacy metadata.status for legacy-shaped tasks', () => {
+    // Legacy field present, no metadata.task.status. isTaskMarker lists the
+    // entry as a task, so its status has to be read from where the legacy
+    // shape stores it — otherwise finished legacy tasks render open forever.
     const children = [
-      section,
+      { ...section, id: 'overview', title: 'Overview' },
       {
         id: 't-legacy',
-        parentId: 'tasks',
+        parentId: 'overview',
         title: 'Legacy status task',
         metadata: { order: 0, task: true, status: 'done' },
         tags: [],
@@ -115,8 +116,8 @@ describe('formatProjectOutput task badge (T3 fix)', () => {
     ] as any[];
 
     const out = formatProjectOutput({ project, children, truncated: false }, 200);
-    expect(out).not.toMatch(/Legacy status task \[done\]/);
-    expect(out).toMatch(/Legacy status task \[todo\]/);
+    expect(out).toMatch(/Legacy status task \[done\]/);
+    expect(out).not.toMatch(/Legacy status task \[todo\]/);
   });
 
   it('prefers metadata.task.status over legacy metadata.status when both present', () => {

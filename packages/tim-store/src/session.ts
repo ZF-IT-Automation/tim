@@ -24,6 +24,7 @@ import {
   SESSIONS_SECTION_TITLE,
   SUMMARY_NODE_TITLE,
 } from './session-tree.js';
+import { ensureProjectSchema } from './project-schema-init.js';
 
 export type ExchangeRole = 'user' | 'agent';
 
@@ -47,6 +48,18 @@ export interface SessionStartParams {
   agentName: string;
   cwd: string;
   harness: string;
+}
+
+/**
+ * A session node is keyed by its id, so a blank one produces an unaddressable
+ * node that no turn-end hook can ever find again — the database already holds
+ * one written with the empty string. Callers pass a harness session id or an
+ * id of their own; either way it has to be usable as a key.
+ */
+export function assertSessionId(sessionId: string): void {
+  if (typeof sessionId !== 'string' || sessionId.trim() === '') {
+    throw new Error('sessionId must be a non-empty string');
+  }
 }
 
 export interface ProjectSessionParams extends SessionStartParams {
@@ -138,6 +151,19 @@ export interface UntaggedBatch {
   seqTo: number;
 }
 
+/**
+ * Exchanges are stored through splitTitleBody, so the first line of the message
+ * lives in the title and only the remainder in the content. Reading the content
+ * alone silently drops that first line — for an agent answer that is its lead.
+ */
+export function exchangeText(entry: Entry): string {
+  const title = entry.title.trim();
+  const body = entry.content.trim();
+  if (!body) return title;
+  if (!title) return body;
+  return `${title}\n${body}`;
+}
+
 const DEFAULT_SUMMARIZER: Summarizer = async (exchanges) => {
   if (exchanges.length === 0) return 'Empty session — no exchanges to checkpoint.';
 
@@ -147,7 +173,7 @@ const DEFAULT_SUMMARIZER: Summarizer = async (exchanges) => {
   const topics = userMsgs
     .slice(0, 5)
     .map(e => {
-      const text = (e.content || e.title || '').trim();
+      const text = exchangeText(e);
       // Extract first sentence or first 120 chars as topic indicator
       const firstSentence = text.split(/[.!?\n]/)[0]?.trim() ?? text;
       return firstSentence.length > 120 ? firstSentence.slice(0, 117) + '…' : firstSentence;
@@ -157,7 +183,7 @@ const DEFAULT_SUMMARIZER: Summarizer = async (exchanges) => {
   const decisionHints = agentMsgs
     .slice(0, 3)
     .map(e => {
-      const text = (e.content || e.title || '').trim();
+      const text = exchangeText(e);
       return text.length > 100 ? text.slice(0, 97) + '…' : text;
     })
     .filter(Boolean);
@@ -185,6 +211,7 @@ export class SessionManager {
 
   async sessionStart(params: SessionStartParams): Promise<Entry> {
     const { sessionId, agentName, cwd, harness } = params;
+    assertSessionId(sessionId);
     const existing = await this.store.read(sessionId);
     if (existing?.metadata.kind === 'session') {
       return existing;
@@ -205,6 +232,7 @@ export class SessionManager {
 
   async startProjectSession(params: ProjectSessionParams): Promise<Entry> {
     const { sessionId, projectId, agentName, cwd, harness, tool, model, taskSummary } = params;
+    assertSessionId(sessionId);
 
     const existing = await this.store.read(sessionId);
     if (existing?.metadata.kind === KIND_SESSION) {
@@ -540,9 +568,9 @@ export class SessionManager {
         exchanges.push({
           seq,
           userId: u.id,
-          userContent: u.content || u.title,
+          userContent: exchangeText(u),
           agentId: agent?.id ?? null,
-          agentContent: agent ? (agent.content || agent.title) : null,
+          agentContent: agent ? exchangeText(agent) : null,
         });
       }
     }
@@ -555,13 +583,18 @@ export class SessionManager {
       return false;
     })();
 
+    // Rolling context for the next batch: the batch summary *bodies*, in batch order.
+    // Selected by kind, not by tag — checkpoint nodes carry the same summary tags but
+    // are not part of the batch chain. Titles ("Batch N") carry no information.
     const previousSummaries: string[] = [];
     if (summaryNode) {
-      const summaries = await this.store.getChildren(summaryNode.id);
-      for (const s of summaries) {
-        if (s.tags?.includes(SESSION_SUMMARY_TAG)) {
-          previousSummaries.push(s.title || s.content || '');
-        }
+      const priorBatches = await this.store.getChildByKind(summaryNode.id, KIND_BATCH);
+      priorBatches.sort(
+        (a, b) => (Number(a.metadata.batch_index) || 0) - (Number(b.metadata.batch_index) || 0),
+      );
+      for (const s of priorBatches) {
+        const text = (s.content || '').trim();
+        if (text) previousSummaries.push(text);
       }
     }
 
@@ -1007,8 +1040,8 @@ export class SessionManager {
       const agent = replies.find(r => r.metadata.role === 'agent') ?? null;
       recentExchanges.push({
         seq: Number(u.metadata.seq),
-        userContent: u.content || u.title,
-        agentContent: agent ? (agent.content || agent.title) : null,
+        userContent: exchangeText(u),
+        agentContent: agent ? exchangeText(agent) : null,
       });
     }
 
@@ -1086,14 +1119,6 @@ export class SessionManager {
     return (await this.store.read(project.id))!;
   }
 }
-
-const AUTO_PROJECT_SECTIONS = [
-  { label: 'Tasks', content: 'Actionable work items and open tasks' },
-  { label: 'Bugs', content: 'Bug and error tracking' },
-  { label: 'Lessons', content: 'Lessons learned and pitfalls' },
-  { label: 'Ideas', content: 'Brainstorming and undecided proposals' },
-  { label: 'Decisions', content: 'Architecture and project decisions' },
-] as const;
 
 async function nextAutoProjectLabel(store: TimStore): Promise<string> {
   return store.allocateNextProjectLabel();
@@ -1218,12 +1243,9 @@ export async function ensureProjectForPath(
         aliases: [alias],
       });
 
-      for (const section of AUTO_PROJECT_SECTIONS) {
-        await store.write(section.content, {
-          parentId: entry.id,
-          metadata: { kind: 'section', label: section.label },
-        });
-      }
+      // Auto-created projects get the same standard sections as every other
+      // creation path — the schema is the single owner of that list.
+      await ensureProjectSchema(store, entry.id);
 
       return { label, entry, created: true };
     } catch (err) {

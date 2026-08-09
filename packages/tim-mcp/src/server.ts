@@ -32,7 +32,7 @@ import {
   isCodingNeedsReview,
 } from 'tim-store';
 import { formatProjectOutput, type ProjectSchema } from './project-output.js';
-import { loadConfig, resolveActiveSessionId, evaluateLoadGate, stripDeprecatedTags, SCHEMA_KINDS, type EdgeType, type Entry } from 'tim-core';
+import { loadConfig, resolveActiveSessionId, evaluateLoadGate, stripDeprecatedTags, SCHEMA_KINDS, PROJECT_SCHEMA, type EdgeType, type Entry } from 'tim-core';
 import { annotateTrust } from './trust.js';
 import { captureProvenance } from './provenance.js';
 import { resolveCallerProjectPath } from './project-path.js';
@@ -43,21 +43,29 @@ import {
   findMarkerOptionsFromEnv,
   getActiveProjectLabel,
   getBriefingMaxTokens,
+  getBriefingRecentSessions,
   maybeSpawnSummarizer,
+  previewSessionStart,
   runPromptSubmit,
   syncNearestProjectMarker,
 } from 'tim-hooks';
 import { tim_export, tim_import, inspectHmemManifest } from 'tim-migrate';
 import { autoPush, autoPull, resetSyncCooldowns, loadConfig as loadSyncConfig } from 'tim-sync-client';
-import { validateWriteTags, supplementWriteTags } from './write-validate.js';
+import {
+  validateWriteTags,
+  supplementWriteTags,
+  applySectionEntryType,
+  validateBugStatus,
+} from './write-validate.js';
 import { handleTimRemember } from './remember-handler.js';
 import { buildInboxFallbackGuidance } from './session-guidance.js';
 import { formatResumeList, formatResumePayload } from './resume-output.js';
 import { runAutoInit } from './auto-init.js';
+import { applyArgAliases, explainMissingParams } from './arg-aliases.js';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { buildBoundedSearchResponse } from './search-response.js';
+import { buildBoundedSearchResponse, clampSearchRequest } from './search-response.js';
 
 /**
  * Format a tool response payload to JSON.
@@ -180,9 +188,13 @@ const TimWriteSchema = z.object({
 
 const TimSearchSchema = z.object({
   query: z.string().describe('FTS5 search query'),
-  topK: z.number().min(1).max(100).optional().default(10),
-  excerptChars: z.number().int().min(0).max(500).optional().default(500)
-    .describe('Maximum Unicode code points per result excerpt'),
+  topK: z.number().min(1).optional().default(10)
+    .describe('Maximum results; values above 100 are clamped to 100, not rejected'),
+  excerptChars: z.number().int().min(0).optional().default(500)
+    .describe(
+      'Maximum Unicode code points per result excerpt; values above 500 are clamped to 500, ' +
+      'not rejected — the 24 KiB response budget truncates first either way',
+    ),
   searchType: z.enum(['fts', 'vector', 'hybrid']).optional().default('fts'),
   root: z.string().optional().describe('Scope to project (label/alias/name)'),
   type: z.string().optional().describe('Filter metadata.type'),
@@ -373,6 +385,17 @@ const TimResumeListSchema = z.object({
   limit: z.number().int().min(1).max(25).optional().default(10),
 });
 
+const TimPreviewBriefingSchema = z.object({
+  project: z.string().describe('Project label, e.g. P0063'),
+  sessionId: z.string().optional()
+    .describe('Session the delta is computed against; defaults to the project\'s most recent'),
+  maxTokens: z.number().int().min(0).max(4000).optional()
+    .describe('Budget for the injected briefing; defaults to the configured value'),
+  origin: z.enum(['marker', 'session']).optional()
+    .describe('Directive flavour: "marker" (.tim-project) or "session" (TIM session metadata)'),
+  cwd: z.string().optional().describe('Directory named in the directive text'),
+});
+
 const TimSessionResumeSchema = z.object({
   sessionId: z.string().describe('Canonical session id to resume (pick from tim_resume_list)'),
   rawCount: z.number().int().min(1).max(50).optional().default(10),
@@ -393,6 +416,10 @@ const TimWriteBatchSummarySchema = z.object({
 
 const TimRollupSessionSummarySchema = z.object({
   sessionId: z.string(),
+  summary: z
+    .string()
+    .optional()
+    .describe('Pre-condensed rollup text. Omit to fall back to concatenating the batch summaries.'),
 });
 
 const TimRecordCommitSchema = z.object({
@@ -469,7 +496,8 @@ const TimCreateProjectSchema = z.object({
 });
 
 const TimLoadProjectSchema = z.object({
-  label: z.string().describe('Project label, e.g. P0062'),
+  label: z.string()
+    .describe('Project label (P0062), alias, or name (TIM). Several matches list the candidates.'),
   depth: z.number().min(1).max(5).optional().default(3)
     .describe('How many child levels to load (1-5)'),
   budget: z.number().min(1).max(1000).optional().default(200)
@@ -484,7 +512,8 @@ const TimLoadProjectSchema = z.object({
 });
 
 const TimReadProjectSchema = z.object({
-  label: z.string().describe('Project label, e.g. P0062'),
+  label: z.string()
+    .describe('Project label (P0062), alias, or name (TIM). Several matches list the candidates.'),
   depth: z.number().min(1).max(5).optional().default(3)
     .describe('How many child levels to load (1-5)'),
   budget: z.number().min(1).max(1000).optional().default(200)
@@ -534,6 +563,21 @@ const TimShowAllUnsummarizedSchema = z.object({});
 const TimShowUntaggedSchema = z.object({});
 
 // ─── ListTools registry (single source of truth) ────────
+
+export interface ToolInputSchema {
+  type: 'object';
+  properties?: Record<string, unknown>;
+  required?: string[];
+}
+
+/**
+ * A tool's parameters as JSON Schema. Shared by the ListTools handler and by
+ * `tim viewer`, which builds its parameter forms from the same output — so a
+ * form field can never describe a parameter the server would reject.
+ */
+export function toolInputSchema(schema: z.ZodObject<z.ZodRawShape>): ToolInputSchema {
+  return zodToJsonSchema(schema, { target: 'openApi3' }) as ToolInputSchema;
+}
 
 export const TOOL_DEFS: Array<{
   name: string;
@@ -697,6 +741,14 @@ export const TOOL_DEFS: Array<{
     schema: TimResumeListSchema,
   },
   {
+    name: 'tim_preview_briefing',
+    description:
+      'Show what a session start would say for a project, without starting one: the directive text a ' +
+      'start hook emits plus the delta/update/cadence briefing. Creates no session, writes no marker, ' +
+      'runs no configured hooks — use it to inspect a briefing, not to begin work.',
+    schema: TimPreviewBriefingSchema,
+  },
+  {
     name: 'tim_session_resume',
     description:
       'Resume a previous session from any tool: injects session summary + all batch summaries + last N raw ' +
@@ -740,7 +792,8 @@ export const TOOL_DEFS: Array<{
   {
     name: 'tim_rollup_session_summary',
     description:
-      'Fold batch-summary children into the session-summary-root content field. Called after tim-summarizer writes all batches.',
+      'Write the session-summary-root content field. Uses the given condensed `summary` when supplied, ' +
+      'otherwise folds the batch-summary children. Called after tim-summarizer writes all batches.',
     schema: TimRollupSessionSummarySchema,
     internal: true,
   },
@@ -849,24 +902,12 @@ export const TOOL_DEFS: Array<{
 // ─── Project output formatting ──────────────────────────
 
 function loadProjectSchema(): ProjectSchema | undefined {
-  // The schema lives at repo-root/docs. The daemon runs as a long-lived service
-  // whose cwd is NOT the checkout (e.g. $HOME), so cwd-relative resolution silently
-  // fails and every render_depth collapses to 1. Resolve relative to this module
-  // (dist/ → ../../../docs) first, then fall back to cwd for dev/CLI invocations.
-  const candidates = [
-    path.join(__dirname, '../../../docs/project-schema.json'),
-    path.join(process.cwd(), 'docs/project-schema.json'),
-  ];
-  for (const schemaPath of candidates) {
-    try {
-      if (fs.existsSync(schemaPath)) {
-        return JSON.parse(fs.readFileSync(schemaPath, 'utf8')) as ProjectSchema;
-      }
-    } catch {
-      // schema optional / malformed → try next candidate
-    }
-  }
-  return undefined;
+  // The schema used to be read from repo-root/docs/project-schema.json, which no
+  // package ships (`files: ["dist/**/*"]`) — under a global install neither the
+  // module-relative nor the cwd-relative candidate existed and every render_depth
+  // collapsed to 1. It is now a compiled constant in tim-core, so it is always
+  // present and always identical to the one the creation paths materialize from.
+  return PROJECT_SCHEMA;
 }
 
 function truncText(s: string, max: number): string {
@@ -895,10 +936,26 @@ function metadataKind(entry: Entry): string {
   return metadataString(entry.metadata.kind);
 }
 
+/**
+ * "P0060 (Hermes Fork), P0061 (Hermes live CTX compression)" — a list the caller
+ * can actually choose from. Bare labels are useless for picking when the query
+ * that produced them was a name.
+ */
+async function describeProjectCandidates(store: TimStore, labels: string[]): Promise<string> {
+  const described = await Promise.all(labels.map(async label => {
+    const entry = await store.read(label, { includeChildren: false });
+    const name = entry?.title?.split(/\s+[—|]\s*|\s*\|\s*/)[0]?.trim();
+    return name ? `${label} (${name})` : label;
+  }));
+  return described.join(', ');
+}
+
 async function resolveProjectEntry(store: TimStore, query: string): Promise<{ label: string; entry: Entry }> {
   const resolved = await store.resolveProjectLabel(query);
   if (resolved.status === 'ambiguous') {
-    throw new Error(`ambiguous project: ${resolved.labels.join(', ')}`);
+    throw new Error(
+      `'${query}' matches ${await describeProjectCandidates(store, resolved.labels)} — repeat with one label.`,
+    );
   }
   if (resolved.status !== 'found') {
     throw new Error(`project not found: ${query}`);
@@ -1259,8 +1316,13 @@ async function fetchByWhat(
       const b = await store.getByTag('#error');
       return scopeEntries(store, dedupeById([...a, ...b]), labels);
     }
-    case 'bugs':
-      return scopeEntries(store, await store.getByTag('#bug'), labels);
+    case 'bugs': {
+      // Bugs are marked by metadata.type='bug' since the schema change; the tag
+      // is the older marker and still the only one some entries carry.
+      const a = await store.getByMetadataType('bug');
+      const b = await store.getByTag('#bug');
+      return scopeEntries(store, dedupeById([...a, ...b]), labels);
+    }
     case 'decisions':
       return scopeEntries(store, await store.getByTag('#decision'), labels);
     case 'learnings':
@@ -1575,6 +1637,7 @@ const READ_TOOLS = new Set([
   'tim_show_unsummarized', 'tim_show_all_unsummarized', 'tim_show_untagged',
   'tim_resume_list',
   'tim_hook_prompt_submit',
+  'tim_preview_briefing',
 ]);
 
 const REMEMBER_TOOLS = new Set(['tim_remember']);
@@ -1647,6 +1710,12 @@ async function usageSessionId(): Promise<string | null> {
   }
 }
 
+/** The parameter names a tool actually accepts, for error messages. */
+function validParamNames(tool: string): string[] {
+  const def = TOOL_DEFS.find(d => d.name === tool);
+  return def ? Object.keys(def.schema.shape) : [];
+}
+
 /** Telemetry must never fail a user-facing tool response. */
 function bestEffortTelemetry(label: string, fn: () => void): void {
   try {
@@ -1705,11 +1774,7 @@ export async function createMcpServer(
     const allTools = defs.map(def => ({
       name: def.name,
       description: def.description,
-      inputSchema: zodToJsonSchema(def.schema, { target: 'openApi3' }) as {
-        type: 'object';
-        properties?: Record<string, unknown>;
-        required?: string[];
-      },
+      inputSchema: toolInputSchema(def.schema),
       internal: def.internal,
     }));
     const exposeInternal = process.env.TIM_EXPOSE_INTERNAL_TOOLS === '1';
@@ -1721,7 +1786,8 @@ export async function createMcpServer(
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const s = getStore();
-    const { name, arguments: args } = request.params;
+    const { name, arguments: rawArgs } = request.params;
+    const args = applyArgAliases(name, rawArgs);
     scheduleAutoSync(name, s);
 
     try {
@@ -2010,13 +2076,25 @@ export async function createMcpServer(
           // checkpoints) are exempt — everything else is user content and
           // must carry at least 2 tags for discoverability.
           let parentKind: string | undefined;
+          let parentEntryTitle: string | undefined;
           if (writeOpts.parentId) {
             const parent = await s.read(writeOpts.parentId, { includeChildren: false });
             parentKind = typeof parent?.metadata?.kind === 'string' ? parent.metadata.kind : undefined;
+            parentEntryTitle = parent?.title;
           }
           const supplemented = supplementWriteTags(writeOpts.tags, writeOpts.metadata, parentKind);
           writeOpts.tags = supplemented.tags;
           writeOpts.metadata = supplemented.metadata ?? {};
+
+          // A child of a collection section is what that section collects —
+          // see entry_type in the project schema.
+          writeOpts.metadata =
+            applySectionEntryType(writeOpts.metadata, parentEntryTitle, parentKind) ?? writeOpts.metadata;
+
+          const bugValidation = validateBugStatus(writeOpts.metadata);
+          if (!bugValidation.ok) {
+            return errorResult(bugValidation.message);
+          }
 
           const tagWarnings = validateTagsDeprecated(writeOpts.tags ?? []);
           const { clean: cleanWriteTags } = stripDeprecatedTags(writeOpts.tags ?? []);
@@ -2111,7 +2189,10 @@ export async function createMcpServer(
         }
 
         case 'tim_search': {
-          const { query, topK, excerptChars, root, type, tag, status } = TimSearchSchema.parse(args);
+          const parsed = TimSearchSchema.parse(args);
+          const { query, root, type, tag, status } = parsed;
+          const { topK, excerptChars, clamped } =
+            clampSearchRequest(parsed.topK, parsed.excerptChars);
           const usageSid = await usageSessionId();
           const hasFilters = Boolean(root || type || tag || status);
           let results = await s.search({ query, topK: hasFilters ? 1000 : topK });
@@ -2140,7 +2221,10 @@ export async function createMcpServer(
           if (hasFilters) {
             results = results.slice(0, topK);
           }
-          const response = buildBoundedSearchResponse(results, excerptChars);
+          const response = {
+            ...buildBoundedSearchResponse(results, excerptChars),
+            ...(clamped ? { clamped } : {}),
+          };
           bestEffortTelemetry('recordRead', () =>
             s.recordRead(response.results.map(e => e.id), usageSid));
           return {
@@ -2304,6 +2388,10 @@ export async function createMcpServer(
           const usageSid = await usageSessionId();
           const resolved = await s.read(id, { showIrrelevant: true, includeChildren: false });
           if (!resolved) return errorResult(`Entry not found: ${id}`);
+          if (patch.metadata !== undefined) {
+            const bugValidation = validateBugStatus(patch.metadata as Record<string, unknown>);
+            if (!bugValidation.ok) return errorResult(bugValidation.message);
+          }
           const projectPath = callerProjectPath;
           if (patch.tags !== undefined) {
             const tagWarnings = validateTagsDeprecated(patch.tags);
@@ -2808,6 +2896,29 @@ export async function createMcpServer(
           return { content: [{ type: 'text', text: formatResumeList(label, list) }] };
         }
 
+        case 'tim_preview_briefing': {
+          const { project, sessionId, maxTokens, origin, cwd } =
+            TimPreviewBriefingSchema.parse(args);
+          const preview = await previewSessionStart(s, {
+            projectId: project,
+            maxTokens: maxTokens ?? getBriefingMaxTokens(loadConfig()),
+            ...(sessionId ? { sessionId } : {}),
+            ...(origin ? { origin } : {}),
+            ...(cwd ? { cwd } : {}),
+          });
+          const text = [
+            `project: ${preview.projectLabel} (${preview.binding})`,
+            `session used for delta/cadence: ${preview.sessionId ?? '(none — project has no sessions)'}`,
+            '',
+            '── directive (what a start hook emits) ──',
+            preview.directive,
+            '',
+            '── briefing (what tim_session_start returns) ──',
+            preview.briefing ?? '(none)',
+          ].join('\n');
+          return { content: [{ type: 'text', text }] };
+        }
+
         case 'tim_session_resume': {
           const { sessionId, rawCount } = TimSessionResumeSchema.parse(args);
           const cwd = isHttp ? undefined : process.cwd();
@@ -2878,8 +2989,12 @@ export async function createMcpServer(
         }
 
         case 'tim_rollup_session_summary': {
-          const { sessionId } = TimRollupSessionSummarySchema.parse(args);
-          const node = await getSessions().rollUpSession(sessionId, async batches => foldBatchSummaries(batches));
+          const { sessionId, summary } = TimRollupSessionSummarySchema.parse(args);
+          // A caller-supplied summary is an LLM condensation of the batches; without
+          // one we fall back to concatenating them (lossy but never empty).
+          const node = await getSessions().rollUpSession(sessionId, async batches =>
+            summary?.trim() || foldBatchSummaries(batches),
+          );
           return {
             content: [{ type: 'text', text: formatToolResponse(node) }],
           };
@@ -3027,7 +3142,8 @@ export async function createMcpServer(
           const resolved = await s.resolveProjectLabel(label);
           if (resolved.status === 'ambiguous') {
             return errorResult(
-              `Ambiguous alias: matches ${resolved.labels.join(', ')}. Use label.`
+              `'${label}' matches ${await describeProjectCandidates(s, resolved.labels)} — ` +
+              'repeat with the one you meant.',
             );
           }
           if (resolved.status === 'not_found') {
@@ -3090,7 +3206,13 @@ export async function createMcpServer(
             }
           }
 
-          const formatted = formatProjectOutput(result, budget, loadProjectSchema(), bind ? 'load' : 'read');
+          const formatted = formatProjectOutput(
+            result,
+            budget,
+            loadProjectSchema(),
+            bind ? 'load' : 'read',
+            getBriefingRecentSessions(loadConfig()),
+          );
           // Response-driven guidance: weak models follow response text more
           // reliably than system prompts — spell out the standard next step.
           const nextHint = bind
@@ -3111,7 +3233,8 @@ export async function createMcpServer(
           const resolved = await s.resolveProjectLabel(label);
           if (resolved.status === 'ambiguous') {
             return errorResult(
-              `Ambiguous alias: matches ${resolved.labels.join(', ')}. Use label.`
+              `'${label}' matches ${await describeProjectCandidates(s, resolved.labels)} — ` +
+              'repeat with the one you meant.',
             );
           }
           if (resolved.status === 'not_found') {
@@ -3123,7 +3246,13 @@ export async function createMcpServer(
             return errorResult(`Project not found: ${label}`);
           }
 
-          const formatted = formatProjectOutput(result, budget, loadProjectSchema(), 'read');
+          const formatted = formatProjectOutput(
+            result,
+            budget,
+            loadProjectSchema(),
+            'read',
+            getBriefingRecentSessions(loadConfig()),
+          );
           return {
             content: [{
               type: 'text',
@@ -3244,14 +3373,16 @@ export async function createMcpServer(
           };
       }
     } catch (error: any) {
+      const explained = explainMissingParams(name, error, args, validParamNames(name));
       getErrorLogger().logError({
         tool: name,
         args,
-        error: error.message ?? String(error),
+        error: explained ?? error.message ?? String(error),
         stack: error.stack,
+        sessionId: (await usageSessionId()) ?? undefined,
       });
       return {
-        content: [{ type: 'text', text: `Error: ${error.message}` }],
+        content: [{ type: 'text', text: `Error: ${explained ?? error.message}` }],
         isError: true,
       };
     }

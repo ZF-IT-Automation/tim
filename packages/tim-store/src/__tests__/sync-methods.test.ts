@@ -23,7 +23,8 @@ describe('sync-methods', () => {
     await store.write('hello');
     const db = store.getDb();
     expect(getUnackedStaging(db).length).toBe(1);
-    ackStaging(db, [getUnackedStaging(db)[0].key]);
+    const row = getUnackedStaging(db)[0];
+    ackStaging(db, [{ key: row.key, lww: row.lww_timestamp }]);
     expect(getUnackedStaging(db).length).toBe(0);
   });
 

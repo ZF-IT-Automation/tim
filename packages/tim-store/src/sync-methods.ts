@@ -19,10 +19,27 @@ export function getUnackedStaging(db: Database.Database): StagingRow[] {
   return db.prepare('SELECT * FROM staging WHERE acked = 0 ORDER BY rowid').all() as StagingRow[];
 }
 
-export function ackStaging(db: Database.Database, keys: string[]): void {
-  if (keys.length === 0) return;
-  const placeholders = keys.map(() => '?').join(',');
-  db.prepare(`UPDATE staging SET acked = 1 WHERE key IN (${placeholders})`).run(...keys);
+/**
+ * Mark pushed staging records as acknowledged.
+ *
+ * Matching is by key *and* timestamp, not by key alone: a local write that
+ * lands while the push is in flight stages a newer record for the same key,
+ * and that one has to stay unacked so the next cycle picks it up.
+ *
+ * ponytail: `<=` means two writes to one key inside the same millisecond, one
+ * of them mid-push, still ack the newer record. `<` would be worse (the pushed
+ * record would never ack at all). Give staging a monotonic sequence if that
+ * millisecond ever matters.
+ */
+export function ackStaging(
+  db: Database.Database,
+  acks: Array<{ key: string; lww: number }>,
+): void {
+  if (acks.length === 0) return;
+  const stmt = db.prepare('UPDATE staging SET acked = 1 WHERE key = ? AND lww_timestamp <= ?');
+  db.transaction(() => {
+    for (const ack of acks) stmt.run(ack.key, ack.lww);
+  })();
 }
 
 export function entryLocalLwwTimestamp(row: {

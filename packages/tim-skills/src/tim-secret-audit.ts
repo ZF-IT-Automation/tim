@@ -8,8 +8,8 @@ Use before sharing, \`tim_export\`, sync setup, or adding collaborators.
 Checks:
 1. Identify sensitive roots: entries with \`metadata.secret\` or known private
    projects/sections.
-2. Use \`tim_secret\` helpers if available; otherwise \`tim_read\` suspected
-   roots and inspect metadata only as far as needed.
+2. Use \`tim_secret\` helpers if available; otherwise \`tim_read\` suspected roots
+   and inspect metadata only as far as needed.
 3. Verify moved children inherited secret metadata.
 4. Confirm export/sync scope excludes private material, or get user approval.
 

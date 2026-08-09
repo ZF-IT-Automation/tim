@@ -26,7 +26,7 @@ describe('sync lifecycle (F-STORE-002/004/005)', () => {
   it('soft delete stages with irrelevant=1 (F-STORE-002)', async () => {
     store = new TimStore(':memory:');
     const entry = await store.write('hello world');
-    ackStaging(store.getDb(), [entry.id]);
+    ackStaging(store.getDb(), [{ key: entry.id, lww: Date.now() }]);
     await store.delete(entry.id, false);
     const unacked = getUnackedStaging(store.getDb());
     expect(unacked).toHaveLength(1);

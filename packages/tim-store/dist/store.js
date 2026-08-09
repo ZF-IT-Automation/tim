@@ -179,6 +179,10 @@ class TimStore {
         this.deviceId = options.deviceId ?? 'local';
         (0, schema_js_1.runMigrations)(this.db);
         (0, schema_js_1.createTriggers)(this.db);
+        // Acked staging records are push history that nothing reads back. Collect
+        // the old ones once per process — without a caller the table only grows.
+        this.db.prepare('DELETE FROM staging WHERE acked = 1 AND lww_timestamp < ?')
+            .run(Date.now() - 7 * 86400_000);
     }
     emit(type, payload) {
         if (!this.emitter)
@@ -194,9 +198,15 @@ class TimStore {
     }
     async read(id, options = {}) {
         let entry = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(id);
-        // Label-based fallback for hmem compatibility (e.g., "P0062", "L0042")
+        // Label-based fallback for hmem compatibility (e.g., "P0062", "L0042").
+        // A label should be unique, but when it is not, prefer the live entry and
+        // otherwise stay deterministic — an unordered .get() here silently picked
+        // a different row than the project resolvers did.
+        // ponytail: two *live* rows sharing a label still resolve to the older one;
+        // resolveProjectLabel and tim doctor refuse loudly in that case instead.
         if (!entry && /^[A-Z]\d{4}$/.test(id)) {
-            entry = this.db.prepare("SELECT * FROM entries WHERE json_extract(metadata, '$.label') = ? AND tombstoned_at IS NULL").get(id);
+            entry = this.db.prepare(`SELECT * FROM entries WHERE json_extract(metadata, '$.label') = ? AND tombstoned_at IS NULL
+         ORDER BY irrelevant ASC, created_at ASC`).get(id);
         }
         if (!entry)
             return null;
@@ -329,6 +339,25 @@ class TimStore {
         return result;
     }
     /**
+     * Every live project root carrying this metadata.label, oldest first.
+     *
+     * A label is supposed to identify exactly one project, but nothing in the
+     * schema enforces it, and two roots did share P0062 for two months. Callers
+     * must branch on `length > 1` instead of taking the first row: which row
+     * SQLite hands back is arbitrary, so a `.get()` here turns every lookup into
+     * a coin flip and lets writes land in the wrong tree.
+     */
+    projectRootsByLabelSync(label) {
+        return this.db.prepare(`
+      SELECT id, metadata FROM entries
+      WHERE json_extract(metadata, '$.kind') = 'project'
+        AND json_extract(metadata, '$.label') = ?
+        AND irrelevant = 0
+        AND tombstoned_at IS NULL
+      ORDER BY created_at ASC
+    `).all(label);
+    }
+    /**
      * Resolve a project label or alias to a canonical P-label.
      * Direct label/id lookup first, then metadata.aliases scan.
      */
@@ -336,31 +365,37 @@ class TimStore {
         const q = query.trim();
         if (!q)
             return { status: 'not_found', query: q };
+        // Duplicate labels are checked before anything else: read() resolves labels
+        // too, and a root whose id *is* its label answers there — so a later check
+        // would never see the second root. Reporting the ids, not the label, is
+        // what the caller needs, since the label no longer names one project.
+        const labelRows = this.projectRootsByLabelSync(q);
+        if (labelRows.length > 1) {
+            return { status: 'ambiguous', query: q, labels: labelRows.map(r => r.id) };
+        }
         const direct = await this.read(q);
         if (direct?.metadata.kind === 'project') {
             const label = typeof direct.metadata.label === 'string' ? direct.metadata.label : q;
             return { status: 'found', label };
         }
-        const labelRow = this.db.prepare(`
-      SELECT metadata FROM entries
-      WHERE json_extract(metadata, '$.kind') = 'project'
-        AND json_extract(metadata, '$.label') = ?
-        AND irrelevant = 0
-        AND tombstoned_at IS NULL
-    `).get(q);
-        if (labelRow) {
-            const meta = JSON.parse(labelRow.metadata);
+        if (labelRows.length === 1) {
+            const meta = JSON.parse(labelRows[0].metadata);
             const label = typeof meta.label === 'string' ? meta.label : q;
             return { status: 'found', label };
         }
         const needle = q.toLowerCase();
         const rows = this.db.prepare(`
-      SELECT metadata FROM entries
+      SELECT metadata, title FROM entries
       WHERE json_extract(metadata, '$.kind') = 'project'
         AND irrelevant = 0
         AND tombstoned_at IS NULL
     `).all();
+        // Aliases beat names, an exact name beats a partial one. Anything the
+        // caller could reasonably have typed should land somewhere — and when it
+        // lands on several projects, the ambiguous branch names them all.
         const matches = [];
+        const exactName = [];
+        const partialName = [];
         for (const row of rows) {
             const meta = JSON.parse(row.metadata);
             const label = typeof meta.label === 'string' ? meta.label : '';
@@ -370,13 +405,28 @@ class TimStore {
             if (aliases.some(a => String(a).toLowerCase() === needle)) {
                 if (!matches.includes(label))
                     matches.push(label);
+                continue;
+            }
+            const name = projectDisplayName(row.title);
+            if (!name)
+                continue;
+            if (name === needle) {
+                if (!exactName.includes(label))
+                    exactName.push(label);
+            }
+            else if (name.includes(needle)) {
+                if (!partialName.includes(label))
+                    partialName.push(label);
             }
         }
-        if (matches.length === 0)
+        const resolvedBy = matches.length > 0 ? matches
+            : exactName.length > 0 ? exactName
+                : partialName;
+        if (resolvedBy.length === 0)
             return { status: 'not_found', query: q };
-        if (matches.length === 1)
-            return { status: 'found', label: matches[0] };
-        return { status: 'ambiguous', query: q, labels: matches.sort() };
+        if (resolvedBy.length === 1)
+            return { status: 'found', label: resolvedBy[0] };
+        return { status: 'ambiguous', query: q, labels: resolvedBy.sort() };
     }
     /**
      * Resolve a section by (projectId, title) within a project root.
@@ -401,14 +451,18 @@ class TimStore {
             return { status: 'not_found', project: projectId, title, candidates: [] };
         }
         const projectLabel = resolved.label;
-        // Find the project root entry.
-        const projectRow = this.db.prepare(`
-      SELECT id FROM entries
-      WHERE json_extract(metadata, '$.kind') = 'project'
-        AND json_extract(metadata, '$.label') = ?
-        AND irrelevant = 0
-        AND tombstoned_at IS NULL
-    `).get(projectLabel);
+        // Find the project root entry. resolveProjectLabel above may have arrived
+        // here through the id-direct path, which never sees a duplicate label — so
+        // this is the point where two same-label roots actually diverge.
+        const projectRoots = this.projectRootsByLabelSync(projectLabel);
+        // Same convention as the ambiguous-project branch above: no section answer
+        // can be right while the project itself is ambiguous, and `ambiguous` here
+        // means "several sections", so a caller must not read project roots out of
+        // it as if they were sections.
+        if (projectRoots.length > 1) {
+            return { status: 'not_found', project: projectLabel, title, candidates: [] };
+        }
+        const projectRow = projectRoots[0];
         if (!projectRow) {
             return { status: 'not_found', project: projectLabel, title, candidates: [] };
         }
@@ -645,6 +699,11 @@ class TimStore {
           AND json_extract(metadata, '$.kind') = 'session'
           AND tombstoned_at IS NULL
           AND irrelevant = 0
+          -- A session that logged nothing is not resumable. Sub-agent runs register
+          -- one each (the summarizer's own codex call does), and being the newest
+          -- node they would otherwise mask the session the briefing is meant to
+          -- carry. An absent count is legacy data, not proof of emptiness — keep it.
+          AND COALESCE(json_extract(metadata, '$.exchange_count'), 1) > 0
         UNION ALL
         SELECT e.id, sub.root, e.created_at, e.rowid FROM entries e
         INNER JOIN sub ON e.parent_id = sub.id
@@ -1284,13 +1343,12 @@ class TimStore {
      * that need not_found/ambiguous handling should use the async version.
      */
     resolveSectionIdByTitleSync(projectLabel, title) {
-        const projectRow = this.db.prepare(`
-      SELECT id FROM entries
-      WHERE json_extract(metadata, '$.kind') = 'project'
-        AND json_extract(metadata, '$.label') = ?
-        AND irrelevant = 0
-        AND tombstoned_at IS NULL
-    `).get(projectLabel);
+        const projectRoots = this.projectRootsByLabelSync(projectLabel);
+        if (projectRoots.length > 1) {
+            throw new Error(`Duplicate project label ${projectLabel}: ${projectRoots.length} live project entries ` +
+                `(${projectRoots.map(r => r.id).join(', ')}). Resolve the duplicate before writing.`);
+        }
+        const projectRow = projectRoots[0];
         if (!projectRow) {
             throw new Error(`Project not found: ${projectLabel}`);
         }
@@ -2598,6 +2656,25 @@ class TimStore {
             warnings.push(message);
             issues.push(message);
         }
+        // Duplicate project labels: two live roots claiming the same P-label make
+        // every lookup a coin flip, and the resolvers now refuse rather than pick.
+        // Only live roots count — a merged-away tree keeps its label because no
+        // MCP path can unset a metadata key.
+        const duplicateLabels = this.db.prepare(`
+      SELECT json_extract(metadata, '$.label') AS label, COUNT(*) AS count
+      FROM entries
+      WHERE json_extract(metadata, '$.kind') = 'project'
+        AND json_extract(metadata, '$.label') IS NOT NULL
+        AND irrelevant = 0
+        AND tombstoned_at IS NULL
+      GROUP BY label
+      HAVING count > 1
+    `).all();
+        for (const dup of duplicateLabels) {
+            const message = `duplicate project label ${dup.label} (${dup.count} live project entries)`;
+            blockers.push(message);
+            issues.push(message);
+        }
         // FTS integrity
         let ftsOk = true;
         try {
@@ -2920,6 +2997,23 @@ function normalizeProjectAliases(aliases) {
         out.push(a);
     }
     return out;
+}
+/**
+ * The part of a project title a human would call the project's name, lowercased.
+ *
+ * Project titles carry a status line — "MAIMO-RPG | Active | TS/Node/SQLite | …"
+ * or "TIM — Theoretically Infinite Memory | Active | …" — so matching the whole
+ * title would make "active" resolve to twenty projects. Only the leading segment
+ * is the name.
+ *
+ * Returns '' for projects marked [OBSOLETE], which stay reachable by label but
+ * are kept out of name matching so they don't crowd the ambiguous list.
+ */
+function projectDisplayName(title) {
+    const t = (title ?? '').trim();
+    if (!t || t.toUpperCase().startsWith('[OBSOLETE]'))
+        return '';
+    return t.split(/\s+[—|]\s*|\s*\|\s*/)[0].trim().toLowerCase();
 }
 function splitTitleBody(content, explicitTitle) {
     if (explicitTitle !== undefined) {

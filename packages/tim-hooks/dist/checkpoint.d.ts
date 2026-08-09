@@ -52,5 +52,38 @@ export declare function runSessionStart(store: TimStore, params: {
     model?: string;
     taskSummary?: string;
 }): Promise<SessionStartResult>;
+export interface SessionStartPreview {
+    projectLabel: string;
+    /** Display label the directive would use, e.g. "P0063 — TIM …". */
+    binding: string;
+    /** Session that fed the session-dependent half; null when the project has none. */
+    sessionId: string | null;
+    /** The directive text a start hook would emit for this project. */
+    directive: string;
+    /** What runSessionStart would return as `briefing`; null when there is nothing. */
+    briefing: string | null;
+}
+/**
+ * What a session start would *say*, without starting one.
+ *
+ * runSessionStart above does four writes before it assembles any text — it
+ * creates the session, may write a marker, runs configured hooks, and its delta
+ * is computed against a session that now exists. This reproduces only the
+ * assembly (lines 217-239 there) against a session that is already in the
+ * store, so the answer can be inspected without changing the thing being
+ * inspected: no session node, no marker, no configured hooks.
+ *
+ * Reads still touch `accessed_at`, and getUpdateCheckLineBriefing may refresh
+ * its own cache — this is "makes no memory changes", not "makes no writes".
+ */
+export declare function previewSessionStart(store: TimStore, params: {
+    projectId: string;
+    maxTokens: number;
+    /** Defaults to the project's most recent session. */
+    sessionId?: string;
+    /** Directive flavour: from a .tim-project marker, or from session metadata. */
+    origin?: 'marker' | 'session';
+    cwd?: string;
+}): Promise<SessionStartPreview>;
 export declare function runSessionEnd(store: TimStore, sessionId: string, opts?: SessionEndOptions): Promise<Entry>;
 //# sourceMappingURL=checkpoint.d.ts.map

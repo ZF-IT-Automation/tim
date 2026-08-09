@@ -18,6 +18,13 @@ export interface SessionStartParams {
     cwd: string;
     harness: string;
 }
+/**
+ * A session node is keyed by its id, so a blank one produces an unaddressable
+ * node that no turn-end hook can ever find again — the database already holds
+ * one written with the empty string. Callers pass a harness session id or an
+ * id of their own; either way it has to be usable as a key.
+ */
+export declare function assertSessionId(sessionId: string): void;
 export interface ProjectSessionParams extends SessionStartParams {
     projectId: string;
     batchSize?: number;
@@ -104,6 +111,12 @@ export interface UntaggedBatch {
     seqFrom: number;
     seqTo: number;
 }
+/**
+ * Exchanges are stored through splitTitleBody, so the first line of the message
+ * lives in the title and only the remainder in the content. Reading the content
+ * alone silently drops that first line — for an agent answer that is its lead.
+ */
+export declare function exchangeText(entry: Entry): string;
 export declare class SessionManager {
     private store;
     private onBatchFull?;
