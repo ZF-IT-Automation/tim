@@ -10,7 +10,9 @@ description: TIM session lifecycle — start, bind project, log exchanges.
    Returns session node; binds project when `projectId` or cwd `.tim-project` present.
 2. **Load brief** — `tim_load_project({ label: "P0063", bind: true, sessionId })`
    One bind per session. Cross-project read → `bind: false`.
-3. **End** — `tim_checkpoint({ sessionId })` or harness session-end hook.
+3. **End** — the harness session-end hook checkpoints automatically. To leave a note yourself, use
+   the CLI: `tim checkpoint --session <sessionId> --handoff-note "…"` (there is no `tim_checkpoint`
+   MCP tool).
 
 ## Hooks (automatic)
 - SessionStart briefing may include delta + update line (no extra calls).
