@@ -443,6 +443,8 @@ const TimSessionLogSchema = z.object({
 
 const TimCheckpointSchema = z.object({
   sessionId: z.string(),
+  handoff_note: z.string().optional()
+    .describe('Handoff note to persist on the checkpoint'),
 });
 
 const TimHookPromptSubmitSchema = z.object({
@@ -805,9 +807,9 @@ export const TOOL_DEFS: Array<{
   },
   {
     name: 'tim_checkpoint',
-    description: 'Create a session checkpoint summary and run verify-before-decay.',
+    description: 'Create a session checkpoint summary and run verify-before-decay. ' +
+      'Use handoff_note to persist done, work-in-progress, and next-step context.',
     schema: TimCheckpointSchema,
-    internal: true,
   },
   {
     name: 'tim_hook_prompt_submit',
@@ -3009,8 +3011,10 @@ export async function createMcpServer(
         }
 
         case 'tim_checkpoint': {
-          const { sessionId } = TimCheckpointSchema.parse(args);
-          const summary = await getSessions().checkpoint(sessionId);
+          const { sessionId, handoff_note } = TimCheckpointSchema.parse(args);
+          const summary = await getSessions().checkpoint(sessionId, {
+            handoffNote: handoff_note,
+          });
           return {
             content: [{ type: 'text', text: formatToolResponse(summary) }],
           };

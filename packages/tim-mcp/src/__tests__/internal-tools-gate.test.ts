@@ -115,7 +115,6 @@ const INTERNAL_TOOL_NAMES = [
   'tim_show_untagged',
   'tim_error_log',
   'tim_session_log',
-  'tim_checkpoint',
 ];
 
 describe('TIM_EXPOSE_INTERNAL_TOOLS gate', () => {
@@ -128,6 +127,32 @@ describe('TIM_EXPOSE_INTERNAL_TOOLS gate', () => {
 
   afterEach(() => {
     if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath);
+  });
+
+  it('exposes tim_checkpoint to agents by default', async () => {
+    const client = new McpClient(dbPath);
+    try {
+      const tools = await client.listTools();
+      expect(tools.map(t => t.name)).toContain('tim_checkpoint');
+    } finally {
+      client.kill();
+    }
+  });
+
+  it('passes an agent handoff note through tim_checkpoint', async () => {
+    const client = new McpClient(dbPath);
+    try {
+      await client.callTool('tim_session_start', { sessionId: 'agent-handoff' });
+      const resp = await client.callTool('tim_checkpoint', {
+        sessionId: 'agent-handoff',
+        handoff_note: 'done: task D | next: task 5',
+      });
+      expect(resp.error).toBeUndefined();
+      expect(resp.result?.isError).toBeFalsy();
+      expect(resp.result?.content[0]?.text).toContain('done: task D | next: task 5');
+    } finally {
+      client.kill();
+    }
   });
 
   it('hides plumbing tools from ListTools by default', async () => {
