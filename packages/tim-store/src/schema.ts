@@ -288,6 +288,35 @@ export interface MigrationRunResult {
   backupPath: string | null;
 }
 
+/**
+ * Thrown when an existing schema is behind this build and the caller did not opt
+ * in. Carries the versions so a consumer can render its own message; the `code`
+ * tag is what cross-package callers should test — `instanceof` breaks if two
+ * copies of tim-store end up loaded.
+ */
+export class SchemaMigrationPendingError extends Error {
+  readonly code = 'SCHEMA_MIGRATION_PENDING';
+  constructor(
+    readonly from: number,
+    readonly to: number,
+    readonly pending: number[],
+    message: string,
+  ) {
+    super(message);
+    this.name = 'SchemaMigrationPendingError';
+  }
+}
+
+export function isSchemaMigrationPendingError(
+  error: unknown,
+): error is SchemaMigrationPendingError {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    (error as { code?: unknown }).code === 'SCHEMA_MIGRATION_PENDING'
+  );
+}
+
 export function runMigrations(
   db: Database.Database,
   migrations: { version: number; sql: string }[] = MIGRATIONS,
@@ -312,7 +341,10 @@ export function runMigrations(
   if (currentVersion > 0 && options.allowMigrations !== true) {
     const n = pending.length;
     const noun = n === 1 ? 'migration' : 'migrations';
-    throw new Error(
+    throw new SchemaMigrationPendingError(
+      currentVersion,
+      expectedVersion,
+      pending.map(m => m.version),
       `Schema is at v${currentVersion}, this build expects v${expectedVersion}. ` +
         `Run "tim migrate-schema" to apply ${n} pending ${noun}.`,
     );

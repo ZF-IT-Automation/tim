@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // TIM CLI — v0.1.0-alpha
 
-import { TimStore, SessionManager, ErrorLogger, resolveProjectBindingLabel, getCurrentVersion } from 'tim-store';
+import { TimStore, SessionManager, ErrorLogger, resolveProjectBindingLabel, getCurrentVersion, isSchemaMigrationPendingError } from 'tim-store';
 import { loadConfig, getTimDir, normalizeLegacyTypeTag, type TimConfigFile } from 'tim-core';
 import {
   runCheckpoint,
@@ -81,6 +81,15 @@ function buildStaleMarkerDirective(projectLabel: string, markerDir: string): str
     `⚠️ Stale TIM project marker (.tim-project in ${markerDir}): ${projectLabel} does not exist in the configured TIM store.`,
     `ACTION: run tim bind-project --label <P00XX> --cwd "${markerDir}" to repair it, ` +
       `or remove ${path.join(markerDir, '.tim-project')} explicitly.`,
+  ].join('\n');
+}
+
+function buildMigrationPendingDirective(gateMessage: string): string {
+  return [
+    `⚠️ TIM is not available in this session: the store's schema is behind this build.`,
+    gateMessage,
+    `ACTION: tell the user to run "tim migrate-schema" (it backs the database up first). ` +
+      `Until then every TIM tool call will fail with the same message.`,
   ].join('\n');
 }
 
@@ -434,7 +443,17 @@ async function buildStartDirectiveForCwd(cwd: string, walkUp?: boolean): Promise
 
   const { marker, dir } = located;
   const config = loadConfig();
-  const store = new TimStore(getDbPath(config));
+  let store: TimStore;
+  try {
+    store = new TimStore(getDbPath(config));
+  } catch (error) {
+    // The migration gate refuses on purpose and its message carries the fix. Every
+    // caller of this function swallows throws (hooks fail soft, the shell script
+    // drops stderr), so the one deliberate refusal has to come back as directive
+    // content instead. Anything else keeps failing soft.
+    if (isSchemaMigrationPendingError(error)) return buildMigrationPendingDirective(error.message);
+    throw error;
+  }
   try {
     const validated = await validateMarkerAgainstStore(marker, store);
     let projectLabel = validated?.project ?? null;

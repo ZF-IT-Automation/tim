@@ -77,6 +77,14 @@ function buildStaleMarkerDirective(projectLabel, markerDir) {
             `or remove ${path.join(markerDir, '.tim-project')} explicitly.`,
     ].join('\n');
 }
+function buildMigrationPendingDirective(gateMessage) {
+    return [
+        `⚠️ TIM is not available in this session: the store's schema is behind this build.`,
+        gateMessage,
+        `ACTION: tell the user to run "tim migrate-schema" (it backs the database up first). ` +
+            `Until then every TIM tool call will fail with the same message.`,
+    ].join('\n');
+}
 const HELP_ALIASES = { h: 'help' };
 function hasHelpFlag(args, command, subcommand) {
     return (0, args_js_1.hasBooleanFlag)(args, 'help', {
@@ -384,7 +392,19 @@ async function buildStartDirectiveForCwd(cwd, walkUp) {
         return null;
     const { marker, dir } = located;
     const config = (0, tim_core_1.loadConfig)();
-    const store = new tim_store_1.TimStore(getDbPath(config));
+    let store;
+    try {
+        store = new tim_store_1.TimStore(getDbPath(config));
+    }
+    catch (error) {
+        // The migration gate refuses on purpose and its message carries the fix. Every
+        // caller of this function swallows throws (hooks fail soft, the shell script
+        // drops stderr), so the one deliberate refusal has to come back as directive
+        // content instead. Anything else keeps failing soft.
+        if ((0, tim_store_1.isSchemaMigrationPendingError)(error))
+            return buildMigrationPendingDirective(error.message);
+        throw error;
+    }
     try {
         const validated = await (0, tim_hooks_1.validateMarkerAgainstStore)(marker, store);
         let projectLabel = validated?.project ?? null;

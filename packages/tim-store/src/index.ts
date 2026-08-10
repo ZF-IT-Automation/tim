@@ -30,6 +30,8 @@ export {
   runMigrations,
   getCurrentVersion,
   MIGRATIONS,
+  SchemaMigrationPendingError,
+  isSchemaMigrationPendingError,
   type RunMigrationsOptions,
   type MigrationRunResult,
 } from './schema.js';

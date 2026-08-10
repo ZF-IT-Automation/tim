@@ -3,7 +3,7 @@ import Database from 'better-sqlite3';
 import fs from 'node:fs';
 import path from 'node:path';
 import { TimStore } from '../store.js';
-import { getCurrentVersion, MIGRATIONS, runMigrations } from '../schema.js';
+import { getCurrentVersion, MIGRATIONS, runMigrations, isSchemaMigrationPendingError } from '../schema.js';
 
 const cleanupPaths: string[] = [];
 
@@ -56,6 +56,22 @@ describe('migration gate', () => {
     );
     expect(readVersion(dbPath)).toBe(rewindTo);
     expect(fs.existsSync(`${dbPath}.pre-migration-v${rewindTo}.bak`)).toBe(false);
+  });
+
+  it('tags the refusal so cross-package callers can recognise it', () => {
+    const dbPath = tmpDb();
+    new TimStore(dbPath).close();
+    const expected = getCurrentVersion();
+    rewindVersion(dbPath, expected - 1);
+
+    let caught: unknown;
+    try {
+      new TimStore(dbPath);
+    } catch (error) {
+      caught = error;
+    }
+    expect(isSchemaMigrationPendingError(caught)).toBe(true);
+    expect(caught).toMatchObject({ from: expected - 1, to: expected, pending: [expected] });
   });
 
   it('migrates when allowMigrations is true', () => {
