@@ -37,8 +37,9 @@ describe('tim hook claude-stop', () => {
   function run(
     input: string | StopPayload,
     env: Record<string, string> = {},
+    sub = 'claude-stop',
   ): SpawnSyncReturns<string> {
-    return spawnSync(process.execPath, [CLI, 'hook', 'claude-stop'], {
+    return spawnSync(process.execPath, [CLI, 'hook', sub], {
       cwd,
       input: typeof input === 'string' ? input : JSON.stringify(input),
       encoding: 'utf8',
@@ -131,6 +132,44 @@ describe('tim hook claude-stop', () => {
     const store = new TimStore(dbPath);
     expect((await deriveCounters(store, 'hook-stop-sess')).exchangeCount).toBe(1);
     store.close();
+  });
+
+  it('checkpoints the session when Cursor reports sessionEnd, but not on a plain stop', async () => {
+    await seedProject('P0001');
+    writeMarker(cwd, 'P0001');
+    // Field names and values as cursor-agent 2026.08.04 actually sends them:
+    // no cwd, the workspace arrives as workspace_roots, and hook_event_name is
+    // the only thing separating a turn end from a session end.
+    const cursorPayload = (event: string, uuid: string): StopPayload => ({
+      session_id: 'hook-stop-sess',
+      transcript_path: writeTranscript([
+        { type: 'user', uuid: `u-${uuid}`, message: { role: 'user', content: `ask ${uuid}` } },
+        { type: 'assistant', uuid: `a-${uuid}`, message: { role: 'assistant', content: 'reply' } },
+      ]),
+      workspace_roots: [cwd],
+      cursor_version: '2026.08.04-aaa8809',
+      hook_event_name: event,
+    });
+
+    // The checkpoint hangs under the session's summary root, not off the session.
+    async function checkpointCount(): Promise<number> {
+      const store = new TimStore(dbPath);
+      try {
+        const roots = await store.getChildren('hook-stop-sess');
+        const summaryRoot = roots.find((c) => c.metadata.kind === 'session-summary-root');
+        if (!summaryRoot) return 0;
+        const children = await store.getChildren(summaryRoot.id);
+        return children.filter((c) => c.metadata.kind === 'checkpoint').length;
+      } finally {
+        store.close();
+      }
+    }
+
+    expect(run(cursorPayload('stop', '1'), {}, 'cursor-stop').status).toBe(0);
+    expect(await checkpointCount()).toBe(0);
+
+    expect(run(cursorPayload('sessionEnd', '2'), {}, 'cursor-stop').status).toBe(0);
+    expect(await checkpointCount()).toBe(1);
   });
 
   it('fail-soft: malformed JSON, missing marker, and stop_hook_active produce exit 0 with no stdout', async () => {

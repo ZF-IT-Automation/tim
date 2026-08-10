@@ -647,6 +647,16 @@ async function cmdHook(args) {
                 if (result.logged) {
                     await (0, tim_hooks_1.maybeSpawnSummarizer)(store, cwd, { sessionId });
                 }
+                // Cursor's sessionEnd is the same signal Claude's SessionEnd carries, so
+                // it gets the same checkpoint. It rides this command instead of a second
+                // hook entry because the checkpoint has to run after the exchange it
+                // summarizes — two entries on one event would race, and a checkpoint that
+                // loses sees no exchanges and silently skips. Under `cursor-agent -p`
+                // sessionEnd is also the only turn-end signal, which is why the exchange
+                // is logged above before this runs.
+                if (payload.hook_event_name === 'sessionEnd') {
+                    await (0, tim_hooks_1.runHarnessSessionEnd)(store, { session_id: sessionId, cwd }, { hooksConfig: config.hooks });
+                }
             }
             finally {
                 store.close();

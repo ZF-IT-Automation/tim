@@ -6,6 +6,11 @@
  * with the same command and the exchange dedupe absorbs the double fire when a
  * TUI session ends. Cursor's hooks.json is flat — event name to command list —
  * and other tooling (hmem, o9k) owns entries in it, so nothing here overwrites.
+ *
+ * `hook cursor-stop` also checkpoints the session when the payload's
+ * `hook_event_name` is `sessionEnd` — Cursor's equivalent of Claude's SessionEnd.
+ * That is why no separate session-end entry is registered: one command keeps the
+ * checkpoint ordered after the exchange it summarizes.
  */
 export interface CursorInstallStep {
     step: 'session-start-hook' | 'turn-end-hooks';
