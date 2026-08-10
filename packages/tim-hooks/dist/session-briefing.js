@@ -12,6 +12,9 @@ const OPEN_WORK_ITEM_MAX_CHARS = 160;
 // Split of briefing.maxTokens: the previous session is the reason the briefing
 // exists, open work is the shorter, denser half.
 const PREVIOUS_SESSION_BUDGET_SHARE = 0.7;
+// Share of the previous-session budget a handoff note may take. Bounded because
+// clampSummary keeps the tail: an unbounded note would evict the whole summary.
+const HANDOFF_NOTE_BUDGET_SHARE = 0.4;
 /**
  * Clamp a summary to a char budget without losing its end. The last lines of a
  * condensed rollup are the handoff ("next: …") — cutting from the front would drop
@@ -42,6 +45,29 @@ function oneLine(text, maxChars) {
     const t = text.replace(/\s+/g, ' ').trim();
     return t.length <= maxChars ? t : `${t.slice(0, maxChars - 1).trimEnd()}…`;
 }
+/**
+ * Newest handoff note and newest checkpoint text under a session's summary node.
+ * Checkpoints carry no `metadata.order`, so getChildren returns them oldest-first —
+ * the last match of each wins. The note's predicate is the note itself, not `kind`,
+ * so any future writer is picked up; the text's is `kind` because only a checkpoint
+ * body is a session summary.
+ */
+async function latestCheckpoint(store, summaryNodeId) {
+    const children = await store.getChildren(summaryNodeId);
+    let note = '';
+    let text = '';
+    for (const child of children) {
+        const childNote = typeof child.metadata.handoff_note === 'string'
+            ? child.metadata.handoff_note.trim()
+            : '';
+        if (childNote)
+            note = childNote;
+        if (child.metadata.kind === 'checkpoint' && child.content.trim()) {
+            text = child.content.trim();
+        }
+    }
+    return { note, text };
+}
 /** Most recent session of the project, with its condensed rollup summary. */
 async function previousSession(store, projectLabel, maxChars) {
     const sessions = new tim_store_1.SessionManager(store);
@@ -49,10 +75,22 @@ async function previousSession(store, projectLabel, maxChars) {
     if (!latest)
         return {};
     const summaryNode = await (0, tim_store_1.findChildByKind)(store, latest.sessionId, tim_store_1.KIND_SUMMARY_ROOT);
+    const { note, text } = summaryNode
+        ? await latestCheckpoint(store, summaryNode.id).catch(() => ({ note: '', text: '' }))
+        : { note: '', text: '' };
+    // Three sources, best first: the summarizer's rollup on the root, then the newest
+    // checkpoint's own text — a checkpoint never writes the root, so a session that only
+    // ever hit the session-end hook has nothing there — then the root's body.
     const stored = typeof summaryNode?.metadata.summary === 'string'
         ? summaryNode.metadata.summary
         : '';
-    const summary = clampSummary((stored || summaryNode?.content || '').trim(), maxChars);
+    const body = (stored || text || summaryNode?.content || '').trim();
+    // The handoff note is what the previous session wrote *for this one*, so it goes
+    // last: clampSummary drops from the front, which makes the tail the safe slot.
+    const clampedNote = note
+        ? clampSummary(note, Math.floor(maxChars * HANDOFF_NOTE_BUDGET_SHARE))
+        : '';
+    const summary = clampSummary([body, clampedNote && `handoff: ${clampedNote}`].filter(Boolean).join('\n'), maxChars);
     if (!summary)
         return {};
     const date = (latest.date ?? latest.lastActivity).slice(0, 10);
