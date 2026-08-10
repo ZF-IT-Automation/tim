@@ -7,8 +7,13 @@ import { getCurrentVersion, MIGRATIONS, runMigrations } from '../schema.js';
 
 const cleanupPaths: string[] = [];
 
+// The repo's gitignored tmp/, resolved from this file rather than from cwd — and
+// created first, because a fresh checkout does not carry an ignored directory.
+const TEST_ROOT = path.resolve(import.meta.dirname, '../../../../tmp');
+
 function tmpDb(): string {
-  const dir = fs.mkdtempSync(path.join(process.cwd(), 'tmp', 'mig-gate-'));
+  fs.mkdirSync(TEST_ROOT, { recursive: true });
+  const dir = fs.mkdtempSync(path.join(TEST_ROOT, 'mig-gate-'));
   const dbPath = path.join(dir, 't.db');
   cleanupPaths.push(dir);
   return dbPath;
