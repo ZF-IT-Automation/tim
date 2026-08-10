@@ -4,12 +4,18 @@ import os from 'node:os';
 import path from 'node:path';
 import { TimStore, ensureProjectForPath } from '../index.js';
 
+// ensureProjectForPath refuses to auto-create under /tmp, and $HOME itself is
+// /tmp/… whenever the suite runs with a scratch HOME. So the fixture lives in
+// the repo's gitignored tmp/ instead of on the developer's machine.
+const TEST_ROOT = path.resolve(import.meta.dirname, '../../../../tmp');
+
 describe('ensureProjectForPath', () => {
   let dir: string;
   let store: TimStore;
 
   beforeEach(() => {
-    dir = fs.mkdtempSync(path.join(os.homedir(), '.tim-test-auto-project-'));
+    fs.mkdirSync(TEST_ROOT, { recursive: true });
+    dir = fs.mkdtempSync(path.join(TEST_ROOT, 'tim-test-auto-project-'));
     store = new TimStore(path.join(dir, 'test.db'));
   });
 
@@ -22,8 +28,8 @@ describe('ensureProjectForPath', () => {
   it('returns null for home, /tmp, and task directories', async () => {
     expect(await ensureProjectForPath(store, os.homedir())).toBeNull();
     expect(await ensureProjectForPath(store, '/tmp/foo')).toBeNull();
+    // Path-only rule — the directory need not exist, so nothing is created in $HOME.
     const taskDir = path.join(os.homedir(), 'projects', 'tasks', 'task-x');
-    fs.mkdirSync(taskDir, { recursive: true });
     expect(await ensureProjectForPath(store, taskDir)).toBeNull();
   });
 
