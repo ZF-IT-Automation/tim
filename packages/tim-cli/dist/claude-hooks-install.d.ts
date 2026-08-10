@@ -13,6 +13,7 @@ export interface ClaudeSettings {
         SessionStart?: ClaudeHookMatcher[];
         UserPromptSubmit?: ClaudeHookMatcher[];
         Stop?: ClaudeHookMatcher[];
+        SessionEnd?: ClaudeHookMatcher[];
         [event: string]: ClaudeHookMatcher[] | undefined;
     };
     [key: string]: unknown;

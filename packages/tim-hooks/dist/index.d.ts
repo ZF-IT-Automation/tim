@@ -1,5 +1,5 @@
 export { runHookScript, runHooks, runConfiguredHooks, embedUnembeddedEntries, type HookEnv, type HookRunResult, type RunHooksOptions, } from './hooks.js';
-export { runCheckpoint, runSessionStart, runSessionEnd, previewSessionStart, loadProjectContext, getActiveProjectLabel, type SessionEndOptions, type SessionStartResult, type SessionStartPreview, } from './checkpoint.js';
+export { runCheckpoint, runSessionStart, runSessionEnd, runHarnessSessionEnd, previewSessionStart, loadProjectContext, getActiveProjectLabel, type SessionEndOptions, type SessionStartResult, type SessionStartPreview, } from './checkpoint.js';
 export { getDeltaBriefing, type DeltaBriefingOptions } from './delta.js';
 export { getCheckpointEveryN, getBriefingMaxTokens, getBriefingRecentSessions, shouldAutoCheckpoint, checkpointCadenceReminder, DEFAULT_CHECKPOINT_EVERY_N, DEFAULT_BRIEFING_MAX_TOKENS, DEFAULT_BRIEFING_RECENT_SESSIONS, } from './cadence.js';
 export { afterExchangeLogged, type CadenceResult } from './cadence-runner.js';

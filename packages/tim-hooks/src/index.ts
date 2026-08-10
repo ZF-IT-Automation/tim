@@ -12,6 +12,7 @@ export {
   runCheckpoint,
   runSessionStart,
   runSessionEnd,
+  runHarnessSessionEnd,
   previewSessionStart,
   loadProjectContext,
   getActiveProjectLabel,

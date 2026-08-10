@@ -6,6 +6,7 @@ import { loadConfig, getTimDir, normalizeLegacyTypeTag, type TimConfigFile } fro
 import {
   runCheckpoint,
   runSessionEnd,
+  runHarnessSessionEnd,
   runSessionStart,
   findMarker,
   findMarkerOptionsFromEnv,
@@ -115,7 +116,7 @@ const COMMAND_HELP: Record<string, string> = {
     'Usage: tim new-project --path <dir> --name <string> [--no-git] [--confirm]',
   'record-commit':
     'Usage: tim record-commit [--cwd <dir>] [--project <label>] [--session <id>] [--hash <sha>] [--message <text>] [--diff <stat>] [--author <name>] [--date <iso>] [--branch <name>]',
-  hook: 'Usage: tim hook <session-start|session-end|log|prompt-submit|claude-session-start|claude-stop|cursor-stop|codex-notify> [options]',
+  hook: 'Usage: tim hook <session-start|session-end|log|prompt-submit|claude-session-start|claude-session-end|claude-stop|cursor-stop|codex-notify> [options]',
   'hook session-start':
     'Usage: tim hook session-start --session <id> [--agent <name>] [--cwd <path>] [--harness <name>] [--project <label>] [--tool <name>] [--model <name>] [--task-summary <text>]',
   'hook session-end': 'Usage: tim hook session-end --session <id>',
@@ -124,6 +125,8 @@ const COMMAND_HELP: Record<string, string> = {
   'hook prompt-submit': 'Usage: tim hook prompt-submit < Claude UserPromptSubmit JSON',
   'hook claude-session-start':
     'Usage: tim hook claude-session-start < Claude SessionStart JSON',
+  'hook claude-session-end':
+    'Usage: tim hook claude-session-end < Claude SessionEnd JSON',
   'hook claude-stop': 'Usage: tim hook claude-stop < Claude Stop JSON',
   'hook cursor-stop': 'Usage: tim hook cursor-stop < Cursor stop/sessionEnd JSON',
   'hook codex-notify': "Usage: tim hook codex-notify '<Codex agent-turn-complete JSON>'",
@@ -650,6 +653,24 @@ async function cmdHook(args: string[]) {
     return;
   }
 
+  if (sub === 'claude-session-end') {
+    try {
+      const payload = await readJsonStdin();
+      if (!payload) return;
+
+      const config = loadConfig();
+      const store = new TimStore(getDbPath(config));
+      try {
+        await runHarnessSessionEnd(store, payload, { hooksConfig: config.hooks });
+      } finally {
+        store.close();
+      }
+    } catch {
+      // Claude hooks fail soft: never block the harness on the way out.
+    }
+    return;
+  }
+
   // One branch for both harnesses: cursor-agent also runs the Stop hook out of
   // ~/.claude/settings.json, so the identity has to come from the payload rather
   // than from which command name was invoked.
@@ -810,7 +831,7 @@ async function cmdHook(args: string[]) {
 
       default:
         console.error(`Unknown hook: ${sub ?? '(none)'}`);
-        console.error('Usage: tim hook <session-start|session-end|log|prompt-submit|claude-session-start|claude-stop|cursor-stop|codex-notify> [options]');
+        console.error('Usage: tim hook <session-start|session-end|log|prompt-submit|claude-session-start|claude-session-end|claude-stop|cursor-stop|codex-notify> [options]');
         process.exit(1);
     }
   } finally {
