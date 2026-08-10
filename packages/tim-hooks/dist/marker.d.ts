@@ -2,6 +2,14 @@ import type { TimStore } from 'tim-store';
 export declare const MARKER_FILENAME = ".tim-project";
 export { SUMMARIZER_LOCK, MARKER_LOCK } from './constants.js';
 /**
+ * Opt-out file. A directory holding `.tim-ignore` belongs to no project, and the
+ * walk-up stops there instead of inheriting a marker from a parent — which is the
+ * only way to keep an unattended runner (a cronjob under `$HOME`) from logging a
+ * session against whatever project happens to sit above its working directory.
+ */
+export declare const IGNORE_FILENAME = ".tim-ignore";
+export declare function ignorePath(cwd: string): string;
+/**
  * Committed default project label for repos that gitignore `.tim-project`.
  * Contains only the stable `project` field. Override per-machine by creating
  * `.tim-project` in the repo root (it wins over tim.json).

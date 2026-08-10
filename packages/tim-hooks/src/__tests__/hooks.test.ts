@@ -15,6 +15,7 @@ import {
   runSessionEnd,
   runHarnessSessionEnd,
   runSessionStart,
+  writeMarker,
 } from '../index.js';
 
 describe('config hooks parsing', () => {
@@ -95,6 +96,37 @@ describe('session-end checkpoint orchestration', () => {
 
     expect(fs.existsSync(marker)).toBe(true);
     expect(summary.metadata.kind).toBe('checkpoint');
+
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+    store.close();
+  });
+
+  it('summarizes a session that ends below batch_size', async () => {
+    // A /clear after two turns used to leave the session with no LLM summary at
+    // all, because the spawn gate only fires at pending >= batch_size.
+    const store = new TimStore(':memory:');
+    const sessions = new SessionManager(store);
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tim-short-end-'));
+    writeMarker(tmpDir, { project: 'P0000' });
+
+    await sessions.sessionStart({
+      sessionId: 'short-end',
+      agentName: 'claude',
+      cwd: tmpDir,
+      harness: 'claude-code',
+    });
+    await sessions.sessionLog('short-end', [
+      { role: 'user', content: 'q1' },
+      { role: 'agent', content: 'a1' },
+    ]);
+
+    const spawn = vi.fn();
+    await runSessionEnd(store, 'short-end', { env: { TIM_CWD: tmpDir }, spawn });
+
+    expect(spawn).toHaveBeenCalledOnce();
+    // The session it summarizes has to be the one that ended, not whatever
+    // resolveCurrentSession picks out of the same directory.
+    expect(spawn.mock.calls[0][1].sessionId).toBe('short-end');
 
     fs.rmSync(tmpDir, { recursive: true, force: true });
     store.close();

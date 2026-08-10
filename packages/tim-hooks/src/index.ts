@@ -111,6 +111,8 @@ export {
   onSessionStop,
   maybeSpawnSummarizer,
   buildSummarizerCommand,
+  isSummarizerChild,
+  SUMMARIZER_ENV_FLAG,
   spawnSummarizer,
   detachedSpawner,
   summarizerLogPath,

@@ -12,6 +12,16 @@ export interface SessionStopResult {
 }
 export { DEFAULT_SUMMARIZER_TIMEOUT_SEC } from './constants.js';
 export declare function summarizerLogPath(cwd: string): string;
+/**
+ * Marks every process below the summarizer spawn. The summarizer runs agent CLIs
+ * (codex, opencode) inside the project directory, so those children are themselves
+ * hook-registered agent sessions: without this flag their hooks log the summarizer's
+ * own prompt back into TIM as a user exchange, and the summarizer ends up feeding
+ * itself. Inherited by every descendant process.
+ */
+export declare const SUMMARIZER_ENV_FLAG = "TIM_SUMMARIZER";
+/** True inside the summarizer's process tree — hooks must not write or brief there. */
+export declare function isSummarizerChild(env?: NodeJS.ProcessEnv): boolean;
 /** Shell snippet: trap lock release, timeout, run tim-summarizer CLI with log append. */
 export declare function buildSummarizerCommand(sessionId: string, lockPath: string, logPath: string, timeoutSec?: number): string;
 /** Detached spawn with log dir creation and spawn-error capture (does not throw). */

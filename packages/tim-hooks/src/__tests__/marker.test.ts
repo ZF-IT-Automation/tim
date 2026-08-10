@@ -154,6 +154,26 @@ describe('marker', () => {
     expect(findMarker(sub, { maxRoot: dir, walkUp: true })?.marker.project).toBe('P0003');
   });
 
+  it('.tim-ignore in the cwd blocks its own marker and the walk up', () => {
+    writeMarker(dir, { project: 'P0002' });
+    const sub = path.join(dir, 'runner');
+    fs.mkdirSync(sub, { recursive: true });
+    writeMarker(sub, { project: 'P0004' });
+    fs.writeFileSync(path.join(sub, '.tim-ignore'), '');
+    expect(findMarker(sub, { maxRoot: dir, walkUp: true })).toBeNull();
+    expect(findMarker(sub, { maxRoot: dir })).toBeNull();
+  });
+
+  it('.tim-ignore in a parent stops the walk before an outer marker', () => {
+    // The cronjob case: a marker sits in $HOME, the runner dir below it opts out.
+    writeMarker(dir, { project: 'P0002' });
+    const guard = path.join(dir, 'workdirs');
+    const sub = path.join(guard, 'post-mortem');
+    fs.mkdirSync(sub, { recursive: true });
+    fs.writeFileSync(path.join(guard, '.tim-ignore'), '');
+    expect(findMarker(sub, { maxRoot: dir, walkUp: true })).toBeNull();
+  });
+
   it('findMarker: repo marker wins over ~/.tim-project on the same walk chain', () => {
     const fakeHome = path.join(dir, 'fake-home');
     const repo = path.join(fakeHome, 'projects', 'tim');

@@ -31,6 +31,7 @@ import {
   runCodexNotify,
   parseCodexNotifyArgs,
   maybeSpawnSummarizer,
+  isSummarizerChild,
   type ProjectMarker,
 } from 'tim-hooks';
 import { buildTimMcpEntry, installMcpEntryForHosts } from './install.js';
@@ -440,6 +441,8 @@ async function cmdStats() {
  * when there is no marker (callers stay silent and exit 0).
  */
 async function buildStartDirectiveForCwd(cwd: string, walkUp?: boolean): Promise<string | null> {
+  // A briefing injected into a summarizer child ends up in the text being summarized.
+  if (isSummarizerChild()) return null;
   const envOpts = findMarkerOptionsFromEnv() ?? {};
   const located = findMarker(cwd, { ...envOpts, walkUp: walkUp ?? envOpts.walkUp ?? false });
   if (!located) return null;
@@ -600,6 +603,11 @@ async function cmdBindProject(args: string[]) {
 }
 
 async function cmdHook(args: string[]) {
+  // Agent CLIs the summarizer runs are hook-registered sessions of their own. Logging
+  // their turns would store the summarizer's prompt as a user exchange and spawn a
+  // fresh summarizer off it — so every hook no-ops inside the summarizer process tree.
+  if (isSummarizerChild()) return;
+
   const sub = args[0];
 
   if (sub === 'claude-session-start') {

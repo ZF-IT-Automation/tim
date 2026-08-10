@@ -387,6 +387,9 @@ async function cmdStats() {
  * when there is no marker (callers stay silent and exit 0).
  */
 async function buildStartDirectiveForCwd(cwd, walkUp) {
+    // A briefing injected into a summarizer child ends up in the text being summarized.
+    if ((0, tim_hooks_1.isSummarizerChild)())
+        return null;
     const envOpts = (0, tim_hooks_1.findMarkerOptionsFromEnv)() ?? {};
     const located = (0, tim_hooks_1.findMarker)(cwd, { ...envOpts, walkUp: walkUp ?? envOpts.walkUp ?? false });
     if (!located)
@@ -535,6 +538,11 @@ async function cmdBindProject(args) {
     }
 }
 async function cmdHook(args) {
+    // Agent CLIs the summarizer runs are hook-registered sessions of their own. Logging
+    // their turns would store the summarizer's prompt as a user exchange and spawn a
+    // fresh summarizer off it — so every hook no-ops inside the summarizer process tree.
+    if ((0, tim_hooks_1.isSummarizerChild)())
+        return;
     const sub = args[0];
     if (sub === 'claude-session-start') {
         try {

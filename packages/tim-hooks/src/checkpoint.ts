@@ -28,15 +28,18 @@ import {
   markerWithRepairedProject,
 } from './phantom-recovery.js';
 import {
-  onSessionStop,
+  maybeSpawnSummarizer,
   maybeSpawnProjectSummary,
   DEFAULT_PROJECT_SUMMARY_THRESHOLD,
+  type Spawner,
 } from './session-hooks.js';
 
 export interface SessionEndOptions {
   summarize?: Summarizer;
   hooksConfig?: HooksConfig;
   env?: HookEnv;
+  /** Test seam for the summarizer spawn; production uses the detached spawner. */
+  spawn?: Spawner;
 }
 
 export interface SessionStartResult {
@@ -352,7 +355,12 @@ export async function runSessionEnd(
 
   await runConfiguredHooks('sessionEnd', opts.hooksConfig, env);
 
-  await onSessionStop(store, cwd);
+  // batchFull skips the pending >= batch_size gate: a session ending with fewer
+  // than batch_size turns would otherwise never be summarized by anything, and
+  // the briefing would fall back to the checkpoint's heuristic text forever.
+  // Passing sessionId keeps this off resolveCurrentSession, which picks by cwd
+  // and can hand back a different session running in the same directory.
+  await maybeSpawnSummarizer(store, cwd, { batchFull: true, sessionId, spawn: opts.spawn });
 
   // Periodically regenerate the project-level summary (every Nth session).
   // Fire-and-forget — must never block or fail the session-end hook.

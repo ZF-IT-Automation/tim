@@ -4,6 +4,14 @@ All notable changes to TIM are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **`.tim-ignore`** — a directory holding this file belongs to no project, and the marker walk-up stops there instead of inheriting a binding from a parent. For unattended runners (cronjobs under `$HOME`, benchmark repos) whose sessions are harness noise rather than project history.
+
+### Fixed
+
+- **The summarizer no longer logs its own prompts back into TIM.** Its process tree is marked with `TIM_SUMMARIZER=1`, and the hook entry points (`tim hook <sub>`, the start directive) no-op under that flag — the agent CLI the summarizer runs is otherwise a hook-registered session of its own, so its prompt was stored as a user exchange and fed the next summarizer run.
+
 ## [0.1.0-beta.1] — 2026-07-19
 
 ### Changed

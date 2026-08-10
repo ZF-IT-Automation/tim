@@ -38,6 +38,20 @@ export function summarizerLogPath(cwd: string): string {
   return path.join(cwd, '.tim', 'summarizer.log');
 }
 
+/**
+ * Marks every process below the summarizer spawn. The summarizer runs agent CLIs
+ * (codex, opencode) inside the project directory, so those children are themselves
+ * hook-registered agent sessions: without this flag their hooks log the summarizer's
+ * own prompt back into TIM as a user exchange, and the summarizer ends up feeding
+ * itself. Inherited by every descendant process.
+ */
+export const SUMMARIZER_ENV_FLAG = 'TIM_SUMMARIZER';
+
+/** True inside the summarizer's process tree — hooks must not write or brief there. */
+export function isSummarizerChild(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env[SUMMARIZER_ENV_FLAG] === '1';
+}
+
 /** Shell snippet: trap lock release, timeout, run tim-summarizer CLI with log append. */
 export function buildSummarizerCommand(
   sessionId: string,
@@ -49,7 +63,7 @@ export function buildSummarizerCommand(
   const cmd = 'node ' + JSON.stringify(path.resolve(__dirname, '..', '..', 'tim-summarizer', 'dist', 'summarize.js'));
   return (
     `{ trap ${q(`rm -f ${lockPath}`)} EXIT; ` +
-    `timeout ${timeoutSec} env TIM_SESSION_ID=${q(sessionId)} ${cmd} >>${q(logPath)} 2>&1; }`
+    `timeout ${timeoutSec} env ${SUMMARIZER_ENV_FLAG}=1 TIM_SESSION_ID=${q(sessionId)} ${cmd} >>${q(logPath)} 2>&1; }`
   );
 }
 
@@ -68,7 +82,7 @@ export const spawnSummarizer: Spawner = (command, ctx) => {
       cwd: ctx.cwd,
       detached: true,
       stdio: 'ignore',
-      env: { ...process.env, TIM_SESSION_ID: ctx.sessionId },
+      env: { ...process.env, TIM_SESSION_ID: ctx.sessionId, [SUMMARIZER_ENV_FLAG]: '1' },
     });
     child.on('error', err => {
       try {

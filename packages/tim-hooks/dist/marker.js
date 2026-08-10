@@ -33,7 +33,8 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.CWD_ONLY_MARKER_DISCOVERY_POLICY = exports.DEFAULT_MARKER_DISCOVERY_POLICY = exports.LOCK_TTL_MS = exports.ExclusiveMarkerConflictError = exports.INBOX_LABEL = exports.MARKER_VERSION = exports.CANONICAL_PROJECT_FILENAME = exports.MARKER_LOCK = exports.SUMMARIZER_LOCK = exports.MARKER_FILENAME = void 0;
+exports.CWD_ONLY_MARKER_DISCOVERY_POLICY = exports.DEFAULT_MARKER_DISCOVERY_POLICY = exports.LOCK_TTL_MS = exports.ExclusiveMarkerConflictError = exports.INBOX_LABEL = exports.MARKER_VERSION = exports.CANONICAL_PROJECT_FILENAME = exports.IGNORE_FILENAME = exports.MARKER_LOCK = exports.SUMMARIZER_LOCK = exports.MARKER_FILENAME = void 0;
+exports.ignorePath = ignorePath;
 exports.markerPath = markerPath;
 exports.canonicalProjectPath = canonicalProjectPath;
 exports.summarizerLockPath = summarizerLockPath;
@@ -63,6 +64,24 @@ exports.MARKER_FILENAME = '.tim-project';
 var constants_js_2 = require("./constants.js");
 Object.defineProperty(exports, "SUMMARIZER_LOCK", { enumerable: true, get: function () { return constants_js_2.SUMMARIZER_LOCK; } });
 Object.defineProperty(exports, "MARKER_LOCK", { enumerable: true, get: function () { return constants_js_2.MARKER_LOCK; } });
+/**
+ * Opt-out file. A directory holding `.tim-ignore` belongs to no project, and the
+ * walk-up stops there instead of inheriting a marker from a parent — which is the
+ * only way to keep an unattended runner (a cronjob under `$HOME`) from logging a
+ * session against whatever project happens to sit above its working directory.
+ */
+exports.IGNORE_FILENAME = '.tim-ignore';
+function ignorePath(cwd) {
+    return path.join(cwd, exports.IGNORE_FILENAME);
+}
+function hasIgnoreFile(dir) {
+    try {
+        return fs.existsSync(path.join(dir, exports.IGNORE_FILENAME));
+    }
+    catch {
+        return false;
+    }
+}
 /**
  * Committed default project label for repos that gitignore `.tim-project`.
  * Contains only the stable `project` field. Override per-machine by creating
@@ -403,6 +422,8 @@ function discoverMarker(startCwd, policy = exports.DEFAULT_MARKER_DISCOVERY_POLI
     const walkUp = policy.walkUp ?? true;
     const allowHome = policy.allowHome ?? true;
     const startResolved = path.resolve(startCwd);
+    if (hasIgnoreFile(startResolved))
+        return null;
     if (!walkUp) {
         const result = scanDirForMarker(startResolved);
         if (result === 'corrupt')
@@ -413,6 +434,9 @@ function discoverMarker(startCwd, policy = exports.DEFAULT_MARKER_DISCOVERY_POLI
     let dir = startResolved;
     const found = [];
     for (let i = 0; i < 256; i++) {
+        // An ignored directory ends the walk: nothing above it may claim this cwd.
+        if (dir !== startResolved && hasIgnoreFile(dir))
+            break;
         const result = scanDirForMarker(dir);
         if (result === 'corrupt')
             return null;

@@ -2,10 +2,13 @@ import type { Entry } from 'tim-core';
 import type { HooksConfig } from 'tim-core';
 import { type Summarizer, type TimStore } from 'tim-store';
 import { type HookEnv } from './hooks.js';
+import { type Spawner } from './session-hooks.js';
 export interface SessionEndOptions {
     summarize?: Summarizer;
     hooksConfig?: HooksConfig;
     env?: HookEnv;
+    /** Test seam for the summarizer spawn; production uses the detached spawner. */
+    spawn?: Spawner;
 }
 export interface SessionStartResult {
     session: Entry;

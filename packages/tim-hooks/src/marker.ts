@@ -9,6 +9,26 @@ export const MARKER_FILENAME = '.tim-project';
 export { SUMMARIZER_LOCK, MARKER_LOCK } from './constants.js';
 
 /**
+ * Opt-out file. A directory holding `.tim-ignore` belongs to no project, and the
+ * walk-up stops there instead of inheriting a marker from a parent — which is the
+ * only way to keep an unattended runner (a cronjob under `$HOME`) from logging a
+ * session against whatever project happens to sit above its working directory.
+ */
+export const IGNORE_FILENAME = '.tim-ignore';
+
+export function ignorePath(cwd: string): string {
+  return path.join(cwd, IGNORE_FILENAME);
+}
+
+function hasIgnoreFile(dir: string): boolean {
+  try {
+    return fs.existsSync(path.join(dir, IGNORE_FILENAME));
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Committed default project label for repos that gitignore `.tim-project`.
  * Contains only the stable `project` field. Override per-machine by creating
  * `.tim-project` in the repo root (it wins over tim.json).
@@ -417,6 +437,8 @@ export function discoverMarker(
   const allowHome = policy.allowHome ?? true;
   const startResolved = path.resolve(startCwd);
 
+  if (hasIgnoreFile(startResolved)) return null;
+
   if (!walkUp) {
     const result = scanDirForMarker(startResolved);
     if (result === 'corrupt') return null;
@@ -427,6 +449,8 @@ export function discoverMarker(
   let dir = startResolved;
   const found: MarkerLocation[] = [];
   for (let i = 0; i < 256; i++) {
+    // An ignored directory ends the walk: nothing above it may claim this cwd.
+    if (dir !== startResolved && hasIgnoreFile(dir)) break;
     const result = scanDirForMarker(dir);
     if (result === 'corrupt') return null;
     if (result) found.push(result);

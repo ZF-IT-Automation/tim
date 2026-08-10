@@ -266,7 +266,12 @@ async function runSessionEnd(store, sessionId, opts = {}) {
         ...opts.env,
     };
     await (0, hooks_js_1.runConfiguredHooks)('sessionEnd', opts.hooksConfig, env);
-    await (0, session_hooks_js_1.onSessionStop)(store, cwd);
+    // batchFull skips the pending >= batch_size gate: a session ending with fewer
+    // than batch_size turns would otherwise never be summarized by anything, and
+    // the briefing would fall back to the checkpoint's heuristic text forever.
+    // Passing sessionId keeps this off resolveCurrentSession, which picks by cwd
+    // and can hand back a different session running in the same directory.
+    await (0, session_hooks_js_1.maybeSpawnSummarizer)(store, cwd, { batchFull: true, sessionId, spawn: opts.spawn });
     // Periodically regenerate the project-level summary (every Nth session).
     // Fire-and-forget — must never block or fail the session-end hook.
     try {

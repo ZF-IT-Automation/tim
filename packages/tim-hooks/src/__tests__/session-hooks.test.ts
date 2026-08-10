@@ -5,6 +5,7 @@ import * as os from 'os';
 import {
   onSessionStop,
   buildSummarizerCommand,
+  isSummarizerChild,
   maybeSpawnSummarizer,
   maybeSpawnProjectSummary,
   buildProjectSummaryCommand,
@@ -96,6 +97,14 @@ describe('onSessionStop', () => {
     expect(cmd).toContain('tim-summarizer');
     expect(cmd).toContain('timeout 120');
     expect(cmd).toContain('TIM_SESSION_ID');
+    // Without this the child's agent CLIs log the summarizer prompt back as exchanges.
+    expect(cmd).toContain('TIM_SUMMARIZER=1');
+  });
+
+  it('isSummarizerChild only fires on the exact flag value', () => {
+    expect(isSummarizerChild({ TIM_SUMMARIZER: '1' })).toBe(true);
+    expect(isSummarizerChild({})).toBe(false);
+    expect(isSummarizerChild({ TIM_SUMMARIZER: '' })).toBe(false);
   });
 
   it('maybeSpawnSummarizer with batchFull skips below-threshold', async () => {
