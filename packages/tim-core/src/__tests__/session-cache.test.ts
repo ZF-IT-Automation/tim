@@ -43,13 +43,48 @@ describe('session-cache', () => {
 
     delete process.env.TIM_SESSION_ID;
     expect(
-      resolveActiveSessionId({ markerSession: 'from-marker' }),
+      resolveActiveSessionId({ markerSession: 'from-marker', cwd: '/x' }),
     ).toBe('from-cache');
 
     fs.unlinkSync(timSessionCachePath());
     expect(
-      resolveActiveSessionId({ markerSession: 'from-marker' }),
+      resolveActiveSessionId({ markerSession: 'from-marker', cwd: '/x' }),
     ).toBe('from-marker');
+  });
+
+  it('ignores a cache entry written from another directory', () => {
+    // The observed fault: a cronjob running in ~/.hermes overwrote the slot
+    // while an interactive session was working in a project directory.
+    fs.writeFileSync(
+      timSessionCachePath(),
+      JSON.stringify({ session_id: 'cron_0b4a52226e21', cwd: '/home/bbbee/.hermes' }),
+    );
+    expect(readTimSessionCache(60_000, '/home/bbbee/projects/tim')).toBeNull();
+    expect(
+      resolveActiveSessionId({ cwd: '/home/bbbee/projects/tim', markerSession: 'from-marker' }),
+    ).toBe('from-marker');
+    expect(
+      resolveActiveSessionId({ cwd: '/home/bbbee/projects/tim' }),
+    ).toBeUndefined();
+  });
+
+  it('rejects the writer\'s $HOME fallback rather than treating it as an ancestor', () => {
+    // tim-hermes-session-cache.sh writes `cwd: $HOME` when the payload carries
+    // no cwd — under prefix matching that entry would belong to everyone.
+    fs.writeFileSync(
+      timSessionCachePath(),
+      JSON.stringify({ session_id: 'homeless', cwd: os.homedir() }),
+    );
+    expect(readTimSessionCache(60_000, path.join(os.homedir(), 'projects/tim'))).toBeNull();
+  });
+
+  it('skips the cache when the caller names no cwd', () => {
+    fs.writeFileSync(
+      timSessionCachePath(),
+      JSON.stringify({ session_id: 'unowned', cwd: '/x' }),
+    );
+    expect(resolveActiveSessionId({})).toBeUndefined();
+    expect(readTimSessionCache(60_000)?.session_id).toBe('unowned');
   });
 
   it('readTimSessionCache respects maxAgeMs', () => {

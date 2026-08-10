@@ -103,6 +103,7 @@ async function resolveHarnessSessionId(store, options) {
     return (0, tim_core_1.resolveActiveSessionId)({
         sessionIdArg: options.sessionIdArg,
         markerSession,
+        cwd: options.cwd,
         useSessionCache: options.useSessionCache,
         useEnv: options.useEnv,
     });
@@ -1522,6 +1523,7 @@ async function usageSessionId() {
             : await resolveMarkerSession(getStore(), process.cwd());
         return (0, tim_core_1.resolveActiveSessionId)({
             markerSession,
+            cwd: transportIsHttp ? undefined : process.cwd(),
             useSessionCache: !transportIsHttp,
             useEnv: !transportIsHttp,
         }) ?? null;
