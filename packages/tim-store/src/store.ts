@@ -15,7 +15,12 @@ import type {
   TaskStatusValue,
 } from 'tim-core';
 import { stripDeprecatedTags, resolveLWW, SCHEMA_KINDS, staleDays, isStale } from 'tim-core';
-import { runMigrations, createTriggers, getCurrentVersion } from './schema.js';
+import {
+  runMigrations,
+  createTriggers,
+  MIGRATIONS,
+  type MigrationRunResult,
+} from './schema.js';
 import { CurateManager } from './curate.js';
 import { ConsolidationManager } from './consolidate.js';
 import { metadataNeedsCoercion, parseAndCoerceMetadata, isIdeaMarker } from './metadata-coerce.js';
@@ -101,6 +106,11 @@ export interface TimStoreOptions {
   agentId?: string;
   /** Stable device id for LWW tiebreaks. Default 'local'. */
   deviceId?: string;
+  /**
+   * Permit applying pending schema upgrades. Default false — only
+   * `tim migrate-schema` should set this. Fresh (version 0) DBs still bootstrap.
+   */
+  allowMigrations?: boolean;
 }
 
 export interface CreateProjectOptions {
@@ -220,6 +230,8 @@ export class TimStore implements MemoryInterface {
   private emitter?: Pick<EventBus, 'emit'>;
   private agentId: string;
   private deviceId: string;
+  /** Set when this open applied one or more migrations; null if none ran. */
+  readonly lastMigration: MigrationRunResult | null;
 
   constructor(dbPath: string, options: TimStoreOptions = {}) {
     this.db = new Database(dbPath);
@@ -227,7 +239,9 @@ export class TimStore implements MemoryInterface {
     this.emitter = options.emitter;
     this.agentId = options.agentId ?? 'system';
     this.deviceId = options.deviceId ?? 'local';
-    runMigrations(this.db);
+    this.lastMigration = runMigrations(this.db, MIGRATIONS, {
+      allowMigrations: options.allowMigrations === true,
+    });
     createTriggers(this.db);
     // Acked staging records are push history that nothing reads back. Collect
     // the old ones once per process — without a caller the table only grows.

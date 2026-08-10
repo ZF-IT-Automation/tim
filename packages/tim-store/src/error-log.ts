@@ -62,13 +62,19 @@ export class ErrorLogger {
     }
   }
 
+  // `error_log` also carries schema_migration audit rows, which are records of a
+  // successful migration and not failures. Every read path here filters them out;
+  // rotate() deliberately does not, so they age out with everything else.
+  private static readonly EXCLUDE_AUDIT = `AND tool != 'schema_migration'`;
+
   getStats(params: { hours?: number; limit?: number } = {}): ErrorStats {
     const hours = params.hours ?? 24;
     const limit = params.limit ?? 10;
     const since = new Date(Date.now() - hours * 3600 * 1000).toISOString();
 
     const countRow = this.db.prepare(`
-      SELECT COUNT(*) as total FROM error_log WHERE timestamp >= ?
+      SELECT COUNT(*) as total FROM error_log
+      WHERE timestamp >= ? ${ErrorLogger.EXCLUDE_AUDIT}
     `).get(since) as { total: number };
 
     const totalErrors = countRow.total;
@@ -76,7 +82,7 @@ export class ErrorLogger {
     const topErrors = this.db.prepare(`
       SELECT error, COUNT(*) as count, MAX(timestamp) as lastSeen
       FROM error_log
-      WHERE timestamp >= ?
+      WHERE timestamp >= ? ${ErrorLogger.EXCLUDE_AUDIT}
       GROUP BY error
       ORDER BY count DESC
       LIMIT ?
@@ -85,7 +91,7 @@ export class ErrorLogger {
     const byTool = this.db.prepare(`
       SELECT tool, COUNT(*) as count
       FROM error_log
-      WHERE timestamp >= ?
+      WHERE timestamp >= ? ${ErrorLogger.EXCLUDE_AUDIT}
       GROUP BY tool
       ORDER BY count DESC
     `).all(since) as { tool: string; count: number }[];
@@ -116,7 +122,7 @@ export class ErrorLogger {
     const rows = this.db.prepare(`
       SELECT error, COUNT(*) as count
       FROM error_log
-      WHERE timestamp >= ?
+      WHERE timestamp >= ? ${ErrorLogger.EXCLUDE_AUDIT}
       GROUP BY error
       HAVING count > ?
       ORDER BY count DESC

@@ -109,6 +109,7 @@ const COMMAND_HELP = {
     export: 'Usage: tim export [path.hmem] [--format hmem|text]',
     import: 'Usage: tim import <path.hmem> [--dry-run] [--deduplicate] [--repair-flags] [--no-snapshot-check]',
     'migrate-from-hmem': 'Usage: tim migrate-from-hmem <path.hmem> [--deduplicate] [--no-deduplicate] [--dry-run]',
+    'migrate-schema': 'Usage: tim migrate-schema',
     migrate: 'Usage: tim migrate <tags-to-types|project-kind> [options]',
     'migrate tags-to-types': 'Usage: tim migrate tags-to-types [--dry-run] [--sample-limit <count>]',
     'migrate project-kind': 'Usage: tim migrate project-kind [--dry-run]',
@@ -177,6 +178,7 @@ Commands:
   export                   Export TIM memory
   import                   Import TIM memory
   migrate-from-hmem        Run guided hmem migration
+  migrate-schema           Apply pending database schema migrations
   migrate                  Run metadata migrations
   snapshot                 Snapshot the TIM database
   restore                  Restore the TIM database
@@ -258,6 +260,23 @@ async function cmdDoctor(args = []) {
     if (stats.newestEntry)
         console.log(`Newest: ${stats.newestEntry}`);
     console.log(`Stale (>30d): ${stats.staleCount}`);
+    const lastSchemaMigration = store.getDb().prepare(`
+    SELECT timestamp, args_json FROM error_log
+    WHERE tool = 'schema_migration'
+    ORDER BY id DESC LIMIT 1
+  `).get();
+    if (lastSchemaMigration) {
+        try {
+            const args = JSON.parse(lastSchemaMigration.args_json);
+            // Stored as UTC ISO; doctor is read by a human at their own clock.
+            const when = new Date(lastSchemaMigration.timestamp)
+                .toLocaleString('sv-SE', { dateStyle: 'short', timeStyle: 'short' });
+            console.log(`schema moved ${args.from} → ${args.to} at ${when}`);
+        }
+        catch {
+            // Malformed log row — skip; absence of a clean line is fine.
+        }
+    }
     if (health.issues.length) {
         console.log('\n⚠ Issues:');
         health.issues.forEach(i => console.log(`  - ${i}`));
@@ -919,6 +938,22 @@ async function cmdReleaseCheck(args) {
         process.exit(1);
     }
 }
+async function cmdMigrateSchema() {
+    const config = (0, tim_core_1.loadConfig)();
+    const dbPath = getDbPath(config);
+    const store = new tim_store_1.TimStore(dbPath, { allowMigrations: true });
+    const result = store.lastMigration;
+    if (!result) {
+        console.log(`Schema already at v${(0, tim_store_1.getCurrentVersion)()}. Nothing to migrate.`);
+    }
+    else {
+        const n = result.applied.length;
+        const noun = n === 1 ? 'migration' : 'migrations';
+        console.log(`Migrated schema v${result.from} → v${result.to} (${n} ${noun}).`);
+        console.log(`Backup: ${result.backupPath ?? '(none)'}`);
+    }
+    store.close();
+}
 async function main() {
     const cmd = process.argv[2] || 'init';
     const rest = process.argv.slice(3);
@@ -982,6 +1017,9 @@ async function main() {
             break;
         case 'migrate-from-hmem':
             await (0, migrate_from_hmem_js_1.cmdMigrateFromHmem)(rest);
+            break;
+        case 'migrate-schema':
+            await cmdMigrateSchema();
             break;
         case 'migrate': {
             // Subcommand dispatch: `tim migrate <sub> [args...]`

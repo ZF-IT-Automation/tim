@@ -29,7 +29,7 @@ node packages/tim-cli/dist/cli.js statusline
 
 ---
 
-## Command Overview (37 commands)
+## Command Overview (38 commands)
 
 ### Top-Level Summary
 
@@ -53,25 +53,26 @@ node packages/tim-cli/dist/cli.js statusline
 | 16 | `tim export` | Export TIM DB to `.hmem` or text format |
 | 17 | `tim import` | Import from `.hmem` file |
 | 18 | `tim migrate-from-hmem` | Guided hmem-to-TIM migration with dry-run, snapshot, import, audit handoff |
-| 19 | `tim migrate` | Convert legacy `#rule` / `#human` tags to `metadata.type` (`migrate tags-to-types`) |
-| 20 | `tim snapshot` | Snapshot live DB to `/tmp/tim-snapshots/` (SQLite backup) |
-| 21 | `tim restore` | Restore DB from a snapshot |
-| 22 | `tim release-check` | Verify release gates, beta smoke checks, and packaging safety |
-| 23 | `tim setup-agent` | Install TIM MCP, skills, hooks, and smoke guidance for one agent host |
-| 24 | `tim sync connect` | Connect to o9k-sync server |
-| 25 | `tim sync disconnect` | Remove local sync configuration |
-| 26 | `tim sync push` | Push unacked staging to server |
-| 27 | `tim sync pull` | Pull remote changes |
-| 28 | `tim sync status` | Show sync configuration and health |
-| 29 | `tim sync dev` | Start local dev sync server (port 3100) |
-| 30 | `tim user init` | Create the human profile scaffold |
-| 31 | `tim user profile` | Show the human profile tree summary |
-| 32 | `tim update-skills` | Copy bundled TIM skills to detected agent hosts |
-| 33 | `tim root-entries` | List root entries |
-| 34 | `tim consolidate` | Run memory consolidation |
-| 35 | `tim secret` | Manage secret entry metadata |
-| 36 | `tim viewer` | Browse the entry tree in a local web UI; move and soft-delete nodes |
-| 37 | `tim --help` | Show top-level help |
+| 19 | `tim migrate-schema` | Apply pending database schema migrations (explicit opt-in) |
+| 20 | `tim migrate` | Convert legacy `#rule` / `#human` tags to `metadata.type` (`migrate tags-to-types`) |
+| 21 | `tim snapshot` | Snapshot live DB to `/tmp/tim-snapshots/` (SQLite backup) |
+| 22 | `tim restore` | Restore DB from a snapshot |
+| 23 | `tim release-check` | Verify release gates, beta smoke checks, and packaging safety |
+| 24 | `tim setup-agent` | Install TIM MCP, skills, hooks, and smoke guidance for one agent host |
+| 25 | `tim sync connect` | Connect to o9k-sync server |
+| 26 | `tim sync disconnect` | Remove local sync configuration |
+| 27 | `tim sync push` | Push unacked staging to server |
+| 28 | `tim sync pull` | Pull remote changes |
+| 29 | `tim sync status` | Show sync configuration and health |
+| 30 | `tim sync dev` | Start local dev sync server (port 3100) |
+| 31 | `tim user init` | Create the human profile scaffold |
+| 32 | `tim user profile` | Show the human profile tree summary |
+| 33 | `tim update-skills` | Copy bundled TIM skills to detected agent hosts |
+| 34 | `tim root-entries` | List root entries |
+| 35 | `tim consolidate` | Run memory consolidation |
+| 36 | `tim secret` | Manage secret entry metadata |
+| 37 | `tim viewer` | Browse the entry tree in a local web UI; move and soft-delete nodes |
+| 38 | `tim --help` | Show top-level help |
 
 ---
 
@@ -460,7 +461,19 @@ for focused repair or lower-level migration work.
 
 ---
 
-### 19. `tim migrate tags-to-types [--dry-run] [--sample-limit N]`
+### 19. `tim migrate-schema`
+
+Apply pending database schema migrations. Opening a store no longer upgrades
+silently — this is the explicit opt-in. Prints from/to versions, how many
+migrations ran, and the pre-migration backup path.
+
+```bash
+tim migrate-schema
+```
+
+---
+
+### 20. `tim migrate tags-to-types [--dry-run] [--sample-limit N]`
 
 One-time migration: convert legacy `#rule` and `#human` tags into `metadata.type`
 fields. Uses heuristics to detect the correct type.

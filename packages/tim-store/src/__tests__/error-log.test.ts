@@ -10,6 +10,9 @@ function createTestDb(): Database.Database {
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
   runMigrations(db);
+  // ErrorLogger tests start from an empty log; bootstrap migration auditing is
+  // covered separately by migration-gate.test.ts.
+  db.prepare("DELETE FROM error_log WHERE tool = 'schema_migration'").run();
   return db;
 }
 
@@ -88,6 +91,22 @@ describe('ErrorLogger', () => {
       expect(stats.topErrors).toEqual([]);
       expect(stats.byTool).toEqual([]);
       expect(stats.alerts).toEqual([]);
+    });
+
+    it('ignores schema_migration audit rows', () => {
+      db.prepare(`
+        INSERT INTO error_log (timestamp, tool, args_json, error)
+        VALUES (?, 'schema_migration', '{}', '')
+      `).run(new Date().toISOString());
+      const audit = db.prepare(
+        `SELECT COUNT(*) as n FROM error_log WHERE tool = 'schema_migration'`,
+      ).get() as { n: number };
+      expect(audit.n).toBeGreaterThan(0);
+
+      logger.logError({ tool: 'tim_read', error: 'not found' });
+      const stats = logger.getStats({ hours: 24 });
+      expect(stats.totalErrors).toBe(1);
+      expect(stats.byTool.map(t => t.tool)).toEqual(['tim_read']);
     });
 
     it('should return stats with errors', () => {

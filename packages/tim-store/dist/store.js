@@ -171,13 +171,17 @@ class TimStore {
     emitter;
     agentId;
     deviceId;
+    /** Set when this open applied one or more migrations; null if none ran. */
+    lastMigration;
     constructor(dbPath, options = {}) {
         this.db = new better_sqlite3_1.default(dbPath);
         this.databasePath = this.db.memory ? ':memory:' : fs.realpathSync(this.db.name);
         this.emitter = options.emitter;
         this.agentId = options.agentId ?? 'system';
         this.deviceId = options.deviceId ?? 'local';
-        (0, schema_js_1.runMigrations)(this.db);
+        this.lastMigration = (0, schema_js_1.runMigrations)(this.db, schema_js_1.MIGRATIONS, {
+            allowMigrations: options.allowMigrations === true,
+        });
         (0, schema_js_1.createTriggers)(this.db);
         // Acked staging records are push history that nothing reads back. Collect
         // the old ones once per process — without a caller the table only grows.

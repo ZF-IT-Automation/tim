@@ -31,13 +31,13 @@ describe('runMigrations', () => {
     const v2good = { version: 2, sql: 'ALTER TABLE t ADD COLUMN extra TEXT;' };
 
     runMigrations(db, [v1]);
-    expect(() => runMigrations(db, [v1, v2bad])).toThrow();
+    expect(() => runMigrations(db, [v1, v2bad], { allowMigrations: true })).toThrow();
 
     // Version must still be 1 and the ALTER rolled back — retry must NOT
     // die with "duplicate column name".
     const version = (db.prepare('SELECT version FROM _schema_version').get() as { version: number }).version;
     expect(version).toBe(1);
-    expect(() => runMigrations(db, [v1, v2good])).not.toThrow();
+    expect(() => runMigrations(db, [v1, v2good], { allowMigrations: true })).not.toThrow();
     const cols = (db.prepare('PRAGMA table_info(t)').all() as { name: string }[]).map(c => c.name);
     expect(cols).toContain('extra');
     db.close();
@@ -56,7 +56,7 @@ describe('runMigrations', () => {
       version: MIGRATIONS[MIGRATIONS.length - 1].version,
       sql: 'CREATE TABLE IF NOT EXISTS mig_probe (id INTEGER);',
     };
-    runMigrations(db, [...MIGRATIONS.slice(0, -1), future]);
+    runMigrations(db, [...MIGRATIONS.slice(0, -1), future], { allowMigrations: true });
 
     const backupPath = `${dbPath}.pre-migration-v${MIGRATIONS.length - 1}.bak`;
     cleanupPaths.push(backupPath);

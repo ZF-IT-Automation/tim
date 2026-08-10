@@ -276,10 +276,23 @@ export function getCurrentVersion(): number {
   return MIGRATIONS[MIGRATIONS.length - 1].version;
 }
 
+export interface RunMigrationsOptions {
+  /** When false (default), refuse pending upgrades on version > 0. Version 0 always bootstraps. */
+  allowMigrations?: boolean;
+}
+
+export interface MigrationRunResult {
+  from: number;
+  to: number;
+  applied: number[];
+  backupPath: string | null;
+}
+
 export function runMigrations(
   db: Database.Database,
   migrations: { version: number; sql: string }[] = MIGRATIONS,
-): void {
+  options: RunMigrationsOptions = {},
+): MigrationRunResult | null {
   db.pragma('journal_mode = WAL');
   db.pragma('busy_timeout = 5000');
   db.pragma('foreign_keys = ON');
@@ -291,23 +304,78 @@ export function runMigrations(
   const currentVersion = current?.version ?? 0;
 
   const pending = migrations.filter(m => m.version > currentVersion);
-  if (pending.length === 0) return;
+  if (pending.length === 0) return null;
 
+  const expectedVersion = migrations[migrations.length - 1]!.version;
+  // Bootstrap (version 0 / fresh / :memory:) always migrates. Pending upgrades
+  // on an existing schema require an explicit opt-in.
+  if (currentVersion > 0 && options.allowMigrations !== true) {
+    const n = pending.length;
+    const noun = n === 1 ? 'migration' : 'migrations';
+    throw new Error(
+      `Schema is at v${currentVersion}, this build expects v${expectedVersion}. ` +
+        `Run "tim migrate-schema" to apply ${n} pending ${noun}.`,
+    );
+  }
+
+  const from = currentVersion;
+  const backupPath = migrationBackupPath(db, currentVersion);
   backupBeforeMigration(db, currentVersion);
 
-  for (const migration of pending) {
-    // One transaction per migration: SQLite DDL is transactional, so a crash
-    // or SQL error rolls back both the DDL and the version bump — the DB
-    // stays at the previous version and the migration is safely retryable.
-    db.transaction(() => {
-      db.exec(migration.sql);
-      const row = db.prepare('SELECT version FROM _schema_version').get();
-      if (row) {
-        db.prepare('UPDATE _schema_version SET version = ?').run(migration.version);
-      } else {
-        db.prepare('INSERT INTO _schema_version (version) VALUES (?)').run(migration.version);
-      }
-    })();
+  const applied: number[] = [];
+  try {
+    for (const migration of pending) {
+      // One transaction per migration: SQLite DDL is transactional, so a crash
+      // or SQL error rolls back both the DDL and the version bump — the DB
+      // stays at the previous version and the migration is safely retryable.
+      db.transaction(() => {
+        db.exec(migration.sql);
+        const row = db.prepare('SELECT version FROM _schema_version').get();
+        if (row) {
+          db.prepare('UPDATE _schema_version SET version = ?').run(migration.version);
+        } else {
+          db.prepare('INSERT INTO _schema_version (version) VALUES (?)').run(migration.version);
+        }
+      })();
+      applied.push(migration.version);
+    }
+  } catch (error) {
+    if (applied.length > 0) {
+      logSchemaMigration(db, { from, to: applied.at(-1)!, applied });
+    }
+    throw error;
+  }
+
+  const to = applied[applied.length - 1]!;
+  logSchemaMigration(db, { from, to, applied });
+
+  return { from, to, applied, backupPath };
+}
+
+function migrationBackupPath(db: Database.Database, fromVersion: number): string | null {
+  if (fromVersion === 0) return null;
+  const dbPath = db.name;
+  if (!dbPath || dbPath === ':memory:') return null;
+  if (process.env.TIM_SKIP_MIGRATION_BACKUP === '1') return null;
+  return `${dbPath}.pre-migration-v${fromVersion}.bak`;
+}
+
+/** Record an applied migration in error_log (tool=schema_migration). Spec chose this table. */
+function logSchemaMigration(
+  db: Database.Database,
+  info: { from: number; to: number; applied: number[] },
+): void {
+  try {
+    const dbPath = db.memory ? ':memory:' : db.name;
+    db.prepare(`
+      INSERT INTO error_log (timestamp, tool, args_json, error, stack, session_id)
+      VALUES (?, 'schema_migration', ?, '', NULL, NULL)
+    `).run(
+      new Date().toISOString(),
+      JSON.stringify({ from: info.from, to: info.to, applied: info.applied, db: dbPath }),
+    );
+  } catch {
+    // Never let migration logging itself brick a successful migrate.
   }
 }
 

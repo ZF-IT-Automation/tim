@@ -26,7 +26,13 @@ export {
   resolveProjectDisplayName,
   resolveProjectBindingLabel,
 } from './project-display.js';
-export { runMigrations, getCurrentVersion, MIGRATIONS } from './schema.js';
+export {
+  runMigrations,
+  getCurrentVersion,
+  MIGRATIONS,
+  type RunMigrationsOptions,
+  type MigrationRunResult,
+} from './schema.js';
 export {
   ensureProjectSchema,
   planProjectSchema,
