@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import * as fs from 'node:fs';
-import * as os from 'node:os';
 import * as path from 'node:path';
 import { PROJECT_SCHEMA } from 'tim-core';
 import { TimStore, ensureProjectForPath, ensureProjectSchema } from 'tim-store';
@@ -16,13 +15,17 @@ async function topLevelSectionTitles(store: TimStore, projectId: string): Promis
   return children.filter(c => c.metadata.kind === 'section').map(c => c.title);
 }
 
+const TEST_ROOT = path.resolve(import.meta.dirname, '../../../../tmp');
+
 describe('project creation paths converge on the schema', () => {
   let dir: string;
   let store: TimStore;
 
   beforeEach(() => {
-    // Under $HOME, not /tmp — ensureProjectForPath refuses to auto-create in /tmp.
-    dir = fs.mkdtempSync(path.join(os.homedir(), '.tim-test-schema-converge-'));
+    // In the repo's gitignored tmp/, not /tmp and not $HOME: ensureProjectForPath
+    // refuses to auto-create under /tmp, and $HOME is itself /tmp/… under a scratch HOME.
+    fs.mkdirSync(TEST_ROOT, { recursive: true });
+    dir = fs.mkdtempSync(path.join(TEST_ROOT, 'tim-test-schema-converge-'));
     store = new TimStore(path.join(dir, 'tim.db'));
   });
 

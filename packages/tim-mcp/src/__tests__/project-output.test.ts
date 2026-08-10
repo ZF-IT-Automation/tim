@@ -550,3 +550,80 @@ describe('formatProjectOutput session summary rendering', () => {
     expect(out).toMatch(/… 2 older sessions/);
   });
 });
+
+describe('formatProjectOutput session exchange count', () => {
+  const project = {
+    id: 'P1',
+    metadata: { label: 'P1', kind: 'project' },
+    title: 'P1 — x',
+    content: '',
+    tags: [],
+    createdAt: '2026-06-01T00:00:00Z',
+  } as any;
+
+  const sessionsRoot = {
+    id: 'sess-root',
+    parentId: 'P1',
+    title: 'Sessions',
+    metadata: { kind: 'sessions-root', order: 1000 },
+    tags: ['#sessions'],
+    content: '',
+    createdAt: '2026-06-01T00:00:00Z',
+  } as any;
+
+  const sessionNode = (exchangeCount: number) => ({
+    id: 'sess',
+    parentId: 'sess-root',
+    title: '2026-06-02-0900',
+    metadata: { kind: 'session', exchange_count: exchangeCount },
+    tags: ['#session'],
+    content: '',
+    createdAt: '2026-06-02T09:00:00Z',
+  }) as any;
+
+  it('reports the logger count for a session the summarizer has not touched yet', () => {
+    // Fresh summary node as startProjectSession creates it: sentinel title, exchanges 0.
+    const summary = {
+      id: 'sum',
+      parentId: 'sess',
+      title: 'Summary',
+      metadata: { kind: 'session-summary-root', exchanges: 0, date: '2026-06-02', summary: '' },
+      tags: ['#session-summary'],
+      content: '',
+      createdAt: '2026-06-02T09:00:00Z',
+    } as any;
+
+    const out = formatProjectOutput(
+      { project, children: [sessionsRoot, sessionNode(7), summary], truncated: false },
+      500,
+    );
+    expect(out).toMatch(/^ {2}7 exchanges · 2026-06-02$/m);
+    // The sentinel title must never be echoed as the session's summary text.
+    expect(out).not.toMatch(/^ {4}Summary$/m);
+    expect(out).toMatch(/^ {4}\(no summary\)$/m);
+  });
+
+  it('keeps rendering the summary once the summarizer has run', () => {
+    const summary = {
+      id: 'sum',
+      parentId: 'sess',
+      title: 'Summary',
+      metadata: {
+        kind: 'session-summary-root',
+        exchanges: 12,
+        date: '2026-06-02',
+        summary: 'bounded the staging queue',
+      },
+      tags: ['#session-summary'],
+      content: '',
+      createdAt: '2026-06-02T09:00:00Z',
+    } as any;
+
+    const out = formatProjectOutput(
+      { project, children: [sessionsRoot, sessionNode(12), summary], truncated: false },
+      500,
+    );
+    expect(out).toMatch(/^ {2}12 exchanges · 2026-06-02$/m);
+    expect(out).toMatch(/bounded the staging queue/);
+  });
+});

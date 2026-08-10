@@ -39,6 +39,7 @@ export declare class ErrorLogger {
         stack?: string;
         sessionId?: string;
     }): void;
+    private static readonly EXCLUDE_AUDIT;
     getStats(params?: {
         hours?: number;
         limit?: number;

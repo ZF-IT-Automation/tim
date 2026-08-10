@@ -363,7 +363,7 @@ export async function handleTimRemember(
 
   let batchSummaries: Array<{ id: string; title: string; excerpt: string }> = [];
   if (opts.includeBatchSummaries) {
-    const sessionId = resolveActiveSessionId({});
+    const sessionId = resolveActiveSessionId({ cwd: process.cwd() });
     const summaries = await store.getRecentBatchSummaries({
       limit: 5,
       maxAgeDays: 30,

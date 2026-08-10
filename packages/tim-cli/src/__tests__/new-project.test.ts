@@ -336,9 +336,9 @@ describe('tim new-project', () => {
       .map(match => match[1]);
 
     expect(help.status).toBe(0);
-    expect(helpCommands).toHaveLength(37);
+    expect(helpCommands).toHaveLength(38);
     expect(documentedCommands).toEqual(helpCommands);
-    expect(reference).toContain('## Command Overview (37 commands)');
+    expect(reference).toContain('## Command Overview (38 commands)');
     expect(reference).toContain('### 7. `tim new-project --path <absolute-dir> --name <name>');
     expect(reference).toContain('`--path` must be absolute');
     expect(reference).toContain("TIM_DB_PATH='/exact/path/to/tim.db' tim bind-project");

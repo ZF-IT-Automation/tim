@@ -52,6 +52,12 @@ const TIM_SESSION_START = {
     matcher: '',
     hooks: [{ type: 'command', command: 'tim hook claude-session-start', timeout: 10 }],
 };
+// Ends the session TIM would otherwise never see closed: /clear and exit both
+// fire this, and the checkpoint is the last thing written before the id is gone.
+const TIM_SESSION_END = {
+    matcher: '',
+    hooks: [{ type: 'command', command: 'tim hook claude-session-end', timeout: 10 }],
+};
 function appendUnique(existing, value) {
     const items = existing ?? [];
     const command = value.hooks[0]?.command;
@@ -67,6 +73,7 @@ function mergeClaudeHooks(settings) {
             SessionStart: appendUnique(settings.hooks?.SessionStart, TIM_SESSION_START),
             UserPromptSubmit: appendUnique(settings.hooks?.UserPromptSubmit, TIM_PROMPT),
             Stop: appendUnique(settings.hooks?.Stop, TIM_STOP),
+            SessionEnd: appendUnique(settings.hooks?.SessionEnd, TIM_SESSION_END),
         },
     };
 }

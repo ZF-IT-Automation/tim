@@ -43,8 +43,16 @@ function timSessionCachePath() {
     const dir = process.env.TIM_CACHE_DIR?.trim() || path.join(os.homedir(), '.tim');
     return path.join(dir, '.session-cache');
 }
-/** Hermes pre_llm_call cache (~/.tim/.session-cache). */
-function readTimSessionCache(maxAgeMs = 3_600_000) {
+/**
+ * Hermes pre_llm_call cache (~/.tim/.session-cache).
+ *
+ * One global slot shared by every TIM consumer on the host — interactive
+ * sessions, workers, cronjobs — and the last writer wins. `expectedCwd` is how
+ * a caller checks the slot is its own: the entry is only returned when it names
+ * the same directory. Without it the caller cannot tell whose session id it is
+ * getting, so it gets none.
+ */
+function readTimSessionCache(maxAgeMs = 3_600_000, expectedCwd) {
     const p = timSessionCachePath();
     if (!fs.existsSync(p))
         return null;
@@ -57,6 +65,13 @@ function readTimSessionCache(maxAgeMs = 3_600_000) {
         if (!session_id)
             return null;
         const cwd = typeof raw.cwd === 'string' ? raw.cwd.trim() : '';
+        if (expectedCwd !== undefined) {
+            // Exact match, the same rule resolveCurrentSession uses to pick a session
+            // by cwd. Prefix matching would accept the writer's `cwd: $HOME` fallback
+            // as an ancestor of every caller on the host.
+            if (!cwd || path.resolve(cwd) !== path.resolve(expectedCwd))
+                return null;
+        }
         const ts = typeof raw.ts === 'string' ? raw.ts : undefined;
         return { session_id, cwd, ts };
     }
@@ -74,8 +89,8 @@ function resolveActiveSessionId(options) {
         if (fromEnv)
             return fromEnv;
     }
-    if (options.useSessionCache !== false) {
-        const cached = readTimSessionCache(options.cacheMaxAgeMs);
+    if (options.useSessionCache !== false && options.cwd !== undefined) {
+        const cached = readTimSessionCache(options.cacheMaxAgeMs, options.cwd);
         if (cached?.session_id)
             return cached.session_id;
     }

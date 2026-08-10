@@ -72,6 +72,16 @@ describe('mergeClaudeHooks', () => {
     );
     expect(mergeClaudeHooks(next)).toEqual(next);
   });
+
+  it('installs the SessionEnd checkpoint hook once', () => {
+    const next = mergeClaudeHooks({});
+    expect(next.hooks?.SessionEnd?.[0].hooks[0]).toEqual({
+      type: 'command',
+      command: 'tim hook claude-session-end',
+      timeout: 10,
+    });
+    expect(mergeClaudeHooks(next).hooks?.SessionEnd).toHaveLength(1);
+  });
 });
 
 describe('installClaudeHooks', () => {

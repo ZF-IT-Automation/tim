@@ -26,7 +26,15 @@ export {
   resolveProjectDisplayName,
   resolveProjectBindingLabel,
 } from './project-display.js';
-export { runMigrations, getCurrentVersion, MIGRATIONS } from './schema.js';
+export {
+  runMigrations,
+  getCurrentVersion,
+  MIGRATIONS,
+  SchemaMigrationPendingError,
+  isSchemaMigrationPendingError,
+  type RunMigrationsOptions,
+  type MigrationRunResult,
+} from './schema.js';
 export {
   ensureProjectSchema,
   planProjectSchema,
@@ -58,11 +66,10 @@ export {
 export {
   deriveCounters,
   findChildByKind,
-  getCurrentBatch,
+  findManagedRoot,
   ensureInboxProject,
   foldBatchSummaries,
   type DerivedCounters,
-  type CurrentBatch,
   SESSIONS_SECTION_TITLE,
   SUMMARY_NODE_TITLE,
   EXCHANGES_NODE_TITLE,

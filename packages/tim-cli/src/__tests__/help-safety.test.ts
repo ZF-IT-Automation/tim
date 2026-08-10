@@ -35,6 +35,7 @@ const HELP_CASES: HelpCase[] = [
   { args: ['export'], usage: 'Usage: tim export' },
   { args: ['import'], usage: 'Usage: tim import' },
   { args: ['migrate-from-hmem'], usage: 'Usage: tim migrate-from-hmem' },
+  { args: ['migrate-schema'], usage: 'Usage: tim migrate-schema' },
   { args: ['migrate'], usage: 'Usage: tim migrate' },
   { args: ['migrate', 'tags-to-types'], usage: 'Usage: tim migrate tags-to-types' },
   { args: ['migrate', 'project-kind'], usage: 'Usage: tim migrate project-kind' },

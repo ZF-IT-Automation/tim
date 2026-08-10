@@ -3,7 +3,8 @@ import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { TimStore, listProjectPathRows } from 'tim-store';
+import Database from 'better-sqlite3';
+import { TimStore, listProjectPathRows, getCurrentVersion } from 'tim-store';
 
 const CLI = path.resolve(__dirname, '../../dist/cli.js');
 const TEST_ROOT = '/tmp/tim-test-runs';
@@ -62,6 +63,26 @@ describe('tim resolve-project / bind-project', () => {
       TIM_MARKER_MAX_ROOT: dir,
     });
     expect(out).toContain('tim_load_project(label="P0063")');
+  });
+
+  it('resolve-project --format directive reports a pending schema migration on stdout', async () => {
+    await store.createProject('P0063');
+    fs.writeFileSync(path.join(dir, '.tim-project'),
+      JSON.stringify({ version: 3, project: 'P0063' }));
+    store.close();
+    const db = new Database(dbPath);
+    db.prepare('UPDATE _schema_version SET version = ?').run(getCurrentVersion() - 1);
+    db.close(); // store stays closed and behind — afterEach's close() is a no-op
+
+    // stdout and exit 0, because the shell hook drops stderr and treats a
+    // nonzero exit as "no marker" — a gate message anywhere else stays invisible.
+    const out = execFileSync('node', [CLI, 'resolve-project', '--cwd', dir, '--format', 'directive'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      env: { ...process.env, TIM_DB_PATH: dbPath, TIM_MARKER_MAX_ROOT: dir },
+    });
+    expect(out).toContain('tim migrate-schema');
+    expect(out).toContain(`this build expects v${getCurrentVersion()}`);
   });
 
   it('bind-project recovers a live project marker; resolve-project reads it back', async () => {

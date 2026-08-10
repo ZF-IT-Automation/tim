@@ -1,5 +1,6 @@
 import Database from 'better-sqlite3';
 import type { Entry, Edge, EdgeType, ReadOptions, WriteOptions, UpdateOptions, DecayOptions, SearchOptions, MemoryInterface, HealthReport, MemoryStats, ContentStats, AgentIdentity, StagingRecord, EventBus, ResolveProjectResult, ResolveSectionResult } from 'tim-core';
+import { type MigrationRunResult } from './schema.js';
 import { CurateManager } from './curate.js';
 import { ConsolidationManager } from './consolidate.js';
 /**
@@ -28,6 +29,11 @@ export interface TimStoreOptions {
     agentId?: string;
     /** Stable device id for LWW tiebreaks. Default 'local'. */
     deviceId?: string;
+    /**
+     * Permit applying pending schema upgrades. Default false — only
+     * `tim migrate-schema` should set this. Fresh (version 0) DBs still bootstrap.
+     */
+    allowMigrations?: boolean;
 }
 export interface CreateProjectOptions {
     content?: string;
@@ -93,6 +99,8 @@ export declare class TimStore implements MemoryInterface {
     private emitter?;
     private agentId;
     private deviceId;
+    /** Set when this open applied one or more migrations; null if none ran. */
+    readonly lastMigration: MigrationRunResult | null;
     constructor(dbPath: string, options?: TimStoreOptions);
     private emit;
     read(id: string, options?: ReadOptions): Promise<Entry | null>;
@@ -196,7 +204,9 @@ export declare class TimStore implements MemoryInterface {
         sessionId?: string;
         root?: string;
     }): Promise<Entry[]>;
-    getChildByKind(parentId: string, kind: string): Promise<Entry[]>;
+    getChildByKind(parentId: string, kind: string, options?: {
+        includeIrrelevant?: boolean;
+    }): Promise<Entry[]>;
     getChildrenBySeq(parentId: string): Promise<Entry[]>;
     /**
      * Query root-level entries (parent_id IS NULL) that are not projects.

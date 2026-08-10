@@ -7,6 +7,8 @@
 // discrepancy between the two is exactly the class of bug the panel exists to
 // catch, so it must not be defined away.
 
+import fs from 'node:fs';
+import path from 'node:path';
 import { TOOL_DEFS, toolInputSchema, type ToolInputSchema } from 'tim-mcp';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
@@ -60,6 +62,24 @@ const FORCED_ARGS: Record<string, Record<string, unknown>> = {
   tim_load_project: { bind: false },
 };
 
+/**
+ * The write tools the viewer may call, kept deliberately tiny.
+ *
+ * Editing memory from the viewer is not the goal — fixing *structure* is: a node
+ * that landed in the wrong place, or one that should not exist. Move and soft-delete
+ * cover that and nothing else. No tool here can change what an entry says, so a
+ * misclick loses a node's position, never its content.
+ *
+ * tim_update_many is on the list only for its `irrelevant` flag: deleting a subtree
+ * means flagging every descendant, and the alternative is one HTTP round trip per
+ * node. It cannot touch content either.
+ */
+export const MUTATION_TOOLS: ReadonlySet<string> = new Set([
+  'tim_delete',
+  'tim_move_entry',
+  'tim_update_many',
+]);
+
 export interface InspectorTool {
   name: string;
   description: string;
@@ -91,11 +111,90 @@ export function inspectorToolArgs(
   return { ...args, ...(FORCED_ARGS[name] ?? {}) };
 }
 
+/**
+ * The database the MCP server is actually working on, read from tim_doctor's
+ * first line. Exported for the test, which should not have to run a server to
+ * check the parse.
+ */
+export function parseDoctorDbPath(text: string): string | null {
+  const match = /^TIM Doctor\s+—\s+(.+?)\s*$/m.exec(text);
+  return match ? match[1]! : null;
+}
+
+export class DatabaseMismatchError extends Error {
+  constructor(viewerDb: string, serverDb: string) {
+    super(
+      `Refusing to edit: the viewer is showing ${viewerDb}, but the MCP server at ` +
+        `TIM_MCP_PORT is working on ${serverDb}. An edit would change a database you ` +
+        `are not looking at. Point the viewer and the server at the same file, or set ` +
+        `TIM_MCP_PORT to the server for this database.`,
+    );
+    this.name = 'DatabaseMismatchError';
+  }
+}
+
+/** Cache per (server url, viewer db): neither path changes while a process lives. */
+const dbCheckCache = new Map<string, Promise<void>>();
+
+/**
+ * Refuse a mutation unless the MCP server holds the same database the viewer is
+ * rendering.
+ *
+ * Reads never needed this: the tool panel exists precisely to show what an agent
+ * sees, and a second database showing through it is informative rather than
+ * dangerous. A delete button is different — without this check, editing a viewer
+ * opened on one database silently rewrites whichever database happens to answer
+ * on TIM_MCP_PORT, and the tree on screen never moves.
+ */
+export async function assertSameDatabase(
+  viewerDbPath: string,
+  options: { url?: string } = {},
+): Promise<void> {
+  const url = options.url ?? defaultMcpUrl();
+  const key = url + '\0' + viewerDbPath;
+  let check = dbCheckCache.get(key);
+  if (!check) {
+    check = (async () => {
+      const text = await callTool('tim_doctor', {}, { url });
+      const serverDb = parseDoctorDbPath(text);
+      // An unreadable answer is not a pass. If tim_doctor's format ever changes,
+      // this fails closed rather than waving edits through unchecked.
+      if (!serverDb) {
+        throw new Error(
+          'Cannot confirm which database the MCP server is using (tim_doctor gave no ' +
+            'path), so the edit is refused rather than aimed at an unknown target.',
+        );
+      }
+      if (real(serverDb) !== real(viewerDbPath)) {
+        throw new DatabaseMismatchError(viewerDbPath, serverDb);
+      }
+    })();
+    dbCheckCache.set(key, check);
+  }
+  try {
+    await check;
+  } catch (err) {
+    // A failed check is not cached: the usual cause is the server being down or
+    // pointed elsewhere, both of which the user can fix without a restart.
+    dbCheckCache.delete(key);
+    throw err;
+  }
+}
+
+function real(p: string): string {
+  try {
+    return fs.realpathSync(p);
+  } catch {
+    return path.resolve(p);
+  }
+}
+
 export class ToolNotAllowedError extends Error {
   constructor(name: string) {
     super(
-      `Tool "${name}" is not callable from the viewer. The viewer runs a read-only ` +
-        `allowlist; write tools, tim_sync and tim_export are excluded.`,
+      `Tool "${name}" is not callable from the viewer. The viewer runs two allowlists: ` +
+        `read tools on GET /api/tool, and structure edits (move, soft-delete) on ` +
+        `POST /api/mutate. Everything else — content writes, tim_sync, tim_export — is excluded.`,
     );
     this.name = 'ToolNotAllowedError';
   }
@@ -121,7 +220,29 @@ export async function callInspectorTool(
   options: { url?: string } = {},
 ): Promise<string> {
   if (!INSPECTOR_TOOLS.has(name)) throw new ToolNotAllowedError(name);
+  return callTool(name, args, options);
+}
 
+/**
+ * Call one structure-editing tool. Same transport as the read path — the point of
+ * going over the wire holds twice over here: the MCP server owns the writable
+ * store, so the viewer's own handle stays read-only and there is exactly one
+ * process that can change the database.
+ */
+export async function callMutationTool(
+  name: string,
+  args: Record<string, unknown>,
+  options: { url?: string } = {},
+): Promise<string> {
+  if (!MUTATION_TOOLS.has(name)) throw new ToolNotAllowedError(name);
+  return callTool(name, args, options);
+}
+
+async function callTool(
+  name: string,
+  args: Record<string, unknown>,
+  options: { url?: string },
+): Promise<string> {
   const url = options.url ?? defaultMcpUrl();
   const client = new Client({ name: 'tim-viewer', version: '1' }, { capabilities: {} });
 
@@ -130,7 +251,7 @@ export async function callInspectorTool(
   } catch (err) {
     throw new Error(
       `Cannot reach the TIM MCP server at ${url} (${(err as Error).message}). ` +
-        `The tool panel needs it running — the tree does not.`,
+        `The tool panel and the edit buttons need it running — the tree does not.`,
     );
   }
 

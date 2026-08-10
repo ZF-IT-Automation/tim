@@ -7,10 +7,11 @@ import {
   startViewer,
   assertLoopbackHost,
   NonLoopbackBindError,
+  requireSameOrigin,
   type ViewerHandle,
 } from '../viewer-server.js';
 import { ViewerData, REDACTED_TITLE } from '../viewer-data.js';
-import { inspectorToolArgs } from '../viewer-tools.js';
+import { inspectorToolArgs, parseDoctorDbPath } from '../viewer-tools.js';
 
 // Deliberately wider than the MCP renderer's MAX_CHILDREN_PER_LEVEL (10).
 const WIDE_CHILD_COUNT = 25;
@@ -407,11 +408,11 @@ describe('viewer tool panel', () => {
 });
 
 describe('viewer read-only guarantee', () => {
-  it('rejects every non-GET method', async () => {
+  it('rejects every non-GET method outside the one mutation route', async () => {
     for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
       const res = await fetch(`${base}/api/node?id=NOTE-1`, { method });
       expect(res.status).toBe(405);
-      expect(res.headers.get('allow')).toBe('GET, HEAD');
+      expect(res.headers.get('allow')).toBe('GET, HEAD, POST');
     }
   });
 
@@ -487,5 +488,116 @@ describe('viewer page', () => {
     expect(html).not.toMatch(/src=["']https?:/i);
     expect(html).not.toMatch(/href=["']https?:/i);
     expect(html).not.toMatch(/@import/);
+  });
+});
+
+// POST /api/mutate is the only route in this server that can change the database
+// (indirectly, via the MCP server). These tests cover the guards in front of it;
+// what the tools themselves do is tim-store's and tim-mcp's business.
+describe('viewer mutation route', () => {
+  async function mutate(
+    body: unknown,
+    headers: Record<string, string> = {},
+  ): Promise<{ status: number; body: Json }> {
+    const res = await fetch(base + '/api/mutate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...headers },
+      body: JSON.stringify(body),
+    });
+    return { status: res.status, body: (await res.json()) as Json };
+  }
+
+  it('rejects a tool that is not on the mutation allowlist', async () => {
+    const { status, body } = await mutate({ name: 'tim_write', args: { title: 'x' } });
+    expect(status).toBe(403);
+    expect(body.error).toMatch(/not callable from the viewer/);
+  });
+
+  it('rejects read tools too — the two allowlists are separate', async () => {
+    const { status } = await mutate({ name: 'tim_read', args: { id: 'NOTE-1' } });
+    expect(status).toBe(403);
+  });
+
+  it('rejects a cross-site request even with a valid tool name', async () => {
+    const { status, body } = await mutate(
+      { name: 'tim_delete', args: { id: 'NOTE-1' } },
+      { 'Sec-Fetch-Site': 'cross-site' },
+    );
+    expect(status).toBe(403);
+    expect(body.error).toMatch(/Cross-site/);
+  });
+
+  it('rejects a foreign Origin', async () => {
+    const { status, body } = await mutate(
+      { name: 'tim_delete', args: { id: 'NOTE-1' } },
+      { Origin: 'http://evil.example' },
+    );
+    expect(status).toBe(403);
+    expect(body.error).toMatch(/Cross-origin/);
+  });
+
+  it('rejects a form-encoded body, which is what a CORS-simple attack would send', async () => {
+    const res = await fetch(base + '/api/mutate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({ name: 'tim_delete', args: { id: 'NOTE-1' } }),
+    });
+    expect(res.status).toBe(415);
+  });
+
+  it('requires a tool name', async () => {
+    const { status, body } = await mutate({ args: {} });
+    expect(status).toBe(400);
+    expect(body.error).toMatch(/name required/);
+  });
+
+  it('reaches the MCP server for an allowed tool (502 here — none is running)', async () => {
+    const previous = process.env.TIM_MCP_PORT;
+    process.env.TIM_MCP_PORT = '1';
+    try {
+      const { status, body } = await mutate({ name: 'tim_delete', args: { id: 'NOTE-1' } });
+      expect(status).toBe(502);
+      expect(body.error).toMatch(/Cannot reach the TIM MCP server/);
+    } finally {
+      if (previous === undefined) delete process.env.TIM_MCP_PORT;
+      else process.env.TIM_MCP_PORT = previous;
+    }
+  });
+
+  it('leaves the viewer own handle read-only', () => {
+    expect(handle.data.getDb().readonly).toBe(true);
+  });
+});
+
+describe('requireSameOrigin', () => {
+  it('allows a same-origin browser request', () => {
+    expect(
+      requireSameOrigin({ 'sec-fetch-site': 'same-origin', origin: `http://127.0.0.1:7373` }, 7373),
+    ).toBeNull();
+  });
+
+  it('allows a non-browser client with neither header', () => {
+    expect(requireSameOrigin({}, 7373)).toBeNull();
+  });
+
+  it('rejects loopback on a different port — another local app is not this one', () => {
+    expect(requireSameOrigin({ origin: 'http://127.0.0.1:9999' }, 7373)).toMatch(/Cross-origin/);
+  });
+
+  it('rejects an unparseable Origin rather than falling through', () => {
+    expect(requireSameOrigin({ origin: 'not a url' }, 7373)).toMatch(/unparseable/);
+  });
+});
+
+describe('parseDoctorDbPath', () => {
+  it('reads the database path out of a real tim_doctor header', () => {
+    expect(
+      parseDoctorDbPath('TIM Doctor — /home/u/.tim/tim.db\nEntries: 10102 | Edges: 1137'),
+    ).toBe('/home/u/.tim/tim.db');
+  });
+
+  it('returns null when the header is absent, so the caller can fail closed', () => {
+    expect(parseDoctorDbPath('Entries: 3')).toBeNull();
+    expect(parseDoctorDbPath('')).toBeNull();
   });
 });

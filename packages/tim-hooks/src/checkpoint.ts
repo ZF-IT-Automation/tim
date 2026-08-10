@@ -370,3 +370,35 @@ export async function runSessionEnd(
     summarize: opts.summarize,
   });
 }
+
+/**
+ * Harness session-end body: checkpoint a session that actually logged something.
+ *
+ * A harness ends sessions the agent never closes itself (`/clear`, exit), so this
+ * is the only automatic checkpoint. Two guards: an unknown session id is not ours
+ * to summarize, and a session with no exchanges would only grow the empty summary
+ * nodes we already fixed elsewhere. The payload's cwd is a hint — the session node
+ * records the directory it started in, so the checkpoint works without it.
+ */
+export async function runHarnessSessionEnd(
+  store: TimStore,
+  payload: { session_id?: unknown; cwd?: unknown },
+  opts: SessionEndOptions = {},
+): Promise<Entry | null> {
+  const sessionId = typeof payload.session_id === 'string' ? payload.session_id.trim() : '';
+  if (!sessionId) return null;
+
+  const session = await store.read(store.resolveSessionAlias(sessionId));
+  if (!session || session.metadata.kind !== 'session') return null;
+
+  // Same list the checkpoint would summarize — and it covers both the batched
+  // session tree and the flat legacy shape, which the counters do not.
+  const exchanges = await new SessionManager(store).getSessionExchanges(sessionId);
+  if (exchanges.length === 0) return null;
+
+  const payloadCwd = typeof payload.cwd === 'string' ? payload.cwd.trim() : '';
+  const sessionCwd = typeof session.metadata.cwd === 'string' ? session.metadata.cwd : '';
+  const cwd = payloadCwd || sessionCwd || process.cwd();
+
+  return runSessionEnd(store, sessionId, { ...opts, env: { TIM_CWD: cwd, ...opts.env } });
+}

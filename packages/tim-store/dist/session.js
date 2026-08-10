@@ -135,7 +135,7 @@ class SessionManager {
         if (existing?.metadata.kind === session_tree_js_1.KIND_SESSION) {
             if (existing.metadata.project_ref !== projectId) {
                 const newProject = await this.store.requireProject(projectId);
-                let newSessionsSection = await (0, session_tree_js_1.findChildByKind)(this.store, newProject.id, session_tree_js_1.KIND_SESSIONS_ROOT);
+                let newSessionsSection = await (0, session_tree_js_1.findManagedRoot)(this.store, newProject.id, session_tree_js_1.KIND_SESSIONS_ROOT);
                 if (!newSessionsSection) {
                     newSessionsSection = await this.store.write(session_tree_js_1.SESSIONS_SECTION_TITLE, {
                         parentId: newProject.id,
@@ -151,7 +151,7 @@ class SessionManager {
             return (await this.store.read(sessionId));
         }
         const project = await this.store.requireProject(projectId);
-        let sessionsSection = await (0, session_tree_js_1.findChildByKind)(this.store, project.id, session_tree_js_1.KIND_SESSIONS_ROOT);
+        let sessionsSection = await (0, session_tree_js_1.findManagedRoot)(this.store, project.id, session_tree_js_1.KIND_SESSIONS_ROOT);
         if (!sessionsSection) {
             sessionsSection = await this.store.write(session_tree_js_1.SESSIONS_SECTION_TITLE, {
                 parentId: project.id,
@@ -188,14 +188,13 @@ class SessionManager {
             metadata: { kind: session_tree_js_1.KIND_SUMMARY_ROOT, exchanges: 0, date, summary: '' },
             tags: [session_tree_js_1.SESSION_SUMMARY_TAG],
         });
-        const exchangesNode = await this.store.write(session_tree_js_1.EXCHANGES_NODE_TITLE, {
+        // No Batch 1 here: sessionLog creates it on the first exchange. Writing it
+        // eagerly only mattered for sessions that never log anything, and there it
+        // left an empty batch behind — 50 of P0063's 93 sessions carried one.
+        await this.store.write(session_tree_js_1.EXCHANGES_NODE_TITLE, {
             parentId: session.id,
             metadata: { kind: session_tree_js_1.KIND_EXCHANGES_ROOT, render_depth: 0 },
             tags: ['#exchanges'],
-        });
-        await this.store.write('Batch 1', {
-            parentId: exchangesNode.id,
-            metadata: { kind: session_tree_js_1.KIND_EXCHANGE_BATCH, batch_index: 1, order: 1 },
         });
         return session;
     }

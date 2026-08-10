@@ -10,7 +10,7 @@ class CommitManager {
     }
     async ensureCommitsSection(projectId) {
         const project = await this.store.requireProject(projectId);
-        const existing = await (0, session_tree_js_1.findChildByKind)(this.store, project.id, commit_tree_js_1.KIND_COMMITS_ROOT);
+        const existing = await (0, session_tree_js_1.findManagedRoot)(this.store, project.id, commit_tree_js_1.KIND_COMMITS_ROOT);
         if (existing)
             return existing;
         return this.store.write(commit_tree_js_1.COMMITS_SECTION_TITLE, {

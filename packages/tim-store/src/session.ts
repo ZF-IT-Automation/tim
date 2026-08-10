@@ -10,6 +10,7 @@ import {
   deriveCountersSync,
   EXCHANGES_NODE_TITLE,
   findChildByKind,
+  findManagedRoot,
   KIND_BATCH,
   KIND_EXCHANGE,
   KIND_EXCHANGE_BATCH,
@@ -239,7 +240,7 @@ export class SessionManager {
       if (existing.metadata.project_ref !== projectId) {
         const newProject = await this.store.requireProject(projectId);
 
-        let newSessionsSection = await findChildByKind(
+        let newSessionsSection = await findManagedRoot(
           this.store,
           newProject.id,
           KIND_SESSIONS_ROOT,
@@ -262,7 +263,7 @@ export class SessionManager {
 
     const project = await this.store.requireProject(projectId);
 
-    let sessionsSection = await findChildByKind(this.store, project.id, KIND_SESSIONS_ROOT);
+    let sessionsSection = await findManagedRoot(this.store, project.id, KIND_SESSIONS_ROOT);
     if (!sessionsSection) {
       sessionsSection = await this.store.write(SESSIONS_SECTION_TITLE, {
         parentId: project.id,
@@ -301,14 +302,13 @@ export class SessionManager {
       metadata: { kind: KIND_SUMMARY_ROOT, exchanges: 0, date, summary: '' },
       tags: [SESSION_SUMMARY_TAG],
     });
-    const exchangesNode = await this.store.write(EXCHANGES_NODE_TITLE, {
+    // No Batch 1 here: sessionLog creates it on the first exchange. Writing it
+    // eagerly only mattered for sessions that never log anything, and there it
+    // left an empty batch behind — 50 of P0063's 93 sessions carried one.
+    await this.store.write(EXCHANGES_NODE_TITLE, {
       parentId: session.id,
       metadata: { kind: KIND_EXCHANGES_ROOT, render_depth: 0 },
       tags: ['#exchanges'],
-    });
-    await this.store.write('Batch 1', {
-      parentId: exchangesNode.id,
-      metadata: { kind: KIND_EXCHANGE_BATCH, batch_index: 1, order: 1 },
     });
 
     return session;

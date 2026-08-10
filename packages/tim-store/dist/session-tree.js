@@ -2,8 +2,8 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.INBOX_PROJECT_LABEL = exports.MARKER_FILENAME = exports.SESSION_ROLLUP_THRESHOLD = exports.DEFAULT_BATCH_SIZE = exports.BATCH_STRUCTURAL_TAGS = exports.BATCH_SUMMARY_TAG = exports.SESSION_SUMMARY_TAG = exports.KIND_EXCHANGE = exports.KIND_EXCHANGE_BATCH = exports.KIND_EXCHANGES_ROOT = exports.KIND_BATCH = exports.KIND_SUMMARY_ROOT = exports.KIND_SESSION_ALIAS = exports.KIND_SESSION = exports.KIND_SESSIONS_ROOT = exports.SESSIONS_SECTION_ORDER = exports.EXCHANGES_NODE_TITLE = exports.SUMMARY_NODE_TITLE = exports.SESSIONS_SECTION_TITLE = void 0;
 exports.foldBatchSummaries = foldBatchSummaries;
-exports.getCurrentBatch = getCurrentBatch;
 exports.findChildByKind = findChildByKind;
+exports.findManagedRoot = findManagedRoot;
 exports.deriveCounters = deriveCounters;
 exports.deriveCountersSync = deriveCountersSync;
 exports.ensureInboxProject = ensureInboxProject;
@@ -31,24 +31,31 @@ function foldBatchSummaries(batches) {
     const sorted = [...batches].sort((a, b) => (Number(a.metadata.batch_index) || 0) - (Number(b.metadata.batch_index) || 0));
     return sorted.map(b => b.content || '').filter(Boolean).join('\n\n---\n\n');
 }
-/** Latest exchange-batch under Exchanges; creates Batch 1 if missing. */
-async function getCurrentBatch(store, exchangesNodeId) {
-    const allBatches = await store.getChildByKind(exchangesNodeId, exports.KIND_EXCHANGE_BATCH);
-    let batchNode = allBatches[allBatches.length - 1] ?? null;
-    if (!batchNode) {
-        batchNode = await store.write('Batch 1', {
-            parentId: exchangesNodeId,
-            metadata: { kind: exports.KIND_EXCHANGE_BATCH, batch_index: 1, order: 1 },
-        });
-        allBatches.push(batchNode);
-    }
-    const usersInBatch = (await store.getChildrenBySeq(batchNode.id)).filter(u => u.metadata.role === 'user');
-    return { batchNode, usersInBatch, allBatches };
-}
 /** Locate the single child of `parentId` with the given metadata.kind, or null. */
 async function findChildByKind(store, parentId, kind) {
     const kids = await store.getChildByKind(parentId, kind);
     return kids[0] ?? null;
+}
+/**
+ * Find a project's managed root (`sessions-root`, `commits-root`), un-hiding it if
+ * it was flagged irrelevant.
+ *
+ * Deliberately looks past the `irrelevant = 0` filter every other lookup applies. A
+ * structural root is not content: when a migration or a bad bulk update flags a
+ * project's children invisible, a filtered lookup misses the root that exists and
+ * its caller creates a second one. Repairing the flag afterwards leaves both behind
+ * — which is how P0063 collected three "Commits" and two "Sessions" roots on
+ * 2026-06-03, the day its whole tree was flagged irrelevant. Callers that create the
+ * root when the lookup returns null must use this, not `findChildByKind`.
+ */
+async function findManagedRoot(store, projectId, kind) {
+    const visible = await store.getChildByKind(projectId, kind);
+    if (visible[0])
+        return visible[0];
+    const hidden = (await store.getChildByKind(projectId, kind, { includeIrrelevant: true }))[0];
+    if (!hidden)
+        return null;
+    return store.update(hidden.id, { irrelevant: false });
 }
 /** Re-derive counters from the DB tree. Authoritative — never trusts caches. */
 async function deriveCounters(store, sessionId) {

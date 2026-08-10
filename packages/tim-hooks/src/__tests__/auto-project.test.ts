@@ -23,7 +23,9 @@ describe('auto-project on session start', () => {
   });
 
   it('creates project from directory name when no marker exists', async () => {
-    const base = path.join(os.homedir(), '.tim-test-session');
+    // Auto-creation refuses /tmp, and $HOME is itself /tmp/… under a scratch HOME,
+    // so this one case needs the repo's gitignored tmp/ rather than `root` above.
+    const base = path.join(import.meta.dirname, '../../../../tmp', 'tim-test-session');
     const sub = path.join(base, 'my-widget');
     fs.mkdirSync(sub, { recursive: true });
     vi.spyOn(checkpoint, 'getActiveProjectLabel').mockReturnValue(null);

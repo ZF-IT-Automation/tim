@@ -13,8 +13,19 @@ export function timSessionCachePath(): string {
   return path.join(dir, '.session-cache');
 }
 
-/** Hermes pre_llm_call cache (~/.tim/.session-cache). */
-export function readTimSessionCache(maxAgeMs = 3_600_000): TimSessionCache | null {
+/**
+ * Hermes pre_llm_call cache (~/.tim/.session-cache).
+ *
+ * One global slot shared by every TIM consumer on the host — interactive
+ * sessions, workers, cronjobs — and the last writer wins. `expectedCwd` is how
+ * a caller checks the slot is its own: the entry is only returned when it names
+ * the same directory. Without it the caller cannot tell whose session id it is
+ * getting, so it gets none.
+ */
+export function readTimSessionCache(
+  maxAgeMs = 3_600_000,
+  expectedCwd?: string,
+): TimSessionCache | null {
   const p = timSessionCachePath();
   if (!fs.existsSync(p)) return null;
   try {
@@ -25,6 +36,12 @@ export function readTimSessionCache(maxAgeMs = 3_600_000): TimSessionCache | nul
       typeof raw.session_id === 'string' ? raw.session_id.trim() : '';
     if (!session_id) return null;
     const cwd = typeof raw.cwd === 'string' ? raw.cwd.trim() : '';
+    if (expectedCwd !== undefined) {
+      // Exact match, the same rule resolveCurrentSession uses to pick a session
+      // by cwd. Prefix matching would accept the writer's `cwd: $HOME` fallback
+      // as an ancestor of every caller on the host.
+      if (!cwd || path.resolve(cwd) !== path.resolve(expectedCwd)) return null;
+    }
     const ts = typeof raw.ts === 'string' ? raw.ts : undefined;
     return { session_id, cwd, ts };
   } catch {
@@ -38,6 +55,8 @@ export function resolveActiveSessionId(options: {
   envSessionId?: string;
   markerSession?: string;
   cacheMaxAgeMs?: number;
+  /** Caller's working directory. Without it the session cache is skipped — see readTimSessionCache. */
+  cwd?: string;
   /** Set false in daemon/HTTP contexts — the cache file is per-machine, not per-client. */
   useSessionCache?: boolean;
   /** Set false in daemon/HTTP contexts — env is daemon-global. */
@@ -52,8 +71,8 @@ export function resolveActiveSessionId(options: {
     if (fromEnv) return fromEnv;
   }
 
-  if (options.useSessionCache !== false) {
-    const cached = readTimSessionCache(options.cacheMaxAgeMs);
+  if (options.useSessionCache !== false && options.cwd !== undefined) {
+    const cached = readTimSessionCache(options.cacheMaxAgeMs, options.cwd);
     if (cached?.session_id) return cached.session_id;
   }
 

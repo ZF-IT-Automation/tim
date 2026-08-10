@@ -249,7 +249,7 @@ async function handleTimRemember(store, opts) {
     }
     let batchSummaries = [];
     if (opts.includeBatchSummaries) {
-        const sessionId = (0, tim_core_1.resolveActiveSessionId)({});
+        const sessionId = (0, tim_core_1.resolveActiveSessionId)({ cwd: process.cwd() });
         const summaries = await store.getRecentBatchSummaries({
             limit: 5,
             maxAgeDays: 30,

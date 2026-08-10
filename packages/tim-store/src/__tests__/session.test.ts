@@ -799,6 +799,13 @@ describe('SessionManager', () => {
       expect(exchanges).toHaveLength(1);
       expect(summary[0].tags).toContain('#session-summary');
 
+      // No batch yet. Writing one here would leave an empty node behind for
+      // every session that never logs an exchange — which is most of the
+      // sessions a broken logging hook produces.
+      expect(await store.getChildByKind(exchanges[0].id, 'exchange-batch')).toHaveLength(0);
+
+      // The first exchange creates it.
+      await sessions.logExchange('sess-proj-1', [{ role: 'user', content: 'hi' }]);
       const batches = await store.getChildByKind(exchanges[0].id, 'exchange-batch');
       expect(batches).toHaveLength(1);
       expect(batches[0].title).toBe('Batch 1');

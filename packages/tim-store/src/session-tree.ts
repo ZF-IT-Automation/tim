@@ -38,32 +38,6 @@ export interface DerivedCounters {
   batchesSummarized: number;
 }
 
-export interface CurrentBatch {
-  batchNode: Entry;
-  usersInBatch: Entry[];
-  allBatches: Entry[];
-}
-
-/** Latest exchange-batch under Exchanges; creates Batch 1 if missing. */
-export async function getCurrentBatch(
-  store: TimStore,
-  exchangesNodeId: string,
-): Promise<CurrentBatch> {
-  const allBatches = await store.getChildByKind(exchangesNodeId, KIND_EXCHANGE_BATCH);
-  let batchNode = allBatches[allBatches.length - 1] ?? null;
-  if (!batchNode) {
-    batchNode = await store.write('Batch 1', {
-      parentId: exchangesNodeId,
-      metadata: { kind: KIND_EXCHANGE_BATCH, batch_index: 1, order: 1 },
-    });
-    allBatches.push(batchNode);
-  }
-  const usersInBatch = (await store.getChildrenBySeq(batchNode.id)).filter(
-    u => u.metadata.role === 'user',
-  );
-  return { batchNode, usersInBatch, allBatches };
-}
-
 /** Locate the single child of `parentId` with the given metadata.kind, or null. */
 export async function findChildByKind(
   store: TimStore,
@@ -72,6 +46,31 @@ export async function findChildByKind(
 ): Promise<Entry | null> {
   const kids = await store.getChildByKind(parentId, kind);
   return kids[0] ?? null;
+}
+
+/**
+ * Find a project's managed root (`sessions-root`, `commits-root`), un-hiding it if
+ * it was flagged irrelevant.
+ *
+ * Deliberately looks past the `irrelevant = 0` filter every other lookup applies. A
+ * structural root is not content: when a migration or a bad bulk update flags a
+ * project's children invisible, a filtered lookup misses the root that exists and
+ * its caller creates a second one. Repairing the flag afterwards leaves both behind
+ * — which is how P0063 collected three "Commits" and two "Sessions" roots on
+ * 2026-06-03, the day its whole tree was flagged irrelevant. Callers that create the
+ * root when the lookup returns null must use this, not `findChildByKind`.
+ */
+export async function findManagedRoot(
+  store: TimStore,
+  projectId: string,
+  kind: string,
+): Promise<Entry | null> {
+  const visible = await store.getChildByKind(projectId, kind);
+  if (visible[0]) return visible[0];
+
+  const hidden = (await store.getChildByKind(projectId, kind, { includeIrrelevant: true }))[0];
+  if (!hidden) return null;
+  return store.update(hidden.id, { irrelevant: false });
 }
 
 /** Re-derive counters from the DB tree. Authoritative — never trusts caches. */

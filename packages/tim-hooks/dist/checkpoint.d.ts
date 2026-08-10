@@ -86,4 +86,17 @@ export declare function previewSessionStart(store: TimStore, params: {
     cwd?: string;
 }): Promise<SessionStartPreview>;
 export declare function runSessionEnd(store: TimStore, sessionId: string, opts?: SessionEndOptions): Promise<Entry>;
+/**
+ * Harness session-end body: checkpoint a session that actually logged something.
+ *
+ * A harness ends sessions the agent never closes itself (`/clear`, exit), so this
+ * is the only automatic checkpoint. Two guards: an unknown session id is not ours
+ * to summarize, and a session with no exchanges would only grow the empty summary
+ * nodes we already fixed elsewhere. The payload's cwd is a hint — the session node
+ * records the directory it started in, so the checkpoint works without it.
+ */
+export declare function runHarnessSessionEnd(store: TimStore, payload: {
+    session_id?: unknown;
+    cwd?: unknown;
+}, opts?: SessionEndOptions): Promise<Entry | null>;
 //# sourceMappingURL=checkpoint.d.ts.map

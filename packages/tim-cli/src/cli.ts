@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 // TIM CLI — v0.1.0-alpha
 
-import { TimStore, SessionManager, ErrorLogger, resolveProjectBindingLabel } from 'tim-store';
+import { TimStore, SessionManager, ErrorLogger, resolveProjectBindingLabel, getCurrentVersion, isSchemaMigrationPendingError } from 'tim-store';
 import { loadConfig, getTimDir, normalizeLegacyTypeTag, type TimConfigFile } from 'tim-core';
 import {
   runCheckpoint,
   runSessionEnd,
+  runHarnessSessionEnd,
   runSessionStart,
   findMarker,
   findMarkerOptionsFromEnv,
@@ -84,6 +85,15 @@ function buildStaleMarkerDirective(projectLabel: string, markerDir: string): str
   ].join('\n');
 }
 
+function buildMigrationPendingDirective(gateMessage: string): string {
+  return [
+    `⚠️ TIM is not available in this session: the store's schema is behind this build.`,
+    gateMessage,
+    `ACTION: tell the user to run "tim migrate-schema" (it backs the database up first). ` +
+      `Until then every TIM tool call will fail with the same message.`,
+  ].join('\n');
+}
+
 const HELP_ALIASES: Readonly<Record<string, string>> = { h: 'help' };
 
 function hasHelpFlag(args: string[], command: string, subcommand?: string): boolean {
@@ -106,7 +116,7 @@ const COMMAND_HELP: Record<string, string> = {
     'Usage: tim new-project --path <dir> --name <string> [--no-git] [--confirm]',
   'record-commit':
     'Usage: tim record-commit [--cwd <dir>] [--project <label>] [--session <id>] [--hash <sha>] [--message <text>] [--diff <stat>] [--author <name>] [--date <iso>] [--branch <name>]',
-  hook: 'Usage: tim hook <session-start|session-end|log|prompt-submit|claude-session-start|claude-stop|cursor-stop|codex-notify> [options]',
+  hook: 'Usage: tim hook <session-start|session-end|log|prompt-submit|claude-session-start|claude-session-end|claude-stop|cursor-stop|codex-notify> [options]',
   'hook session-start':
     'Usage: tim hook session-start --session <id> [--agent <name>] [--cwd <path>] [--harness <name>] [--project <label>] [--tool <name>] [--model <name>] [--task-summary <text>]',
   'hook session-end': 'Usage: tim hook session-end --session <id>',
@@ -115,6 +125,8 @@ const COMMAND_HELP: Record<string, string> = {
   'hook prompt-submit': 'Usage: tim hook prompt-submit < Claude UserPromptSubmit JSON',
   'hook claude-session-start':
     'Usage: tim hook claude-session-start < Claude SessionStart JSON',
+  'hook claude-session-end':
+    'Usage: tim hook claude-session-end < Claude SessionEnd JSON',
   'hook claude-stop': 'Usage: tim hook claude-stop < Claude Stop JSON',
   'hook cursor-stop': 'Usage: tim hook cursor-stop < Cursor stop/sessionEnd JSON',
   'hook codex-notify': "Usage: tim hook codex-notify '<Codex agent-turn-complete JSON>'",
@@ -129,6 +141,7 @@ const COMMAND_HELP: Record<string, string> = {
     'Usage: tim import <path.hmem> [--dry-run] [--deduplicate] [--repair-flags] [--no-snapshot-check]',
   'migrate-from-hmem':
     'Usage: tim migrate-from-hmem <path.hmem> [--deduplicate] [--no-deduplicate] [--dry-run]',
+  'migrate-schema': 'Usage: tim migrate-schema',
   migrate: 'Usage: tim migrate <tags-to-types|project-kind> [options]',
   'migrate tags-to-types':
     'Usage: tim migrate tags-to-types [--dry-run] [--sample-limit <count>]',
@@ -210,6 +223,7 @@ Commands:
   export                   Export TIM memory
   import                   Import TIM memory
   migrate-from-hmem        Run guided hmem migration
+  migrate-schema           Apply pending database schema migrations
   migrate                  Run metadata migrations
   snapshot                 Snapshot the TIM database
   restore                  Restore the TIM database
@@ -299,6 +313,22 @@ async function cmdDoctor(args: string[] = []) {
   if (stats.oldestEntry) console.log(`Oldest: ${stats.oldestEntry}`);
   if (stats.newestEntry) console.log(`Newest: ${stats.newestEntry}`);
   console.log(`Stale (>30d): ${stats.staleCount}`);
+  const lastSchemaMigration = store.getDb().prepare(`
+    SELECT timestamp, args_json FROM error_log
+    WHERE tool = 'schema_migration'
+    ORDER BY id DESC LIMIT 1
+  `).get() as { timestamp: string; args_json: string } | undefined;
+  if (lastSchemaMigration) {
+    try {
+      const args = JSON.parse(lastSchemaMigration.args_json) as { from: number; to: number };
+      // Stored as UTC ISO; doctor is read by a human at their own clock.
+      const when = new Date(lastSchemaMigration.timestamp)
+        .toLocaleString('sv-SE', { dateStyle: 'short', timeStyle: 'short' });
+      console.log(`schema moved ${args.from} → ${args.to} at ${when}`);
+    } catch {
+      // Malformed log row — skip; absence of a clean line is fine.
+    }
+  }
   if (health.issues.length) {
     console.log('\n⚠ Issues:');
     health.issues.forEach(i => console.log(`  - ${i}`));
@@ -416,7 +446,17 @@ async function buildStartDirectiveForCwd(cwd: string, walkUp?: boolean): Promise
 
   const { marker, dir } = located;
   const config = loadConfig();
-  const store = new TimStore(getDbPath(config));
+  let store: TimStore;
+  try {
+    store = new TimStore(getDbPath(config));
+  } catch (error) {
+    // The migration gate refuses on purpose and its message carries the fix. Every
+    // caller of this function swallows throws (hooks fail soft, the shell script
+    // drops stderr), so the one deliberate refusal has to come back as directive
+    // content instead. Anything else keeps failing soft.
+    if (isSchemaMigrationPendingError(error)) return buildMigrationPendingDirective(error.message);
+    throw error;
+  }
   try {
     const validated = await validateMarkerAgainstStore(marker, store);
     let projectLabel = validated?.project ?? null;
@@ -613,6 +653,24 @@ async function cmdHook(args: string[]) {
     return;
   }
 
+  if (sub === 'claude-session-end') {
+    try {
+      const payload = await readJsonStdin();
+      if (!payload) return;
+
+      const config = loadConfig();
+      const store = new TimStore(getDbPath(config));
+      try {
+        await runHarnessSessionEnd(store, payload, { hooksConfig: config.hooks });
+      } finally {
+        store.close();
+      }
+    } catch {
+      // Claude hooks fail soft: never block the harness on the way out.
+    }
+    return;
+  }
+
   // One branch for both harnesses: cursor-agent also runs the Stop hook out of
   // ~/.claude/settings.json, so the identity has to come from the payload rather
   // than from which command name was invoked.
@@ -773,7 +831,7 @@ async function cmdHook(args: string[]) {
 
       default:
         console.error(`Unknown hook: ${sub ?? '(none)'}`);
-        console.error('Usage: tim hook <session-start|session-end|log|prompt-submit|claude-session-start|claude-stop|cursor-stop|codex-notify> [options]');
+        console.error('Usage: tim hook <session-start|session-end|log|prompt-submit|claude-session-start|claude-session-end|claude-stop|cursor-stop|codex-notify> [options]');
         process.exit(1);
     }
   } finally {
@@ -1035,6 +1093,22 @@ async function cmdReleaseCheck(args: string[]) {
   }
 }
 
+async function cmdMigrateSchema() {
+  const config = loadConfig();
+  const dbPath = getDbPath(config);
+  const store = new TimStore(dbPath, { allowMigrations: true });
+  const result = store.lastMigration;
+  if (!result) {
+    console.log(`Schema already at v${getCurrentVersion()}. Nothing to migrate.`);
+  } else {
+    const n = result.applied.length;
+    const noun = n === 1 ? 'migration' : 'migrations';
+    console.log(`Migrated schema v${result.from} → v${result.to} (${n} ${noun}).`);
+    console.log(`Backup: ${result.backupPath ?? '(none)'}`);
+  }
+  store.close();
+}
+
 async function main() {
   const cmd = process.argv[2] || 'init';
   const rest = process.argv.slice(3);
@@ -1100,6 +1174,9 @@ async function main() {
       break;
     case 'migrate-from-hmem':
       await cmdMigrateFromHmem(rest);
+      break;
+    case 'migrate-schema':
+      await cmdMigrateSchema();
       break;
     case 'migrate': {
       // Subcommand dispatch: `tim migrate <sub> [args...]`

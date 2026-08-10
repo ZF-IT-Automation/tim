@@ -13,6 +13,7 @@ import {
   runHookScript,
   runHooks,
   runSessionEnd,
+  runHarnessSessionEnd,
   runSessionStart,
 } from '../index.js';
 
@@ -96,6 +97,44 @@ describe('session-end checkpoint orchestration', () => {
     expect(summary.metadata.kind).toBe('checkpoint');
 
     fs.rmSync(tmpDir, { recursive: true, force: true });
+    store.close();
+  });
+
+  it('checkpoints from a harness payload, taking the cwd off the session node', async () => {
+    const store = new TimStore(':memory:');
+    const sessions = new SessionManager(store);
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tim-harness-end-'));
+
+    await sessions.sessionStart({
+      sessionId: 'harness-end',
+      agentName: 'claude',
+      cwd: tmpDir,
+      harness: 'claude-code',
+    });
+    await sessions.sessionLog('harness-end', [{ role: 'user', content: 'done' }]);
+
+    // No cwd in the payload: the session node has to supply it.
+    const summary = await runHarnessSessionEnd(store, { session_id: 'harness-end' });
+
+    expect(summary?.metadata.kind).toBe('checkpoint');
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+    store.close();
+  });
+
+  it('skips an unknown session and one that logged nothing', async () => {
+    const store = new TimStore(':memory:');
+    const sessions = new SessionManager(store);
+    await sessions.sessionStart({
+      sessionId: 'empty-end',
+      agentName: 'claude',
+      cwd: os.tmpdir(),
+      harness: 'claude-code',
+    });
+
+    expect(await runHarnessSessionEnd(store, { session_id: 'no-such-session' })).toBeNull();
+    expect(await runHarnessSessionEnd(store, { session_id: 'empty-end' })).toBeNull();
+    expect(await store.getChildren('empty-end')).toHaveLength(0);
+
     store.close();
   });
 

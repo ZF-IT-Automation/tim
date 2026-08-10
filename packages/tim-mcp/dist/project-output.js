@@ -97,16 +97,26 @@ function clampSummaryLines(text, max) {
     }
     return tail.length > 0 ? [head, ELIDED_MARKER, ...tail] : [head, ELIDED_MARKER];
 }
-function parseSessionEntry(entry) {
+function parseSessionEntry(entry, sessionNode) {
     const date = entry.createdAt.slice(0, 10);
-    const combined = entry.content ? `${entry.title}\n${entry.content}` : entry.title;
+    // A freshly created summary node is the sentinel "Summary" with an empty body —
+    // echoing it as the session's summary line says nothing. Legacy nodes that carry
+    // their text in title/content still go through `combined`.
+    const isSentinel = entry.title === tim_store_1.SUMMARY_NODE_TITLE;
+    const combined = entry.content
+        ? (isSentinel ? entry.content : `${entry.title}\n${entry.content}`)
+        : (isSentinel ? '' : entry.title);
     const exMatch = combined.match(/(\d+)\s+exchanges?/i);
-    // Prefer the structured metadata the store maintains (rollUpSession/updateSessionSummary
-    // set metadata.exchanges + metadata.summary); the body regex is only a legacy fallback.
+    // The live count is the logger's `exchange_count` on the session node — the summary
+    // node's `exchanges` stays 0 until the summarizer runs, which is what made every
+    // brief report "0 exchanges" for a session that was logging fine.
+    const liveCount = Number(sessionNode?.metadata.exchange_count);
     const metaExchanges = Number(entry.metadata.exchanges);
-    const exchanges = Number.isFinite(metaExchanges) && metaExchanges > 0
-        ? metaExchanges
-        : exMatch ? parseInt(exMatch[1], 10) : 0;
+    const exchanges = Number.isFinite(liveCount) && liveCount > 0
+        ? liveCount
+        : Number.isFinite(metaExchanges) && metaExchanges > 0
+            ? metaExchanges
+            : exMatch ? parseInt(exMatch[1], 10) : 0;
     const metaSummary = typeof entry.metadata.summary === 'string' ? entry.metadata.summary.trim() : '';
     let summary = metaSummary || combined;
     if (!metaSummary && exMatch) {
@@ -441,6 +451,7 @@ function formatProjectOutput(result, budget, schema, renderMode, recentSessionsC
     const parsed = parseProjectContent(project.title, contentForParse);
     const lines = [];
     const childMap = buildChildMap(children);
+    const entryById = new Map(children.map(c => [c.id, c]));
     const budgetState = { remaining: budget };
     lines.push(FORMAT_SEP);
     lines.push(`${label} — ${parsed.title}`);
@@ -526,7 +537,7 @@ function formatProjectOutput(result, budget, schema, renderMode, recentSessionsC
         const recent = sessions.slice(0, shown);
         lines.push('', `── Recent Sessions (${recent.length}/${sessions.length}) ──`, '');
         for (const session of recent) {
-            const { exchanges, summary, date } = parseSessionEntry(session);
+            const { exchanges, summary, date } = parseSessionEntry(session, entryById.get(session.parentId ?? ''));
             // Header line, then the summary's own lines indented — a condensed rollup is
             // multi-bullet and becomes unreadable when folded onto one line.
             lines.push(`  ${exchanges} exchanges · ${date}`);
