@@ -18,6 +18,10 @@ const OPEN_WORK_ITEM_MAX_CHARS = 160;
 // exists, open work is the shorter, denser half.
 const PREVIOUS_SESSION_BUDGET_SHARE = 0.7;
 
+// Share of the previous-session budget a handoff note may take. Bounded because
+// clampSummary keeps the tail: an unbounded note would evict the whole summary.
+const HANDOFF_NOTE_BUDGET_SHARE = 0.4;
+
 /**
  * Clamp a summary to a char budget without losing its end. The last lines of a
  * condensed rollup are the handoff ("next: …") — cutting from the front would drop
@@ -50,6 +54,19 @@ function oneLine(text: string, maxChars: number): string {
   return t.length <= maxChars ? t : `${t.slice(0, maxChars - 1).trimEnd()}…`;
 }
 
+/**
+ * Newest handoff note stored under a session's summary node. Checkpoints carry no
+ * `metadata.order`, so getChildren returns them oldest-first — the last match wins.
+ * The predicate is the note itself, not `kind`, so any future writer is picked up.
+ */
+async function latestHandoffNote(store: TimStore, summaryNodeId: string): Promise<string> {
+  const children = await store.getChildren(summaryNodeId);
+  const notes = children
+    .map(c => (typeof c.metadata.handoff_note === 'string' ? c.metadata.handoff_note.trim() : ''))
+    .filter(n => n.length > 0);
+  return notes[notes.length - 1] ?? '';
+}
+
 /** Most recent session of the project, with its condensed rollup summary. */
 async function previousSession(
   store: TimStore,
@@ -64,7 +81,21 @@ async function previousSession(
   const stored = typeof summaryNode?.metadata.summary === 'string'
     ? summaryNode.metadata.summary
     : '';
-  const summary = clampSummary((stored || summaryNode?.content || '').trim(), maxChars);
+  const body = (stored || summaryNode?.content || '').trim();
+
+  // The handoff note is what the previous session wrote *for this one*, so it goes
+  // last: clampSummary drops from the front, which makes the tail the safe slot.
+  const note = summaryNode
+    ? await latestHandoffNote(store, summaryNode.id).catch(() => '')
+    : '';
+  const clampedNote = note
+    ? clampSummary(note, Math.floor(maxChars * HANDOFF_NOTE_BUDGET_SHARE))
+    : '';
+
+  const summary = clampSummary(
+    [body, clampedNote && `handoff: ${clampedNote}`].filter(Boolean).join('\n'),
+    maxChars,
+  );
   if (!summary) return {};
 
   const date = (latest.date ?? latest.lastActivity).slice(0, 10);

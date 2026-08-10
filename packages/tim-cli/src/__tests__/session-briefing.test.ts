@@ -83,6 +83,10 @@ describe('session-start directive carries content', () => {
       { role: 'agent', content: 'done' },
     ]);
     await sessions.updateSessionSummary('sess-previous', CONDENSED_SUMMARY);
+    await sessions.checkpoint('sess-previous', {
+      summarize: async () => 'checkpoint stub',
+      handoffNote: 'done: wired the reader | next: watch it render in a live session',
+    });
     await store.write('Ship the SessionStart hook', {
       parentId: project.id,
       metadata: { task: { status: 'in_progress', priority: 'high' } },
@@ -104,6 +108,8 @@ describe('session-start directive carries content', () => {
 
     expect(out).toContain('── Previous session');
     expect(out).toContain('next: install the SessionStart hook');
+    // The handoff note the previous session left is read back, not just written.
+    expect(out).toContain('handoff: done: wired the reader');
     expect(out).toContain('── Open work ──');
     expect(out).toContain('Ship the SessionStart hook');
     // Closed tasks are not open work.
