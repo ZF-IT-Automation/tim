@@ -46,16 +46,27 @@ function oneLine(text, maxChars) {
     return t.length <= maxChars ? t : `${t.slice(0, maxChars - 1).trimEnd()}…`;
 }
 /**
- * Newest handoff note stored under a session's summary node. Checkpoints carry no
- * `metadata.order`, so getChildren returns them oldest-first — the last match wins.
- * The predicate is the note itself, not `kind`, so any future writer is picked up.
+ * Newest handoff note and newest checkpoint text under a session's summary node.
+ * Checkpoints carry no `metadata.order`, so getChildren returns them oldest-first —
+ * the last match of each wins. The note's predicate is the note itself, not `kind`,
+ * so any future writer is picked up; the text's is `kind` because only a checkpoint
+ * body is a session summary.
  */
-async function latestHandoffNote(store, summaryNodeId) {
+async function latestCheckpoint(store, summaryNodeId) {
     const children = await store.getChildren(summaryNodeId);
-    const notes = children
-        .map(c => (typeof c.metadata.handoff_note === 'string' ? c.metadata.handoff_note.trim() : ''))
-        .filter(n => n.length > 0);
-    return notes[notes.length - 1] ?? '';
+    let note = '';
+    let text = '';
+    for (const child of children) {
+        const childNote = typeof child.metadata.handoff_note === 'string'
+            ? child.metadata.handoff_note.trim()
+            : '';
+        if (childNote)
+            note = childNote;
+        if (child.metadata.kind === 'checkpoint' && child.content.trim()) {
+            text = child.content.trim();
+        }
+    }
+    return { note, text };
 }
 /** Most recent session of the project, with its condensed rollup summary. */
 async function previousSession(store, projectLabel, maxChars) {
@@ -64,15 +75,18 @@ async function previousSession(store, projectLabel, maxChars) {
     if (!latest)
         return {};
     const summaryNode = await (0, tim_store_1.findChildByKind)(store, latest.sessionId, tim_store_1.KIND_SUMMARY_ROOT);
+    const { note, text } = summaryNode
+        ? await latestCheckpoint(store, summaryNode.id).catch(() => ({ note: '', text: '' }))
+        : { note: '', text: '' };
+    // Three sources, best first: the summarizer's rollup on the root, then the newest
+    // checkpoint's own text — a checkpoint never writes the root, so a session that only
+    // ever hit the session-end hook has nothing there — then the root's body.
     const stored = typeof summaryNode?.metadata.summary === 'string'
         ? summaryNode.metadata.summary
         : '';
-    const body = (stored || summaryNode?.content || '').trim();
+    const body = (stored || text || summaryNode?.content || '').trim();
     // The handoff note is what the previous session wrote *for this one*, so it goes
     // last: clampSummary drops from the front, which makes the tail the safe slot.
-    const note = summaryNode
-        ? await latestHandoffNote(store, summaryNode.id).catch(() => '')
-        : '';
     const clampedNote = note
         ? clampSummary(note, Math.floor(maxChars * HANDOFF_NOTE_BUDGET_SHARE))
         : '';

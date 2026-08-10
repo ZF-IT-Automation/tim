@@ -118,6 +118,37 @@ describe('session-start directive carries content', () => {
     expect(out).toContain('tim_load_project(label="P0063")');
   });
 
+  it('falls back to the checkpoint text when nothing rolled it up into the summary root', async () => {
+    // The shape the automatic session-end hook leaves behind: a checkpoint child and
+    // an untouched summary root, because only the summarizer writes metadata.summary.
+    const store = new TimStore(dbPath);
+    await store.createProject('P0065', { content: 'Checkpoint-only project' });
+    const sessions = new SessionManager(store);
+    await sessions.startProjectSession({
+      sessionId: 'sess-checkpoint-only',
+      projectId: 'P0065',
+      agentName: 'test',
+      cwd,
+      harness: 'test',
+    });
+    await sessions.logExchange('sess-checkpoint-only', [
+      { role: 'user', content: 'do the thing' },
+      { role: 'agent', content: 'done' },
+    ]);
+    await sessions.checkpoint('sess-checkpoint-only', {
+      summarize: async () => 'Session checkpoint: 1 exchange\nTopics: 1. do the thing',
+    });
+    store.close();
+    fs.writeFileSync(
+      path.join(cwd, '.tim-project'),
+      JSON.stringify({ version: 3, project: 'P0065' }),
+    );
+
+    const out = run(['resolve-project', '--cwd', cwd, '--format', 'directive']).stdout;
+    expect(out).toContain('── Previous session');
+    expect(out).toContain('Topics: 1. do the thing');
+  });
+
   it('falls back to the instruction-only directive when the project has no history', async () => {
     const store = new TimStore(dbPath);
     await store.createProject('P0064', { content: 'Empty project' });
