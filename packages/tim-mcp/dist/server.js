@@ -168,6 +168,10 @@ const TimWriteSchema = zod_1.z.object({
     force: zod_1.z.boolean().optional().default(false)
         .describe('Bypass the near-duplicate title check and write anyway'),
 });
+const TimWriteManySchema = zod_1.z.object({
+    entries: zod_1.z.array(TimWriteSchema).min(1).max(100)
+        .describe('Entries to write, same fields as tim_write. Max 100 per call.'),
+});
 const TimSearchSchema = zod_1.z.object({
     query: zod_1.z.string().describe('FTS5 search query'),
     topK: zod_1.z.number().min(1).optional().default(10)
@@ -508,6 +512,15 @@ exports.TOOL_DEFS = [
             'read it and update instead; pass force:true only when it is genuinely a different thing. ' +
             'Tags are topics (#tim, #security); status/priority belong in metadata.task.',
         schema: TimWriteSchema,
+    },
+    {
+        name: 'tim_write_many',
+        description: 'Write several NEW entries in one call (max 100), each with the same fields as ' +
+            'tim_write. Entries are written one by one and a failure isolates to its own entry: the ' +
+            'result is {created, failed}, where failed carries the index and the reason ' +
+            '(duplicate_suspected, unresolvable placement, tag validation). Use it for a batch of ' +
+            'unrelated notes; a single entry is still tim_write.',
+        schema: TimWriteManySchema,
     },
     {
         name: 'tim_search',
@@ -1442,8 +1455,165 @@ function getSessions() {
     }
     return sessions;
 }
+/**
+ * The body of tim_write, shared with tim_write_many.
+ *
+ * It returns an outcome rather than an MCP result so a batch caller can keep
+ * going after one entry is rejected — the failure paths here (unresolvable
+ * placement, deprecated tags, duplicate_suspected) are per-entry, not per-call.
+ */
+async function writeEntry(s, opts, ctx) {
+    const { parentTitle, projectId, where, force, ...writeOpts } = opts;
+    if (!writeOpts.parentId && where) {
+        const parts = where.split('/');
+        const projPart = parts[0]?.trim();
+        const secPart = parts.slice(1).join('/').trim();
+        if (!projPart || !secPart) {
+            return { ok: false, message: `Invalid where shorthand '${where}' — expected P0062/Tasks` };
+        }
+        const pr = await s.resolveProjectLabel(projPart);
+        if (pr.status === 'ambiguous') {
+            return { ok: false, message: `ambiguous project in where: ${pr.labels.join(', ')}` };
+        }
+        if (pr.status !== 'found') {
+            return { ok: false, message: `project not found in where: ${projPart}` };
+        }
+        const projEntry = await s.read(pr.label);
+        if (!projEntry) {
+            return { ok: false, message: `project not found in where: ${projPart}` };
+        }
+        const sr = await s.resolveSectionByTitle(projEntry.id, secPart);
+        if (sr.status === 'ambiguous') {
+            return {
+                ok: false,
+                message: `ambiguous section '${secPart}': ` +
+                    sr.candidates.map(c => `${c.title} (${c.id})`).join(', '),
+            };
+        }
+        if (sr.status !== 'found') {
+            return {
+                ok: false,
+                message: `section not found: ${secPart} (candidates: ${sr.candidates.join(', ')})`,
+            };
+        }
+        writeOpts.parentId = sr.id;
+    }
+    if (!writeOpts.parentId && parentTitle) {
+        if (!projectId) {
+            return { ok: false, message: 'projectId required when using parentTitle' };
+        }
+        const row = s.getDb().prepare(`
+      SELECT e.id FROM entries e
+      JOIN entries p ON e.parent_id = p.id
+      WHERE json_extract(p.metadata, '$.label') = ?
+        AND e.title = ?
+    `).get(projectId, parentTitle);
+        if (!row) {
+            return {
+                ok: false,
+                message: `Parent section '${parentTitle}' not found in project '${projectId}'`,
+            };
+        }
+        writeOpts.parentId = row.id;
+    }
+    // Enforce tags for non-schema entries. Schema entries (sections,
+    // project roots, sessions, exchanges, batch summaries, commits,
+    // checkpoints) are exempt — everything else is user content and
+    // must carry at least 2 tags for discoverability.
+    let parentKind;
+    let parentEntryTitle;
+    if (writeOpts.parentId) {
+        const parent = await s.read(writeOpts.parentId, { includeChildren: false });
+        parentKind = typeof parent?.metadata?.kind === 'string' ? parent.metadata.kind : undefined;
+        parentEntryTitle = parent?.title;
+    }
+    const supplemented = (0, write_validate_js_1.supplementWriteTags)(writeOpts.tags, writeOpts.metadata, parentKind);
+    writeOpts.tags = supplemented.tags;
+    writeOpts.metadata = supplemented.metadata ?? {};
+    // A child of a collection section is what that section collects —
+    // see entry_type in the project schema.
+    writeOpts.metadata =
+        (0, write_validate_js_1.applySectionEntryType)(writeOpts.metadata, parentEntryTitle, parentKind) ?? writeOpts.metadata;
+    const bugValidation = (0, write_validate_js_1.validateBugStatus)(writeOpts.metadata);
+    if (!bugValidation.ok) {
+        return { ok: false, message: bugValidation.message };
+    }
+    const tagWarnings = (0, tim_store_1.validateTagsDeprecated)(writeOpts.tags ?? []);
+    const { clean: cleanWriteTags } = (0, tim_core_1.stripDeprecatedTags)(writeOpts.tags ?? []);
+    writeOpts.tags = cleanWriteTags;
+    const tagsValidation = (0, write_validate_js_1.validateWriteTags)(writeOpts.tags, writeOpts.metadata);
+    if (!tagsValidation.ok) {
+        return { ok: false, message: formatToolResponse(tagsValidation) };
+    }
+    // Best-effort git provenance: which commit was HEAD when this
+    // knowledge was written. Skipped for schema entries, explicit
+    // provenance, and when disabled via env.
+    const provKind = typeof writeOpts.metadata?.kind === 'string'
+        ? writeOpts.metadata.kind
+        : undefined;
+    if (process.env.TIM_PROVENANCE !== '0' &&
+        writeOpts.metadata.provenance === undefined &&
+        (!provKind || !tim_core_1.SCHEMA_KINDS.has(provKind))) {
+        const prov = (0, provenance_js_1.captureProvenance)(ctx.isHttp ? '' : process.cwd());
+        if (prov) {
+            writeOpts.metadata.provenance = {
+                ...prov,
+                captured_at: new Date().toISOString(),
+            };
+        }
+    }
+    // Dedup gate: refuse knowledge writes whose title is nearly
+    // identical to an existing entry in the same project. Schema
+    // kinds (sessions, exchanges, summaries, …) are pipeline writes
+    // and are never blocked.
+    const dedupKind = typeof writeOpts.metadata?.kind === 'string'
+        ? writeOpts.metadata.kind
+        : undefined;
+    if (!force &&
+        process.env.TIM_DEDUP_CHECK !== '0' &&
+        (!dedupKind || !tim_core_1.SCHEMA_KINDS.has(dedupKind))) {
+        const candidateTitle = (writeOpts.title ?? opts.content.split('\n')[0]).trim();
+        const dedupScope = writeOpts.parentId
+            ? (s.getProjectLabel(writeOpts.parentId) ?? null)
+            : null;
+        // Without a resolvable project scope the gate would scan all projects
+        // and false-positive on generic titles ("Setup", "Next Steps", "Log").
+        // Skip the gate; callers can pass force:true for explicit opt-in.
+        if (dedupScope !== null) {
+            const dupes = candidateTitle
+                ? await s.findSimilar(candidateTitle, { projectLabel: dedupScope })
+                : [];
+            if (dupes.length > 0) {
+                return {
+                    ok: false,
+                    message: formatToolResponse({
+                        status: 'duplicate_suspected',
+                        candidates: dupes,
+                        hint: 'A very similar entry already exists. To extend it: tim_read ' +
+                            'the candidate, merge your text into its body, then tim_update ' +
+                            '(content replaces, it does not append). Pass force:true only if ' +
+                            'this is genuinely a different thing.',
+                    }),
+                };
+            }
+        }
+    }
+    const entry = await s.write(opts.content, {
+        ...writeOpts,
+        projectPath: ctx.callerProjectPath,
+    });
+    const usageSid = await usageSessionId();
+    if (usageSid) {
+        const readIds = s.getSessionReadIds(usageSid);
+        const cited = readIds.filter(rid => opts.content.includes(rid));
+        if (cited.length > 0) {
+            bestEffortTelemetry('markReferenced', () => s.markReferenced(cited, usageSid));
+        }
+    }
+    return { ok: true, entry, warnings: tagWarnings };
+}
 const WRITE_TOOLS = new Set([
-    'tim_write', 'tim_update', 'tim_verify', 'tim_delete', 'tim_delete_batch', 'tim_link',
+    'tim_write', 'tim_write_many', 'tim_update', 'tim_verify', 'tim_delete', 'tim_delete_batch', 'tim_link',
     'tim_session_start', 'tim_session_resume', 'tim_session_log', 'tim_checkpoint', 'tim_write_batch_summary',
     'tim_rollup_session_summary',
     'tim_record_commit',
@@ -1774,192 +1944,50 @@ async function createMcpServer(options = {}) {
                     };
                 }
                 case 'tim_write': {
-                    const opts = TimWriteSchema.parse(args);
-                    const { parentTitle, projectId, where, force, ...writeOpts } = opts;
-                    if (!writeOpts.parentId && where) {
-                        const parts = where.split('/');
-                        const projPart = parts[0]?.trim();
-                        const secPart = parts.slice(1).join('/').trim();
-                        if (!projPart || !secPart) {
-                            return {
-                                content: [{
-                                        type: 'text',
-                                        text: `Invalid where shorthand '${where}' — expected P0062/Tasks`,
-                                    }],
-                                isError: true,
-                            };
-                        }
-                        const pr = await s.resolveProjectLabel(projPart);
-                        if (pr.status === 'ambiguous') {
-                            return {
-                                content: [{
-                                        type: 'text',
-                                        text: `ambiguous project in where: ${pr.labels.join(', ')}`,
-                                    }],
-                                isError: true,
-                            };
-                        }
-                        if (pr.status !== 'found') {
-                            return {
-                                content: [{ type: 'text', text: `project not found in where: ${projPart}` }],
-                                isError: true,
-                            };
-                        }
-                        const projEntry = await s.read(pr.label);
-                        if (!projEntry) {
-                            return {
-                                content: [{ type: 'text', text: `project not found in where: ${projPart}` }],
-                                isError: true,
-                            };
-                        }
-                        const sr = await s.resolveSectionByTitle(projEntry.id, secPart);
-                        if (sr.status === 'ambiguous') {
-                            return {
-                                content: [{
-                                        type: 'text',
-                                        text: `ambiguous section '${secPart}': ${sr.candidates.map(c => `${c.title} (${c.id})`).join(', ')}`,
-                                    }],
-                                isError: true,
-                            };
-                        }
-                        if (sr.status !== 'found') {
-                            return {
-                                content: [{
-                                        type: 'text',
-                                        text: `section not found: ${secPart} (candidates: ${sr.candidates.join(', ')})`,
-                                    }],
-                                isError: true,
-                            };
-                        }
-                        writeOpts.parentId = sr.id;
-                    }
-                    if (!writeOpts.parentId && parentTitle) {
-                        if (!projectId) {
-                            return {
-                                content: [{ type: 'text', text: 'projectId required when using parentTitle' }],
-                                isError: true,
-                            };
-                        }
-                        const row = s.getDb().prepare(`
-              SELECT e.id FROM entries e
-              JOIN entries p ON e.parent_id = p.id
-              WHERE json_extract(p.metadata, '$.label') = ?
-                AND e.title = ?
-            `).get(projectId, parentTitle);
-                        if (!row) {
-                            return {
-                                content: [{
-                                        type: 'text',
-                                        text: `Parent section '${parentTitle}' not found in project '${projectId}'`,
-                                    }],
-                                isError: true,
-                            };
-                        }
-                        writeOpts.parentId = row.id;
-                    }
-                    // Enforce tags for non-schema entries. Schema entries (sections,
-                    // project roots, sessions, exchanges, batch summaries, commits,
-                    // checkpoints) are exempt — everything else is user content and
-                    // must carry at least 2 tags for discoverability.
-                    let parentKind;
-                    let parentEntryTitle;
-                    if (writeOpts.parentId) {
-                        const parent = await s.read(writeOpts.parentId, { includeChildren: false });
-                        parentKind = typeof parent?.metadata?.kind === 'string' ? parent.metadata.kind : undefined;
-                        parentEntryTitle = parent?.title;
-                    }
-                    const supplemented = (0, write_validate_js_1.supplementWriteTags)(writeOpts.tags, writeOpts.metadata, parentKind);
-                    writeOpts.tags = supplemented.tags;
-                    writeOpts.metadata = supplemented.metadata ?? {};
-                    // A child of a collection section is what that section collects —
-                    // see entry_type in the project schema.
-                    writeOpts.metadata =
-                        (0, write_validate_js_1.applySectionEntryType)(writeOpts.metadata, parentEntryTitle, parentKind) ?? writeOpts.metadata;
-                    const bugValidation = (0, write_validate_js_1.validateBugStatus)(writeOpts.metadata);
-                    if (!bugValidation.ok) {
-                        return errorResult(bugValidation.message);
-                    }
-                    const tagWarnings = (0, tim_store_1.validateTagsDeprecated)(writeOpts.tags ?? []);
-                    const { clean: cleanWriteTags } = (0, tim_core_1.stripDeprecatedTags)(writeOpts.tags ?? []);
-                    writeOpts.tags = cleanWriteTags;
-                    const tagsValidation = (0, write_validate_js_1.validateWriteTags)(writeOpts.tags, writeOpts.metadata);
-                    if (!tagsValidation.ok) {
-                        return {
-                            content: [{ type: 'text', text: formatToolResponse(tagsValidation) }],
-                            isError: true,
-                        };
-                    }
-                    // Best-effort git provenance: which commit was HEAD when this
-                    // knowledge was written. Skipped for schema entries, explicit
-                    // provenance, and when disabled via env.
-                    const provKind = typeof writeOpts.metadata?.kind === 'string'
-                        ? writeOpts.metadata.kind
-                        : undefined;
-                    if (process.env.TIM_PROVENANCE !== '0' &&
-                        writeOpts.metadata.provenance === undefined &&
-                        (!provKind || !tim_core_1.SCHEMA_KINDS.has(provKind))) {
-                        const prov = (0, provenance_js_1.captureProvenance)(isHttp ? '' : process.cwd());
-                        if (prov) {
-                            writeOpts.metadata.provenance = {
-                                ...prov,
-                                captured_at: new Date().toISOString(),
-                            };
-                        }
-                    }
-                    // Dedup gate: refuse knowledge writes whose title is nearly
-                    // identical to an existing entry in the same project. Schema
-                    // kinds (sessions, exchanges, summaries, …) are pipeline writes
-                    // and are never blocked.
-                    const dedupKind = typeof writeOpts.metadata?.kind === 'string'
-                        ? writeOpts.metadata.kind
-                        : undefined;
-                    if (!force &&
-                        process.env.TIM_DEDUP_CHECK !== '0' &&
-                        (!dedupKind || !tim_core_1.SCHEMA_KINDS.has(dedupKind))) {
-                        const candidateTitle = (writeOpts.title ?? opts.content.split('\n')[0]).trim();
-                        const dedupScope = writeOpts.parentId
-                            ? (s.getProjectLabel(writeOpts.parentId) ?? null)
-                            : null;
-                        // Without a resolvable project scope the gate would scan all projects
-                        // and false-positive on generic titles ("Setup", "Next Steps", "Log").
-                        // Skip the gate; callers can pass force:true for explicit opt-in.
-                        if (dedupScope !== null) {
-                            const dupes = candidateTitle
-                                ? await s.findSimilar(candidateTitle, { projectLabel: dedupScope })
-                                : [];
-                            if (dupes.length > 0) {
-                                return {
-                                    content: [{
-                                            type: 'text',
-                                            text: formatToolResponse({
-                                                status: 'duplicate_suspected',
-                                                candidates: dupes,
-                                                hint: 'A very similar entry already exists. To extend it: tim_read ' +
-                                                    'the candidate, merge your text into its body, then tim_update ' +
-                                                    '(content replaces, it does not append). Pass force:true only if ' +
-                                                    'this is genuinely a different thing.',
-                                            }),
-                                        }],
-                                    isError: true,
-                                };
-                            }
-                        }
-                    }
-                    const entry = await s.write(opts.content, {
-                        ...writeOpts,
-                        projectPath: callerProjectPath,
+                    const outcome = await writeEntry(s, TimWriteSchema.parse(args), {
+                        isHttp,
+                        callerProjectPath,
                     });
-                    const usageSid = await usageSessionId();
-                    if (usageSid) {
-                        const readIds = s.getSessionReadIds(usageSid);
-                        const cited = readIds.filter(rid => opts.content.includes(rid));
-                        if (cited.length > 0) {
-                            bestEffortTelemetry('markReferenced', () => s.markReferenced(cited, usageSid));
-                        }
-                    }
-                    const payload = tagWarnings.length > 0 ? { entry, warnings: tagWarnings } : entry;
+                    if (!outcome.ok)
+                        return errorResult(outcome.message);
+                    const payload = outcome.warnings.length > 0
+                        ? { entry: outcome.entry, warnings: outcome.warnings }
+                        : outcome.entry;
                     return {
                         content: [{ type: 'text', text: formatToolResponse(payload) }],
+                    };
+                }
+                case 'tim_write_many': {
+                    const { entries } = TimWriteManySchema.parse(args);
+                    const created = [];
+                    const failed = [];
+                    // Sequential and per-entry, not one transaction: the caller is usually an
+                    // agent writing a batch of unrelated notes, and one duplicate_suspected
+                    // must not discard the nineteen entries that were fine.
+                    for (const [index, opts] of entries.entries()) {
+                        const outcome = await writeEntry(s, opts, { isHttp, callerProjectPath })
+                            .catch(err => ({
+                            ok: false,
+                            message: err instanceof Error ? err.message : String(err),
+                        }));
+                        if (outcome.ok) {
+                            created.push({
+                                id: outcome.entry.id,
+                                title: outcome.entry.title,
+                                ...(outcome.warnings.length > 0 ? { warnings: outcome.warnings } : {}),
+                            });
+                        }
+                        else {
+                            failed.push({
+                                index,
+                                ...(opts.title ? { title: opts.title } : {}),
+                                error: outcome.message,
+                            });
+                        }
+                    }
+                    return {
+                        content: [{ type: 'text', text: formatToolResponse({ created, failed }) }],
+                        ...(failed.length === entries.length ? { isError: true } : {}),
                     };
                 }
                 case 'tim_search': {
