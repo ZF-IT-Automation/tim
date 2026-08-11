@@ -32,7 +32,7 @@ describe('buildPrompt vocabulary hint (criteria 1 + 2)', () => {
 
     expect(withoutField).toBe(withEmpty);
     expect(withoutField).not.toMatch(/already reuses/);
-    expect(withoutField).toContain('(1-3 content hashtags, lowercase kebab-case, # prefix)');
+    expect(withoutField).toContain('Give 1-3 subject tags');
   });
 
   it('still asks for the TAGS line when a vocabulary is present', () => {
@@ -56,7 +56,8 @@ describe('buildPrompt vocabulary hint (criteria 1 + 2)', () => {
   // sentence in a string literal that any later edit can quietly soften.
   it('names what a tag is and what it is not', () => {
     const prompt = buildPrompt(base);
-    expect(prompt).toContain('At least one tag must name a feature, subsystem or subject');
+    expect(prompt).toContain('Give 1-3 subject tags');
+    expect(prompt).toContain('A subject tag names a feature, subsystem or subject');
     for (const counterExample of ['#queue', '#tim']) {
       expect(prompt).toContain(counterExample);
     }
@@ -69,7 +70,19 @@ describe('buildPrompt vocabulary hint (criteria 1 + 2)', () => {
   it('offers activity tags only as a closed list of four', () => {
     const prompt = buildPrompt(base);
     expect(prompt).toContain('#design #implementation #debugging #review');
-    expect(prompt).toContain('at most one activity tag');
     expect(prompt).toMatch(/Invent no other activity word/);
+  });
+
+  // The budget counts subjects only. When the activity competed for the same
+  // 1-3 slots it won often enough to matter: 38 of 171 re-tagged summaries came
+  // back with one subject and an activity where the original had three or more
+  // subjects, so a topic that used to be findable stopped being findable.
+  it('puts the activity tag on top of the subject budget, not inside it', () => {
+    const prompt = buildPrompt(base);
+    expect(prompt).toContain('On top of those you may add one activity tag');
+    expect(prompt).toContain('It is an addition, never a replacement');
+    // The count must attach to subjects — "1-3 content hashtags" is what made
+    // the facet compete in the first place.
+    expect(prompt).not.toMatch(/1-3 content hashtags/);
   });
 });

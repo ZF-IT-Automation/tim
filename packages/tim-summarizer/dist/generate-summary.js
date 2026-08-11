@@ -133,15 +133,24 @@ function buildPrompt(batch) {
         // has none, so every run invents its own phrasing. Four fixed words cannot
         // drift, and they answer the question a subject tag alone cannot: not "the
         // summarizer" but "the session where the summarizer was debugged".
-        `End your response with a line: TAGS: #tag1 #tag2 ... (1-3 content hashtags, lowercase kebab-case, # prefix). ` +
-        `At least one tag must name a feature, subsystem or subject that could have its own file or spec — ` +
-        `#session-continuity, #summarizer, #topic-recall, #tim-viewer. ` +
+        `End your response with a line: TAGS: #tag1 #tag2 ... (lowercase kebab-case, # prefix). ` +
+        `Give 1-3 subject tags. A subject tag names a feature, subsystem or subject that could ` +
+        `have its own file or spec — #session-continuity, #summarizer, #topic-recall, #tim-viewer. ` +
         `Never a container (#queue, #tasks) and never the project itself (#tim, #hermes). ` +
-        `You may add at most one activity tag, and only from exactly this list: ` +
+        `One precise subject is better than three padded ones. ` +
+        // Counting the activity facet inside the same budget made it compete with
+        // the subjects instead of describing them: measured over 171 re-tagged
+        // summaries, 38 came back with one subject plus an activity where the
+        // original had three or more subjects — #luna-purge #soft-delete
+        // #quality-gate #duplicate-detection became #luna-purge #review. The
+        // activity is worth having (it separates building the summarizer from
+        // debugging it) but never at the price of a subject nobody can search for
+        // afterwards.
+        `On top of those you may add one activity tag, from exactly this list: ` +
         `#design #implementation #debugging #review. ` +
-        `Invent no other activity word — write #debugging, never #bugfix or #bug-fixing. ` +
-        `Add it only when the batch is clearly about that kind of work; a subject tag alone is a fine answer. ` +
-        `One precise tag is better than three padded ones.` +
+        `It is an addition, never a replacement — name every subject that belongs first, ` +
+        `and add the activity only if the batch is clearly about that kind of work. ` +
+        `Invent no other activity word — write #debugging, never #bugfix or #bug-fixing.` +
         vocabulary);
 }
 exports.FALLBACK_MARKER = 'TIM_SUMMARIZER_FALLBACK_NEEDED';
