@@ -63,8 +63,17 @@ const vcs_js_1 = require("./vcs.js");
 // Value import, but session-tree only imports TimStore as a *type*, so this is
 // erased at runtime and creates no cycle (see the note on the Inbox literal below).
 const session_tree_js_1 = require("./session-tree.js");
+// Constants-only module, no imports of its own — safe to pull in here.
+const commit_tree_js_1 = require("./commit-tree.js");
 const sync_methods_js_1 = require("./sync-methods.js");
 const secret_js_1 = require("./secret.js");
+/**
+ * Tags TIM stamps itself when recording a commit. They describe how an entry got
+ * here, not what it is about, so they are never part of a project's topic
+ * vocabulary. `#commits` is the older spelling, still on entries written before
+ * the commit tree settled on the singular.
+ */
+const MACHINE_STAMPED_TAGS = new Set([commit_tree_js_1.COMMIT_TAG, '#commits']);
 /**
  * Sanitize a user-supplied query string into a safe FTS5 MATCH expression.
  *
@@ -2841,8 +2850,11 @@ class TimStore {
      * the project already has instead of minting a synonym per run (`#queue`
      * versus `#queue-planning` for the same subject, measured two days apart).
      *
-     * Excludes exactly the two tags that are still stamped automatically. It
-     * deliberately does NOT exclude RETIRED_STRUCTURAL_TAGS: those words are
+     * Excludes the two structural batch tags and the machine-stamped commit tags.
+     * The commit tags are bookkeeping, not topic vocabulary — `#commit` alone
+     * carries 229 entries in P0063 and would otherwise head the frequency-ordered
+     * list the prompt tells the model to prefer. It deliberately does NOT exclude
+     * RETIRED_STRUCTURAL_TAGS: those words are
      * subject matter in a project about sessions and checkpoints, and dropping
      * them would cost the vocabulary four of the terms it is most about.
      *
@@ -2885,6 +2897,8 @@ class TimStore {
                 continue;
             for (const tag of parsed) {
                 if (typeof tag !== 'string' || session_tree_js_1.BATCH_STRUCTURAL_TAGS.has(tag))
+                    continue;
+                if (MACHINE_STAMPED_TAGS.has(tag))
                     continue;
                 counts.set(tag, (counts.get(tag) ?? 0) + 1);
             }

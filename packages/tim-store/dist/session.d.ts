@@ -59,9 +59,10 @@ export interface UnsummarizedBatch {
         task_summary?: string;
     };
     /**
-     * The project's existing content tags, most frequent first, for the prompt to
-     * reuse. Absent when the session has no project or the lookup failed — the
-     * prompt then falls back to its old wording rather than blocking the summary.
+     * The project's *reused* content tags, most frequent first, for the prompt to
+     * pick from. Absent when the session has no project, the lookup failed, or no
+     * tag has been used twice yet — the prompt then falls back to its old wording
+     * rather than blocking the summary.
      */
     vocabulary?: string[];
 }

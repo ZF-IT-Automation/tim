@@ -442,8 +442,11 @@ export declare class TimStore implements MemoryInterface {
      * the project already has instead of minting a synonym per run (`#queue`
      * versus `#queue-planning` for the same subject, measured two days apart).
      *
-     * Excludes exactly the two tags that are still stamped automatically. It
-     * deliberately does NOT exclude RETIRED_STRUCTURAL_TAGS: those words are
+     * Excludes the two structural batch tags and the machine-stamped commit tags.
+     * The commit tags are bookkeeping, not topic vocabulary — `#commit` alone
+     * carries 229 entries in P0063 and would otherwise head the frequency-ordered
+     * list the prompt tells the model to prefer. It deliberately does NOT exclude
+     * RETIRED_STRUCTURAL_TAGS: those words are
      * subject matter in a project about sessions and checkpoints, and dropping
      * them would cost the vocabulary four of the terms it is most about.
      *

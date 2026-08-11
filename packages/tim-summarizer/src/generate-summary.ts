@@ -51,14 +51,16 @@ export function generateSummaryHeuristic(batch: UnsummarizedBatch): string {
 }
 
 export function buildPrompt(batch: UnsummarizedBatch): string {
-  // The whole vocabulary, uncapped and frequency-ordered. A rare tag the
-  // summarizer never sees only gets rarer, which is the spiral this stops.
-  // No vocabulary (no project, or the lookup failed) → the prompt below is
-  // byte-for-byte the one that shipped before topic recall.
+  // Only tags the project reused, frequency-ordered (the caller drops
+  // singletons and the machine-stamped commit tags). "Verbatim" is the load
+  // bearing word: the drift being fixed is not only invented topics but
+  // respellings of agreed ones — #bugfix, #bugfixing and #bug-fixing all exist
+  // side by side in P0062, and each new spelling splits the topic again.
   const vocabulary = batch.vocabulary?.length
-    ? `\n\nThis project already uses these tags, most used first: ` +
+    ? `\n\nTags this project already reuses, most used first: ` +
       `${batch.vocabulary.join(' ')}\n` +
-      `Reuse a fitting existing tag before inventing a new one; mint a new tag only for a genuinely new topic.`
+      `If one of them fits, use it verbatim — same spelling, same hyphens. ` +
+      `Mint a new tag only for a subject none of them names.`
     : '';
 
   return (
@@ -68,7 +70,16 @@ export function buildPrompt(batch: UnsummarizedBatch): string {
       previousSummaries: batch.previousSummaries,
       sessionMeta: batch.sessionMeta,
     })}\n\n` +
-    `End your response with a line: TAGS: #tag1 #tag2 ... (3-5 content hashtags, lowercase kebab-case, # prefix).` +
+    // A tag exists to be searched for later, so it has to name the thing the
+    // work was about. Asking for 3-5 on a batch about one subject forces
+    // padding, and padded tags are where the one-off inventions come from:
+    // 407 of 509 tags in this database are used exactly once.
+    `End your response with a line: TAGS: #tag1 #tag2 ... (1-3 content hashtags, lowercase kebab-case, # prefix). ` +
+    `A tag names a feature, subsystem or subject that could have its own file or spec — ` +
+    `#session-continuity, #summarizer, #topic-recall, #tim-viewer. ` +
+    `Not an activity (#testing, #debugging, #refactoring), not a container (#queue, #tasks), ` +
+    `not the project itself (#tim, #hermes). ` +
+    `One precise tag is better than three padded ones; if only one subject fits, give one.` +
     vocabulary
   );
 }

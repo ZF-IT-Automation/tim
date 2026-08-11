@@ -62,6 +62,17 @@ describe('projectTagVocabulary (topic recall, criteria 1 + 2)', () => {
     ]);
   });
 
+  // #commit is stamped by tim_record_commit, not chosen by anyone. It carries
+  // 229 entries in P0063, so without this it heads the frequency-ordered list
+  // the prompt tells the model to prefer — the prompt would be recommending
+  // bookkeeping as the project's main topic.
+  it('excludes the machine-stamped commit tags', async () => {
+    await writeTagged('P0091', 'a', ['#commit', '#commits', '#staging-queue']);
+
+    const vocab = await store.projectTagVocabulary('P0091');
+    expect(vocab.map(t => t.tag)).toEqual(['#staging-queue']);
+  });
+
   it('returns nothing for an unknown project instead of throwing', async () => {
     expect(await store.projectTagVocabulary('P9999')).toEqual([]);
   });
@@ -84,5 +95,32 @@ describe('projectTagVocabulary (topic recall, criteria 1 + 2)', () => {
     const batch = await sessions.showUnsummarized('voc-1');
     expect(batch.vocabulary).toContain('#topic-recall');
     expect(batch.vocabulary).not.toContain('#session-summary');
+  });
+
+  // The full histogram is the honest answer for a caller that wants to measure
+  // drift; it is the wrong thing to put in a prompt. 407 of 509 tags in the live
+  // database are used exactly once, so an unfiltered list would mostly be
+  // one-off inventions offered to the model as precedent.
+  it('offers the summarizer only tags the project reused, not every singleton', async () => {
+    const sessions = new SessionManager(store);
+    await writeTagged('P0091', 'first', ['#agreed', '#one-off']);
+    await writeTagged('P0091', 'second', ['#agreed']);
+    await sessions.startProjectSession({
+      sessionId: 'voc-2',
+      projectId: 'P0091',
+      agentName: 'test',
+      cwd: '/tmp',
+      harness: 'test',
+    });
+    await sessions.logExchange('voc-2', [
+      { role: 'user', content: 'Q' },
+      { role: 'agent', content: 'A' },
+    ]);
+
+    const batch = await sessions.showUnsummarized('voc-2');
+    expect(batch.vocabulary).toContain('#agreed');
+    expect(batch.vocabulary).not.toContain('#one-off');
+    // The measurement path keeps seeing both — the filter belongs to the prompt.
+    expect((await store.projectTagVocabulary('P0091')).map(t => t.tag)).toContain('#one-off');
   });
 });

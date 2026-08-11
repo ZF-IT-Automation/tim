@@ -56,6 +56,14 @@ function assertSessionId(sessionId) {
     }
 }
 /**
+ * Both catch-up sweeps scan every session there is. The old literal cap of 100
+ * was invisible while TIM held fewer than a hundred sessions and silently
+ * blinded both sweeps once it passed that: at 377 sessions they could not see
+ * 277 of them, which is why the four sessions carrying five or more
+ * unsummarized exchanges never turned up in a catch-up run.
+ */
+const ALL_SESSIONS = 1_000_000;
+/**
  * Exchanges are stored through splitTitleBody, so the first line of the message
  * lives in the title and only the remainder in the content. Reading the content
  * alone silently drops that first line — for an agent answer that is its lead.
@@ -439,12 +447,18 @@ class SessionManager {
             model: typeof session.metadata.model === 'string' ? session.metadata.model : undefined,
             task_summary: typeof session.metadata.task_summary === 'string' ? session.metadata.task_summary : undefined,
         };
+        // Only tags the project has actually reused. Measured 2026-08-11: of 509
+        // distinct tags on batch summaries, 407 were used exactly once — feeding
+        // those back as "the vocabulary" would hand the model a list of one-off
+        // inventions to imitate and pay prompt tokens for the privilege. A tag that
+        // two summaries agreed on is the project's language; a singleton is a guess.
+        //
         // Best effort by design: a vocabulary lookup that fails must not stop a
         // session from being summarized. No field, old prompt, summary still runs.
         const vocabulary = sessionMeta.project
             ? await this.store
                 .projectTagVocabulary(sessionMeta.project)
-                .then(v => v.map(t => t.tag))
+                .then(v => v.filter(t => t.count >= 2).map(t => t.tag))
                 .catch(() => [])
             : [];
         return {
@@ -587,7 +601,7 @@ class SessionManager {
     /** Batch summary nodes with no content tags (only structural tags). */
     async showUntagged() {
         const results = [];
-        const sessions = await this.store.getByMetadataKind(session_tree_js_1.KIND_SESSION, 100);
+        const sessions = await this.store.getByMetadataKind(session_tree_js_1.KIND_SESSION, ALL_SESSIONS);
         for (const session of sessions) {
             try {
                 const summaryNode = await (0, session_tree_js_1.findChildByKind)(this.store, session.id, session_tree_js_1.KIND_SUMMARY_ROOT);
@@ -654,7 +668,7 @@ class SessionManager {
     /** Scan all project sessions and return their unsummarized batches (cleanup sweep). */
     async showAllUnsummarized() {
         const results = [];
-        const sessions = await this.store.getByMetadataKind(session_tree_js_1.KIND_SESSION, 100);
+        const sessions = await this.store.getByMetadataKind(session_tree_js_1.KIND_SESSION, ALL_SESSIONS);
         for (const session of sessions) {
             try {
                 const batch = await this.showUnsummarized(session.id);
