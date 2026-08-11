@@ -163,5 +163,47 @@ describe('CurateManager', () => {
       expect(read!.tags).toContain('#nosql');
       expect(read!.tags).not.toContain('#sql');
     });
+
+    // Merging a tag family is the case this exists for, and the entries most
+    // likely to carry the old name are the ones already carrying the new one.
+    it('leaves one copy when the target tag is already on the entry', async () => {
+      const entry = await store.write('Both names', { tags: ['#handoff', '#handoff-note', '#keep'] });
+
+      store.curate().tagRename('#handoff', '#handoff-note');
+
+      const read = await store.read(entry.id);
+      expect(read!.tags).toEqual(['#handoff-note', '#keep']);
+    });
+
+    describe('scoped to a project', () => {
+      // The same word means different things in different projects — measured
+      // on the live database, #handoff meant the worker handoff in one project
+      // and TIM's handoff note in another. Without a scope, merging it in one
+      // place silently rewrites the others.
+      it('renames inside the named project and leaves the rest alone', async () => {
+        await store.createProject('P0101', { content: 'mine' });
+        await store.createProject('P0102', { content: 'theirs' });
+        const mineRoot = (await store.read('P0101'))!;
+        const theirsRoot = (await store.read('P0102'))!;
+        const mine = await store.write('in scope', { parentId: mineRoot.id, tags: ['#handoff'] });
+        const theirs = await store.write('out of scope', { parentId: theirsRoot.id, tags: ['#handoff'] });
+
+        const count = store.curate().tagRename('#handoff', '#handoff-note', { rootId: mineRoot.id });
+
+        expect(count).toBe(1);
+        expect((await store.read(mine.id))!.tags).toEqual(['#handoff-note']);
+        expect((await store.read(theirs.id))!.tags).toEqual(['#handoff']);
+      });
+
+      it('reaches entries nested well below the project root', async () => {
+        await store.createProject('P0103', { content: 'deep' });
+        const root = (await store.read('P0103'))!;
+        const section = await store.write('Log', { parentId: root.id });
+        const child = await store.write('Batch 1', { parentId: section.id, tags: ['#old'] });
+
+        expect(store.curate().tagRename('#old', '#new', { rootId: root.id })).toBe(1);
+        expect((await store.read(child.id))!.tags).toEqual(['#new']);
+      });
+    });
   });
 });

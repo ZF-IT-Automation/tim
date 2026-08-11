@@ -504,6 +504,9 @@ const TimTagRemoveSchema = z.object({
 const TimTagRenameSchema = z.object({
   oldTag: z.string(),
   newTag: z.string(),
+  project: z.string().optional()
+    .describe('Restrict the rename to one project\'s subtree. Omit to rewrite the whole database — ' +
+      'correct only for a tag that means the same thing everywhere.'),
 });
 
 const TimCreateProjectSchema = z.object({
@@ -3209,10 +3212,26 @@ export async function createMcpServer(
         }
 
         case 'tim_tag_rename': {
-          const { oldTag, newTag } = TimTagRenameSchema.parse(args);
-          const count = s.curate().tagRename(oldTag, newTag);
+          const { oldTag, newTag, project } = TimTagRenameSchema.parse(args);
+          let rootId: string | undefined;
+          if (project) {
+            const resolved = await s.resolveProjectLabel(project);
+            if (resolved.status !== 'found') {
+              return errorResult(`Project not found: ${project}`);
+            }
+            const root = await s.read(resolved.label);
+            if (!root) return errorResult(`Project not found: ${project}`);
+            rootId = root.id;
+          }
+          const count = s.curate().tagRename(oldTag, newTag, { rootId });
           return {
-            content: [{ type: 'text', text: formatToolResponse({ oldTag, newTag, updatedCount: count }) }],
+            content: [{
+              type: 'text',
+              text: formatToolResponse({
+                oldTag, newTag, updatedCount: count,
+                scope: project ?? 'whole database',
+              }),
+            }],
           };
         }
 

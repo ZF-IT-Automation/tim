@@ -366,23 +366,52 @@ export class CurateManager {
     return rowToEntry(updated);
   }
 
-  tagRename(oldTag: string, newTag: string): number {
-    const rows = this.db.prepare(
-      "SELECT id, tags FROM entries WHERE tags LIKE '%' || ? || '%'",
-    ).all(oldTag) as { id: string; tags: string }[];
+  /**
+   * Rename a tag, optionally only inside one project's subtree.
+   *
+   * The scope is not a convenience. Merging tag families is the one cleanup
+   * that has to happen across a finished corpus — a single entry cannot show
+   * that three neighbours name the same thing differently — and the same word
+   * routinely means different things in different projects. Measured 2026-08-11:
+   * #handoff carried 7 entries in P0062, 6 in P0063 and 1 each in P0054 and
+   * P0072, meaning the worker handoff in one place and TIM's handoff note in
+   * another. Unscoped, merging it into #handoff-note was a wrong rewrite of
+   * three projects to fix one.
+   *
+   * `rootId` is the project's entry id; the caller resolves the label.
+   */
+  tagRename(oldTag: string, newTag: string, opts: { rootId?: string } = {}): number {
+    const rows = (opts.rootId
+      ? this.db.prepare(`
+          WITH RECURSIVE tree(id) AS (
+            SELECT id FROM entries WHERE id = ?
+            UNION ALL
+            SELECT c.id FROM entries c INNER JOIN tree t ON c.parent_id = t.id
+          )
+          SELECT e.id, e.tags FROM entries e
+          INNER JOIN tree ON tree.id = e.id
+          WHERE e.tags LIKE '%' || ? || '%'
+        `).all(opts.rootId, oldTag)
+      : this.db.prepare(
+          "SELECT id, tags FROM entries WHERE tags LIKE '%' || ? || '%'",
+        ).all(oldTag)) as { id: string; tags: string }[];
 
     const transaction = this.db.transaction(() => {
       let count = 0;
       for (const row of rows) {
         const tags = JSON.parse(row.tags) as string[];
         let changed = false;
-        const updated = tags.map(t => {
+        // Deduplicated: an entry already carrying the target keeps one copy of
+        // it rather than ending up with the same tag twice, which is exactly
+        // what a merge hits — the entries most likely to carry #handoff are the
+        // ones that also carry #handoff-note.
+        const updated = [...new Set(tags.map(t => {
           if (t === oldTag) {
             changed = true;
             return newTag;
           }
           return t;
-        });
+        }))];
         if (!changed) continue;
 
         this.db.prepare('UPDATE entries SET tags = ? WHERE id = ?')
