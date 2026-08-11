@@ -13,6 +13,7 @@ import { TIM_NEW_PROJECT_SKILL } from './tim-new-project.js';
 import { TIM_RESUME_SKILL } from './tim-resume.js';
 import { TIM_RESUME_TOPIC_SKILL } from './tim-resume-topic.js';
 import { TIM_CONTINUE_SKILL } from './tim-continue.js';
+import { TIM_TAG_INVENTORY_SKILL } from './tim-tag-inventory.js';
 
 export { TIM_HANDOFF_SKILL } from './tim-handoff.js';
 export { TIM_EXPLAIN_SKILL } from './tim-explain.js';
@@ -29,6 +30,7 @@ export { TIM_NEW_PROJECT_SKILL } from './tim-new-project.js';
 export { TIM_RESUME_SKILL } from './tim-resume.js';
 export { TIM_RESUME_TOPIC_SKILL } from './tim-resume-topic.js';
 export { TIM_CONTINUE_SKILL } from './tim-continue.js';
+export { TIM_TAG_INVENTORY_SKILL } from './tim-tag-inventory.js';
 
 export interface TimSkill {
   name: string;
@@ -55,6 +57,7 @@ export const ALL_TIM_SKILLS: TimSkill[] = [
   TIM_RESUME_SKILL,
   TIM_RESUME_TOPIC_SKILL,
   TIM_CONTINUE_SKILL,
+  TIM_TAG_INVENTORY_SKILL,
 ];
 
 export function getSkill(name: string): TimSkill | undefined {

@@ -13,6 +13,7 @@ export { TIM_NEW_PROJECT_SKILL } from './tim-new-project.js';
 export { TIM_RESUME_SKILL } from './tim-resume.js';
 export { TIM_RESUME_TOPIC_SKILL } from './tim-resume-topic.js';
 export { TIM_CONTINUE_SKILL } from './tim-continue.js';
+export { TIM_TAG_INVENTORY_SKILL } from './tim-tag-inventory.js';
 export interface TimSkill {
     name: string;
     description: string;

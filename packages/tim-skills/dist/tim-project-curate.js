@@ -50,6 +50,9 @@ Before any delete:
 
 End with \`tim_project_structure\` + \`tim_doctor\`, and report per invariant what now
 holds and what you deliberately left alone.
+
+Tags are content, not structure: merging names needs a reader who has seen the
+entries. Use the \`tim-tag-inventory\` skill for that, after this one.
 `,
 };
 //# sourceMappingURL=tim-project-curate.js.map

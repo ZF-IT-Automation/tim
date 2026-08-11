@@ -291,6 +291,9 @@ const TimStatsSchema = z.object({
   root: z.string().optional().describe('Optional project label to scope stats'),
   kind: z.string().optional().describe('Optional metadata.kind filter'),
   buckets: z.array(z.number()).optional().default([0, 100, 500, 1000, 5000, 10000, 50000]),
+  tags: z.boolean().optional().default(false)
+    .describe('Add the project\'s full tag histogram, most used first. Requires root. ' +
+      'Off by default because it is long — a few hundred tags for an old project.'),
 });
 
 const TimDeleteBatchSchema = z.object({
@@ -2604,7 +2607,10 @@ export async function createMcpServer(
         }
 
         case 'tim_stats': {
-          const { root, kind, buckets } = TimStatsSchema.parse(args);
+          const { root, kind, buckets, tags } = TimStatsSchema.parse(args);
+          if (tags && !root) {
+            return errorResult('tags:true needs root — a tag histogram is only meaningful per project.');
+          }
           const stats = await s.getContentStats(root, kind, buckets);
           const maxTokens = getBriefingMaxTokens(loadConfig());
           const scopedEstimate = root
@@ -2613,6 +2619,10 @@ export async function createMcpServer(
           const projectEstimates = root
             ? (scopedEstimate ? [scopedEstimate] : [])
             : await listProjectTokenEstimates(s, maxTokens);
+          // The unfiltered histogram, singletons included. The summarizer takes
+          // only reused tags because it is choosing from them; a curator is
+          // looking for the drift, and the drift is mostly singletons.
+          const tagHistogram = tags && root ? await s.projectTagVocabulary(root) : undefined;
           const payload = {
             ...stats,
             tokenBudget: {
@@ -2622,6 +2632,15 @@ export async function createMcpServer(
               scopedEstimate,
               overBudgetProjects: projectEstimates.filter(p => p.overBriefingBudget).map(p => p.label),
             },
+            ...(tagHistogram
+              ? {
+                  tags: {
+                    distinct: tagHistogram.length,
+                    usedOnce: tagHistogram.filter(t => t.count === 1).length,
+                    histogram: tagHistogram,
+                  },
+                }
+              : {}),
           };
           return {
             content: [{ type: 'text', text: formatToolResponse(payload) }],

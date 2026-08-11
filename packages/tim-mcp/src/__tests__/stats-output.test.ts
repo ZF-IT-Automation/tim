@@ -144,6 +144,38 @@ describe('MCP tool response JSON safety (BUG 2)', () => {
     expect(typeof stats.totalEntries).toBe('number');
   });
 
+  // The tag inventory the curate workflow runs on. Nothing else exposes a
+  // per-project tag histogram: stats() computes one but database-wide, and
+  // tim_stats never surfaced it, so the skill had no way to see the drift.
+  it('tim_stats returns the project tag histogram only when asked for it', async () => {
+    await client.callTool('tim_create_project', { label: 'P0077', memoryOnly: true });
+    await client.callTool('tim_write', { content: 'a', where: 'P0077/Log', tags: ['#alpha'] });
+    await client.callTool('tim_write', { content: 'b', where: 'P0077/Log', tags: ['#alpha', '#beta'] });
+
+    const off = JSON.parse((await client.callTool('tim_stats', { root: 'P0077' })).result!.content[0].text);
+    expect(off.tags).toBeUndefined();
+
+    const on = JSON.parse(
+      (await client.callTool('tim_stats', { root: 'P0077', tags: true })).result!.content[0].text,
+    );
+    // Four, not two: the histogram covers the whole subtree, and a freshly
+    // created project node carries #tim and #entry from its own scaffolding.
+    // That is the honest count for a curator deciding what to merge — hiding
+    // scaffolding tags would hide them from the person who has to judge them.
+    expect(on.tags.distinct).toBe(4);
+    expect(on.tags.usedOnce).toBe(3);
+    // Most used first — the curator reads the shape off the top of the list.
+    expect(on.tags.histogram[0]).toEqual({ tag: '#alpha', count: 2 });
+  });
+
+  it('tim_stats refuses a tag histogram without a project instead of returning a global one', async () => {
+    const resp = await client.callTool('tim_stats', { tags: true });
+    const text = resp.result!.content[0].text;
+    // A database-wide histogram would merge vocabularies that mean different
+    // things per project, which is the mistake this whole workflow guards against.
+    expect(text).toMatch(/needs root/);
+  });
+
   it('tim_write + tim_read round-trip: response is parseable JSON even with # in tags', async () => {
     // Seed an entry with tags that include the # character (the smoking gun
     // from the BUG 2 crash report).

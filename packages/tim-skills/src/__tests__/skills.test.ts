@@ -150,7 +150,21 @@ describe('weak-model skills', () => {
     }
   });
 
-  it('listSkills returns all fifteen skills', () => {
+  // The two lines that keep this skill from doing damage. An unscoped rename
+  // rewrites every project — measured, #handoff meant different things in four
+  // of them — and the head-word families it must not touch look exactly like
+  // the ones it should merge.
+  it('tag inventory insists on the project scope and on leaving real siblings alone', () => {
+    const skill = getSkill('tim-tag-inventory');
+    expect(skill).toBeDefined();
+    expect(skill!.content).toContain('tim_stats({ root: label, tags: true })');
+    expect(skill!.content).toMatch(/Always pass `project`/);
+    expect(skill!.content).toContain('Distinct siblings sharing a head word');
+    expect(skill!.content).toContain('**Leave alone.**');
+    expect(lineCount(skill!.content)).toBeLessThanOrEqual(50);
+  });
+
+  it('listSkills returns all sixteen skills', () => {
     expect(listSkills().map(s => s.name)).toEqual([
       'tim-handoff',
       'tim-explain',
@@ -167,6 +181,7 @@ describe('weak-model skills', () => {
       'tim-resume',
       'tim-resume-topic',
       'tim-continue',
+      'tim-tag-inventory',
     ]);
   });
 });
