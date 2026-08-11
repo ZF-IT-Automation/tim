@@ -176,5 +176,22 @@ export function formatTopicResume(r: TopicResume): string {
     }
   }
 
+  // The same silence that the empty case already fixed, in the case that is not
+  // empty. Measured against the live database: #topic-recall matches five
+  // entries in P0063, of which this view renders one — the other four are notes
+  // and Summary roots, kinds it deliberately does not show. Reporting "1
+  // session" and nothing else reads as "that is all there is", and the reader
+  // never learns a different tool would show more.
+  const rendered = r.sessions.length + r.work.length;
+  if (r.otherHits > rendered) {
+    const rest = r.otherHits - rendered;
+    out.push(
+      '',
+      `${rest} further ${rest === 1 ? 'entry carries' : 'entries carry'} ${r.tag} in kinds ` +
+        `this view does not render (notes, Summary roots). ` +
+        `Use tim_search with tag=${r.tag} to see them.`,
+    );
+  }
+
   return out.join('\n');
 }

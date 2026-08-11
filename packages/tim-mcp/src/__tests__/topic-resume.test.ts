@@ -184,4 +184,27 @@ describe('tim_resume_topic (criteria 5, 6, 7)', () => {
     const topic = await collectTopicResume(store, 'P0082', '#nothing-here');
     expect(formatTopicResume(topic)).toBe('No entries tagged #nothing-here in P0082.');
   });
+
+  // A rendered result that hides its own incompleteness is the worse failure of
+  // the two: the empty case at least prompts the reader to look further, while
+  // "1 session" reads as the whole answer. Measured against the live database,
+  // #topic-recall matched five entries in P0063 and this view rendered one.
+  it('names the entries it did not render, even when it rendered some', async () => {
+    await seedSession({
+      id: 'has-batch', date: '2026-03-01T10:00:00.000Z', tag: '#partial',
+      summary: 'the summarized part',
+    });
+    // A plain note: carries the tag, is neither a batch summary nor open work,
+    // so no block of this view will ever show it.
+    const root = (await store.read('P0082'))!;
+    await store.write('a note nobody renders', { parentId: root.id, tags: ['#partial'] });
+
+    const topic = await collectTopicResume(store, 'P0082', '#partial');
+    const text = formatTopicResume(topic);
+
+    expect(topic.sessions).toHaveLength(1);
+    expect(text).toContain('── Sessions on this topic (1');
+    expect(text).toMatch(/further entr(y carries|ies carry) #partial/);
+    expect(text).toContain('tim_search with tag=#partial');
+  });
 });
