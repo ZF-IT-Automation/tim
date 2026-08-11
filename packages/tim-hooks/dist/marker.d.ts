@@ -133,6 +133,8 @@ export interface DirectiveBriefing {
     previousSessionLabel?: string;
     /** Condensed previous-session summary; newlines are preserved verbatim. */
     previousSessionSummary?: string;
+    /** Raw turns of the previous session that no batch summary covers, oldest first. */
+    recentExchanges?: string[];
     /** Open work lines (tasks, next steps), already formatted and bounded. */
     openWork?: string[];
 }

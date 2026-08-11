@@ -494,6 +494,8 @@ export interface DirectiveBriefing {
   previousSessionLabel?: string;
   /** Condensed previous-session summary; newlines are preserved verbatim. */
   previousSessionSummary?: string;
+  /** Raw turns of the previous session that no batch summary covers, oldest first. */
+  recentExchanges?: string[];
   /** Open work lines (tasks, next steps), already formatted and bounded. */
   openWork?: string[];
 }
@@ -504,9 +506,19 @@ function briefingBlock(briefing?: DirectiveBriefing): string[] {
   const out: string[] = [];
 
   const summary = briefing.previousSessionSummary?.trim();
+  const label = briefing.previousSessionLabel?.trim();
   if (summary) {
-    const label = briefing.previousSessionLabel?.trim();
     out.push('', `── Previous session${label ? ` (${label})` : ''} ──`, summary);
+  }
+
+  const recent = (briefing.recentExchanges ?? []).map(b => b.trimEnd()).filter(b => b.trim());
+  if (recent.length > 0) {
+    // Carries the session label when no summary did — a session the summarizer never
+    // reached renders these turns and nothing else.
+    const heading = summary
+      ? '── Since the last summary ──'
+      : `── Previous session${label ? ` (${label})` : ''}, not yet summarized ──`;
+    out.push('', heading, ...recent);
   }
 
   const openWork = (briefing.openWork ?? []).map(l => l.trimEnd()).filter(l => l.trim());

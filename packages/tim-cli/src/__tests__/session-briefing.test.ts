@@ -149,6 +149,49 @@ describe('session-start directive carries content', () => {
     expect(out).toContain('Topics: 1. do the thing');
   });
 
+  it('renders the newest unsummarized turns, not the oldest uncovered batch', async () => {
+    // Two uncovered batches is the case that discriminates: a reader that returns the
+    // first uncovered batch (what the summarizer wants) would show turns 3-4 and drop
+    // the newest ones, which are the turns carrying "next: …".
+    const store = new TimStore(dbPath);
+    await store.createProject('P0066', { content: 'Raw tail project' });
+    const sessions = new SessionManager(store);
+    await sessions.startProjectSession({
+      sessionId: 'sess-raw-tail',
+      projectId: 'P0066',
+      agentName: 'test',
+      cwd,
+      harness: 'test',
+      batchSize: 2,
+    });
+    for (let turn = 1; turn <= 10; turn++) {
+      await sessions.logExchange('sess-raw-tail', [
+        { role: 'user', content: `question ${turn}` },
+        { role: 'agent', content: `answer ${turn}` },
+      ]);
+    }
+    // Only batch 1 (turns 1-2) ever got summarized; batches 2 and 3 are uncovered.
+    await sessions.writeBatchSummary('sess-raw-tail', 1, 'covered turns 1 and 2', {
+      seqFrom: 1,
+      seqTo: 2,
+    });
+    store.close();
+    fs.writeFileSync(
+      path.join(cwd, '.tim-project'),
+      JSON.stringify({ version: 3, project: 'P0066' }),
+    );
+
+    const out = run(['resolve-project', '--cwd', cwd, '--format', 'directive']).stdout;
+    expect(out).toContain('not yet summarized');
+    expect(out).toContain('question 10');
+    expect(out).toContain('answer 10');
+    // Eight turns are uncovered, six fit: the cap drops the oldest of them.
+    expect(out).toContain('question 5');
+    expect(out).not.toContain('question 4');
+    // Summarized turns are not repeated raw.
+    expect(out).not.toContain('question 2');
+  });
+
   it('falls back to the instruction-only directive when the project has no history', async () => {
     const store = new TimStore(dbPath);
     await store.createProject('P0064', { content: 'Empty project' });

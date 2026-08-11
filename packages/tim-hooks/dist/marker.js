@@ -481,9 +481,18 @@ function briefingBlock(briefing) {
         return [];
     const out = [];
     const summary = briefing.previousSessionSummary?.trim();
+    const label = briefing.previousSessionLabel?.trim();
     if (summary) {
-        const label = briefing.previousSessionLabel?.trim();
         out.push('', `── Previous session${label ? ` (${label})` : ''} ──`, summary);
+    }
+    const recent = (briefing.recentExchanges ?? []).map(b => b.trimEnd()).filter(b => b.trim());
+    if (recent.length > 0) {
+        // Carries the session label when no summary did — a session the summarizer never
+        // reached renders these turns and nothing else.
+        const heading = summary
+            ? '── Since the last summary ──'
+            : `── Previous session${label ? ` (${label})` : ''}, not yet summarized ──`;
+        out.push('', heading, ...recent);
     }
     const openWork = (briefing.openWork ?? []).map(l => l.trimEnd()).filter(l => l.trim());
     if (openWork.length > 0) {
