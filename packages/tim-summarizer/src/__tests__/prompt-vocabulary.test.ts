@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { buildPrompt } from '../generate-summary.js';
+import { BATCH_SUMMARY_MAX_CHARS } from 'tim-core';
 import type { UnsummarizedBatch } from '../mcp-client.js';
 
 const base: UnsummarizedBatch = {
@@ -84,5 +85,20 @@ describe('buildPrompt vocabulary hint (criteria 1 + 2)', () => {
     // The count must attach to subjects — "1-3 content hashtags" is what made
     // the facet compete in the first place.
     expect(prompt).not.toMatch(/1-3 content hashtags/);
+  });
+});
+
+describe('batch summary length budget', () => {
+  const batch = base;
+
+  it('states the character budget rather than asking vaguely for brevity', () => {
+    expect(buildPrompt(batch)).toContain(`under ${BATCH_SUMMARY_MAX_CHARS} characters`);
+  });
+
+  // A model told only to be shorter drops whatever is easiest to drop, which is
+  // the structured tail — exactly the part the next session reads.
+  it('says what to sacrifice first, so decisions and open items survive the cut', () => {
+    const prompt = buildPrompt(batch);
+    expect(prompt).toMatch(/never a decision or an open item/);
   });
 });

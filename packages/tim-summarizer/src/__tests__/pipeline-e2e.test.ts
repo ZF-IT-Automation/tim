@@ -56,7 +56,11 @@ function writeSessionMarker(dir: string, overrides: Partial<Parameters<typeof wr
   });
 }
 
-vi.mock('tim-core', () => ({
+// Only the three config accessors need faking. Replacing the whole module makes
+// every later import from tim-core an undefined that fails somewhere unrelated —
+// which is how adding one exported constant broke this file.
+vi.mock('tim-core', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('tim-core')>()),
   loadConfig: vi.fn(() => ({
     dbPath: ':memory:',
     deviceId: 'test',

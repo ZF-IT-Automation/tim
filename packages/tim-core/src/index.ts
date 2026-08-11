@@ -364,6 +364,11 @@ export {
 export { evaluateLoadGate } from './load-gate.js';
 export { SCHEMA_KINDS } from './schema-kinds.js';
 export {
+  BATCH_SUMMARY_MAX_CHARS,
+  BATCH_SUMMARY_RENDER_CHARS,
+  truncateSummary,
+} from './summary-budget.js';
+export {
   PROJECT_SCHEMA,
   findSchemaSection,
   schemaSectionNames,

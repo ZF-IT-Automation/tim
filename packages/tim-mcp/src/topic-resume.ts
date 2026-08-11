@@ -10,6 +10,7 @@
 // their bodies. Full text is forgiving but bm25-ranked and truncating, so it
 // cannot promise completeness the way the tag scan does.
 import type { Entry } from 'tim-core';
+import { truncateSummary } from 'tim-core';
 import type { TimStore } from 'tim-store';
 import { KIND_BATCH, KIND_SESSION, KIND_SUMMARY_ROOT } from 'tim-store';
 import { recentExchanges } from 'tim-hooks';
@@ -129,7 +130,10 @@ export async function collectTopicResume(
       date,
       batchIndex: Number(hit.metadata.batch_index) || 0,
       title: hit.title,
-      summary: (hit.content ?? '').trim(),
+      // Cut here, not at render time, so the id needed to read the rest is still
+      // in hand. The 441 summaries written before the budget existed run to 4953
+      // characters; the prompt limit only binds the ones written from now on.
+      summary: truncateSummary((hit.content ?? '').trim(), hit.id),
     });
     const known = candidates.get(located.session.id);
     if (!known || date > known.date) {

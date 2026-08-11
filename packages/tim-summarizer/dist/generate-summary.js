@@ -116,6 +116,15 @@ function buildPrompt(batch) {
             `Mint at most one tag that is not on the list, and only for a subject none of them names.`
         : '';
     return (`Summarize this agent session batch thematically (bullet themes, decisions, open items). ` +
+        // Without a stated budget the model has none, and the summaries drifted with
+        // it: across 553 of them the median is 637 characters while the top decile
+        // passes 2440. Length is not the cost by itself — a topic recall renders ten
+        // summaries at once, so the tail decides whether reading a topic costs three
+        // thousand tokens or eight. The instruction says what to give up first, or a
+        // model asked only to be shorter drops the open items and keeps the prose.
+        `Keep the summary under ${tim_core_1.BATCH_SUMMARY_MAX_CHARS} characters. If it does not fit, ` +
+        `cut prose and detail, never a decision or an open item — those are what the next ` +
+        `session reads. ` +
         `Batch index ${batch.batchIndex}. JSON:\n${JSON.stringify({
             exchanges: batch.exchanges,
             previousSummaries: batch.previousSummaries,
