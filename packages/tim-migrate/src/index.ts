@@ -11,3 +11,9 @@ export type { HmemFormat, HmemFormatInfo, HmemManifest, HmemManifestLabel } from
 
 export { migrateTagsToTypes } from './tags-to-types.js';
 export type { MigrationReport as TagsToTypesReport, MigrationEntryResult } from './tags-to-types.js';
+
+export { migrateRetireDeprecatedTags } from './retire-deprecated-tags.js';
+export type {
+  RetireDeprecatedTagsReport,
+  RetireDeprecatedTagsEntryResult,
+} from './retire-deprecated-tags.js';

@@ -31,6 +31,7 @@ const COMMAND_VALUE_OPTIONS = {
     statusline: new Set(['cwd', 'session', 'format']),
     export: new Set(['format']),
     'migrate tags-to-types': new Set(['sample-limit']),
+    'migrate retire-deprecated-tags': new Set(['sample-limit']),
     snapshot: new Set(['db', 'out', 'prune-hours']),
     restore: new Set(['from', 'db']),
     'release-check': new Set(['skip-tests']),

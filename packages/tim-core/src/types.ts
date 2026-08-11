@@ -124,6 +124,25 @@ export const DEPRECATED_PRIORITY_TAGS = new Set([
   '#priority-critical', '#priority-high', '#priority-medium', '#priority-low',
   'priority-critical', 'priority-high', 'priority-medium', 'priority-low',
 ]);
+// Structural tags the session tree used to stamp on every node it wrote. The write sites
+// are gone, so nothing emits them automatically any more.
+//
+// Deliberately NOT part of DEPRECATED_TAGS: these words are subject matter, not just
+// plumbing. In a project about sessions, checkpoints and exchanges, a summary of the work
+// on checkpoint reaping *should* be able to carry #checkpoint — banning the word would
+// cost the tag vocabulary four of the terms the project is most about. The structural
+// meaning lives in metadata.kind and never needed a tag.
+//
+// This set exists for one job: the one-time cleanup of the rows the old write sites left
+// behind (`tim migrate retire-deprecated-tags`). Run that cleanup before using any of
+// these as a content tag, or the sweep will take the new tag with it.
+export const RETIRED_STRUCTURAL_TAGS = new Set([
+  '#exchange', 'exchange',
+  '#session', 'session',
+  '#exchanges', 'exchanges',
+  '#sessions', 'sessions',
+  '#checkpoint', 'checkpoint',
+]);
 export const DEPRECATED_TAGS = new Set([
   ...DEPRECATED_STATUS_TAGS,
   ...DEPRECATED_PRIORITY_TAGS,

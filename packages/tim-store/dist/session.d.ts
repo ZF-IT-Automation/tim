@@ -81,6 +81,7 @@ export interface ResumePayload {
         taskSummary?: string;
     };
     sessionSummary: string;
+    handoffNote?: string;
     batchSummaries: ResumeBatchSummary[];
     recentExchanges: ResumeExchange[];
     warnings: string[];
@@ -160,6 +161,11 @@ export declare class SessionManager {
     /** Upsert session-summary-root content after checkpoint / rollup. */
     updateSessionSummary(sessionId: string, summaryText: string): Promise<Entry>;
     resumeSession(oldSessionId: string, opts?: ResumeSessionOpts): Promise<ResumePayload>;
+    /**
+     * Delete checkpoint nodes whose session rollup already exists on the Summary root.
+     * Sweep all sessions when sessionId omitted. Returns count deleted.
+     */
+    reapCoveredCheckpoints(sessionId?: string): Promise<number>;
     listResumableSessions(projectRef: string, limit?: number): Promise<ResumableSession[]>;
     private static readonly PROJECT_STATS_MARKER;
     /** Refresh project-root stats line (entry count + last activity). */

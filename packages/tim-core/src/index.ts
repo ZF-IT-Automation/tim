@@ -34,6 +34,7 @@ export {
   DEPRECATED_STATUS_TAGS,
   DEPRECATED_PRIORITY_TAGS,
   DEPRECATED_TAGS,
+  RETIRED_STRUCTURAL_TAGS,
   isDeprecatedTag,
   stripDeprecatedTags,
 } from './types.js';

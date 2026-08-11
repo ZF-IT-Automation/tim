@@ -61,6 +61,7 @@ export declare function isMetadataType(value: unknown): value is MetadataType;
 export declare function normalizeLegacyTypeTag(tag: string | null | undefined): LegacyMetadataType | null;
 export declare const DEPRECATED_STATUS_TAGS: Set<string>;
 export declare const DEPRECATED_PRIORITY_TAGS: Set<string>;
+export declare const RETIRED_STRUCTURAL_TAGS: Set<string>;
 export declare const DEPRECATED_TAGS: Set<string>;
 export declare function isDeprecatedTag(tag: string): boolean;
 export type HealthSeverity = 'OK' | 'WARN' | 'BLOCKER';

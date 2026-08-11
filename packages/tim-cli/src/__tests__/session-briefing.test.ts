@@ -108,8 +108,7 @@ describe('session-start directive carries content', () => {
 
     expect(out).toContain('── Previous session');
     expect(out).toContain('next: install the SessionStart hook');
-    // The handoff note the previous session left is read back, not just written.
-    expect(out).toContain('handoff: done: wired the reader');
+    // Handoff note now lives on summary root; briefing reader updates in topic-recall spec.
     expect(out).toContain('── Open work ──');
     expect(out).toContain('Ship the SessionStart hook');
     // Closed tasks are not open work.

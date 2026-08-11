@@ -1,7 +1,7 @@
 "use strict";
 // TIM Migration — package exports
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.migrateTagsToTypes = exports.createV2HmemDatabase = exports.inspectHmemManifest = exports.inspectHmemFile = exports.detectHmemFormat = exports.repairProjectKind = exports.repairImportFlags = exports.labelFromMetadata = exports.tim_import = exports.exportToMarkdown = exports.exportToHmem = exports.tim_export = void 0;
+exports.migrateRetireDeprecatedTags = exports.migrateTagsToTypes = exports.createV2HmemDatabase = exports.inspectHmemManifest = exports.inspectHmemFile = exports.detectHmemFormat = exports.repairProjectKind = exports.repairImportFlags = exports.labelFromMetadata = exports.tim_import = exports.exportToMarkdown = exports.exportToHmem = exports.tim_export = void 0;
 var export_js_1 = require("./export.js");
 Object.defineProperty(exports, "tim_export", { enumerable: true, get: function () { return export_js_1.tim_export; } });
 Object.defineProperty(exports, "exportToHmem", { enumerable: true, get: function () { return export_js_1.exportToHmem; } });
@@ -18,4 +18,6 @@ Object.defineProperty(exports, "inspectHmemManifest", { enumerable: true, get: f
 Object.defineProperty(exports, "createV2HmemDatabase", { enumerable: true, get: function () { return hmem_format_js_1.createV2HmemDatabase; } });
 var tags_to_types_js_1 = require("./tags-to-types.js");
 Object.defineProperty(exports, "migrateTagsToTypes", { enumerable: true, get: function () { return tags_to_types_js_1.migrateTagsToTypes; } });
+var retire_deprecated_tags_js_1 = require("./retire-deprecated-tags.js");
+Object.defineProperty(exports, "migrateRetireDeprecatedTags", { enumerable: true, get: function () { return retire_deprecated_tags_js_1.migrateRetireDeprecatedTags; } });
 //# sourceMappingURL=index.js.map

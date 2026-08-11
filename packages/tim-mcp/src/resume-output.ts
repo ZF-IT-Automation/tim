@@ -42,6 +42,10 @@ export function formatResumePayload(p: ResumePayload): string {
     p.sessionSummary.trim() || '(no session summary yet)',
   ].join('\n');
 
+  const handoffSection = p.handoffNote
+    ? ['## Handoff Note', p.handoffNote.trim()].join('\n')
+    : '';
+
   const batchSection = p.batchSummaries.length
     ? [
         `## Batch Summaries (${p.batchSummaries.length})`,
@@ -65,6 +69,7 @@ export function formatResumePayload(p: ResumePayload): string {
   return [
     header,
     summarySection,
+    ...(handoffSection ? [handoffSection] : []),
     batchSection,
     exchangeSection,
     ...(warningLines.length ? [warningLines.join('\n')] : []),

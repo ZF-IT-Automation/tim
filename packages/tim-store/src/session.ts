@@ -119,6 +119,7 @@ export interface ResumePayload {
     taskSummary?: string;
   };
   sessionSummary: string;
+  handoffNote?: string;
   batchSummaries: ResumeBatchSummary[];
   recentExchanges: ResumeExchange[];
   warnings: string[];
@@ -227,7 +228,6 @@ export class SessionManager {
         harness,
         cwd,
       },
-      tags: ['#session'],
     });
   }
 
@@ -249,7 +249,6 @@ export class SessionManager {
           newSessionsSection = await this.store.write(SESSIONS_SECTION_TITLE, {
             parentId: newProject.id,
             metadata: { kind: KIND_SESSIONS_ROOT, render_depth: 0, order: SESSIONS_SECTION_ORDER },
-            tags: ['#sessions'],
           });
         }
 
@@ -268,7 +267,6 @@ export class SessionManager {
       sessionsSection = await this.store.write(SESSIONS_SECTION_TITLE, {
         parentId: project.id,
         metadata: { kind: KIND_SESSIONS_ROOT, render_depth: 0, order: SESSIONS_SECTION_ORDER },
-        tags: ['#sessions'],
       });
     }
 
@@ -294,7 +292,6 @@ export class SessionManager {
         ...(model && { model }),
         ...(taskSummary && { task_summary: taskSummary }),
       },
-      tags: ['#session'],
     });
 
     await this.store.write(SUMMARY_NODE_TITLE, {
@@ -308,7 +305,6 @@ export class SessionManager {
     await this.store.write(EXCHANGES_NODE_TITLE, {
       parentId: session.id,
       metadata: { kind: KIND_EXCHANGES_ROOT, render_depth: 0 },
-      tags: ['#exchanges'],
     });
 
     return session;
@@ -338,7 +334,6 @@ export class SessionManager {
           seq: nextSeq,
           sessionId,
         },
-        tags: ['#exchange'],
       });
       written.push(entry);
     }
@@ -422,7 +417,6 @@ export class SessionManager {
         currentUser = this.store.writeSync(e.content, {
           parentId: batchNode.id,
           metadata: { kind: KIND_EXCHANGE, role: 'user', seq, sessionId, ...keyMeta },
-          tags: ['#exchange'],
         });
         usersInBatch.push(currentUser);
         result.push(currentUser);
@@ -432,7 +426,6 @@ export class SessionManager {
         const a = this.store.writeSync(e.content, {
           parentId,
           metadata: { kind: KIND_EXCHANGE, role: 'agent', seq: agentSeq, sessionId, ...keyMeta },
-          tags: ['#exchange'],
         });
         result.push(a);
       }
@@ -864,6 +857,23 @@ export class SessionManager {
       });
     }
 
+    if (opts.handoffNote) {
+      await this.store.update(summaryNode.id, {
+        metadata: {
+          ...summaryNode.metadata,
+          handoff_note: opts.handoffNote,
+        },
+      });
+      const verifiedRoot = await this.store.read(summaryNode.id);
+      const noteOk =
+        typeof verifiedRoot?.metadata.handoff_note === 'string' &&
+        verifiedRoot.metadata.handoff_note === opts.handoffNote;
+      if (!noteOk) {
+        throw new Error('Handoff note verification failed: note not durable');
+      }
+      summaryNode = verifiedRoot!;
+    }
+
     const exchanges = await this.getSessionExchanges(sessionId);
     const summarize = opts.summarize ?? DEFAULT_SUMMARIZER;
     const summaryText = await summarize(exchanges);
@@ -874,9 +884,8 @@ export class SessionManager {
         kind: 'checkpoint',
         sessionId,
         count: exchanges.length,
-        ...(opts.handoffNote ? { handoff_note: opts.handoffNote } : {}),
       },
-      tags: [SESSION_SUMMARY_TAG, BATCH_SUMMARY_TAG, '#checkpoint'],
+      tags: [SESSION_SUMMARY_TAG, BATCH_SUMMARY_TAG],
     });
 
     await this.store.link(summary.id, sessionId, 'summarizes');
@@ -1046,6 +1055,10 @@ export class SessionManager {
     }
 
     const freshSession = (await this.store.read(canonical))!;
+    const handoffNote =
+      typeof summaryNode?.metadata.handoff_note === 'string'
+        ? summaryNode.metadata.handoff_note
+        : undefined;
     return {
       sessionId: canonical,
       sessionMeta: {
@@ -1063,10 +1076,42 @@ export class SessionManager {
           ? freshSession.metadata.task_summary : undefined,
       },
       sessionSummary: summaryNode?.content ?? '',
+      ...(handoffNote !== undefined && { handoffNote }),
       batchSummaries,
       recentExchanges,
       warnings,
     };
+  }
+
+  /**
+   * Delete checkpoint nodes whose session rollup already exists on the Summary root.
+   * Sweep all sessions when sessionId omitted. Returns count deleted.
+   */
+  async reapCoveredCheckpoints(sessionId?: string): Promise<number> {
+    const sessionIds = sessionId
+      ? [this.store.resolveSessionAlias(sessionId)]
+      : (await this.store.getByMetadataKind(KIND_SESSION, 10000)).map(s => s.id);
+
+    let reaped = 0;
+    for (const sid of sessionIds) {
+      const summaryNode = await findChildByKind(this.store, sid, KIND_SUMMARY_ROOT);
+      if (!summaryNode) continue;
+      const rollup = summaryNode.metadata.summary;
+      if (typeof rollup !== 'string' || !rollup.trim()) continue;
+
+      const checkpoints = await this.store.getChildByKind(summaryNode.id, 'checkpoint');
+      for (const cp of checkpoints) {
+        const edges = await this.store.getEdges(cp.id, 'outgoing');
+        for (const e of edges) {
+          if (e.type === 'summarizes') {
+            await this.store.unlink(e.id);
+          }
+        }
+        await this.store.delete(cp.id, true);
+        reaped++;
+      }
+    }
+    return reaped;
   }
 
   async listResumableSessions(projectRef: string, limit = 10): Promise<ResumableSession[]> {

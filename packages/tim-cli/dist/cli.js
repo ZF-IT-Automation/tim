@@ -119,9 +119,11 @@ const COMMAND_HELP = {
     import: 'Usage: tim import <path.hmem> [--dry-run] [--deduplicate] [--repair-flags] [--no-snapshot-check]',
     'migrate-from-hmem': 'Usage: tim migrate-from-hmem <path.hmem> [--deduplicate] [--no-deduplicate] [--dry-run]',
     'migrate-schema': 'Usage: tim migrate-schema',
-    migrate: 'Usage: tim migrate <tags-to-types|project-kind> [options]',
+    migrate: 'Usage: tim migrate <tags-to-types|project-kind|retire-deprecated-tags> [options]',
     'migrate tags-to-types': 'Usage: tim migrate tags-to-types [--dry-run] [--sample-limit <count>]',
     'migrate project-kind': 'Usage: tim migrate project-kind [--dry-run]',
+    'migrate retire-deprecated-tags': 'Usage: tim migrate retire-deprecated-tags [--dry-run] [--sample-limit <count>]',
+    'reap-checkpoints': 'Usage: tim reap-checkpoints',
     snapshot: 'Usage: tim snapshot [--db <path>] [--out <path>] [--prune-hours <hours>] [--no-symlink] [--quiet]',
     restore: 'Usage: tim restore [--from <path>] [--db <path>] [--list] [--dry-run] [--force]',
     'release-check': 'Usage: tim release-check [--beta] [--json] [--skip-tests <true|false>]',
@@ -189,6 +191,7 @@ Commands:
   migrate-from-hmem        Run guided hmem migration
   migrate-schema           Apply pending database schema migrations
   migrate                  Run metadata migrations
+  reap-checkpoints         Reap checkpoints whose session already has a summarizer rollup
   snapshot                 Snapshot the TIM database
   restore                  Restore the TIM database
   release-check            Run release verification
@@ -917,6 +920,40 @@ async function cmdMigrateProjectKind(args) {
         store.close();
     }
 }
+async function cmdMigrateRetireDeprecatedTags(args) {
+    const { flags } = (0, args_js_1.parseArgs)(args, {
+        valueOptions: (0, args_js_1.valueOptionsFor)('migrate', 'retire-deprecated-tags'),
+    });
+    const dryRun = flags['dry-run'] === 'true';
+    const sampleLimit = flags['sample-limit'] ? parseInt(flags['sample-limit'], 10) : 20;
+    const config = (0, tim_core_1.loadConfig)();
+    const store = new tim_store_1.TimStore(getDbPath(config));
+    try {
+        const report = await (0, tim_migrate_1.migrateRetireDeprecatedTags)(store, { dryRun, sampleLimit });
+        console.log(JSON.stringify(report, null, 2));
+        if (dryRun) {
+            console.error(`\n[tim] migrate retire-deprecated-tags — DRY RUN. ${report.migrated} entries would be cleaned.`);
+        }
+        else {
+            console.error(`\n[tim] migrate retire-deprecated-tags — ${report.migrated} cleaned, ${report.skipped} skipped, ${report.errors.length} errors.`);
+        }
+    }
+    finally {
+        store.close();
+    }
+}
+async function cmdReapCheckpoints() {
+    const config = (0, tim_core_1.loadConfig)();
+    const store = new tim_store_1.TimStore(getDbPath(config));
+    try {
+        const checkpointsReaped = await new tim_store_1.SessionManager(store).reapCoveredCheckpoints();
+        console.log(JSON.stringify({ checkpointsReaped }, null, 2));
+        console.error(`\n[tim] reap-checkpoints — ${checkpointsReaped} checkpoint(s) reaped.`);
+    }
+    finally {
+        store.close();
+    }
+}
 async function cmdRootEntries(args) {
     const { flags } = (0, args_js_1.parseArgs)(args, {
         valueOptions: (0, args_js_1.valueOptionsFor)('root-entries'),
@@ -1088,14 +1125,21 @@ async function main() {
             else if (sub === 'project-kind') {
                 await cmdMigrateProjectKind(rest.slice(1));
             }
+            else if (sub === 'retire-deprecated-tags') {
+                await cmdMigrateRetireDeprecatedTags(rest.slice(1));
+            }
             else {
                 console.error(`Usage: tim migrate <subcommand>\n` +
-                    `  tags-to-types   Convert legacy #rule / #human tags to metadata.type [--dry-run] [--sample-limit N]\n` +
-                    `  project-kind    Backfill metadata.kind=project on imported P-prefix roots [--dry-run]`);
+                    `  tags-to-types           Convert legacy #rule / #human tags to metadata.type [--dry-run] [--sample-limit N]\n` +
+                    `  project-kind            Backfill metadata.kind=project on imported P-prefix roots [--dry-run]\n` +
+                    `  retire-deprecated-tags  Strip every deprecated tag (structural, status, priority) from existing rows [--dry-run]`);
                 process.exit(1);
             }
             break;
         }
+        case 'reap-checkpoints':
+            await cmdReapCheckpoints();
+            break;
         case 'snapshot':
             await (0, snapshot_js_1.cmdSnapshot)(rest);
             break;

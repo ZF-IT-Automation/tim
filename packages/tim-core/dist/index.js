@@ -2,7 +2,7 @@
 // TIM Core Types — v0.1.0-alpha
 // These types define the contract that all modules must implement.
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.daysSinceLastVerified = exports.staleDays = exports.isStale = exports.schemaSectionNames = exports.findSchemaSection = exports.PROJECT_SCHEMA = exports.SCHEMA_KINDS = exports.evaluateLoadGate = exports.timSessionCachePath = exports.resolveActiveSessionId = exports.readTimSessionCache = exports.hooksEnabled = exports.normalizeHookScripts = exports.getTimDir = exports.getConfigPath = exports.saveConfig = exports.loadConfig = exports.InProcessEventBus = exports.resolveLWW = exports.stripDeprecatedTags = exports.isDeprecatedTag = exports.DEPRECATED_TAGS = exports.DEPRECATED_PRIORITY_TAGS = exports.DEPRECATED_STATUS_TAGS = exports.normalizeLegacyTypeTag = exports.isMetadataType = exports.isBuiltinType = exports.isBuiltinMetadataType = exports.METADATA_TYPES = exports.ALL_METADATA_TYPES = exports.LEGACY_METADATA_TYPES = exports.BUILTIN_TYPES = exports.BUILTIN_METADATA_TYPES = void 0;
+exports.daysSinceLastVerified = exports.staleDays = exports.isStale = exports.schemaSectionNames = exports.findSchemaSection = exports.PROJECT_SCHEMA = exports.SCHEMA_KINDS = exports.evaluateLoadGate = exports.timSessionCachePath = exports.resolveActiveSessionId = exports.readTimSessionCache = exports.hooksEnabled = exports.normalizeHookScripts = exports.getTimDir = exports.getConfigPath = exports.saveConfig = exports.loadConfig = exports.InProcessEventBus = exports.resolveLWW = exports.stripDeprecatedTags = exports.isDeprecatedTag = exports.RETIRED_STRUCTURAL_TAGS = exports.DEPRECATED_TAGS = exports.DEPRECATED_PRIORITY_TAGS = exports.DEPRECATED_STATUS_TAGS = exports.normalizeLegacyTypeTag = exports.isMetadataType = exports.isBuiltinType = exports.isBuiltinMetadataType = exports.METADATA_TYPES = exports.ALL_METADATA_TYPES = exports.LEGACY_METADATA_TYPES = exports.BUILTIN_TYPES = exports.BUILTIN_METADATA_TYPES = void 0;
 var types_js_1 = require("./types.js");
 Object.defineProperty(exports, "BUILTIN_METADATA_TYPES", { enumerable: true, get: function () { return types_js_1.BUILTIN_METADATA_TYPES; } });
 Object.defineProperty(exports, "BUILTIN_TYPES", { enumerable: true, get: function () { return types_js_1.BUILTIN_TYPES; } });
@@ -16,6 +16,7 @@ Object.defineProperty(exports, "normalizeLegacyTypeTag", { enumerable: true, get
 Object.defineProperty(exports, "DEPRECATED_STATUS_TAGS", { enumerable: true, get: function () { return types_js_1.DEPRECATED_STATUS_TAGS; } });
 Object.defineProperty(exports, "DEPRECATED_PRIORITY_TAGS", { enumerable: true, get: function () { return types_js_1.DEPRECATED_PRIORITY_TAGS; } });
 Object.defineProperty(exports, "DEPRECATED_TAGS", { enumerable: true, get: function () { return types_js_1.DEPRECATED_TAGS; } });
+Object.defineProperty(exports, "RETIRED_STRUCTURAL_TAGS", { enumerable: true, get: function () { return types_js_1.RETIRED_STRUCTURAL_TAGS; } });
 Object.defineProperty(exports, "isDeprecatedTag", { enumerable: true, get: function () { return types_js_1.isDeprecatedTag; } });
 Object.defineProperty(exports, "stripDeprecatedTags", { enumerable: true, get: function () { return types_js_1.stripDeprecatedTags; } });
 var lww_js_1 = require("./lww.js");

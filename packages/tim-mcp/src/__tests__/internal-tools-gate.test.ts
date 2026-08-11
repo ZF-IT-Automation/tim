@@ -149,7 +149,8 @@ describe('TIM_EXPOSE_INTERNAL_TOOLS gate', () => {
       });
       expect(resp.error).toBeUndefined();
       expect(resp.result?.isError).toBeFalsy();
-      expect(resp.result?.content[0]?.text).toContain('done: task D | next: task 5');
+      const resume = await client.callTool('tim_session_resume', { sessionId: 'agent-handoff' });
+      expect(resume.result?.content[0]?.text).toContain('done: task D | next: task 5');
     } finally {
       client.kill();
     }

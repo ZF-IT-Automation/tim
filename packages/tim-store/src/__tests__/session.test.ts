@@ -128,7 +128,7 @@ describe('SessionManager', () => {
       expect(edges.some(e => e.type === 'summarizes' && e.targetId === 'sess-cp')).toBe(true);
     });
 
-    it('stores handoff_note in checkpoint metadata when provided', async () => {
+    it('stores handoff_note on the summary root when provided', async () => {
       await sessions.sessionStart({
         sessionId: 'sess-handoff',
         agentName: 'agent',
@@ -136,10 +136,12 @@ describe('SessionManager', () => {
         harness: 'test',
       });
       await sessions.sessionLog('sess-handoff', [{ role: 'user', content: 'hi' }]);
-      const summary = await sessions.checkpoint('sess-handoff', {
+      const checkpoint = await sessions.checkpoint('sess-handoff', {
         handoffNote: 'done: x | wip: y | next: z',
       });
-      expect(summary.metadata.handoff_note).toBe('done: x | wip: y | next: z');
+      expect(checkpoint.metadata.handoff_note).toBeUndefined();
+      const summaryRoot = (await store.getChildByKind('sess-handoff', 'session-summary-root'))[0];
+      expect(summaryRoot?.metadata.handoff_note).toBe('done: x | wip: y | next: z');
     });
 
     it('runs decay only after summary is durable', async () => {

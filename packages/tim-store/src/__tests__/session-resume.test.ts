@@ -63,6 +63,13 @@ describe('session resume', () => {
       }
     }
 
+    it('includes handoff note in payload when present', async () => {
+      await seedSession('sess-HN');
+      await sessions.checkpoint('sess-HN', { handoffNote: 'done: ship | next: verify' });
+      const p = await sessions.resumeSession('sess-HN', { newHarnessId: 'h-hn' });
+      expect(p.handoffNote).toBe('done: ship | next: verify');
+    });
+
     it('returns summary, batch summaries in order, and last N raw exchanges ascending', async () => {
       await seedSession('sess-R', 12);
       await sessions.writeBatchSummary('sess-R', 1, 'summary of batch 1', { seqFrom: 1, seqTo: 5 });
