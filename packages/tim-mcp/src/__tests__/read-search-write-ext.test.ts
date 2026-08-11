@@ -235,6 +235,37 @@ describe('tim_search extended', () => {
     expect(response.results.every((r: { title: string }) => r.title === 'AlphaSearchToken')).toBe(true);
   });
 
+  // Criterion 4 is a tool contract, not just a store method: `query` had to
+  // become optional and the "at least one of query/tag" check had to move into
+  // the handler, because a Zod .refine() returns a ZodEffects the tool registry
+  // cannot take.
+  it('tag without query returns the tag lookup, oldest first', async () => {
+    await seedScopedEntry('P0530', 'FirstTagged', ['#chronology', '#test']);
+    await seedScopedEntry('P0531', 'SecondTagged', ['#chronology', '#test']);
+    await seedScopedEntry('P0532', 'Unrelated', ['#other', '#test']);
+
+    const resp = await client.callTool('tim_search', { tag: '#chronology' });
+    expect(resp.result!.isError).toBeUndefined();
+    const response = JSON.parse(resp.result!.content[0].text);
+    expect(response.results.map((r: { title: string }) => r.title))
+      .toEqual(['FirstTagged', 'SecondTagged']);
+  });
+
+  it('tag without query still respects topK', async () => {
+    await seedScopedEntry('P0533', 'TagOne', ['#capped', '#test']);
+    await seedScopedEntry('P0534', 'TagTwo', ['#capped', '#test']);
+
+    const resp = await client.callTool('tim_search', { tag: '#capped', topK: 1 });
+    const response = JSON.parse(resp.result!.content[0].text);
+    expect(response.results.map((r: { title: string }) => r.title)).toEqual(['TagOne']);
+  });
+
+  it('neither query nor tag is an error, not an empty result set', async () => {
+    const resp = await client.callTool('tim_search', {});
+    expect(resp.result!.isError).toBe(true);
+    expect(resp.result!.content[0].text).toContain('query, a tag, or both');
+  });
+
   it('type tag status filters combine with AND', async () => {
     await seedScopedEntry('P0520', 'Errmark', ['#combo', '#test'], {
       type: 'error',

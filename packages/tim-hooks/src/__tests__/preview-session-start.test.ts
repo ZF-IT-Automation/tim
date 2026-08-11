@@ -85,6 +85,31 @@ describe('previewSessionStart', () => {
     expect(fromSession.directive).toContain('TIM session bound to project');
   });
 
+  // The automatic session start stopped asking for past work (topic recall,
+  // criterion 8), which leaves this the only caller that does. Without this
+  // test the render blocks in briefingBlock look dead and get deleted — and
+  // /tim-continue, which is exactly this call, would quietly render nothing.
+  it('still renders the previous session and its uncovered turns', async () => {
+    await sessions.updateSessionSummary('prev-1', 'rolled up: wired the reader');
+    await sessions.logExchange('prev-1', [
+      { role: 'user', content: 'uncovered question' },
+      { role: 'agent', content: 'uncovered answer' },
+    ]);
+
+    const preview = await previewSessionStart(store, {
+      projectId: 'P0055',
+      maxTokens: 1000,
+      cwd: dir,
+    });
+
+    expect(preview.directive).toContain('── Previous session');
+    expect(preview.directive).toContain('rolled up: wired the reader');
+    // Both render blocks, not just the summary one: the raw tail is what a
+    // session that died mid-work leaves behind.
+    expect(preview.directive).toContain('── Since the last summary ──');
+    expect(preview.directive).toContain('uncovered question');
+  });
+
   it('refuses an unknown project instead of briefing on nothing', async () => {
     await expect(
       previewSessionStart(store, { projectId: 'P9999', maxTokens: 400, cwd: dir }),

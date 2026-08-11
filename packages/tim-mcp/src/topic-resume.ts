@@ -15,6 +15,7 @@ const MAX_TAG_HITS = 500;
 export interface TopicSessionHit {
   sessionId: string;
   date: string;
+  batchIndex: number;
   title: string;
   summary: string;
 }
@@ -85,6 +86,7 @@ export async function collectTopicResume(
     sessions.push({
       sessionId: located.session.id,
       date,
+      batchIndex: Number(hit.metadata.batch_index) || 0,
       title: hit.title,
       summary: (hit.content ?? '').trim(),
     });
@@ -94,7 +96,9 @@ export async function collectTopicResume(
     }
   }
 
-  sessions.sort((a, b) => a.date.localeCompare(b.date) || a.title.localeCompare(b.title));
+  // Within a session, batch order — not title order, which would put "Batch 10"
+  // before "Batch 2" the moment a session runs long enough to have ten.
+  sessions.sort((a, b) => a.date.localeCompare(b.date) || a.batchIndex - b.batchIndex);
 
   const newestEntry = [...candidates.entries()].sort(
     (a, b) => b[1].date.localeCompare(a[1].date) || b[0].localeCompare(a[0]),

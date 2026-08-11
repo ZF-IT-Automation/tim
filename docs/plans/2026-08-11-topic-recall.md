@@ -132,6 +132,28 @@ and the consumer.
     used; above ~95% the summarizer has stopped minting genuinely new topics.
     Either reading is the trigger to split tagging into its own pass — not before.
 
+## Measured after the build (2026-08-11, live `~/.tim/tim.db`, 9610 entries)
+
+The two numbers the spec left open, both answered by `projectTagVocabulary`:
+
+- **P0063 has 348 distinct content tags.** 236 of them — **67.8%** — are used
+  exactly once. That is the spiral criterion 1 exists to stop, quantified.
+- Timings, read-only: the vocabulary query takes **23 ms**, a scoped
+  `searchByTag` **4.6 ms**, unscoped **3.7 ms**. No index is warranted for
+  `tags LIKE` at this size; revisit if a project passes ~50k entries.
+- Two follow-ups the measurement surfaced, neither in this spec's scope:
+  - `#commit` (229) dominates the list and is stamped by the commit recorder,
+    not chosen by the summarizer. It is not one of the two tags criterion 1
+    excludes, so it now heads the prompt's vocabulary. Consider excluding
+    machine-stamped tags as a class rather than by name.
+  - `tim` appears alongside `#tim` (13 uses versus 90) — some write path stored
+    a tag without its `#`. `tim_tag_rename` can merge the two.
+- **Prompt size:** 348 tags is roughly 4–5 KB added to every batch prompt. The
+  no-cap decision stands (a tag the summarizer never sees only gets rarer), but
+  criterion 13's reuse-rate reading should be taken against this number — if the
+  vocabulary keeps growing at 68% singletons, capping by *count* rather than by
+  rank is the next lever.
+
 ## Build order (planner pass, 2026-08-11, added after the spec was grilled)
 
 The Risk section dictates two commits, not thirteen. Criterion 13 is a
