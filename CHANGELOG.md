@@ -7,7 +7,7 @@ All notable changes to TIM are documented in this file.
 ### Added
 
 - **Topic recall** — past work is retrieved by topic instead of injected by recency.
-  - The summarizer prompt now carries the project's complete content-tag vocabulary, frequency-ordered and uncapped, with the instruction to reuse a fitting tag before inventing one (`TimStore.projectTagVocabulary`, `UnsummarizedBatch.vocabulary`). A failed lookup leaves the prompt unchanged.
+  - The summarizer prompt now carries the tags the project has actually reused, frequency-ordered, with the instruction to reuse a fitting one verbatim before inventing a new one (`TimStore.projectTagVocabulary`, `UnsummarizedBatch.vocabulary`). A failed lookup leaves the prompt unchanged.
   - `aggregateSessionTags` uses a batch-count dependent bar — every content tag up to two batches, twice-seen from three on — so short sessions stop losing their topics.
   - `tim_search` accepts `tag` without `query`: a tag lookup returning everything carrying it, oldest first. With both, the tag stays a filter on the ranked results.
   - New MCP tool `tim_resume_topic(tag)` and skill `/tim-resume-topic`: batch summaries across all matching sessions in chronological order, the tasks/bugs/ideas sharing the tag, and — from the newest matched session only — its handoff note and uncovered raw turns. A newest session without a note says so; it never falls back to an older one.
@@ -17,9 +17,14 @@ All notable changes to TIM are documented in this file.
 
 ### Changed
 
+- **Tags name subjects, not activities.** The summarizer asked for "3-5 content hashtags" and said nothing about what a tag is; on a batch about one subject that forces padding, and padding is where one-off tags come from — 407 of the 509 distinct tags on batch summaries were used exactly once. It now asks for 1-3, requires at least one to name a feature, subsystem or subject that could have its own file or spec, and rules out containers and the project's own name. Activity is a closed list of four words (`#design #implementation #debugging #review`), at most one, because free-form activity words are where the drift actually lived: `#bugfix`, `#bugfixing`, `#bug-fixing` and `#codefix` all coexist in one project, as do seven spellings of managing skills.
+- **The vocabulary hint no longer recommends bookkeeping.** `projectTagVocabulary` excludes the machine-stamped commit tags (`#commit` alone carries 229 entries in P0063 and headed the frequency-ordered list the prompt tells the model to prefer), and the summarizer path takes only tags used at least twice. The unfiltered histogram stays available to callers measuring drift.
+
 - **The automatic session start no longer injects past work.** `collectDirectiveBriefing` takes `includePastWork`: the two start-hook callers pass `false`, so a fresh session gets the project header, open work and the binding instruction; `tim_preview_briefing` passes `true`. The previous session used to be chosen by recency alone, which made it noise in every session about something else. Use `/tim-continue` for the last session, `/tim-resume-topic` for a subject.
 
 ### Fixed
+
+- **Both catch-up sweeps see every session.** `showAllUnsummarized` and `showUntagged` scanned `getByMetadataKind(KIND_SESSION, 100)`. The cap was invisible below a hundred sessions and silently blinded both once past it: at 377 sessions they could not see 277, including every session that had logged five or more exchanges and never been summarized.
 
 - **The summarizer no longer logs its own prompts back into TIM.** Its process tree is marked with `TIM_SUMMARIZER=1`, and the hook entry points (`tim hook <sub>`, the start directive) no-op under that flag — the agent CLI the summarizer runs is otherwise a hook-registered session of its own, so its prompt was stored as a user exchange and fed the next summarizer run.
 

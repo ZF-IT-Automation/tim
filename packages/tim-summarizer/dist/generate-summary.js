@@ -115,12 +115,23 @@ function buildPrompt(batch) {
         // work was about. Asking for 3-5 on a batch about one subject forces
         // padding, and padded tags are where the one-off inventions come from:
         // 407 of 509 tags in this database are used exactly once.
+        //
+        // The activity facet is a closed list on purpose. Free-form activity words
+        // are where the measured drift actually lives — #bugfix, #bugfixing,
+        // #bug-fixing and #codefix all coexist in P0062, as do seven spellings of
+        // managing skills. A subject has a name the code already fixed; an activity
+        // has none, so every run invents its own phrasing. Four fixed words cannot
+        // drift, and they answer the question a subject tag alone cannot: not "the
+        // summarizer" but "the session where the summarizer was debugged".
         `End your response with a line: TAGS: #tag1 #tag2 ... (1-3 content hashtags, lowercase kebab-case, # prefix). ` +
-        `A tag names a feature, subsystem or subject that could have its own file or spec — ` +
+        `At least one tag must name a feature, subsystem or subject that could have its own file or spec — ` +
         `#session-continuity, #summarizer, #topic-recall, #tim-viewer. ` +
-        `Not an activity (#testing, #debugging, #refactoring), not a container (#queue, #tasks), ` +
-        `not the project itself (#tim, #hermes). ` +
-        `One precise tag is better than three padded ones; if only one subject fits, give one.` +
+        `Never a container (#queue, #tasks) and never the project itself (#tim, #hermes). ` +
+        `You may add at most one activity tag, and only from exactly this list: ` +
+        `#design #implementation #debugging #review. ` +
+        `Invent no other activity word — write #debugging, never #bugfix or #bug-fixing. ` +
+        `Add it only when the batch is clearly about that kind of work; a subject tag alone is a fine answer. ` +
+        `One precise tag is better than three padded ones.` +
         vocabulary);
 }
 exports.FALLBACK_MARKER = 'TIM_SUMMARIZER_FALLBACK_NEEDED';

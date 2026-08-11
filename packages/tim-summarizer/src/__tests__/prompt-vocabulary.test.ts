@@ -44,9 +44,20 @@ describe('buildPrompt vocabulary hint (criteria 1 + 2)', () => {
   // sentence in a string literal that any later edit can quietly soften.
   it('names what a tag is and what it is not', () => {
     const prompt = buildPrompt(base);
-    expect(prompt).toContain('feature, subsystem or subject');
-    for (const counterExample of ['#testing', '#queue', '#tim']) {
+    expect(prompt).toContain('At least one tag must name a feature, subsystem or subject');
+    for (const counterExample of ['#queue', '#tim']) {
       expect(prompt).toContain(counterExample);
     }
+  });
+
+  // The activity facet only stays driftable-proof while the list stays closed
+  // and stays named in the prompt. An edit that turns it back into a category
+  // ("you may add an activity tag") reopens the #bugfix/#bugfixing families
+  // this was measured against, and nothing else would catch that.
+  it('offers activity tags only as a closed list of four', () => {
+    const prompt = buildPrompt(base);
+    expect(prompt).toContain('#design #implementation #debugging #review');
+    expect(prompt).toContain('at most one activity tag');
+    expect(prompt).toMatch(/Invent no other activity word/);
   });
 });
