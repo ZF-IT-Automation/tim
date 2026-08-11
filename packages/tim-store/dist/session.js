@@ -439,6 +439,14 @@ class SessionManager {
             model: typeof session.metadata.model === 'string' ? session.metadata.model : undefined,
             task_summary: typeof session.metadata.task_summary === 'string' ? session.metadata.task_summary : undefined,
         };
+        // Best effort by design: a vocabulary lookup that fails must not stop a
+        // session from being summarized. No field, old prompt, summary still runs.
+        const vocabulary = sessionMeta.project
+            ? await this.store
+                .projectTagVocabulary(sessionMeta.project)
+                .then(v => v.map(t => t.tag))
+                .catch(() => [])
+            : [];
         return {
             sessionId,
             summaryNodeId: summaryNode.id,
@@ -449,6 +457,7 @@ class SessionManager {
             hasMore,
             previousSummaries,
             sessionMeta,
+            ...(vocabulary.length > 0 ? { vocabulary } : {}),
         };
     }
     async writeBatchSummary(sessionId, batchIndex, summaryText, range, tags) {
@@ -543,7 +552,15 @@ class SessionManager {
             metadata: { ...session.metadata, batches_summarized: batchesSummarized },
         });
     }
-    /** Recompute session-level content tags from batch summaries (freq >= 2). */
+    /**
+     * Recompute session-level content tags from batch summaries.
+     *
+     * The frequency bar depends on how many batches there are: with one or two,
+     * every content tag qualifies — a short session has no topic drift to filter
+     * out, only tags to lose, and a single-batch session could never clear a
+     * two-batch bar at all. From three batches on the old `>= 2` rule returns: a
+     * Summary root carrying twelve tags matches every topic and sharpens none.
+     */
     async aggregateSessionTags(sessionId) {
         sessionId = this.store.resolveSessionAlias(sessionId);
         const summaryNode = await (0, session_tree_js_1.findChildByKind)(this.store, sessionId, session_tree_js_1.KIND_SUMMARY_ROOT);
@@ -557,8 +574,9 @@ class SessionManager {
                 freq.set(tag, (freq.get(tag) ?? 0) + 1);
             }
         }
+        const threshold = batches.length <= 2 ? 1 : 2;
         const aggregated = [...freq.entries()]
-            .filter(([, count]) => count >= 2)
+            .filter(([, count]) => count >= threshold)
             .map(([tag]) => tag)
             .sort();
         await this.store.update(summaryNode.id, {

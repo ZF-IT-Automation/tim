@@ -60,6 +60,9 @@ const metadata_coerce_js_1 = require("./metadata-coerce.js");
 const idea_promote_js_1 = require("./idea-promote.js");
 const task_status_history_js_1 = require("./task-status-history.js");
 const vcs_js_1 = require("./vcs.js");
+// Value import, but session-tree only imports TimStore as a *type*, so this is
+// erased at runtime and creates no cycle (see the note on the Inbox literal below).
+const session_tree_js_1 = require("./session-tree.js");
 const sync_methods_js_1 = require("./sync-methods.js");
 const secret_js_1 = require("./secret.js");
 /**
@@ -2780,6 +2783,64 @@ class TimStore {
         const thirtyDaysAgo = new Date(Date.now() - 30 * 86400_000).toISOString();
         const stale = this.db.prepare('SELECT COUNT(*) as c FROM entries WHERE irrelevant = 0 AND accessed_at < ?').get(thirtyDaysAgo).c;
         return { totalEntries, totalEdges, entriesByDepth, entriesByType, topTags, avgConfidence: avgConf, oldestEntry: oldest, newestEntry: newest, staleCount: stale };
+    }
+    /**
+     * Every distinct content tag inside one project's subtree, most frequent
+     * first, with no cap. Feeds the summarizer prompt so it reuses the vocabulary
+     * the project already has instead of minting a synonym per run (`#queue`
+     * versus `#queue-planning` for the same subject, measured two days apart).
+     *
+     * Excludes exactly the two tags that are still stamped automatically. It
+     * deliberately does NOT exclude RETIRED_STRUCTURAL_TAGS: those words are
+     * subject matter in a project about sessions and checkpoints, and dropping
+     * them would cost the vocabulary four of the terms it is most about.
+     *
+     * A tag carried by both a batch summary and the Summary root that aggregated
+     * it counts twice. That is a ranking hint for a prompt, not a statistic —
+     * a tag that survived aggregation is a session-level topic and should rank
+     * above one that did not.
+     */
+    async projectTagVocabulary(project) {
+        const resolved = await this.resolveProjectLabel(project);
+        if (resolved.status !== 'found')
+            return [];
+        const root = await this.read(resolved.label);
+        if (!root)
+            return [];
+        const rows = this.db.prepare(`
+      WITH RECURSIVE tree(id) AS (
+        SELECT id FROM entries WHERE id = ?
+        UNION ALL
+        SELECT c.id FROM entries c
+        INNER JOIN tree t ON c.parent_id = t.id
+        WHERE c.tombstoned_at IS NULL
+      )
+      SELECT e.id, e.tags FROM entries e
+      INNER JOIN tree ON tree.id = e.id
+      WHERE e.irrelevant = 0
+        AND e.tombstoned_at IS NULL
+        AND e.tags != '[]'
+    `).all(root.id);
+        const counts = new Map();
+        for (const row of rows) {
+            let parsed;
+            try {
+                parsed = JSON.parse(row.tags);
+            }
+            catch {
+                continue; // a corrupt tags column must not sink the whole lookup
+            }
+            if (!Array.isArray(parsed))
+                continue;
+            for (const tag of parsed) {
+                if (typeof tag !== 'string' || session_tree_js_1.BATCH_STRUCTURAL_TAGS.has(tag))
+                    continue;
+                counts.set(tag, (counts.get(tag) ?? 0) + 1);
+            }
+        }
+        return [...counts.entries()]
+            .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+            .map(([tag, count]) => ({ tag, count }));
     }
     async getContentStats(root, kind, buckets = [0, 100, 500, 1000, 5000, 10000, 50000]) {
         const empty = {

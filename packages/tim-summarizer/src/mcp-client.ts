@@ -22,6 +22,8 @@ export interface UnsummarizedBatch {
   hasMore: boolean;
   previousSummaries: string[];
   sessionMeta: Record<string, string | undefined>;
+  /** Project's existing content tags for the prompt to reuse; absent if unknown. */
+  vocabulary?: string[];
 }
 
 function dbPathFromEnv(): string {

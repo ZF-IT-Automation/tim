@@ -58,6 +58,12 @@ export interface UnsummarizedBatch {
         model?: string;
         task_summary?: string;
     };
+    /**
+     * The project's existing content tags, most frequent first, for the prompt to
+     * reuse. Absent when the session has no project or the lookup failed — the
+     * prompt then falls back to its old wording rather than blocking the summary.
+     */
+    vocabulary?: string[];
 }
 export interface ResumeBatchSummary {
     batchIndex: number;
@@ -145,7 +151,15 @@ export declare class SessionManager {
     }, tags?: string[]): Promise<Entry>;
     private writeBatchSummarySync;
     private syncSessionBatchesSummarized;
-    /** Recompute session-level content tags from batch summaries (freq >= 2). */
+    /**
+     * Recompute session-level content tags from batch summaries.
+     *
+     * The frequency bar depends on how many batches there are: with one or two,
+     * every content tag qualifies — a short session has no topic drift to filter
+     * out, only tags to lose, and a single-batch session could never clear a
+     * two-batch bar at all. From three batches on the old `>= 2` rule returns: a
+     * Summary root carrying twelve tags matches every topic and sharpens none.
+     */
     aggregateSessionTags(sessionId: string): Promise<Entry | null>;
     /** Batch summary nodes with no content tags (only structural tags). */
     showUntagged(): Promise<UntaggedBatch[]>;

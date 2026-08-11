@@ -2,6 +2,7 @@ import type { UnsummarizedBatch } from './mcp-client.js';
 export type ErrorLogFn = (tool: string, error: string, stack?: string) => void;
 /** Compact thematic summary for a batch (no external API required). */
 export declare function generateSummaryHeuristic(batch: UnsummarizedBatch): string;
+export declare function buildPrompt(batch: UnsummarizedBatch): string;
 export declare const FALLBACK_MARKER = "TIM_SUMMARIZER_FALLBACK_NEEDED";
 /**
  * How a summary was produced. Anything other than 'ok' means the stored text is

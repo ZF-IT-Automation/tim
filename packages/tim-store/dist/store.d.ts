@@ -425,6 +425,26 @@ export declare class TimStore implements MemoryInterface {
     setVectors(entryId: string, vector: Float32Array, model: string): void;
     health(): Promise<HealthReport>;
     stats(): Promise<MemoryStats>;
+    /**
+     * Every distinct content tag inside one project's subtree, most frequent
+     * first, with no cap. Feeds the summarizer prompt so it reuses the vocabulary
+     * the project already has instead of minting a synonym per run (`#queue`
+     * versus `#queue-planning` for the same subject, measured two days apart).
+     *
+     * Excludes exactly the two tags that are still stamped automatically. It
+     * deliberately does NOT exclude RETIRED_STRUCTURAL_TAGS: those words are
+     * subject matter in a project about sessions and checkpoints, and dropping
+     * them would cost the vocabulary four of the terms it is most about.
+     *
+     * A tag carried by both a batch summary and the Summary root that aggregated
+     * it counts twice. That is a ranking hint for a prompt, not a statistic —
+     * a tag that survived aggregation is a session-level topic and should rank
+     * above one that did not.
+     */
+    projectTagVocabulary(project: string): Promise<{
+        tag: string;
+        count: number;
+    }[]>;
     getContentStats(root?: string, kind?: string, buckets?: number[]): Promise<ContentStats>;
     /**
      * Re-confirm entries as still valid without editing them. Stamps

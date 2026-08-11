@@ -35,6 +35,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.FALLBACK_MARKER = void 0;
 exports.generateSummaryHeuristic = generateSummaryHeuristic;
+exports.buildPrompt = buildPrompt;
 exports.noChainHint = noChainHint;
 exports.extractTags = extractTags;
 exports.tryCli = tryCli;
@@ -93,13 +94,23 @@ function generateSummaryHeuristic(batch) {
     return summary;
 }
 function buildPrompt(batch) {
+    // The whole vocabulary, uncapped and frequency-ordered. A rare tag the
+    // summarizer never sees only gets rarer, which is the spiral this stops.
+    // No vocabulary (no project, or the lookup failed) → the prompt below is
+    // byte-for-byte the one that shipped before topic recall.
+    const vocabulary = batch.vocabulary?.length
+        ? `\n\nThis project already uses these tags, most used first: ` +
+            `${batch.vocabulary.join(' ')}\n` +
+            `Reuse a fitting existing tag before inventing a new one; mint a new tag only for a genuinely new topic.`
+        : '';
     return (`Summarize this agent session batch thematically (bullet themes, decisions, open items). ` +
         `Batch index ${batch.batchIndex}. JSON:\n${JSON.stringify({
             exchanges: batch.exchanges,
             previousSummaries: batch.previousSummaries,
             sessionMeta: batch.sessionMeta,
         })}\n\n` +
-        `End your response with a line: TAGS: #tag1 #tag2 ... (3-5 content hashtags, lowercase kebab-case, # prefix).`);
+        `End your response with a line: TAGS: #tag1 #tag2 ... (3-5 content hashtags, lowercase kebab-case, # prefix).` +
+        vocabulary);
 }
 exports.FALLBACK_MARKER = 'TIM_SUMMARIZER_FALLBACK_NEEDED';
 /** Actionable operator message — a missing chain is config, not a transient CLI failure. */

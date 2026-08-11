@@ -132,6 +132,50 @@ and the consumer.
     used; above ~95% the summarizer has stopped minting genuinely new topics.
     Either reading is the trigger to split tagging into its own pass — not before.
 
+## Build order (planner pass, 2026-08-11, added after the spec was grilled)
+
+The Risk section dictates two commits, not thirteen. Criterion 13 is a
+measurement a dozen sessions later, not code; criteria 9 and 11 are
+"do not touch" assertions — they get a test, not an implementation.
+
+- **Commit A — criteria 1, 2, 3.** Vocabulary query, prompt, aggregation
+  threshold. Independently shippable: it changes what future summaries are
+  tagged with and nothing about retrieval, so it carries no blind-start risk and
+  starts building vocabulary while B is written.
+- **Commit B, atomic — criteria 4, 5, 8, 10, 12.** Criterion 8 removes the only
+  automatic path to past work and must not land before its replacements work.
+  One commit, no config flag (see Risk).
+
+Decisions taken during the planner pass, each of which would otherwise be
+guessed during implementation:
+
+- **The vocabulary excludes exactly two tags**, `#session-summary` and
+  `#batch-summary`. It must *not* filter `RETIRED_STRUCTURAL_TAGS`: those words
+  are this project's own subject matter (see the Measured starting point,
+  RESOLVED 2026-08-11). Filtering them is the most likely implementation
+  mistake here and it silently guts what the spec exists to build.
+- **The vocabulary reaches the summarizer as a field on `UnsummarizedBatch`.**
+  The summarizer fetches its batch over MCP (`tim_show_unsummarized`,
+  `summarize.ts:295`) and has no store handle in that path, so the lookup
+  belongs where the batch is assembled (`session.ts:594`), scoped by the
+  session's `metadata.project_ref`. Criterion 2's fallback is then structural: a
+  lookup that throws leaves the field absent and `buildPrompt` emits today's
+  text.
+- **Tag counts range over every live entry in the project subtree**, with no
+  de-duplication between a batch summary and the Summary root that aggregated
+  its tag. Criterion 3 makes that double-count slightly more common. It is a
+  ranking hint for a prompt, not a statistic — and ranking a tag that survived
+  aggregation above one that did not is the behaviour we want.
+- **`tim_search` with both `query` and `tag` keeps today's behaviour**: relevance
+  order, tag as a post-filter. Only the tagless-query form is new, and only it is
+  chronological. The tool description says which is which, so the change is
+  additive rather than a silent reordering of existing calls.
+- **Skills reach a host only as `skills/<name>/SKILL.md`** — `tim update-skills`
+  copies every such directory, and `skill-parity.test.ts` fails if the on-disk
+  set and `ALL_TIM_SKILLS` drift. Criteria 10 and 12 therefore each need the
+  SKILL.md *and* the TS mirror. Installing them is a manual `tim update-skills`
+  afterwards (the same gap item 22 records for `/tim-handoff`).
+
 ## Scope
 
 - Repo: `~/projects/tim`

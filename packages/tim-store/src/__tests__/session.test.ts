@@ -1190,8 +1190,25 @@ describe('SessionManager', () => {
       expect(batchesSummarized).toBe(1);
     });
 
-    it('aggregateSessionTags promotes tags appearing in 2+ batches to Summary node', async () => {
-      await sessions.writeBatchSummary('sb', 1, 'batch one', { seqFrom: 1, seqTo: 1 }, ['#auth', '#ui']);
+    // The frequency bar is batch-count dependent: >= 1 up to two batches,
+    // >= 2 from three on. A short session has no drift to filter, only tags to
+    // lose — and under the old flat >= 2 rule a one-batch session could never
+    // put a single content tag on its Summary root.
+    const summaryTags = async (sessionId: string) =>
+      (await store.getChildByKind(sessionId, 'session-summary-root'))[0]!.tags;
+
+    it('aggregateSessionTags keeps every content tag of a one-batch session', async () => {
+      await sessions.writeBatchSummary('sb', 1, 'batch one', { seqFrom: 1, seqTo: 2 }, ['#auth', '#ui']);
+
+      const tags = await summaryTags('sb');
+      expect(tags).toContain('#auth');
+      expect(tags).toContain('#ui');
+    });
+
+    // The discriminating case: it fails under the old rule (both dropped) and
+    // under a naive "always >= 1" (the three-batch case below would then break).
+    it('aggregateSessionTags keeps a tag that appears in only one of two batches', async () => {
+      await sessions.writeBatchSummary('sb', 1, 'batch one', { seqFrom: 1, seqTo: 2 }, ['#auth', '#ui']);
       await sessions.logExchange('sb', [
         { role: 'user', content: 'Q3' },
         { role: 'agent', content: 'A3' },
@@ -1200,10 +1217,32 @@ describe('SessionManager', () => {
       ]);
       await sessions.writeBatchSummary('sb', 2, 'batch two', { seqFrom: 3, seqTo: 4 }, ['#auth', '#db']);
 
-      const summaryNode = (await store.getChildByKind('sb', 'session-summary-root'))[0]!;
-      expect(summaryNode.tags).toContain('#auth');
-      expect(summaryNode.tags).not.toContain('#ui');
-      expect(summaryNode.tags).not.toContain('#db');
+      const tags = await summaryTags('sb');
+      expect(tags).toContain('#auth');
+      expect(tags).toContain('#ui');
+      expect(tags).toContain('#db');
+    });
+
+    it('aggregateSessionTags still drops one-off tags once a session has three batches', async () => {
+      await sessions.writeBatchSummary('sb', 1, 'batch one', { seqFrom: 1, seqTo: 2 }, ['#auth', '#ui']);
+      await sessions.logExchange('sb', [
+        { role: 'user', content: 'Q3' },
+        { role: 'agent', content: 'A3' },
+        { role: 'user', content: 'Q4' },
+        { role: 'agent', content: 'A4' },
+        { role: 'user', content: 'Q5' },
+        { role: 'agent', content: 'A5' },
+        { role: 'user', content: 'Q6' },
+        { role: 'agent', content: 'A6' },
+      ]);
+      await sessions.writeBatchSummary('sb', 2, 'batch two', { seqFrom: 3, seqTo: 4 }, ['#auth', '#db']);
+      await sessions.writeBatchSummary('sb', 3, 'batch three', { seqFrom: 5, seqTo: 6 }, ['#auth', '#cache']);
+
+      const tags = await summaryTags('sb');
+      expect(tags).toContain('#auth');
+      expect(tags).not.toContain('#ui');
+      expect(tags).not.toContain('#db');
+      expect(tags).not.toContain('#cache');
     });
 
     it('showUntagged lists batch nodes with only structural tags', async () => {
