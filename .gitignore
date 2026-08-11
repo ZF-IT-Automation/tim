@@ -24,3 +24,6 @@ local_cache/
 
 # macOS AppleDouble metadata files (rsync artifact)
 ._*
+
+# Session handoffs — written for the next session, not for the repo
+HANDOFF-*.md
