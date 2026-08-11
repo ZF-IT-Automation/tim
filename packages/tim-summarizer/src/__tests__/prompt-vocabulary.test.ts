@@ -40,6 +40,18 @@ describe('buildPrompt vocabulary hint (criteria 1 + 2)', () => {
     expect(prompt).toContain('End your response with a line: TAGS:');
   });
 
+  // Verbatim reuse alone left the widest hole measured: a vocabulary holding
+  // both #handoff and #handoff-note fits either way, so the choice came out
+  // differently per call and the broad tag stopped finding half its history.
+  // Only the vocabulary block can carry this rule — without a list there is no
+  // pair to choose between.
+  it('says which of two overlapping vocabulary tags to take', () => {
+    const prompt = buildPrompt({ ...base, vocabulary: ['#handoff', '#handoff-note'] });
+    expect(prompt).toContain('name the same area at different widths');
+    expect(prompt).toContain('use exactly one, never both');
+    expect(prompt).toContain('Mint at most one tag that is not on the list');
+  });
+
   // The rule the tags are actually judged by. Without this the instruction is a
   // sentence in a string literal that any later edit can quietly soften.
   it('names what a tag is and what it is not', () => {

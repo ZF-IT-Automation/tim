@@ -60,7 +60,17 @@ export function buildPrompt(batch: UnsummarizedBatch): string {
     ? `\n\nTags this project already reuses, most used first: ` +
       `${batch.vocabulary.join(' ')}\n` +
       `If one of them fits, use it verbatim — same spelling, same hyphens. ` +
-      `Mint a new tag only for a subject none of them names.`
+      // Measured on the re-tagging run: two summaries that both carried
+      // #schema-migrations came back as #schema-migrations and #schema, and
+      // #mcp / #mcp-catalog swapped in both directions across P0054. Those are
+      // not spelling variants — the rule above already stops those — but the
+      // same subject named at two widths, with nothing in the prompt to decide
+      // between them. A reader searching the broad tag then misses half the
+      // history, which is the failure this whole feature exists to prevent.
+      `When two of them name the same area at different widths (#handoff and #handoff-note), ` +
+      `use exactly one, never both: the narrower only if the batch is mainly about that ` +
+      `narrower thing, otherwise the broader one. ` +
+      `Mint at most one tag that is not on the list, and only for a subject none of them names.`
     : '';
 
   return (
