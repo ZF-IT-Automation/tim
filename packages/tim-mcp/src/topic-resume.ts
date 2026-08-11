@@ -1,7 +1,14 @@
-// Retrieval by topic: everything a project ever recorded under one tag, in the
-// order it happened, plus the one live handoff from the newest session that
-// touched it. Replaces the recency-picked previous session that used to be
-// injected into every session start whether it was relevant or not.
+// Retrieval by topic: what a project recorded about a subject, in the order it
+// happened, plus the one live handoff from the newest session that touched it.
+// Replaces the recency-picked previous session that used to be injected into
+// every session start whether it was relevant or not.
+//
+// Two retrieval paths, unioned, because neither alone finds the topic. Tags are
+// exact and exhaustive but only match a name somebody coined: measured against
+// the live database, the tag for the viewer work is `#tim-inspector`, so asking
+// for "tim-viewer" returned nothing while full text found the same batches by
+// their bodies. Full text is forgiving but bm25-ranked and truncating, so it
+// cannot promise completeness the way the tag scan does.
 import type { Entry } from 'tim-core';
 import type { TimStore } from 'tim-store';
 import { KIND_BATCH, KIND_SESSION, KIND_SUMMARY_ROOT } from 'tim-store';
@@ -11,6 +18,16 @@ import { recentExchanges } from 'tim-hooks';
 const RAW_TAIL_MAX_CHARS = 2000;
 /** Enough to cover a project's whole history under one tag without unbounded output. */
 const MAX_TAG_HITS = 500;
+/** Ranked candidates to pull before the recency cap picks among them. */
+const MAX_FTS_HITS = 200;
+/**
+ * Raw turns match the topic's words in bulk and carry no tags, so they crowd a
+ * ranked page out of the summaries that are the point of this view. They are
+ * still reachable — the newest session's uncovered tail is rendered below.
+ */
+const FLOODING_KINDS = ['exchange'];
+/** Sessions rendered by default: enough to see the arc, few enough to read. */
+const DEFAULT_SESSION_LIMIT = 10;
 
 export interface TopicSessionHit {
   sessionId: string;
@@ -21,15 +38,20 @@ export interface TopicSessionHit {
 }
 
 export interface TopicResume {
+  /** What was asked for, as the user wrote it. */
+  topic: string;
+  /** The tag form that was looked up alongside the full-text search. */
   tag: string;
   projectLabel: string;
-  /** Batch summaries carrying the tag, oldest first. */
+  /** Batch summaries matching the topic, oldest first — capped to the newest `limit` sessions. */
   sessions: TopicSessionHit[];
-  /** Tasks, bugs and ideas carrying the tag. */
+  /** How many sessions matched before the cap, so a partial history says it is one. */
+  sessionsMatched: number;
+  /** Tasks, bugs and ideas matching the topic. */
   work: Entry[];
   /** The newest session among the hits — the only one whose note and turns are shown. */
   newest?: { sessionId: string; date: string; handoffNote?: string; rawTurns: string[] };
-  /** Total entries carrying the tag, including the kinds this view does not render. */
+  /** Total entries matched, including the kinds this view does not render. */
   otherHits: number;
 }
 
@@ -70,10 +92,27 @@ function sessionDate(session: Entry): string {
 export async function collectTopicResume(
   store: TimStore,
   projectLabel: string,
-  tag: string,
+  topic: string,
+  limit: number = DEFAULT_SESSION_LIMIT,
 ): Promise<TopicResume> {
-  const needle = tag.startsWith('#') ? tag : `#${tag}`;
-  const hits = await store.searchByTag(needle, MAX_TAG_HITS, projectLabel);
+  const needle = topic.startsWith('#') ? topic : `#${topic}`;
+  // Topics arrive tag-shaped ("sync-server"), and FTS5 reads a quoted
+  // "sync-server" as the adjacent phrase `sync server` — so the hyphen silently
+  // demands a word order the prose never has to use. Measured in P0063:
+  // "sync-server" matched no batch summary at all, while the same words as
+  // separate terms matched several. Splitting them turns the phrase into an AND,
+  // which is what a two-word topic actually means.
+  const words = topic.replace(/^#/, '').replace(/[-_]+/g, ' ');
+  const [tagged, matched] = await Promise.all([
+    store.searchByTag(needle, MAX_TAG_HITS, projectLabel),
+    store.searchFts(words, MAX_FTS_HITS, {
+      project: projectLabel,
+      excludeKinds: FLOODING_KINDS,
+    }),
+  ]);
+  // Tag hits first so the exhaustive scan wins ties; dedupe on id, since an
+  // entry that both carries the tag and names it in the body is one entry.
+  const hits = [...new Map([...tagged, ...matched].map(e => [e.id, e])).values()];
 
   const sessions: TopicSessionHit[] = [];
   // Keyed by session id so several matching batches of one session collapse into
@@ -102,9 +141,18 @@ export async function collectTopicResume(
   // before "Batch 2" the moment a session runs long enough to have ten.
   sessions.sort((a, b) => a.date.localeCompare(b.date) || a.batchIndex - b.batchIndex);
 
-  const newestEntry = [...candidates.entries()].sort(
+  const byRecency = [...candidates.entries()].sort(
     (a, b) => b[1].date.localeCompare(a[1].date) || b[0].localeCompare(a[0]),
-  )[0];
+  );
+
+  // Cap by session, then render chronologically. Selecting the newest and
+  // rendering newest-first are different things: the second would make a topic's
+  // history read backwards to buy the same bound.
+  const sessionsMatched = byRecency.length;
+  const kept = new Set(byRecency.slice(0, Math.max(1, limit)).map(([id]) => id));
+  const rendered = sessions.filter(s => kept.has(s.sessionId));
+
+  const newestEntry = byRecency[0];
 
   let newest: TopicResume['newest'];
   if (newestEntry) {
@@ -122,9 +170,11 @@ export async function collectTopicResume(
   }
 
   return {
+    topic,
     tag: needle,
     projectLabel,
-    sessions,
+    sessions: rendered,
+    sessionsMatched,
     work: hits.filter(isWorkEntry),
     newest,
     otherHits: hits.length,
@@ -134,19 +184,29 @@ export async function collectTopicResume(
 export function formatTopicResume(r: TopicResume): string {
   if (r.sessions.length === 0 && r.work.length === 0) {
     // This view renders session history and open work. Saying "nothing" when
-    // the tag does exist on other kinds of entry would send the reader looking
-    // for a different tag instead of a different tool.
+    // the topic does exist on other kinds of entry would send the reader looking
+    // for different words instead of a different tool.
     return r.otherHits > 0
-      ? `No session summaries and no open work tagged ${r.tag} in ${r.projectLabel} — ` +
-        `but ${r.otherHits} other ${r.otherHits === 1 ? 'entry carries' : 'entries carry'} it. ` +
-        `Use tim_search with tag=${r.tag} to see them.`
-      : `No entries tagged ${r.tag} in ${r.projectLabel}.`;
+      ? `No session summaries and no open work on "${r.topic}" in ${r.projectLabel} — ` +
+        `but ${r.otherHits} other ${r.otherHits === 1 ? 'entry matches' : 'entries match'}. ` +
+        `Use tim_search with query=${r.topic} to see them.`
+      : `Nothing on "${r.topic}" in ${r.projectLabel} — no entry carries ${r.tag} and none mentions it.`;
   }
 
-  const out: string[] = [`## Topic ${r.tag} — ${r.projectLabel}`];
+  const out: string[] = [`## Topic "${r.topic}" — ${r.projectLabel}`];
 
   if (r.sessions.length > 0) {
+    const capped = r.sessionsMatched > new Set(r.sessions.map(s => s.sessionId)).size;
     out.push('', `── Sessions on this topic (${r.sessions.length}, oldest first) ──`);
+    if (capped) {
+      // A cap that does not announce itself turns a partial history into a
+      // confident whole one — the reader has no way to tell the topic started
+      // earlier than the oldest line shown.
+      out.push(
+        `Newest ${new Set(r.sessions.map(s => s.sessionId)).size} of ${r.sessionsMatched} ` +
+        `matching sessions; earlier ones exist. Raise limit to see them.`,
+      );
+    }
     for (const s of r.sessions) {
       out.push(`▸ ${s.date.slice(0, 16).replace('T', ' ')} · ${s.sessionId} · ${s.title}`);
       if (s.summary) out.push(`  ${s.summary}`);
@@ -154,7 +214,7 @@ export function formatTopicResume(r: TopicResume): string {
   }
 
   if (r.work.length > 0) {
-    out.push('', `── Tasks, bugs and ideas tagged ${r.tag} (${r.work.length}) ──`);
+    out.push('', `── Tasks, bugs and ideas on this topic (${r.work.length}) ──`);
     for (const w of r.work) {
       const status = typeof w.metadata.status === 'string' ? ` [${w.metadata.status}]` : '';
       out.push(`- ${w.title}${status}`);
@@ -182,14 +242,14 @@ export function formatTopicResume(r: TopicResume): string {
   // and Summary roots, kinds it deliberately does not show. Reporting "1
   // session" and nothing else reads as "that is all there is", and the reader
   // never learns a different tool would show more.
-  const rendered = r.sessions.length + r.work.length;
-  if (r.otherHits > rendered) {
-    const rest = r.otherHits - rendered;
+  const shown = r.sessions.length + r.work.length;
+  if (r.otherHits > shown) {
+    const rest = r.otherHits - shown;
     out.push(
       '',
-      `${rest} further ${rest === 1 ? 'entry carries' : 'entries carry'} ${r.tag} in kinds ` +
+      `${rest} further ${rest === 1 ? 'entry matches' : 'entries match'} "${r.topic}" in kinds ` +
         `this view does not render (notes, Summary roots). ` +
-        `Use tim_search with tag=${r.tag} to see them.`,
+        `Use tim_search with query=${r.topic} to see them.`,
     );
   }
 

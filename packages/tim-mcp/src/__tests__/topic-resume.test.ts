@@ -180,9 +180,72 @@ describe('tim_resume_topic (criteria 5, 6, 7)', () => {
     ]);
   });
 
-  it('says so plainly when nothing carries the tag', async () => {
-    const topic = await collectTopicResume(store, 'P0082', '#nothing-here');
-    expect(formatTopicResume(topic)).toBe('No entries tagged #nothing-here in P0082.');
+  it('says so plainly when nothing matches the topic', async () => {
+    const topic = await collectTopicResume(store, 'P0082', 'nothing-here');
+    expect(formatTopicResume(topic)).toBe(
+      'Nothing on "nothing-here" in P0082 — no entry carries #nothing-here and none mentions it.',
+    );
+  });
+
+  // The failure that made the tool unusable, in the shape it was measured in:
+  // the viewer work is tagged #tim-inspector, so a tag-only lookup for
+  // "tim-viewer" returned nothing while the summaries said "tim viewer" outright.
+  it('finds a session whose tag is spelled differently than the topic', async () => {
+    await seedSession({
+      id: 'inspector', date: '2026-04-01T10:00:00.000Z', tag: '#tim-inspector',
+      summary: 'tim viewer becomes the TIM Inspector; read-only, no write tools',
+    });
+
+    expect(await store.searchByTag('#tim-viewer', 500, 'P0082')).toEqual([]);
+
+    const topic = await collectTopicResume(store, 'P0082', 'tim-viewer');
+    expect(topic.sessions.map(s => s.summary)).toEqual([
+      'tim viewer becomes the TIM Inspector; read-only, no write tools',
+    ]);
+  });
+
+  // FTS5 tokenizes a quoted "sync-server" as an adjacent phrase, so a
+  // tag-shaped topic demanded a word order the prose never owes it. Measured in
+  // P0063: "sync-server" matched no batch summary, "sync server" matched several.
+  it('reads a hyphenated topic as its words, not as a fixed phrase', async () => {
+    await seedSession({
+      id: 'syncwork', date: '2026-06-01T10:00:00.000Z', tag: '#unrelated-tag',
+      summary: 'the server now compacts what sync appends',
+    });
+
+    const topic = await collectTopicResume(store, 'P0082', 'sync-server');
+    expect(topic.sessions.map(s => s.summary)).toEqual([
+      'the server now compacts what sync appends',
+    ]);
+  });
+
+  // Raw turns carry no tags, match the topic's words in bulk and outnumber the
+  // summaries — ranked full text puts them first unless the query excludes them.
+  it('never renders raw exchanges as sessions on the topic', async () => {
+    await seedSession({
+      id: 'chatty', date: '2026-05-01T10:00:00.000Z', tag: '#unrelated-tag',
+      summary: 'the summary of the widget work',
+      rawTurn: 'widget widget widget widget widget',
+    });
+
+    const topic = await collectTopicResume(store, 'P0082', 'widget');
+    expect(topic.sessions.map(s => s.summary)).toEqual(['the summary of the widget work']);
+  });
+
+  it('keeps the newest sessions when capped, and still renders them oldest first', async () => {
+    for (const n of [1, 2, 3]) {
+      await seedSession({
+        id: `s${n}`, date: `2026-0${n}-01T10:00:00.000Z`, tag: '#recall',
+        summary: `pass ${n}`,
+      });
+    }
+
+    const topic = await collectTopicResume(store, 'P0082', '#recall', 2);
+    // Newest two selected — but rendered in the order they happened. Rendering
+    // newest-first would buy the same bound and make the history read backwards.
+    expect(topic.sessions.map(s => s.summary)).toEqual(['pass 2', 'pass 3']);
+    expect(topic.sessionsMatched).toBe(3);
+    expect(formatTopicResume(topic)).toContain('Newest 2 of 3 matching sessions');
   });
 
   // A rendered result that hides its own incompleteness is the worse failure of
@@ -204,7 +267,7 @@ describe('tim_resume_topic (criteria 5, 6, 7)', () => {
 
     expect(topic.sessions).toHaveLength(1);
     expect(text).toContain('── Sessions on this topic (1');
-    expect(text).toMatch(/further entr(y carries|ies carry) #partial/);
-    expect(text).toContain('tim_search with tag=#partial');
+    expect(text).toMatch(/further entr(y matches|ies match) "#partial"/);
+    expect(text).toContain('tim_search with query=#partial');
   });
 });

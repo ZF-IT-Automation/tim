@@ -354,7 +354,10 @@ export declare class TimStore implements MemoryInterface {
      *   3. Graph/usage/staleness boost (from Plan 8/10)
      */
     private rankByHybrid;
-    searchFts(query: string, limit?: number): Promise<Entry[]>;
+    searchFts(query: string, limit?: number, opts?: {
+        project?: string;
+        excludeKinds?: string[];
+    }): Promise<Entry[]>;
     /**
      * Near-duplicate candidates for a title, for the tim_write dedup gate.
      * FTS narrows to plausible candidates; Jaccard token overlap on the

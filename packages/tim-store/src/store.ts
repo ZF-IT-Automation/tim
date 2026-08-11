@@ -2547,7 +2547,11 @@ export class TimStore implements MemoryInterface {
       .slice(0, topK);
   }
 
-  async searchFts(query: string, limit: number = 10): Promise<Entry[]> {
+  async searchFts(
+    query: string,
+    limit: number = 10,
+    opts: { project?: string; excludeKinds?: string[] } = {},
+  ): Promise<Entry[]> {
     // Sanitize FTS5 query — quote tokens; drop quoted FTS operator literals before MATCH.
     // See sanitizeFtsQuery() in store-utils for rationale.
     const sanitized = sanitizeFtsQuery(query)
@@ -2555,15 +2559,46 @@ export class TimStore implements MemoryInterface {
       .replace(/\s+/g, ' ')
       .trim();
     if (!sanitized) return [];
+
+    // Both filters go into the SQL, never into a post-filter on the result set:
+    // LIMIT applies before the caller sees anything, so filtering afterwards
+    // returns a handful of rows out of a page that was mostly excluded matter.
+    const params: unknown[] = [sanitized];
+    let scopeSql = '';
+    if (opts.project) {
+      const resolved = await this.resolveProjectLabel(opts.project);
+      if (resolved.status !== 'found') return [];
+      const root = await this.read(resolved.label);
+      if (!root) return [];
+      scopeSql += ` AND e.id IN (
+        WITH RECURSIVE tree(id) AS (
+          SELECT id FROM entries WHERE id = ?
+          UNION ALL
+          SELECT c.id FROM entries c
+          INNER JOIN tree t ON c.parent_id = t.id
+          WHERE c.tombstoned_at IS NULL
+        )
+        SELECT id FROM tree
+      )`;
+      params.push(root.id);
+    }
+    if (opts.excludeKinds?.length) {
+      const holes = opts.excludeKinds.map(() => '?').join(', ');
+      scopeSql += ` AND COALESCE(json_extract(e.metadata, '$.kind'), '') NOT IN (${holes})`;
+      params.push(...opts.excludeKinds);
+    }
+    params.push(limit);
+
     const rows = this.db.prepare(`
       SELECT e.* FROM entries e
       INNER JOIN fts_entries f ON e.rowid = f.rowid
       WHERE fts_entries MATCH ?
       AND e.irrelevant = 0
       AND e.tombstoned_at IS NULL
+      ${scopeSql}
       ORDER BY rank
       LIMIT ?
-    `).all(sanitized, limit) as RowEntry[];
+    `).all(...params) as RowEntry[];
 
     return rows.map(rowToEntry);
   }

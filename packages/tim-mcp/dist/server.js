@@ -350,13 +350,16 @@ const TimResumeListSchema = zod_1.z.object({
     projectId: zod_1.z.string().optional().describe('Project label, e.g. P0063; defaults to the bound project'),
     limit: zod_1.z.number().int().min(1).max(25).optional().default(10),
 });
-// The tag, and an escape hatch for the project. No session count and no date
-// floor until someone misses them — a topic's history is short enough to read
-// whole.
+// Free text, not a tag. The tag form is still looked up — it is the exact half
+// of the search — but requiring the caller to know it made the tool unusable:
+// the viewer work is tagged #tim-inspector, so "tim-viewer" found nothing.
 const TimResumeTopicSchema = zod_1.z.object({
-    tag: zod_1.z.string().describe('Topic tag, with or without the leading # (e.g. "topic-recall")'),
+    topic: zod_1.z.string().describe('What the topic is called, in the user\'s own words (e.g. "tim viewer", "session continuity"). ' +
+        'Matched against tags and against summary text, so it need not be an existing tag.'),
     project: zod_1.z.string().optional()
         .describe('Project label; defaults to the bound project, then to the .tim-project marker at cwd'),
+    limit: zod_1.z.number().int().min(1).max(50).optional()
+        .describe('How many of the most recent matching sessions to render (default 10, oldest first)'),
 });
 const TimPreviewBriefingSchema = zod_1.z.object({
     project: zod_1.z.string().describe('Project label, e.g. P0063'),
@@ -683,11 +686,13 @@ exports.TOOL_DEFS = [
     },
     {
         name: 'tim_resume_topic',
-        description: 'Recall everything the bound project recorded under one tag: the batch summaries carrying it ' +
-            'across all sessions in chronological order, the tasks/bugs/ideas that share it, and — from the ' +
-            'newest session that touched the topic — its handoff note and the turns no summary covers yet. ' +
-            'Pure read: binds nothing, starts no session, mutates nothing. This is how you pick up past work; ' +
-            'session start no longer injects it by recency.',
+        description: 'Recall what the bound project recorded about a topic, named in plain words rather than as a tag: ' +
+            'the batch summaries matching it, in chronological order across the most recent sessions, the ' +
+            'tasks/bugs/ideas on the same topic, and — from the newest session that touched it — its handoff ' +
+            'note and the turns no summary covers yet. Searches tags and summary text together, so it finds ' +
+            'the work even when the tag is spelled differently than the topic. Pure read: binds nothing, ' +
+            'starts no session, mutates nothing. This is how you pick up past work; session start no longer ' +
+            'injects it by recency.',
         schema: TimResumeTopicSchema,
     },
     {
@@ -2713,7 +2718,7 @@ async function createMcpServer(options = {}) {
                     return { content: [{ type: 'text', text: (0, resume_output_js_1.formatResumeList)(label, list) }] };
                 }
                 case 'tim_resume_topic': {
-                    const { tag, project } = TimResumeTopicSchema.parse(args);
+                    const { topic: wanted, project, limit } = TimResumeTopicSchema.parse(args);
                     // getActiveProjectLabel reads TIM_PROJECT or ~/.tim/active-project, and
                     // neither is set on a host whose sessions bind through a .tim-project
                     // marker — which is the normal setup. So the marker is a fallback, not
@@ -2733,7 +2738,7 @@ async function createMcpServer(options = {}) {
                             isError: true,
                         };
                     }
-                    const topic = await (0, topic_resume_js_1.collectTopicResume)(s, projectLabel, tag);
+                    const topic = await (0, topic_resume_js_1.collectTopicResume)(s, projectLabel, wanted, limit);
                     return { content: [{ type: 'text', text: (0, topic_resume_js_1.formatTopicResume)(topic) }] };
                 }
                 case 'tim_preview_briefing': {

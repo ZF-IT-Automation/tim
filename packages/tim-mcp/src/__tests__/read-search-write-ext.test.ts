@@ -277,11 +277,11 @@ describe('tim_search extended', () => {
     });
 
     const resp = await client.callTool('tim_resume_topic', {
-      tag: '#resolution',
+      topic: '#resolution',
       project: 'P0540',
     });
     expect(resp.result!.isError).toBeUndefined();
-    expect(resp.result!.content[0].text).toContain('## Topic #resolution — P0540');
+    expect(resp.result!.content[0].text).toContain('## Topic "#resolution" — P0540');
     expect(resp.result!.content[0].text).toContain('Recalled task');
   });
 
@@ -289,16 +289,16 @@ describe('tim_search extended', () => {
     await seedScopedEntry('P0541', 'Just a note', ['#plain-note', '#test']);
 
     const resp = await client.callTool('tim_resume_topic', {
-      tag: '#plain-note',
+      topic: '#plain-note',
       project: 'P0541',
     });
     const text = resp.result!.content[0].text;
     expect(text).toContain('other');
-    expect(text).toContain('tim_search with tag=#plain-note');
+    expect(text).toContain('tim_search with query=#plain-note');
   });
 
   it('tim_resume_topic says what to pass when no project resolves at all', async () => {
-    const resp = await client.callTool('tim_resume_topic', { tag: '#resolution' });
+    const resp = await client.callTool('tim_resume_topic', { topic: '#resolution' });
     expect(resp.result!.isError).toBe(true);
     expect(resp.result!.content[0].text).toContain('pass project');
   });
