@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.ALL_TIM_SKILLS = exports.TIM_RESUME_SKILL = exports.TIM_NEW_PROJECT_SKILL = exports.TIM_MCP_SMOKE_SKILL = exports.TIM_SECRET_AUDIT_SKILL = exports.TIM_SYNC_TRIAGE_SKILL = exports.TIM_PROJECT_CURATE_SKILL = exports.TIM_RELEASE_BETA_SKILL = exports.TIM_HMEM_IMPORT_AUDIT_SKILL = exports.TIM_SESSION_START_SKILL = exports.TIM_REMEMBER_SKILL = exports.TIM_USING_SKILL = exports.TIM_EXPLAIN_SKILL = exports.TIM_HANDOFF_SKILL = void 0;
+exports.ALL_TIM_SKILLS = exports.TIM_CONTINUE_SKILL = exports.TIM_RESUME_TOPIC_SKILL = exports.TIM_RESUME_SKILL = exports.TIM_NEW_PROJECT_SKILL = exports.TIM_MCP_SMOKE_SKILL = exports.TIM_SECRET_AUDIT_SKILL = exports.TIM_SYNC_TRIAGE_SKILL = exports.TIM_PROJECT_CURATE_SKILL = exports.TIM_RELEASE_BETA_SKILL = exports.TIM_HMEM_IMPORT_AUDIT_SKILL = exports.TIM_SESSION_START_SKILL = exports.TIM_REMEMBER_SKILL = exports.TIM_USING_SKILL = exports.TIM_EXPLAIN_SKILL = exports.TIM_HANDOFF_SKILL = void 0;
 exports.getSkill = getSkill;
 exports.listSkills = listSkills;
 const tim_handoff_js_1 = require("./tim-handoff.js");
@@ -16,6 +16,8 @@ const tim_secret_audit_js_1 = require("./tim-secret-audit.js");
 const tim_mcp_smoke_js_1 = require("./tim-mcp-smoke.js");
 const tim_new_project_js_1 = require("./tim-new-project.js");
 const tim_resume_js_1 = require("./tim-resume.js");
+const tim_resume_topic_js_1 = require("./tim-resume-topic.js");
+const tim_continue_js_1 = require("./tim-continue.js");
 var tim_handoff_js_2 = require("./tim-handoff.js");
 Object.defineProperty(exports, "TIM_HANDOFF_SKILL", { enumerable: true, get: function () { return tim_handoff_js_2.TIM_HANDOFF_SKILL; } });
 var tim_explain_js_2 = require("./tim-explain.js");
@@ -42,6 +44,10 @@ var tim_new_project_js_2 = require("./tim-new-project.js");
 Object.defineProperty(exports, "TIM_NEW_PROJECT_SKILL", { enumerable: true, get: function () { return tim_new_project_js_2.TIM_NEW_PROJECT_SKILL; } });
 var tim_resume_js_2 = require("./tim-resume.js");
 Object.defineProperty(exports, "TIM_RESUME_SKILL", { enumerable: true, get: function () { return tim_resume_js_2.TIM_RESUME_SKILL; } });
+var tim_resume_topic_js_2 = require("./tim-resume-topic.js");
+Object.defineProperty(exports, "TIM_RESUME_TOPIC_SKILL", { enumerable: true, get: function () { return tim_resume_topic_js_2.TIM_RESUME_TOPIC_SKILL; } });
+var tim_continue_js_2 = require("./tim-continue.js");
+Object.defineProperty(exports, "TIM_CONTINUE_SKILL", { enumerable: true, get: function () { return tim_continue_js_2.TIM_CONTINUE_SKILL; } });
 // Mirror of skills/<name>/SKILL.md, which is what `tim update-skills` actually
 // installs. The on-disk files are authoritative; skill-parity.test.ts fails if the
 // two sets ever drift, because a TS-only skill can be referenced but never installed.
@@ -59,6 +65,8 @@ exports.ALL_TIM_SKILLS = [
     tim_mcp_smoke_js_1.TIM_MCP_SMOKE_SKILL,
     tim_new_project_js_1.TIM_NEW_PROJECT_SKILL,
     tim_resume_js_1.TIM_RESUME_SKILL,
+    tim_resume_topic_js_1.TIM_RESUME_TOPIC_SKILL,
+    tim_continue_js_1.TIM_CONTINUE_SKILL,
 ];
 function getSkill(name) {
     return exports.ALL_TIM_SKILLS.find(s => s.name === name);

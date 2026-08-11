@@ -1,0 +1,166 @@
+// Retrieval by topic: everything a project ever recorded under one tag, in the
+// order it happened, plus the one live handoff from the newest session that
+// touched it. Replaces the recency-picked previous session that used to be
+// injected into every session start whether it was relevant or not.
+import type { Entry } from 'tim-core';
+import type { TimStore } from 'tim-store';
+import { KIND_BATCH, KIND_SESSION, KIND_SUMMARY_ROOT } from 'tim-store';
+import { recentExchanges } from 'tim-hooks';
+
+/** How much raw tail to render. Same order of magnitude as the old briefing's. */
+const RAW_TAIL_MAX_CHARS = 2000;
+/** Enough to cover a project's whole history under one tag without unbounded output. */
+const MAX_TAG_HITS = 500;
+
+export interface TopicSessionHit {
+  sessionId: string;
+  date: string;
+  title: string;
+  summary: string;
+}
+
+export interface TopicResume {
+  tag: string;
+  projectLabel: string;
+  /** Batch summaries carrying the tag, oldest first. */
+  sessions: TopicSessionHit[];
+  /** Tasks, bugs and ideas carrying the tag. */
+  work: Entry[];
+  /** The newest session among the hits — the only one whose note and turns are shown. */
+  newest?: { sessionId: string; date: string; handoffNote?: string; rawTurns: string[] };
+}
+
+/**
+ * Task/bug/idea, across the three places status bookkeeping actually lives.
+ * `metadata.type` has no 'bug' member — bugs are recognised by kind — so the
+ * kind check is not redundant with the type check.
+ */
+function isWorkEntry(e: Entry): boolean {
+  const kind = e.metadata.kind;
+  return e.metadata.task !== undefined
+    || kind === 'task' || kind === 'bug' || kind === 'idea'
+    || e.metadata.type === 'idea';
+}
+
+/**
+ * Walk a batch summary up to its session: batch → Summary root → session node.
+ * The batch carries no session id of its own, and the tree is the only place the
+ * relation is recorded.
+ */
+async function sessionOfBatch(
+  store: TimStore,
+  batch: Entry,
+): Promise<{ session: Entry; summaryRoot: Entry } | null> {
+  if (!batch.parentId) return null;
+  const summaryRoot = await store.read(batch.parentId);
+  if (!summaryRoot || summaryRoot.metadata.kind !== KIND_SUMMARY_ROOT) return null;
+  if (!summaryRoot.parentId) return null;
+  const session = await store.read(summaryRoot.parentId);
+  if (!session || session.metadata.kind !== KIND_SESSION) return null;
+  return { session, summaryRoot };
+}
+
+function sessionDate(session: Entry): string {
+  return typeof session.metadata.date === 'string' ? session.metadata.date : session.createdAt;
+}
+
+export async function collectTopicResume(
+  store: TimStore,
+  projectLabel: string,
+  tag: string,
+): Promise<TopicResume> {
+  const needle = tag.startsWith('#') ? tag : `#${tag}`;
+  const hits = await store.searchByTag(needle, MAX_TAG_HITS, projectLabel);
+
+  const sessions: TopicSessionHit[] = [];
+  // Keyed by session id so several matching batches of one session collapse into
+  // one candidate for "newest".
+  const candidates = new Map<string, { date: string; summaryRoot: Entry }>();
+
+  for (const hit of hits) {
+    if (hit.metadata.kind !== KIND_BATCH) continue;
+    const located = await sessionOfBatch(store, hit);
+    if (!located) continue;
+    const date = sessionDate(located.session);
+    sessions.push({
+      sessionId: located.session.id,
+      date,
+      title: hit.title,
+      summary: (hit.content ?? '').trim(),
+    });
+    const known = candidates.get(located.session.id);
+    if (!known || date > known.date) {
+      candidates.set(located.session.id, { date, summaryRoot: located.summaryRoot });
+    }
+  }
+
+  sessions.sort((a, b) => a.date.localeCompare(b.date) || a.title.localeCompare(b.title));
+
+  const newestEntry = [...candidates.entries()].sort(
+    (a, b) => b[1].date.localeCompare(a[1].date) || b[0].localeCompare(a[0]),
+  )[0];
+
+  let newest: TopicResume['newest'];
+  if (newestEntry) {
+    const [sessionId, { date, summaryRoot }] = newestEntry;
+    const note = summaryRoot.metadata.handoff_note;
+    // The note and the turns come from the same session, always. A note from one
+    // session beside turns from another would read as one state of the work and
+    // describe two.
+    newest = {
+      sessionId,
+      date,
+      ...(typeof note === 'string' && note.trim() ? { handoffNote: note.trim() } : {}),
+      rawTurns: await recentExchanges(store, sessionId, RAW_TAIL_MAX_CHARS).catch(() => []),
+    };
+  }
+
+  return {
+    tag: needle,
+    projectLabel,
+    sessions,
+    work: hits.filter(isWorkEntry),
+    newest,
+  };
+}
+
+export function formatTopicResume(r: TopicResume): string {
+  if (r.sessions.length === 0 && r.work.length === 0) {
+    return `No entries tagged ${r.tag} in ${r.projectLabel}.`;
+  }
+
+  const out: string[] = [`## Topic ${r.tag} — ${r.projectLabel}`];
+
+  if (r.sessions.length > 0) {
+    out.push('', `── Sessions on this topic (${r.sessions.length}, oldest first) ──`);
+    for (const s of r.sessions) {
+      out.push(`▸ ${s.date.slice(0, 16).replace('T', ' ')} · ${s.sessionId} · ${s.title}`);
+      if (s.summary) out.push(`  ${s.summary}`);
+    }
+  }
+
+  if (r.work.length > 0) {
+    out.push('', `── Tasks, bugs and ideas tagged ${r.tag} (${r.work.length}) ──`);
+    for (const w of r.work) {
+      const status = typeof w.metadata.status === 'string' ? ` [${w.metadata.status}]` : '';
+      out.push(`- ${w.title}${status}`);
+    }
+  }
+
+  if (r.newest) {
+    const when = r.newest.date.slice(0, 16).replace('T', ' ');
+    out.push('', `── Newest session on this topic: ${r.newest.sessionId} (${when}) ──`);
+    // A missing note is information; a foreign one is a false statement about the
+    // current state of the work. So this says so instead of reaching backwards.
+    out.push(
+      r.newest.handoffNote
+        ? `Handoff note:\n${r.newest.handoffNote}`
+        : `No handoff note — session ${r.newest.sessionId} (${when}) ended without one.`,
+    );
+    if (r.newest.rawTurns.length > 0) {
+      out.push('', '── Its turns since the last summary ──', ...r.newest.rawTurns);
+    }
+  }
+
+  return out.join('\n');
+}

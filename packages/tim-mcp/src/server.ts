@@ -32,6 +32,7 @@ import {
   isCodingNeedsReview,
 } from 'tim-store';
 import { formatProjectOutput, type ProjectSchema } from './project-output.js';
+import { collectTopicResume, formatTopicResume } from './topic-resume.js';
 import { loadConfig, resolveActiveSessionId, evaluateLoadGate, stripDeprecatedTags, SCHEMA_KINDS, PROJECT_SCHEMA, type EdgeType, type Entry } from 'tim-core';
 import { annotateTrust } from './trust.js';
 import { captureProvenance } from './provenance.js';
@@ -193,7 +194,8 @@ const TimWriteManySchema = z.object({
 });
 
 const TimSearchSchema = z.object({
-  query: z.string().describe('FTS5 search query'),
+  query: z.string().optional()
+    .describe('FTS5 search query. Optional only when tag is given'),
   topK: z.number().min(1).optional().default(10)
     .describe('Maximum results; values above 100 are clamped to 100, not rejected'),
   excerptChars: z.number().int().min(0).optional().default(500)
@@ -204,8 +206,11 @@ const TimSearchSchema = z.object({
   searchType: z.enum(['fts', 'vector', 'hybrid']).optional().default('fts'),
   root: z.string().optional().describe('Scope to project (label/alias/name)'),
   type: z.string().optional().describe('Filter metadata.type'),
-  tag: z.string().optional().describe('Filter exact tag'),
+  tag: z.string().optional()
+    .describe('Exact tag. With a query: a filter on the ranked results. Alone: a tag lookup'),
   status: z.string().optional().describe('Filter metadata.status'),
+  // "at least one of query/tag" is checked in the handler, not with .refine():
+  // refine returns a ZodEffects and the tool registry takes a ZodObject.
 }).describe(
   'Returns {results, returned, omitted, truncated}. Results contain bounded excerpts; ' +
   'use tim_read for the full body.',
@@ -389,6 +394,12 @@ const TimSessionStartSchema = z.object({
 const TimResumeListSchema = z.object({
   projectId: z.string().optional().describe('Project label, e.g. P0063; defaults to the bound project'),
   limit: z.number().int().min(1).max(25).optional().default(10),
+});
+
+// One parameter, the tag. No session count and no date floor until someone
+// misses them — a topic's history is short enough to read whole.
+const TimResumeTopicSchema = z.object({
+  tag: z.string().describe('Topic tag, with or without the leading # (e.g. "topic-recall")'),
 });
 
 const TimPreviewBriefingSchema = z.object({
@@ -622,7 +633,9 @@ export const TOOL_DEFS: Array<{
     name: 'tim_search',
     description: 'Search TIM entries using FTS5 full-text search: keywords, "quoted phrases", ' +
       'prefix*. NOT SQL — no column filters. For vague/associative queries use tim_remember; ' +
-      'for a known label use tim_read directly. Returns {results, returned, omitted, truncated}; ' +
+      'for a known label use tim_read directly. Pass tag without query for a pure tag lookup: ' +
+      'everything carrying that tag, oldest first. With both, tag filters the ranked results ' +
+      'as before. Returns {results, returned, omitted, truncated}; ' +
       'results contain bounded excerpts. Use tim_read for the full body.',
     schema: TimSearchSchema,
   },
@@ -756,6 +769,16 @@ export const TOOL_DEFS: Array<{
       'List resumable sessions of the bound project (most recent activity first) with date, tool, ' +
       'task summary, and exchange count. Follow the ACTION line: present to the user, then call tim_session_resume.',
     schema: TimResumeListSchema,
+  },
+  {
+    name: 'tim_resume_topic',
+    description:
+      'Recall everything the bound project recorded under one tag: the batch summaries carrying it ' +
+      'across all sessions in chronological order, the tasks/bugs/ideas that share it, and — from the ' +
+      'newest session that touched the topic — its handoff note and the turns no summary covers yet. ' +
+      'Pure read: binds nothing, starts no session, mutates nothing. This is how you pick up past work; ' +
+      'session start no longer injects it by recency.',
+    schema: TimResumeTopicSchema,
   },
   {
     name: 'tim_preview_briefing',
@@ -1837,6 +1860,7 @@ const READ_TOOLS = new Set([
   'tim_resume_list',
   'tim_hook_prompt_submit',
   'tim_preview_briefing',
+  'tim_resume_topic',
 ]);
 
 const REMEMBER_TOOLS = new Set(['tim_remember']);
@@ -2235,11 +2259,23 @@ export async function createMcpServer(
         case 'tim_search': {
           const parsed = TimSearchSchema.parse(args);
           const { query, root, type, tag, status } = parsed;
+          if (query === undefined && tag === undefined) {
+            return {
+              content: [{ type: 'text', text: 'tim_search needs a query, a tag, or both.' }],
+              isError: true,
+            };
+          }
           const { topK, excerptChars, clamped } =
             clampSearchRequest(parsed.topK, parsed.excerptChars);
           const usageSid = await usageSessionId();
           const hasFilters = Boolean(root || type || tag || status);
-          let results = await s.search({ query, topK: hasFilters ? 1000 : topK });
+          // Two different retrievals behind one tool. With a query it stays what
+          // it was — relevance order, tag as a post-filter — so existing callers
+          // see no reordering. Without one there is nothing to rank against, and
+          // a topic reads in the order it happened.
+          let results = query === undefined
+            ? await s.searchByTag(tag!, hasFilters ? 1000 : topK, root)
+            : await s.search({ query, topK: hasFilters ? 1000 : topK });
           if (root) {
             const roots = await resolveRoots(s, root);
             if (roots.error) {
@@ -2938,6 +2974,23 @@ export async function createMcpServer(
           }
           const list = await getSessions().listResumableSessions(label, limit);
           return { content: [{ type: 'text', text: formatResumeList(label, list) }] };
+        }
+
+        case 'tim_resume_topic': {
+          const { tag } = TimResumeTopicSchema.parse(args);
+          const projectLabel = getActiveProjectLabel();
+          if (!projectLabel) {
+            return {
+              content: [{
+                type: 'text',
+                text: 'No project bound to this session — call tim_load_project first, ' +
+                  'then tim_resume_topic.',
+              }],
+              isError: true,
+            };
+          }
+          const topic = await collectTopicResume(s, projectLabel, tag);
+          return { content: [{ type: 'text', text: formatTopicResume(topic) }] };
         }
 
         case 'tim_preview_briefing': {

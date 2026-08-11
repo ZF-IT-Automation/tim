@@ -107,7 +107,7 @@ function entryText(entry: Entry): string {
  * batch (correct for the summarizer, which works forward), which here would render
  * the opening of a never-summarized session under a "since the last summary" heading.
  */
-async function recentExchanges(
+export async function recentExchanges(
   store: TimStore,
   sessionId: string,
   maxChars: number,
@@ -232,11 +232,20 @@ async function openWork(
 /**
  * Build the directive briefing for a project. Returns undefined when there is
  * nothing to inject, so the directive falls back to its instruction-only form.
+ *
+ * `includePastWork` decides whether the previous session comes along. It is a
+ * call parameter with one hard-coded value per caller, not a setting: the two
+ * automatic callers in tim-cli pass `false`, so a fresh session starts with
+ * structure and open work only, and `previewSessionStart` passes `true`, which
+ * is what `/tim-continue` renders on demand. Past work is retrieved by topic
+ * now (`tim_resume_topic`), not injected by recency into every session that
+ * happens to start in this directory.
  */
 export async function collectDirectiveBriefing(
   store: TimStore,
   projectLabel: string,
   maxTokens: number,
+  includePastWork: boolean,
 ): Promise<DirectiveBriefing | undefined> {
   const maxChars = Math.max(0, Math.floor(maxTokens * CHARS_PER_TOKEN));
   if (maxChars === 0) return undefined;
@@ -244,8 +253,9 @@ export async function collectDirectiveBriefing(
   const summaryBudget = Math.floor(maxChars * PREVIOUS_SESSION_BUDGET_SHARE);
   const rawBudget = Math.floor(maxChars * RECENT_EXCHANGE_BUDGET_SHARE);
 
-  const previous: { label?: string; summary?: string; recent?: string[] } =
-    await previousSession(store, projectLabel, summaryBudget, rawBudget).catch(() => ({}));
+  const previous: { label?: string; summary?: string; recent?: string[] } = includePastWork
+    ? await previousSession(store, projectLabel, summaryBudget, rawBudget).catch(() => ({}))
+    : {};
   const recent = previous.recent ?? [];
   const spent = (previous.summary?.length ?? 0)
     + recent.reduce((n, block) => n + block.length + 1, 0);

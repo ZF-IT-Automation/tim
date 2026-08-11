@@ -322,10 +322,14 @@ export async function previewSessionStart(
     }
   }
 
+  // The deliberate path: only `tim_preview_briefing` reaches here, and asking for
+  // the previous session is the whole point of calling it. `/tim-continue` is the
+  // skill that does.
   const directiveBriefing = await collectDirectiveBriefing(
     store,
     projectLabel,
     params.maxTokens,
+    true,
   ).catch(() => undefined);
 
   const directive = params.origin === 'session'

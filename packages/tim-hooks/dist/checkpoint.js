@@ -246,7 +246,10 @@ async function previewSessionStart(store, params) {
                 briefingParts.push(reminder);
         }
     }
-    const directiveBriefing = await (0, session_briefing_js_1.collectDirectiveBriefing)(store, projectLabel, params.maxTokens).catch(() => undefined);
+    // The deliberate path: only `tim_preview_briefing` reaches here, and asking for
+    // the previous session is the whole point of calling it. `/tim-continue` is the
+    // skill that does.
+    const directiveBriefing = await (0, session_briefing_js_1.collectDirectiveBriefing)(store, projectLabel, params.maxTokens, true).catch(() => undefined);
     const directive = params.origin === 'session'
         ? (0, marker_js_1.buildSessionDirective)(projectLabel, cwd, binding, directiveBriefing)
         : (0, marker_js_1.buildLoadDirective)(projectLabel, cwd, binding, directiveBriefing);

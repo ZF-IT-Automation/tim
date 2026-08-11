@@ -4,7 +4,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { SessionManager, TimStore } from 'tim-store';
-import { clampSummary } from 'tim-hooks';
+import { clampSummary, collectDirectiveBriefing } from 'tim-hooks';
 
 const CLI = path.resolve(__dirname, '../../dist/cli.js');
 
@@ -102,19 +102,43 @@ describe('session-start directive carries content', () => {
     );
   }
 
-  it('resolve-project --format directive injects the previous summary and open work', async () => {
+  // The collector, called the way the deliberate path calls it. The automatic
+  // path is the subprocess above; wiring it to `true` must break the test below.
+  async function pastWorkBriefing(projectLabel: string) {
+    const store = new TimStore(dbPath);
+    try {
+      return await collectDirectiveBriefing(store, projectLabel, 4000, true);
+    } finally {
+      store.close();
+    }
+  }
+
+  it('resolve-project --format directive carries open work but no past work', async () => {
     await seed();
     const out = run(['resolve-project', '--cwd', cwd, '--format', 'directive']).stdout;
 
-    expect(out).toContain('── Previous session');
-    expect(out).toContain('next: install the SessionStart hook');
-    // Handoff note now lives on summary root; briefing reader updates in topic-recall spec.
+    // Criterion 8: the automatic session start stops asking for past work. The
+    // previous session was picked by recency alone, so it was noise in every
+    // session that was about something else. /tim-continue renders it on demand.
+    expect(out).not.toContain('── Previous session');
+    expect(out).not.toContain('next: install the SessionStart hook');
+    expect(out).not.toContain('question 10');
+
+    // Structure and open work stay — they are what a fresh session needs.
     expect(out).toContain('── Open work ──');
     expect(out).toContain('Ship the SessionStart hook');
     // Closed tasks are not open work.
     expect(out).not.toContain('Already handled');
     // Binding still has to happen.
     expect(out).toContain('tim_load_project(label="P0063")');
+  });
+
+  it('the same collector still returns past work when asked for it deliberately', async () => {
+    await seed();
+    const briefing = await pastWorkBriefing('P0063');
+
+    expect(briefing?.previousSessionSummary).toContain('next: install the SessionStart hook');
+    expect(briefing?.openWork?.join('\n')).toContain('Ship the SessionStart hook');
   });
 
   it('falls back to the checkpoint text when nothing rolled it up into the summary root', async () => {
@@ -143,9 +167,8 @@ describe('session-start directive carries content', () => {
       JSON.stringify({ version: 3, project: 'P0065' }),
     );
 
-    const out = run(['resolve-project', '--cwd', cwd, '--format', 'directive']).stdout;
-    expect(out).toContain('── Previous session');
-    expect(out).toContain('Topics: 1. do the thing');
+    const briefing = await pastWorkBriefing('P0065');
+    expect(briefing?.previousSessionSummary).toContain('Topics: 1. do the thing');
   });
 
   it('renders the newest unsummarized turns, not the oldest uncovered batch', async () => {
@@ -180,15 +203,14 @@ describe('session-start directive carries content', () => {
       JSON.stringify({ version: 3, project: 'P0066' }),
     );
 
-    const out = run(['resolve-project', '--cwd', cwd, '--format', 'directive']).stdout;
-    expect(out).toContain('not yet summarized');
-    expect(out).toContain('question 10');
-    expect(out).toContain('answer 10');
+    const raw = (await pastWorkBriefing('P0066'))?.recentExchanges?.join('\n') ?? '';
+    expect(raw).toContain('question 10');
+    expect(raw).toContain('answer 10');
     // Eight turns are uncovered, six fit: the cap drops the oldest of them.
-    expect(out).toContain('question 5');
-    expect(out).not.toContain('question 4');
+    expect(raw).toContain('question 5');
+    expect(raw).not.toContain('question 4');
     // Summarized turns are not repeated raw.
-    expect(out).not.toContain('question 2');
+    expect(raw).not.toContain('question 2');
   });
 
   it('falls back to the instruction-only directive when the project has no history', async () => {

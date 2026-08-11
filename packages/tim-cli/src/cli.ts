@@ -482,10 +482,15 @@ async function buildStartDirectiveForCwd(cwd: string, walkUp?: boolean): Promise
     // The directive must carry substance, not just an instruction — a model that
     // never calls tim_load_project still gets briefed. Failure stays silent so a
     // start hook is never blocked by a briefing problem.
+    //
+    // No past work: this is an automatic path. The previous session was chosen by
+    // recency alone, so it was noise whenever the new session was about something
+    // else. `/tim-continue` renders it on demand, `/tim-resume-topic` by topic.
     const briefing = await collectDirectiveBriefing(
       store,
       projectLabel,
       getBriefingMaxTokens(config),
+      false,
     ).catch(() => undefined);
     return buildLoadDirective(projectLabel, dir, binding, briefing);
   } finally {
@@ -567,10 +572,12 @@ async function cmdResolveSession(args: string[]) {
       console.log(JSON.stringify({ sessionId, project: projectRef, cwd }));
     } else if (format === 'directive') {
       const binding = await resolveProjectBindingLabel(store, projectRef);
+      // Automatic path as well — structure and open work only, see above.
       const briefing = await collectDirectiveBriefing(
         store,
         projectRef,
         getBriefingMaxTokens(config),
+        false,
       ).catch(() => undefined);
       process.stdout.write(buildSessionDirective(projectRef, cwd, binding, briefing));
     } else {

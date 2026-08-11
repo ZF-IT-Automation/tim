@@ -2785,6 +2785,57 @@ class TimStore {
         return { totalEntries, totalEdges, entriesByDepth, entriesByType, topTags, avgConfidence: avgConf, oldestEntry: oldest, newestEntry: newest, staleCount: stale };
     }
     /**
+     * Entries carrying a tag, oldest first. A lookup, not a search: `search()`
+     * runs FTS on a query and then filters, which can only ever narrow what the
+     * full-text ranking already surfaced — so "give me everything tagged
+     * #frontend" had no path at all, and any attempt to count a tag's uses
+     * under-reported it.
+     *
+     * Chronological rather than ranked on purpose: the caller is reading a topic's
+     * history, and a history is only legible in the order it happened.
+     */
+    async searchByTag(tag, topK = 10, project) {
+        const needle = tag.startsWith('#') ? tag : `#${tag}`;
+        let scopeSql = '';
+        const params = [`%"${needle}"%`];
+        if (project) {
+            const resolved = await this.resolveProjectLabel(project);
+            if (resolved.status !== 'found')
+                return [];
+            const root = await this.read(resolved.label);
+            if (!root)
+                return [];
+            scopeSql = ` AND id IN (
+        WITH RECURSIVE tree(id) AS (
+          SELECT id FROM entries WHERE id = ?
+          UNION ALL
+          SELECT c.id FROM entries c
+          INNER JOIN tree t ON c.parent_id = t.id
+          WHERE c.tombstoned_at IS NULL
+        )
+        SELECT id FROM tree
+      )`;
+            params.push(root.id);
+        }
+        const rows = this.db.prepare(`
+      SELECT * FROM entries
+      WHERE tags LIKE ?
+        AND irrelevant = 0
+        AND tombstoned_at IS NULL
+        ${scopeSql}
+      ORDER BY created_at ASC, rowid ASC
+    `).all(...params);
+        // LIKE on the JSON text can only over-match (a tag that contains this one as
+        // a substring is excluded by the quotes, but a corrupt column could slip
+        // through), so the exact membership check stays.
+        const patterns = this.loadActiveSuppressPatterns();
+        return rows
+            .map(rowToEntry)
+            .filter(e => e.tags.includes(needle))
+            .filter(e => !TimStore.matchesSuppressed(patterns, e))
+            .slice(0, topK);
+    }
+    /**
      * Every distinct content tag inside one project's subtree, most frequent
      * first, with no cap. Feeds the summarizer prompt so it reuses the vocabulary
      * the project already has instead of minting a synonym per run (`#queue`

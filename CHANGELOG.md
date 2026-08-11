@@ -6,7 +6,18 @@ All notable changes to TIM are documented in this file.
 
 ### Added
 
+- **Topic recall** — past work is retrieved by topic instead of injected by recency.
+  - The summarizer prompt now carries the project's complete content-tag vocabulary, frequency-ordered and uncapped, with the instruction to reuse a fitting tag before inventing one (`TimStore.projectTagVocabulary`, `UnsummarizedBatch.vocabulary`). A failed lookup leaves the prompt unchanged.
+  - `aggregateSessionTags` uses a batch-count dependent bar — every content tag up to two batches, twice-seen from three on — so short sessions stop losing their topics.
+  - `tim_search` accepts `tag` without `query`: a tag lookup returning everything carrying it, oldest first. With both, the tag stays a filter on the ranked results.
+  - New MCP tool `tim_resume_topic(tag)` and skill `/tim-resume-topic`: batch summaries across all matching sessions in chronological order, the tasks/bugs/ideas sharing the tag, and — from the newest matched session only — its handoff note and uncovered raw turns. A newest session without a note says so; it never falls back to an older one.
+  - New skill `/tim-continue` renders the previous session's briefing on demand via `tim_preview_briefing`.
+
 - **`.tim-ignore`** — a directory holding this file belongs to no project, and the marker walk-up stops there instead of inheriting a binding from a parent. For unattended runners (cronjobs under `$HOME`, benchmark repos) whose sessions are harness noise rather than project history.
+
+### Changed
+
+- **The automatic session start no longer injects past work.** `collectDirectiveBriefing` takes `includePastWork`: the two start-hook callers pass `false`, so a fresh session gets the project header, open work and the binding instruction; `tim_preview_briefing` passes `true`. The previous session used to be chosen by recency alone, which made it noise in every session about something else. Use `/tim-continue` for the last session, `/tim-resume-topic` for a subject.
 
 ### Fixed
 

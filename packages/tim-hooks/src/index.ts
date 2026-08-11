@@ -99,7 +99,7 @@ export {
   type MarkerDiscoveryPolicy,
 } from './marker.js';
 
-export { collectDirectiveBriefing, clampSummary } from './session-briefing.js';
+export { collectDirectiveBriefing, clampSummary, recentExchanges } from './session-briefing.js';
 
 export {
   rebalanceBatch,
