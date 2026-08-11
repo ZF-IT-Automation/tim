@@ -266,6 +266,43 @@ describe('tim_search extended', () => {
     expect(resp.result!.content[0].text).toContain('query, a tag, or both');
   });
 
+  // tim_resume_topic first resolved its project through getActiveProjectLabel
+  // alone, which reads TIM_PROJECT or ~/.tim/active-project — neither of which
+  // exists on a host that binds through a .tim-project marker. The tool was
+  // unreachable exactly where it was meant to be used, and only a real call
+  // found it. An explicit project is the escape hatch either way.
+  it('tim_resume_topic takes an explicit project when nothing is bound', async () => {
+    await seedScopedEntry('P0540', 'Recalled task', ['#resolution', '#test'], {
+      task: { status: 'todo' },
+    });
+
+    const resp = await client.callTool('tim_resume_topic', {
+      tag: '#resolution',
+      project: 'P0540',
+    });
+    expect(resp.result!.isError).toBeUndefined();
+    expect(resp.result!.content[0].text).toContain('## Topic #resolution — P0540');
+    expect(resp.result!.content[0].text).toContain('Recalled task');
+  });
+
+  it('tim_resume_topic points at tim_search when the tag exists but not in this view', async () => {
+    await seedScopedEntry('P0541', 'Just a note', ['#plain-note', '#test']);
+
+    const resp = await client.callTool('tim_resume_topic', {
+      tag: '#plain-note',
+      project: 'P0541',
+    });
+    const text = resp.result!.content[0].text;
+    expect(text).toContain('other');
+    expect(text).toContain('tim_search with tag=#plain-note');
+  });
+
+  it('tim_resume_topic says what to pass when no project resolves at all', async () => {
+    const resp = await client.callTool('tim_resume_topic', { tag: '#resolution' });
+    expect(resp.result!.isError).toBe(true);
+    expect(resp.result!.content[0].text).toContain('pass project');
+  });
+
   it('type tag status filters combine with AND', async () => {
     await seedScopedEntry('P0520', 'Errmark', ['#combo', '#test'], {
       type: 'error',

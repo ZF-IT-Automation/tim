@@ -29,6 +29,8 @@ export interface TopicResume {
   work: Entry[];
   /** The newest session among the hits — the only one whose note and turns are shown. */
   newest?: { sessionId: string; date: string; handoffNote?: string; rawTurns: string[] };
+  /** Total entries carrying the tag, including the kinds this view does not render. */
+  otherHits: number;
 }
 
 /**
@@ -125,12 +127,20 @@ export async function collectTopicResume(
     sessions,
     work: hits.filter(isWorkEntry),
     newest,
+    otherHits: hits.length,
   };
 }
 
 export function formatTopicResume(r: TopicResume): string {
   if (r.sessions.length === 0 && r.work.length === 0) {
-    return `No entries tagged ${r.tag} in ${r.projectLabel}.`;
+    // This view renders session history and open work. Saying "nothing" when
+    // the tag does exist on other kinds of entry would send the reader looking
+    // for a different tag instead of a different tool.
+    return r.otherHits > 0
+      ? `No session summaries and no open work tagged ${r.tag} in ${r.projectLabel} — ` +
+        `but ${r.otherHits} other ${r.otherHits === 1 ? 'entry carries' : 'entries carry'} it. ` +
+        `Use tim_search with tag=${r.tag} to see them.`
+      : `No entries tagged ${r.tag} in ${r.projectLabel}.`;
   }
 
   const out: string[] = [`## Topic ${r.tag} — ${r.projectLabel}`];

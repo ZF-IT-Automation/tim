@@ -347,10 +347,13 @@ const TimResumeListSchema = zod_1.z.object({
     projectId: zod_1.z.string().optional().describe('Project label, e.g. P0063; defaults to the bound project'),
     limit: zod_1.z.number().int().min(1).max(25).optional().default(10),
 });
-// One parameter, the tag. No session count and no date floor until someone
-// misses them — a topic's history is short enough to read whole.
+// The tag, and an escape hatch for the project. No session count and no date
+// floor until someone misses them — a topic's history is short enough to read
+// whole.
 const TimResumeTopicSchema = zod_1.z.object({
     tag: zod_1.z.string().describe('Topic tag, with or without the leading # (e.g. "topic-recall")'),
+    project: zod_1.z.string().optional()
+        .describe('Project label; defaults to the bound project, then to the .tim-project marker at cwd'),
 });
 const TimPreviewBriefingSchema = zod_1.z.object({
     project: zod_1.z.string().describe('Project label, e.g. P0063'),
@@ -2688,14 +2691,22 @@ async function createMcpServer(options = {}) {
                     return { content: [{ type: 'text', text: (0, resume_output_js_1.formatResumeList)(label, list) }] };
                 }
                 case 'tim_resume_topic': {
-                    const { tag } = TimResumeTopicSchema.parse(args);
-                    const projectLabel = (0, tim_hooks_1.getActiveProjectLabel)();
+                    const { tag, project } = TimResumeTopicSchema.parse(args);
+                    // getActiveProjectLabel reads TIM_PROJECT or ~/.tim/active-project, and
+                    // neither is set on a host whose sessions bind through a .tim-project
+                    // marker — which is the normal setup. So the marker is a fallback, not
+                    // an afterthought: without it the tool is unreachable exactly where it
+                    // is meant to be used.
+                    const markerLabel = isHttp
+                        ? undefined
+                        : findConfiguredMarker(process.cwd())?.marker.project;
+                    const projectLabel = project ?? (0, tim_hooks_1.getActiveProjectLabel)() ?? markerLabel;
                     if (!projectLabel) {
                         return {
                             content: [{
                                     type: 'text',
-                                    text: 'No project bound to this session — call tim_load_project first, ' +
-                                        'then tim_resume_topic.',
+                                    text: 'No project to search — pass project (e.g. P0063), or call ' +
+                                        'tim_load_project first.',
                                 }],
                             isError: true,
                         };
