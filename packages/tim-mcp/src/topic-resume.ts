@@ -196,15 +196,21 @@ export function formatTopicResume(r: TopicResume): string {
   const out: string[] = [`## Topic "${r.topic}" — ${r.projectLabel}`];
 
   if (r.sessions.length > 0) {
-    const capped = r.sessionsMatched > new Set(r.sessions.map(s => s.sessionId)).size;
-    out.push('', `── Sessions on this topic (${r.sessions.length}, oldest first) ──`);
-    if (capped) {
+    // Sessions and batches are different counts — one session can contribute
+    // several batches — and labelling the batch count "Sessions" made the header
+    // disagree with the cap line right under it.
+    const shownSessions = new Set(r.sessions.map(s => s.sessionId)).size;
+    const batches = r.sessions.length === shownSessions
+      ? ''
+      : `, ${r.sessions.length} batches`;
+    out.push('', `── Sessions on this topic (${shownSessions}${batches}, oldest first) ──`);
+    if (r.sessionsMatched > shownSessions) {
       // A cap that does not announce itself turns a partial history into a
       // confident whole one — the reader has no way to tell the topic started
       // earlier than the oldest line shown.
       out.push(
-        `Newest ${new Set(r.sessions.map(s => s.sessionId)).size} of ${r.sessionsMatched} ` +
-        `matching sessions; earlier ones exist. Raise limit to see them.`,
+        `Newest ${shownSessions} of ${r.sessionsMatched} matching sessions; ` +
+        `earlier ones exist. Raise limit to see them.`,
       );
     }
     for (const s of r.sessions) {

@@ -266,7 +266,7 @@ describe('tim_resume_topic (criteria 5, 6, 7)', () => {
     const text = formatTopicResume(topic);
 
     expect(topic.sessions).toHaveLength(1);
-    expect(text).toContain('── Sessions on this topic (1');
+    expect(text).toContain('── Sessions on this topic (1, oldest first)');
     expect(text).toMatch(/further entr(y matches|ies match) "#partial"/);
     expect(text).toContain('tim_search with query=#partial');
   });
