@@ -57,6 +57,12 @@ const DEFAULT_CONFIG: TimConfigFile = {
   summarizer: {
     chain: DEFAULT_SUMMARIZER_CHAIN,
     timeout_sec: 600,
+    idle_sweep: {
+      enabled: true,
+      interval_minutes: 5,
+      idle_minutes: 15,
+      max_spawns_per_pass: 3,
+    },
   },
   remember: {
     enabled: true,
@@ -106,6 +112,10 @@ export function loadConfig(): TimConfigFile {
         ...raw.summarizer,
         // A user-supplied chain replaces the default wholesale — never merged element-wise.
         chain: raw.summarizer?.chain ?? DEFAULT_SUMMARIZER_CHAIN,
+        idle_sweep: {
+          ...DEFAULT_CONFIG.summarizer?.idle_sweep,
+          ...raw.summarizer?.idle_sweep,
+        },
       },
       remember: {
         ...DEFAULT_CONFIG.remember,

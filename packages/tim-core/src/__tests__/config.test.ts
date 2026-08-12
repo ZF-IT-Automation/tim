@@ -48,6 +48,27 @@ describe('loadConfig summarizer defaults', () => {
     expect(config.summarizer?.timeout_sec).toBeGreaterThan(0);
   });
 
+  it('ships idle_sweep defaults when no config file exists', () => {
+    const config = loadConfig();
+    expect(config.summarizer?.idle_sweep).toEqual({
+      enabled: true,
+      interval_minutes: 5,
+      idle_minutes: 15,
+      max_spawns_per_pass: 3,
+    });
+  });
+
+  it('merges idle_sweep overrides from config file', () => {
+    writeConfig({ summarizer: { idle_sweep: { enabled: false, idle_minutes: 30 } } });
+    const config = loadConfig();
+    expect(config.summarizer?.idle_sweep).toMatchObject({
+      enabled: false,
+      idle_minutes: 30,
+      interval_minutes: 5,
+      max_spawns_per_pass: 3,
+    });
+  });
+
   it('an explicitly empty chain is honoured (opt-out, not overridden)', () => {
     writeConfig({ summarizer: { chain: [] } });
     expect(loadConfig().summarizer?.chain).toEqual([]);

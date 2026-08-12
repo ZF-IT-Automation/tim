@@ -50,6 +50,7 @@ import {
   runPromptSubmit,
   syncNearestProjectMarker,
 } from 'tim-hooks';
+import { startIdleSweepTimer, stopIdleSweepTimer } from './idle-sweep-timer.js';
 import { tim_export, tim_import, inspectHmemManifest } from 'tim-migrate';
 import { autoPush, autoPull, resetSyncCooldowns, loadConfig as loadSyncConfig } from 'tim-sync-client';
 import {
@@ -3543,6 +3544,8 @@ export async function createMcpServer(
     }
   });
 
+  startIdleSweepTimer(getStore());
+
   return server;
 }
 
@@ -3600,6 +3603,8 @@ export async function createHttpServer(options?: {
 
   installProcessErrorGuards();
 
+  startIdleSweepTimer(getStore());
+
   const httpServer = await new Promise<HttpServer>((resolve, reject) => {
     const listener = app.listen(port, host);
     listener.once('listening', () => resolve(listener));
@@ -3616,6 +3621,7 @@ export async function createHttpServer(options?: {
     typeof addr === 'object' && addr !== null ? addr.port : port;
 
   const close = async (): Promise<void> => {
+    stopIdleSweepTimer();
     for (const transport of transports.values()) {
       try {
         await transport.close();
@@ -3653,6 +3659,7 @@ export async function startServer(): Promise<void> {
     );
 
     const shutdown = async (): Promise<void> => {
+      stopIdleSweepTimer();
       await handle.close();
       process.exit(0);
     };
