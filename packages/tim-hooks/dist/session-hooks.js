@@ -157,6 +157,14 @@ async function onSessionStop(store, cwd, opts = {}) {
 }
 const ALL_SESSIONS = 1_000_000;
 const KIND_SESSION = 'session';
+/**
+ * Sessions already reported as unsweepable, for the life of this process. A broken
+ * cwd does not heal between ticks, so a per-pass set would write the same row every
+ * `interval_minutes` — 288 rows a day per broken session, against a log that rotates
+ * at 10k. Process-scoped is the right lifetime: it survives the ticks, and a restart
+ * is exactly when the situation may have changed.
+ */
+const sweepSkipLogged = new Set();
 /** Latest exchange timestamp anywhere in the session's Exchanges subtree. */
 async function getSessionLastExchangeAt(store, sessionId) {
     const exNode = await (0, tim_store_1.findChildByKind)(store, sessionId, tim_store_1.KIND_EXCHANGES_ROOT);
@@ -190,7 +198,6 @@ async function sweepIdleSessions(store, opts = {}) {
     const nowMs = opts.now ?? (() => Date.now());
     const idleCutoff = new Date(nowMs() - idleMinutes * 60_000).toISOString();
     const errorLogger = new tim_store_1.ErrorLogger(store.getDb());
-    const loggedSkip = new Set();
     const results = [];
     let spawns = 0;
     const sessions = await store.getByMetadataKind(KIND_SESSION, ALL_SESSIONS);
@@ -213,13 +220,13 @@ async function sweepIdleSessions(store, opts = {}) {
         const cwdRaw = session.metadata.cwd;
         if (typeof cwdRaw !== 'string' || !cwdRaw.trim()) {
             const key = `${sessionId}:no-cwd`;
-            if (!loggedSkip.has(key)) {
+            if (!sweepSkipLogged.has(key)) {
                 errorLogger.logError({
                     tool: 'idle_sweep',
                     error: 'session missing metadata.cwd — skipped',
                     sessionId,
                 });
-                loggedSkip.add(key);
+                sweepSkipLogged.add(key);
             }
             results.push({ sessionId, reason: 'no-cwd' });
             continue;
@@ -227,26 +234,26 @@ async function sweepIdleSessions(store, opts = {}) {
         const cwd = cwdRaw.trim();
         if (!fs.existsSync(cwd)) {
             const key = `${sessionId}:missing-dir`;
-            if (!loggedSkip.has(key)) {
+            if (!sweepSkipLogged.has(key)) {
                 errorLogger.logError({
                     tool: 'idle_sweep',
                     error: `session cwd does not exist: ${cwd}`,
                     sessionId,
                 });
-                loggedSkip.add(key);
+                sweepSkipLogged.add(key);
             }
             results.push({ sessionId, reason: 'no-cwd' });
             continue;
         }
         if (!(0, marker_js_1.detectProject)(cwd)) {
             const key = `${sessionId}:no-marker`;
-            if (!loggedSkip.has(key)) {
+            if (!sweepSkipLogged.has(key)) {
                 errorLogger.logError({
                     tool: 'idle_sweep',
                     error: `session cwd has no .tim-project marker: ${cwd}`,
                     sessionId,
                 });
-                loggedSkip.add(key);
+                sweepSkipLogged.add(key);
             }
             results.push({ sessionId, reason: 'no-marker' });
             continue;
