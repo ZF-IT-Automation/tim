@@ -50,6 +50,7 @@ import {
 } from './hermes-statusline-install.js';
 import { cmdConsolidate } from './consolidate.js';
 import { auditSummarizerHealth } from './summarizer-health.js';
+import { auditHarnessDbPaths } from './harness-db-audit.js';
 import {
   collectProjectSchemaReport,
   formatProjectSchemaFindingLine,
@@ -413,6 +414,20 @@ async function cmdDoctor(args: string[] = []) {
       for (const outcome of outcomes) {
         console.log(formatProjectSchemaOutcomeLine(outcome));
       }
+    }
+  }
+
+  const harnessDb = auditHarnessDbPaths(getDbPath(config));
+  if (harnessDb.length > 0) {
+    const wrong = harnessDb.filter(f => !f.matches);
+    console.log('\nHarness DB paths:');
+    if (wrong.length === 0) {
+      console.log(`  ✓ ${harnessDb.length} config(s) point at this DB`);
+    } else {
+      for (const finding of wrong) {
+        console.log(`  ✗ ${finding.configPath} → ${finding.configured}`);
+      }
+      console.log('  Agents using these read and write a different database than the one above.');
     }
   }
 

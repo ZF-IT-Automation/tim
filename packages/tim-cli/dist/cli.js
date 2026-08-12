@@ -51,6 +51,7 @@ const new_project_js_1 = require("./new-project.js");
 const hermes_statusline_install_js_1 = require("./hermes-statusline-install.js");
 const consolidate_js_1 = require("./consolidate.js");
 const summarizer_health_js_1 = require("./summarizer-health.js");
+const harness_db_audit_js_1 = require("./harness-db-audit.js");
 const project_schema_repair_js_1 = require("./project-schema-repair.js");
 const secret_js_1 = require("./secret.js");
 const release_check_js_1 = require("./release-check.js");
@@ -361,6 +362,20 @@ async function cmdDoctor(args = []) {
             for (const outcome of outcomes) {
                 console.log((0, project_schema_repair_js_1.formatProjectSchemaOutcomeLine)(outcome));
             }
+        }
+    }
+    const harnessDb = (0, harness_db_audit_js_1.auditHarnessDbPaths)(getDbPath(config));
+    if (harnessDb.length > 0) {
+        const wrong = harnessDb.filter(f => !f.matches);
+        console.log('\nHarness DB paths:');
+        if (wrong.length === 0) {
+            console.log(`  ✓ ${harnessDb.length} config(s) point at this DB`);
+        }
+        else {
+            for (const finding of wrong) {
+                console.log(`  ✗ ${finding.configPath} → ${finding.configured}`);
+            }
+            console.log('  Agents using these read and write a different database than the one above.');
         }
     }
     const hermesDir = path.join(os.homedir(), '.hermes');
