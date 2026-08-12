@@ -170,13 +170,29 @@ async function previousSession(
     ? await latestCheckpoint(store, summaryNode.id).catch(() => ({ note: '', text: '' }))
     : { note: '', text: '' };
 
-  // Three sources, best first: the summarizer's rollup on the root, then the newest
+  // Four sources, best first: the summarizer's rollup on the root, then the newest
   // checkpoint's own text — a checkpoint never writes the root, so a session that only
-  // ever hit the session-end hook has nothing there — then the root's body.
+  // ever hit the session-end hook has nothing there — then the root's body, and
+  // finally the batch summaries themselves.
+  //
+  // The last one is not hypothetical. Measured across 336 sessions: 45 have no
+  // rollup, 35 of those have no usable checkpoint either, and for 13 of them the
+  // raw tail is empty too, because every exchange is covered by a batch summary.
+  // Those 13 produced an empty briefing while carrying up to 3010 characters of
+  // batch summaries that nothing ever read.
   const stored = typeof summaryNode?.metadata.summary === 'string'
     ? summaryNode.metadata.summary
     : '';
-  const body = (stored || text || summaryNode?.content || '').trim();
+  let body = (stored || text || summaryNode?.content || '').trim();
+  if (!body && summaryNode) {
+    const batchSummaries = await store.getChildByKind(summaryNode.id, KIND_BATCH).catch(() => []);
+    body = batchSummaries
+      .slice()
+      .sort((a, b) => (Number(a.metadata.batch_index) || 0) - (Number(b.metadata.batch_index) || 0))
+      .map(b => (b.content ?? '').trim())
+      .filter(Boolean)
+      .join('\n\n');
+  }
 
   // The handoff note is what the previous session wrote *for this one*, so it goes
   // last: clampSummary drops from the front, which makes the tail the safe slot.

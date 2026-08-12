@@ -305,3 +305,79 @@ describe('tim hook claude-session-start', () => {
     expect(garbage.stdout.trim()).toBe('');
   });
 });
+
+// The briefing's source cascade ends at the batch summaries. Measured across 336
+// sessions in the live database: 45 have no rollup, 35 of those have no usable
+// checkpoint either, and for 13 of them the raw tail is empty too — every
+// exchange is already covered by a batch summary. Those 13 produced an entirely
+// empty briefing while carrying up to 3010 characters of summaries nothing read.
+describe('briefing falls back to batch summaries when a session has no rollup', () => {
+  let root: string;
+  let dbPath: string;
+
+  beforeEach(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'tim-briefing-fallback-'));
+    dbPath = path.join(root, 'tim.db');
+  });
+
+  afterEach(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  async function seedBatchesOnly(): Promise<void> {
+    const store = new TimStore(dbPath);
+    await store.createProject('P0064', { content: 'fallback test project' });
+    const sessions = new SessionManager(store);
+    await sessions.startProjectSession({
+      sessionId: 'sess-nobody-rolled-up',
+      projectId: 'P0064',
+      agentName: 'test',
+      cwd: root,
+      harness: 'test',
+      batchSize: 2,
+    });
+    // Every exchange covered by the batch summary below, so the raw tail — the
+    // last thing the cascade could have fallen back to — is empty.
+    await sessions.logExchange('sess-nobody-rolled-up', [
+      { role: 'user', content: 'first question' },
+      { role: 'agent', content: 'first answer' },
+      { role: 'user', content: 'second question' },
+      { role: 'agent', content: 'second answer' },
+    ]);
+    await sessions.writeBatchSummary(
+      'sess-nobody-rolled-up', 1,
+      'BATCH ONE: the parser was rewritten', { seqFrom: 1, seqTo: 1 }, ['#parser'],
+    );
+    await sessions.writeBatchSummary(
+      'sess-nobody-rolled-up', 2,
+      'BATCH TWO: and then the tests were fixed', { seqFrom: 2, seqTo: 2 }, ['#parser'],
+    );
+    // No updateSessionSummary and no checkpoint: that is the whole point.
+    store.close();
+  }
+
+  it('uses the batch summaries instead of returning nothing', async () => {
+    await seedBatchesOnly();
+    const store = new TimStore(dbPath);
+    try {
+      const briefing = await collectDirectiveBriefing(store, 'P0064', 4000, true);
+      const text = JSON.stringify(briefing);
+      expect(text).toContain('BATCH ONE');
+      expect(text).toContain('BATCH TWO');
+    } finally {
+      store.close();
+    }
+  });
+
+  it('keeps them in the order they happened', async () => {
+    await seedBatchesOnly();
+    const store = new TimStore(dbPath);
+    try {
+      const briefing = await collectDirectiveBriefing(store, 'P0064', 4000, true);
+      const text = JSON.stringify(briefing);
+      expect(text.indexOf('BATCH ONE')).toBeLessThan(text.indexOf('BATCH TWO'));
+    } finally {
+      store.close();
+    }
+  });
+});
