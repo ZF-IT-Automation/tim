@@ -30,12 +30,28 @@ const FLOODING_KINDS = ['exchange'];
 /** Sessions rendered by default: enough to see the arc, few enough to read. */
 const DEFAULT_SESSION_LIMIT = 10;
 
+/**
+ * One session's account of the topic. A session, not a batch: batches are an
+ * artifact of the batching cadence — nobody worked "in batch 3" — and rendering
+ * them separately reprints a session's intermediate states as if each were its
+ * conclusion. Measured on the live view for "tim-viewer": one session
+ * contributed three batches whose last one says the earlier decisions are
+ * superseded, while the two superseded ones were rendered above it with equal
+ * authority.
+ */
 export interface TopicSessionHit {
   sessionId: string;
   date: string;
-  batchIndex: number;
-  title: string;
   summary: string;
+  /**
+   * `rollup` — the session's own summary, written across all its batches, which
+   * is where supersession within the session is already resolved.
+   * `batches` — the fallback for the 152 sessions whose Summary root is empty;
+   * without it those sessions vanish from the history entirely.
+   */
+  source: 'rollup' | 'batches';
+  /** Batches that matched, kept for the count the fallback case reports. */
+  batchCount: number;
 }
 
 export interface TopicResume {
@@ -48,6 +64,8 @@ export interface TopicResume {
   sessions: TopicSessionHit[];
   /** How many sessions matched before the cap, so a partial history says it is one. */
   sessionsMatched: number;
+  /** Matched entries absorbed into the rendered session blocks, for the remainder line. */
+  matchedEntries: number;
   /** Tasks, bugs and ideas matching the topic. */
   work: Entry[];
   /** The newest session among the hits — the only one whose note and turns are shown. */
@@ -115,35 +133,44 @@ export async function collectTopicResume(
   // entry that both carries the tag and names it in the body is one entry.
   const hits = [...new Map([...tagged, ...matched].map(e => [e.id, e])).values()];
 
-  const sessions: TopicSessionHit[] = [];
-  // Keyed by session id so several matching batches of one session collapse into
-  // one candidate for "newest".
-  const candidates = new Map<string, { date: string; summaryRoot: Entry }>();
+  // Keyed by session id: every matching batch of one session collapses into that
+  // session's single entry, and a matching Summary root reaches the same entry
+  // from the other direction.
+  const candidates = new Map<
+    string,
+    { date: string; summaryRoot: Entry; batches: Entry[]; absorbed: number }
+  >();
+
+  const remember = (session: Entry, summaryRoot: Entry, batch?: Entry) => {
+    const known = candidates.get(session.id);
+    const record = known ?? {
+      date: sessionDate(session),
+      summaryRoot,
+      batches: [] as Entry[],
+      absorbed: 0,
+    };
+    if (batch) record.batches.push(batch);
+    // Every hit that lands in a session block, so the "further entries" footer
+    // can subtract what was actually accounted for rather than block count.
+    record.absorbed += 1;
+    candidates.set(session.id, record);
+  };
 
   for (const hit of hits) {
-    if (hit.metadata.kind !== KIND_BATCH) continue;
-    const located = await sessionOfBatch(store, hit);
-    if (!located) continue;
-    const date = sessionDate(located.session);
-    sessions.push({
-      sessionId: located.session.id,
-      date,
-      batchIndex: Number(hit.metadata.batch_index) || 0,
-      title: hit.title,
-      // Cut here, not at render time, so the id needed to read the rest is still
-      // in hand. The 441 summaries written before the budget existed run to 4953
-      // characters; the prompt limit only binds the ones written from now on.
-      summary: truncateSummary((hit.content ?? '').trim(), hit.id),
-    });
-    const known = candidates.get(located.session.id);
-    if (!known || date > known.date) {
-      candidates.set(located.session.id, { date, summaryRoot: located.summaryRoot });
+    if (hit.metadata.kind === KIND_BATCH) {
+      const located = await sessionOfBatch(store, hit);
+      if (located) remember(located.session, located.summaryRoot, hit);
+      continue;
+    }
+    // A Summary root carries the session's aggregated tags and its rollup text,
+    // so it matches topics its individual batches never spell out. It used to be
+    // counted only in the "kinds this view does not render" footer — while
+    // holding exactly the text this view now wants.
+    if (hit.metadata.kind === KIND_SUMMARY_ROOT && hit.parentId) {
+      const session = await store.read(hit.parentId);
+      if (session && session.metadata.kind === KIND_SESSION) remember(session, hit);
     }
   }
-
-  // Within a session, batch order — not title order, which would put "Batch 10"
-  // before "Batch 2" the moment a session runs long enough to have ten.
-  sessions.sort((a, b) => a.date.localeCompare(b.date) || a.batchIndex - b.batchIndex);
 
   const byRecency = [...candidates.entries()].sort(
     (a, b) => b[1].date.localeCompare(a[1].date) || b[0].localeCompare(a[0]),
@@ -153,8 +180,36 @@ export async function collectTopicResume(
   // rendering newest-first are different things: the second would make a topic's
   // history read backwards to buy the same bound.
   const sessionsMatched = byRecency.length;
-  const kept = new Set(byRecency.slice(0, Math.max(1, limit)).map(([id]) => id));
-  const rendered = sessions.filter(s => kept.has(s.sessionId));
+  const keptRecords = byRecency.slice(0, Math.max(1, limit));
+  const matchedEntries = keptRecords.reduce((n, [, rec]) => n + rec.absorbed, 0);
+  const rendered: TopicSessionHit[] = keptRecords
+    .reverse()
+    .map(([sessionId, { date, summaryRoot, batches }]) => {
+      const rollup = (summaryRoot.content ?? '').trim();
+      if (rollup) {
+        return {
+          sessionId,
+          date,
+          summary: truncateSummary(rollup, summaryRoot.id),
+          source: 'rollup' as const,
+          batchCount: batches.length,
+        };
+      }
+      // 152 Summary roots in the live database are empty. Dropping those sessions
+      // would silently shorten the history; their batches are all there is.
+      const ordered = [...batches].sort(
+        (a, b) => (Number(a.metadata.batch_index) || 0) - (Number(b.metadata.batch_index) || 0),
+      );
+      return {
+        sessionId,
+        date,
+        summary: ordered
+          .map(b => truncateSummary((b.content ?? '').trim(), b.id))
+          .join('\n'),
+        source: 'batches' as const,
+        batchCount: ordered.length,
+      };
+    });
 
   const newestEntry = byRecency[0];
 
@@ -179,6 +234,7 @@ export async function collectTopicResume(
     projectLabel,
     sessions: rendered,
     sessionsMatched,
+    matchedEntries,
     work: hits.filter(isWorkEntry),
     newest,
     otherHits: hits.length,
@@ -200,25 +256,24 @@ export function formatTopicResume(r: TopicResume): string {
   const out: string[] = [`## Topic "${r.topic}" — ${r.projectLabel}`];
 
   if (r.sessions.length > 0) {
-    // Sessions and batches are different counts — one session can contribute
-    // several batches — and labelling the batch count "Sessions" made the header
-    // disagree with the cap line right under it.
-    const shownSessions = new Set(r.sessions.map(s => s.sessionId)).size;
-    const batches = r.sessions.length === shownSessions
-      ? ''
-      : `, ${r.sessions.length} batches`;
-    out.push('', `── Sessions on this topic (${shownSessions}${batches}, oldest first) ──`);
-    if (r.sessionsMatched > shownSessions) {
+    out.push('', `── Sessions on this topic (${r.sessions.length}, oldest first) ──`);
+    if (r.sessionsMatched > r.sessions.length) {
       // A cap that does not announce itself turns a partial history into a
       // confident whole one — the reader has no way to tell the topic started
       // earlier than the oldest line shown.
       out.push(
-        `Newest ${shownSessions} of ${r.sessionsMatched} matching sessions; ` +
+        `Newest ${r.sessions.length} of ${r.sessionsMatched} matching sessions; ` +
         `earlier ones exist. Raise limit to see them.`,
       );
     }
     for (const s of r.sessions) {
-      out.push(`▸ ${s.date.slice(0, 16).replace('T', ' ')} · ${s.sessionId} · ${s.title}`);
+      // Say when the text is stitched from batches rather than a session's own
+      // account: those are the sessions whose intermediate states were never
+      // reconciled, so a decision in one batch may be overturned in the next.
+      const from = s.source === 'batches'
+        ? ` · no session summary, ${s.batchCount} ${s.batchCount === 1 ? 'batch' : 'batches'}`
+        : '';
+      out.push(`▸ ${s.date.slice(0, 16).replace('T', ' ')} · ${s.sessionId}${from}`);
       if (s.summary) out.push(`  ${s.summary}`);
     }
   }
@@ -252,14 +307,22 @@ export function formatTopicResume(r: TopicResume): string {
   // and Summary roots, kinds it deliberately does not show. Reporting "1
   // session" and nothing else reads as "that is all there is", and the reader
   // never learns a different tool would show more.
-  const shown = r.sessions.length + r.work.length;
+  //
+  // Counted in matched entries, not rendered blocks: one session block can stand
+  // for several matching batches, so subtracting blocks would overstate the
+  // remainder. `matchedEntries` is that per-session tally.
+  const shown = r.matchedEntries + r.work.length;
   if (r.otherHits > shown) {
     const rest = r.otherHits - shown;
     out.push(
       '',
-      `${rest} further ${rest === 1 ? 'entry matches' : 'entries match'} "${r.topic}" in kinds ` +
-        `this view does not render (notes, Summary roots). ` +
-        `Use tim_search with query=${r.topic} to see them.`,
+      // Summary roots used to be named here as unrendered. They are now the main
+      // thing this view renders, so saying so would send the reader looking for
+      // what is already in front of them.
+      `${rest} further ${rest === 1 ? 'entry matches' : 'entries match'} "${r.topic}" — ` +
+        `kinds this view does not render (notes, checkpoints, commits)` +
+        (r.sessionsMatched > r.sessions.length ? ', and the sessions past the cap' : '') +
+        `. Use tim_search with query=${r.topic} to see them.`,
     );
   }
 

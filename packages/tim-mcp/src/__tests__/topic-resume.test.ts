@@ -72,6 +72,7 @@ describe('tim_resume_topic (criteria 5, 6, 7)', () => {
     summary: string;
     handoffNote?: string;
     rawTurn?: string;
+    rollup?: string;
   }) {
     await sessions.startProjectSession({
       sessionId: opts.id,
@@ -91,6 +92,7 @@ describe('tim_resume_topic (criteria 5, 6, 7)', () => {
       { role: 'agent', content: 'second covered answer' },
     ]);
     await sessions.writeBatchSummary(opts.id, 1, opts.summary, { seqFrom: 1, seqTo: 2 }, [opts.tag]);
+    if (opts.rollup) await sessions.updateSessionSummary(opts.id, opts.rollup);
     if (opts.handoffNote) {
       await sessions.checkpoint(opts.id, {
         summarize: async () => 'checkpoint stub',
@@ -268,6 +270,89 @@ describe('tim_resume_topic (criteria 5, 6, 7)', () => {
     expect(topic.sessions).toHaveLength(1);
     expect(text).toContain('── Sessions on this topic (1, oldest first)');
     expect(text).toMatch(/further entr(y matches|ies match) "#partial"/);
+    // Summary roots are what this view renders now; naming them as unrendered
+    // would send the reader looking for what is already on screen.
+    expect(text).not.toContain('Summary roots');
     expect(text).toContain('tim_search with query=#partial');
+  });
+});
+
+// A session is a unit of meaning; a batch is an artifact of the cadence. Rendering
+// batches reprinted a session's intermediate states as if each were its
+// conclusion — measured on "tim-viewer", where one session's third batch says the
+// earlier decisions are superseded while the superseded ones were rendered above
+// it with equal authority. The rollup is written across all batches, so it has
+// already resolved that.
+describe('tim_resume_topic renders sessions, not batches', () => {
+  let store: TimStore;
+  let sessions: SessionManager;
+
+  beforeEach(async () => {
+    store = new TimStore(':memory:');
+    sessions = new SessionManager(store);
+    await store.createProject('P0083', { content: 'session-level rendering' });
+  });
+
+  afterEach(() => store.close());
+
+  async function seed(id: string, date: string, batchTexts: string[], rollup?: string) {
+    await sessions.startProjectSession({
+      sessionId: id, projectId: 'P0083', agentName: 'test',
+      cwd: '/tmp', harness: 'test', batchSize: 2,
+    });
+    await store.update(id, { metadata: { date } });
+    await sessions.logExchange(id, [
+      { role: 'user', content: `${id} question` },
+      { role: 'agent', content: 'answer' },
+    ]);
+    for (const [i, text] of batchTexts.entries()) {
+      await sessions.writeBatchSummary(id, i + 1, text, { seqFrom: 1, seqTo: 2 }, ['#widget']);
+    }
+    if (rollup) await sessions.updateSessionSummary(id, rollup);
+  }
+
+  it('collapses one session\'s batches into its own summary', async () => {
+    await seed('multi', '2026-07-01T10:00:00.000Z', [
+      'widget: decided to build it in the CLI',
+      'widget: decided to build it in the daemon instead — the CLI decision is superseded',
+    ], 'widget lives in the daemon; the CLI plan was dropped mid-session');
+
+    const topic = await collectTopicResume(store, 'P0083', 'widget');
+
+    expect(topic.sessions).toHaveLength(1);
+    expect(topic.sessions[0]!.source).toBe('rollup');
+    expect(topic.sessions[0]!.summary).toBe(
+      'widget lives in the daemon; the CLI plan was dropped mid-session',
+    );
+    // The superseded decision must not be reprinted as if it still held.
+    expect(formatTopicResume(topic)).not.toContain('build it in the CLI');
+  });
+
+  // 152 Summary roots in the live database are empty. Dropping those sessions
+  // would silently shorten a topic's history.
+  it('falls back to the batches when a session never got a summary, and says so', async () => {
+    await seed('bare', '2026-07-02T10:00:00.000Z', ['widget: the only account there is']);
+
+    const topic = await collectTopicResume(store, 'P0083', 'widget');
+    expect(topic.sessions[0]!.source).toBe('batches');
+    expect(topic.sessions[0]!.summary).toContain('the only account there is');
+
+    const text = formatTopicResume(topic);
+    // Stitched text is weaker evidence than a session's own account, so the
+    // reader is told which one they are looking at.
+    expect(text).toContain('no session summary, 1 batch');
+  });
+
+  // A Summary root carries the session's aggregated tags and its rollup text, so
+  // it can match a topic none of its batches spell out. It used to be counted
+  // only in the "kinds this view does not render" footer.
+  it('finds a session through its Summary root alone', async () => {
+    await seed('viaroot', '2026-07-03T10:00:00.000Z', ['nothing relevant in here'],
+      'the sprocket subsystem was rewritten');
+
+    const topic = await collectTopicResume(store, 'P0083', 'sprocket');
+    expect(topic.sessions).toHaveLength(1);
+    expect(topic.sessions[0]!.sessionId).toBe('viaroot');
+    expect(topic.sessions[0]!.source).toBe('rollup');
   });
 });
