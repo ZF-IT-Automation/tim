@@ -94,6 +94,18 @@ describe('staging queue stays bounded', () => {
     store.close();
   });
 
+  it('purgeStaging drops the outbox including what was never pushed', async () => {
+    const store = new TimStore(':memory:', { staging: true });
+    const db = store.getDb();
+    stage(db, 'ACKED', 'x', Date.now());
+    ackStaging(db, [{ key: 'ACKED', lww: Date.now() }]);
+    stage(db, 'UNACKED', 'y', Date.now());
+
+    expect(await store.purgeStaging()).toBe(2);
+    expect(db.prepare('SELECT COUNT(*) c FROM staging').get()).toEqual({ c: 0 });
+    store.close();
+  });
+
   it('gcStaging drops acked records older than the cutoff', async () => {
     const store = new TimStore(':memory:');
     const db = store.getDb();

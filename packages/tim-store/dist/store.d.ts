@@ -412,6 +412,17 @@ export declare class TimStore implements MemoryInterface {
     applyStaging(records: StagingRecord[]): Promise<void>;
     getStagingCursor(): Promise<number>;
     gcStaging(olderThanDays: number): Promise<number>;
+    /**
+     * Drop the whole outbox, unacked rows included, and reclaim the pages.
+     *
+     * Unlike `gcStaging` this discards changes the server has never seen, so it
+     * is only correct when the outbox has no destination: sync was never set up,
+     * or the entire database is about to be mirrored to a fresh server, which
+     * makes a per-change history pointless. `VACUUM` needs the database to
+     * itself; with another connection open it throws SQLITE_BUSY and the rows
+     * stay deleted but the file keeps its size.
+     */
+    purgeStaging(vacuum?: boolean): Promise<number>;
     private usageGcDone;
     /** Record that these entries were surfaced to the agent (read or search hit). */
     recordRead(entryIds: string[], sessionId: string | null): void;

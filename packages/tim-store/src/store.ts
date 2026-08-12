@@ -3088,6 +3088,25 @@ export class TimStore implements MemoryInterface {
     return result.changes;
   }
 
+  /**
+   * Drop the whole outbox, unacked rows included, and reclaim the pages.
+   *
+   * Unlike `gcStaging` this discards changes the server has never seen, so it
+   * is only correct when the outbox has no destination: sync was never set up,
+   * or the entire database is about to be mirrored to a fresh server, which
+   * makes a per-change history pointless. `VACUUM` needs the database to
+   * itself; with another connection open it throws SQLITE_BUSY and the rows
+   * stay deleted but the file keeps its size.
+   */
+  async purgeStaging(vacuum = false): Promise<number> {
+    const removed = this.db.prepare('DELETE FROM staging').run().changes;
+    if (vacuum) {
+      this.db.pragma('wal_checkpoint(TRUNCATE)');
+      this.db.exec('VACUUM');
+    }
+    return removed;
+  }
+
   // ─── Retrieval usage feedback (device-local, never synced) ─────
 
   private usageGcDone = false;
