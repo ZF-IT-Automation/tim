@@ -358,9 +358,16 @@ export async function sweepIdleSessions(
           sweepBatchesAtSpawn: null,
         });
       } else {
+        // Clear the marker along with the increment: it records one spawn, and this
+        // pass has now judged it. Leaving it set would charge every later pass to the
+        // same spawn — a `locked` cwd (the summarizer legitimately still running, up
+        // to 600 s against a 5-minute tick) would exhaust three attempts without ever
+        // getting a second spawn. One increment per spawn, which is what the criterion
+        // says.
         attempts += 1;
         sessionMeta = await patchSessionSweepMetadata(store, sessionId, {
           sweepAttempts: attempts,
+          sweepBatchesAtSpawn: null,
         });
       }
     }
