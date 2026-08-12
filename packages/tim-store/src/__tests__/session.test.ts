@@ -1145,9 +1145,55 @@ describe('SessionManager', () => {
 
       const batch = await sessions.showUnsummarized('su-race');
       expect(batch.batchIndex).toBe(1);
-      expect(batch.exchanges.map(e => e.seq)).toEqual([3]);
-      expect(batch.exchanges[0]?.userContent).toBe('Q-late');
+      // Re-pass must re-read the whole batch, not only the uncovered tail —
+      // writeBatchSummarySync merges seq ranges and would silently drop Q1/Q2.
+      expect(batch.exchanges.map(e => e.seq)).toEqual([1, 2, 3]);
+      expect(batch.exchanges.map(e => e.userContent)).toEqual(['Q1', 'Q2', 'Q-late']);
+      expect(batch.previousSummaries).toEqual([]);
       expect(batch.hasMore).toBe(false);
+    });
+
+    it('re-pass summary content covers the full merged seq range', async () => {
+      await store.createProject('P0098');
+      await sessions.startProjectSession({
+        sessionId: 'su-repass',
+        projectId: 'P0098',
+        agentName: 'a',
+        cwd: '/',
+        harness: 't',
+        batchSize: 5,
+      });
+      await sessions.logExchange('su-repass', [
+        { role: 'user', content: 'Q1' },
+        { role: 'agent', content: 'A1' },
+        { role: 'user', content: 'Q2' },
+        { role: 'agent', content: 'A2' },
+      ]);
+      await sessions.writeBatchSummary('su-repass', 1, 'partial draft', { seqFrom: 1, seqTo: 2 });
+
+      await sessions.logExchange('su-repass', [
+        { role: 'user', content: 'Q3' },
+        { role: 'agent', content: 'A3' },
+        { role: 'user', content: 'Q4' },
+        { role: 'agent', content: 'A4' },
+        { role: 'user', content: 'Q5' },
+        { role: 'agent', content: 'A5' },
+      ]);
+
+      const batch = await sessions.showUnsummarized('su-repass');
+      const seqs = batch.exchanges.map(e => e.seq);
+      const summaryText = `covered seqs: ${seqs.join(',')}`;
+      const node = await sessions.writeBatchSummary(
+        'su-repass',
+        batch.batchIndex,
+        summaryText,
+        { seqFrom: Math.min(...seqs), seqTo: Math.max(...seqs) },
+      );
+
+      expect(node.content).toContain('1');
+      expect(node.content).toContain('2');
+      expect(node.metadata.seq_from).toBe(1);
+      expect(node.metadata.seq_to).toBe(5);
     });
   });
 

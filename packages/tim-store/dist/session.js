@@ -393,7 +393,9 @@ class SessionManager {
             const seqTo = Number(summary.metadata.seq_to);
             if (maxSeq > seqTo) {
                 targetBatchIndex = batchIdx;
-                seqFloor = seqTo;
+                // Partial summary: re-read the whole batch so the replacement covers
+                // every exchange, not just the tail (writeBatchSummarySync merges ranges).
+                seqFloor = 0;
                 break;
             }
         }
@@ -436,6 +438,10 @@ class SessionManager {
             const priorBatches = await this.store.getChildByKind(summaryNode.id, session_tree_js_1.KIND_BATCH);
             priorBatches.sort((a, b) => (Number(a.metadata.batch_index) || 0) - (Number(b.metadata.batch_index) || 0));
             for (const s of priorBatches) {
+                // Re-summarizing a partially covered batch: do not hand the model its
+                // own earlier draft of the same material as rolling context.
+                if (Number(s.metadata.batch_index) === batchIndex)
+                    continue;
                 const text = (s.content || '').trim();
                 if (text)
                     previousSummaries.push(text);
