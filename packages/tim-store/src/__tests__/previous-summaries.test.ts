@@ -66,6 +66,34 @@ describe('showUnsummarized previousSummaries', () => {
     expect(third.previousSummaries).toEqual(['first themes', 'second themes']);
   });
 
+  it('excludes the partial summary of the batch being re-summarized', async () => {
+    await logPair(1);
+    await logPair(2);
+    await sessions.writeBatchSummary(SESSION, 1, 'partial draft of batch one', {
+      seqFrom: 1,
+      seqTo: 2,
+    });
+
+    const exNode = (await store.getChildByKind(SESSION, 'exchanges-root'))[0]!;
+    const batch1 = (await store.getChildByKind(exNode.id, 'exchange-batch'))
+      .find(b => b.metadata.batch_index === 1)!;
+    const lateUser = await store.write('Q3', {
+      parentId: batch1.id,
+      metadata: { kind: 'exchange', role: 'user', seq: 3, sessionId: SESSION },
+      tags: ['#exchange'],
+    });
+    await store.write('A3', {
+      parentId: lateUser.id,
+      metadata: { kind: 'exchange', role: 'agent', seq: 3, sessionId: SESSION },
+      tags: ['#exchange'],
+    });
+
+    const batch = await sessions.showUnsummarized(SESSION);
+    expect(batch.batchIndex).toBe(1);
+    expect(batch.previousSummaries).toEqual([]);
+    expect(batch.previousSummaries).not.toContain('partial draft of batch one');
+  });
+
   it('excludes checkpoint nodes, which share the batch summary tags', async () => {
     await logPair(1);
     await logPair(2);
