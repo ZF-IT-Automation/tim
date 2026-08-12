@@ -3,7 +3,14 @@ import { spawn } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { BATCH_SUMMARY_MAX_CHARS, getConfigPath, getTimDir, loadConfig } from 'tim-core';
+import {
+  BATCH_SUMMARY_MAX_CHARS,
+  clampForPrompt,
+  getConfigPath,
+  getTimDir,
+  loadConfig,
+  rollupInputBudget,
+} from 'tim-core';
 
 function resolveEnvVar(name: string): string | undefined {
   if (process.env[name]) return process.env[name];
@@ -373,8 +380,14 @@ export async function tryCli(
   }
 }
 
-function buildSessionRollupPrompt(batchSummaries: string[]): string {
-  const joined = batchSummaries.join('\n\n---\n\n');
+export function buildSessionRollupPrompt(batchSummaries: string[]): string {
+  // The batch summaries went in raw. Measured across 336 sessions, the worst fed
+  // 52,617 characters — about 13k tokens — into the free model, on a path that
+  // runs at every session end. Each batch gets an equal share of the total
+  // budget rather than the early ones being dropped: a rollup is meant to cover
+  // the whole session, and losing how it started is worse than losing detail.
+  const budget = rollupInputBudget(batchSummaries.length);
+  const joined = batchSummaries.map(s => clampForPrompt(s, budget)).join('\n\n---\n\n');
   return (
     `You are condensing the batch summaries of ONE agent session into a handoff ` +
     `for the next session on the same work.\n\n` +

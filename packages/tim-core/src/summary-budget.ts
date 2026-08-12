@@ -24,9 +24,58 @@ export const BATCH_SUMMARY_MAX_CHARS = 1200;
 export const BATCH_SUMMARY_RENDER_CHARS = Math.round(BATCH_SUMMARY_MAX_CHARS * 1.2);
 
 /**
- * Cut a summary for display, naming what it takes to see the rest. Cuts on a
- * line boundary when there is one nearby, since these summaries are bullet
- * lists and half a bullet reads as a different claim than the whole one.
+ * Total characters of batch summaries a session rollup may be given. Without it
+ * the rollup prompt concatenated them raw: measured across 336 sessions, the
+ * worst fed 52,617 characters — about 13k tokens — into the free model on every
+ * session end.
+ */
+export const ROLLUP_INPUT_MAX_CHARS = 20000;
+
+/**
+ * How much of each batch summary a rollup over `count` of them may read.
+ *
+ * Shrinks the per-batch allowance rather than dropping batches: a rollup is
+ * supposed to cover the whole session, and dropping the early ones would lose
+ * how the session started while leaving the total just as unbounded.
+ */
+export function rollupInputBudget(count: number): number {
+  if (count <= 0) return BATCH_SUMMARY_RENDER_CHARS;
+  return Math.min(BATCH_SUMMARY_RENDER_CHARS, Math.floor(ROLLUP_INPUT_MAX_CHARS / count));
+}
+
+/**
+ * Cut on a line boundary when there is one nearby: these summaries are bullet
+ * lists, and half a bullet reads as a different claim than the whole one. Also
+ * drops a heading the cut would leave empty — "### Open items" followed by
+ * nothing reads as "there are none", which is a false statement rather than a
+ * shortened true one. Measured on a real summary: the cut fell exactly there.
+ */
+function cutAtLine(text: string, maxChars: number): string {
+  const cut = text.slice(0, maxChars);
+  const lastBreak = cut.lastIndexOf('\n');
+  const body = (lastBreak > maxChars * 0.6 ? cut.slice(0, lastBreak) : cut).trimEnd();
+  const lines = body.split('\n');
+  while (lines.length && /^\s*(#{1,6}\s|\*\*[^*]+\*\*\s*:?\s*$)/.test(lines[lines.length - 1]!)) {
+    lines.pop();
+  }
+  return lines.join('\n').trimEnd();
+}
+
+/**
+ * Cut a summary being fed to another prompt. No `tim_read` pointer: the reader
+ * is a model that cannot follow one, and an id it cannot use is an invitation
+ * to hallucinate having read the rest.
+ */
+export function clampForPrompt(
+  text: string,
+  maxChars: number = BATCH_SUMMARY_RENDER_CHARS,
+): string {
+  if (text.length <= maxChars) return text;
+  return `${cutAtLine(text, maxChars)}\n[…]`;
+}
+
+/**
+ * Cut a summary for display, naming what it takes to see the rest.
  */
 export function truncateSummary(
   text: string,
@@ -34,19 +83,5 @@ export function truncateSummary(
   maxChars: number = BATCH_SUMMARY_RENDER_CHARS,
 ): string {
   if (text.length <= maxChars) return text;
-  const cut = text.slice(0, maxChars);
-  const lastBreak = cut.lastIndexOf('\n');
-  let body = (lastBreak > maxChars * 0.6 ? cut.slice(0, lastBreak) : cut).trimEnd();
-
-  // A cut that lands just after a heading leaves the heading promising content
-  // that is not there — "### Open items" followed by nothing reads as "there are
-  // none", which is a false statement rather than a shortened true one. Measured
-  // on a real summary: the cut fell exactly there.
-  const lines = body.split('\n');
-  while (lines.length && /^\s*(#{1,6}\s|\*\*[^*]+\*\*\s*:?\s*$)/.test(lines[lines.length - 1]!)) {
-    lines.pop();
-  }
-  body = lines.join('\n').trimEnd();
-
-  return `${body}\n  […] full summary: tim_read({ id: "${id}" })`;
+  return `${cutAtLine(text, maxChars)}\n  […] full summary: tim_read({ id: "${id}" })`;
 }

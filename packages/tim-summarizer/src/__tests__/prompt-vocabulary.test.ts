@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { buildPrompt } from '../generate-summary.js';
-import { BATCH_SUMMARY_MAX_CHARS } from 'tim-core';
+import { buildPrompt, buildSessionRollupPrompt } from '../generate-summary.js';
+import { BATCH_SUMMARY_MAX_CHARS, ROLLUP_INPUT_MAX_CHARS } from 'tim-core';
 import type { UnsummarizedBatch } from '../mcp-client.js';
 
 const base: UnsummarizedBatch = {
@@ -100,5 +100,31 @@ describe('batch summary length budget', () => {
   it('says what to sacrifice first, so decisions and open items survive the cut', () => {
     const prompt = buildPrompt(batch);
     expect(prompt).toMatch(/never a decision or an open item/);
+  });
+});
+
+describe('session rollup input budget', () => {
+  // The rollup path concatenated batch summaries raw. Measured across 336
+  // sessions, the worst fed 52,617 characters into the free model — on a path
+  // that runs at every session end.
+  it('bounds the total it feeds the model, however many batches there are', () => {
+    const many = Array.from({ length: 33 }, (_, i) => `batch ${i}: ` + 'x'.repeat(4000));
+    const prompt = buildSessionRollupPrompt(many);
+    expect(prompt.length).toBeLessThan(ROLLUP_INPUT_MAX_CHARS + 3000);
+  });
+
+  // Shrinking the per-batch share rather than dropping batches is the whole
+  // point: a rollup that lost the early batches would lose how the session
+  // started, which is the part the later batches assume.
+  it('keeps every batch represented instead of dropping the early ones', () => {
+    const many = Array.from({ length: 33 }, (_, i) => `MARKER${i} ` + 'x'.repeat(4000));
+    const prompt = buildSessionRollupPrompt(many);
+    for (const i of [0, 1, 16, 32]) expect(prompt).toContain(`MARKER${i}`);
+  });
+
+  it('leaves short batch summaries untouched', () => {
+    const prompt = buildSessionRollupPrompt(['- did a thing', '- did another']);
+    expect(prompt).toContain('- did a thing');
+    expect(prompt).not.toContain('[…]');
   });
 });

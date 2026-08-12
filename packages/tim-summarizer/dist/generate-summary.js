@@ -39,6 +39,7 @@ exports.buildPrompt = buildPrompt;
 exports.noChainHint = noChainHint;
 exports.extractTags = extractTags;
 exports.tryCli = tryCli;
+exports.buildSessionRollupPrompt = buildSessionRollupPrompt;
 exports.generateSessionRollup = generateSessionRollup;
 exports.generateProjectSummary = generateProjectSummary;
 exports.generateSummaryDetailed = generateSummaryDetailed;
@@ -374,7 +375,13 @@ async function tryCli(cli, model, provider, prompt, timeoutSec, onError, extraAr
     }
 }
 function buildSessionRollupPrompt(batchSummaries) {
-    const joined = batchSummaries.join('\n\n---\n\n');
+    // The batch summaries went in raw. Measured across 336 sessions, the worst fed
+    // 52,617 characters — about 13k tokens — into the free model, on a path that
+    // runs at every session end. Each batch gets an equal share of the total
+    // budget rather than the early ones being dropped: a rollup is meant to cover
+    // the whole session, and losing how it started is worse than losing detail.
+    const budget = (0, tim_core_1.rollupInputBudget)(batchSummaries.length);
+    const joined = batchSummaries.map(s => (0, tim_core_1.clampForPrompt)(s, budget)).join('\n\n---\n\n');
     return (`You are condensing the batch summaries of ONE agent session into a handoff ` +
         `for the next session on the same work.\n\n` +
         `Cover, in this order:\n` +

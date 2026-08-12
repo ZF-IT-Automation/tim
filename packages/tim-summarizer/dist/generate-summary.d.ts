@@ -21,6 +21,7 @@ export declare function extractTags(text: string): {
     tags: string[];
 };
 export declare function tryCli(cli: string, model: string, provider: string | undefined, prompt: string, timeoutSec: number, onError?: ErrorLogFn, extraArgs?: string[]): Promise<string | null>;
+export declare function buildSessionRollupPrompt(batchSummaries: string[]): string;
 /**
  * Condense one session's batch summaries into a next-session handoff via the CLI chain.
  * Returns null on total failure (no chain, no input, or every CLI failed) so the caller
