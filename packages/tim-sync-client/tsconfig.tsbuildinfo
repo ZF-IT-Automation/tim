@@ -1,1 +1,0 @@
-{"root":["./src/auto-sync.ts","./src/client.ts","./src/config.ts","./src/crypto.ts","./src/dev-server.ts","./src/envelope.ts","./src/index.ts","./src/queue.ts","./src/sync.ts"],"version":"5.9.3"}
