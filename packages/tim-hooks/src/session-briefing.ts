@@ -175,11 +175,15 @@ async function previousSession(
   // ever hit the session-end hook has nothing there — then the root's body, and
   // finally the batch summaries themselves.
   //
-  // The last one is not hypothetical. Measured across 336 sessions: 45 have no
-  // rollup, 35 of those have no usable checkpoint either, and for 13 of them the
-  // raw tail is empty too, because every exchange is covered by a batch summary.
-  // Those 13 produced an empty briefing while carrying up to 3010 characters of
-  // batch summaries that nothing ever read.
+  // The last one is not hypothetical. Measured across the 312 sessions that have
+  // batch summaries: 21 have no rollup, 13 of those have no usable checkpoint
+  // either, and for all 13 the raw tail is empty too, because every exchange is
+  // covered by a batch summary. Those 13 produced an empty briefing while
+  // carrying up to 3010 characters of batch summaries that nothing ever read.
+  //
+  // Counted by kind, not by tag: a batch summary carries #session-summary as well
+  // as #batch-summary, so a tag query returns the roots and the batches together
+  // and inflates every count derived from it.
   const stored = typeof summaryNode?.metadata.summary === 'string'
     ? summaryNode.metadata.summary
     : '';

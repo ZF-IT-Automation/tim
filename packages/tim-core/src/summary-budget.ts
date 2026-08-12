@@ -3,16 +3,20 @@
  *
  * Shared by the summarizer (which asks the model for it) and by the readers
  * that render summaries back, so the budget is stated once. Without a stated
- * budget the models had none: measured over 553 batch summaries in the live
- * database the median is 637 characters, but the top decile runs past 2440 and
+ * budget the models had none: measured over the 445 batch summaries in the live
+ * database the median is 915 characters, but the top decile runs past 2715 and
  * the longest is 4953 — and a topic recall renders ten of them at once, so one
  * call spent 33k characters before the reader did anything.
+ *
+ * Count entries of kind `batch-summary`, never entries tagged `#batch-summary`:
+ * a batch summary carries `#session-summary` too, so a tag query conflates them
+ * with the session roots and inflates every figure derived from it.
  */
 
 /**
  * The budget put to the model. Chosen from that distribution rather than from
- * taste: it leaves the median summary untouched and only bites on the third of
- * them that were running free.
+ * taste: it sits above the median, so a typical summary is unaffected, and binds
+ * the 40% that were running past it.
  */
 export const BATCH_SUMMARY_MAX_CHARS = 1200;
 
@@ -25,9 +29,9 @@ export const BATCH_SUMMARY_RENDER_CHARS = Math.round(BATCH_SUMMARY_MAX_CHARS * 1
 
 /**
  * Total characters of batch summaries a session rollup may be given. Without it
- * the rollup prompt concatenated them raw: measured across 336 sessions, the
- * worst fed 52,617 characters — about 13k tokens — into the free model on every
- * session end.
+ * the rollup prompt concatenated them raw: measured across the 312 sessions that
+ * have batch summaries, the worst fed 52,617 characters — about 13k tokens —
+ * into the free model on every session end.
  */
 export const ROLLUP_INPUT_MAX_CHARS = 20000;
 

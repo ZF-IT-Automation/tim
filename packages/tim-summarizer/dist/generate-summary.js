@@ -118,8 +118,8 @@ function buildPrompt(batch) {
         : '';
     return (`Summarize this agent session batch thematically (bullet themes, decisions, open items). ` +
         // Without a stated budget the model has none, and the summaries drifted with
-        // it: across 553 of them the median is 637 characters while the top decile
-        // passes 2440. Length is not the cost by itself — a topic recall renders ten
+        // it: across the 445 in this database the median is 915 characters while the
+        // top decile passes 2715. Length is not the cost by itself — a recall renders ten
         // summaries at once, so the tail decides whether reading a topic costs three
         // thousand tokens or eight. The instruction says what to give up first, or a
         // model asked only to be shorter drops the open items and keeps the prose.
@@ -375,7 +375,8 @@ async function tryCli(cli, model, provider, prompt, timeoutSec, onError, extraAr
     }
 }
 function buildSessionRollupPrompt(batchSummaries) {
-    // The batch summaries went in raw. Measured across 336 sessions, the worst fed
+    // The batch summaries went in raw. Measured across the 312 sessions that have
+    // batch summaries, the worst fed
     // 52,617 characters — about 13k tokens — into the free model, on a path that
     // runs at every session end. Each batch gets an equal share of the total
     // budget rather than the early ones being dropped: a rollup is meant to cover

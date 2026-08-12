@@ -46,8 +46,9 @@ export interface TopicSessionHit {
   /**
    * `rollup` — the session's own summary, written across all its batches, which
    * is where supersession within the session is already resolved.
-   * `batches` — the fallback for the 152 sessions whose Summary root is empty;
-   * without it those sessions vanish from the history entirely.
+   * `batches` — the fallback for the sessions whose Summary root is empty (21 of
+   * 312 after the backfill, all of them one- or two-batch sessions where a rollup
+   * would add nothing); without it those sessions vanish from the history.
    */
   source: 'rollup' | 'batches';
   /** Batches that matched, kept for the count the fallback case reports. */
@@ -195,7 +196,7 @@ export async function collectTopicResume(
           batchCount: batches.length,
         };
       }
-      // 152 Summary roots in the live database are empty. Dropping those sessions
+      // 94 Summary roots in the live database are empty. Dropping those sessions
       // would silently shorten the history; their batches are all there is.
       const ordered = [...batches].sort(
         (a, b) => (Number(a.metadata.batch_index) || 0) - (Number(b.metadata.batch_index) || 0),
