@@ -177,6 +177,10 @@ export async function onSessionStop(
 
 const ALL_SESSIONS = 1_000_000;
 const KIND_SESSION = 'session';
+/** Session metadata — absent means 0. Reset when batchesSummarized increases. */
+const SWEEP_ATTEMPTS_KEY = 'sweep_attempts';
+/** batchesSummarized at last sweep spawn — compared on the next pass. */
+const SWEEP_BATCHES_AT_SPAWN_KEY = 'sweep_batches_at_spawn';
 
 /**
  * Sessions already reported as unsweepable, for the life of this process. A broken
@@ -190,7 +194,7 @@ const sweepSkipLogged = new Set<string>();
 export interface IdleSweepOptions {
   idleMinutes?: number;
   maxSpawnsPerPass?: number;
-  /** Reserved for issue #20 — attempt counter / give-up after repeated failures. */
+  /** Give up after this many spawns that produced no new summary (default 3). */
   maxAttempts?: number;
   spawn?: Spawner;
   now?: () => number;
@@ -233,6 +237,36 @@ async function getSessionLastExchangeAt(
   return latest;
 }
 
+function getSweepAttempts(metadata: Record<string, unknown>): number {
+  const v = metadata[SWEEP_ATTEMPTS_KEY];
+  return typeof v === 'number' && v >= 0 ? v : 0;
+}
+
+function getSweepBatchesAtSpawn(metadata: Record<string, unknown>): number | undefined {
+  const v = metadata[SWEEP_BATCHES_AT_SPAWN_KEY];
+  return typeof v === 'number' ? v : undefined;
+}
+
+async function patchSessionSweepMetadata(
+  store: TimStore,
+  sessionId: string,
+  patch: { sweepAttempts?: number; sweepBatchesAtSpawn?: number | null },
+): Promise<Record<string, unknown>> {
+  const session = await store.read(sessionId);
+  if (!session) throw new Error(`Session not found: ${sessionId}`);
+  const next = { ...session.metadata } as Record<string, unknown>;
+  if (patch.sweepAttempts !== undefined) {
+    if (patch.sweepAttempts <= 0) next[SWEEP_ATTEMPTS_KEY] = null;
+    else next[SWEEP_ATTEMPTS_KEY] = patch.sweepAttempts;
+  }
+  if (patch.sweepBatchesAtSpawn !== undefined) {
+    if (patch.sweepBatchesAtSpawn === null) next[SWEEP_BATCHES_AT_SPAWN_KEY] = null;
+    else next[SWEEP_BATCHES_AT_SPAWN_KEY] = patch.sweepBatchesAtSpawn;
+  }
+  await store.update(sessionId, { metadata: next });
+  return next;
+}
+
 /**
  * Walk all sessions and spawn the summarizer for idle ones with pending exchanges.
  * Always passes sessionId explicitly — never resolves by cwd.
@@ -244,6 +278,7 @@ export async function sweepIdleSessions(
 ): Promise<IdleSweepResult[]> {
   const idleMinutes = opts.idleMinutes ?? 15;
   const maxSpawns = opts.maxSpawnsPerPass ?? 3;
+  const maxAttempts = opts.maxAttempts ?? 3;
   const nowMs = opts.now ?? (() => Date.now());
   const idleCutoff = new Date(nowMs() - idleMinutes * 60_000).toISOString();
   const errorLogger = new ErrorLogger(store.getDb());
@@ -312,13 +347,58 @@ export async function sweepIdleSessions(
       continue;
     }
 
+    let sessionMeta = session.metadata as Record<string, unknown>;
+    let attempts = getSweepAttempts(sessionMeta);
+    const batchesAtSpawn = getSweepBatchesAtSpawn(sessionMeta);
+    if (batchesAtSpawn !== undefined) {
+      if (batchesSummarized > batchesAtSpawn) {
+        attempts = 0;
+        sessionMeta = await patchSessionSweepMetadata(store, sessionId, {
+          sweepAttempts: 0,
+          sweepBatchesAtSpawn: null,
+        });
+      } else {
+        // Clear the marker along with the increment: it records one spawn, and this
+        // pass has now judged it. Leaving it set would charge every later pass to the
+        // same spawn — a `locked` cwd (the summarizer legitimately still running, up
+        // to 600 s against a 5-minute tick) would exhaust three attempts without ever
+        // getting a second spawn. One increment per spawn, which is what the criterion
+        // says.
+        attempts += 1;
+        sessionMeta = await patchSessionSweepMetadata(store, sessionId, {
+          sweepAttempts: attempts,
+          sweepBatchesAtSpawn: null,
+        });
+      }
+    }
+
+    if (attempts >= maxAttempts) {
+      const key = `${sessionId}:exhausted`;
+      if (!sweepSkipLogged.has(key)) {
+        errorLogger.logError({
+          tool: 'idle_sweep',
+          error:
+            `session exhausted ${maxAttempts} idle-sweep attempts without a new summary — skipped`,
+          sessionId,
+        });
+        sweepSkipLogged.add(key);
+      }
+      results.push({ sessionId, reason: 'exhausted' });
+      continue;
+    }
+
     const res = await maybeSpawnSummarizer(store, cwd, {
       spawn: opts.spawn,
       batchFull: true,
       sessionId,
     });
     results.push({ sessionId, reason: res.reason });
-    if (res.spawned) spawns++;
+    if (res.spawned) {
+      spawns++;
+      await patchSessionSweepMetadata(store, sessionId, {
+        sweepBatchesAtSpawn: batchesSummarized,
+      });
+    }
   }
 
   return results;

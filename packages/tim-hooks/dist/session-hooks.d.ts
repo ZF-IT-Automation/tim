@@ -45,7 +45,7 @@ export declare function onSessionStop(store: TimStore, cwd: string, opts?: {
 export interface IdleSweepOptions {
     idleMinutes?: number;
     maxSpawnsPerPass?: number;
-    /** Reserved for issue #20 — attempt counter / give-up after repeated failures. */
+    /** Give up after this many spawns that produced no new summary (default 3). */
     maxAttempts?: number;
     spawn?: Spawner;
     now?: () => number;
