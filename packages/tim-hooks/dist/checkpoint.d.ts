@@ -43,6 +43,11 @@ export declare function runCheckpoint(store: TimStore, sessionId: string, opts?:
     runDecay?: boolean;
     handoffNote?: string;
 }): Promise<Entry>;
+/** Checkpoint then spawn summarizer — same ordering as `tim checkpoint` (issue #18). */
+export declare function runCheckpointWithSummarizerSpawn(store: TimStore, sessionId: string, cwd: string, opts?: {
+    handoffNote?: string;
+    spawn?: Spawner;
+}): Promise<Entry>;
 export declare function runSessionStart(store: TimStore, params: {
     sessionId: string;
     agentName: string;
