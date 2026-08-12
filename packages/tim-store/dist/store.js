@@ -195,6 +195,12 @@ class TimStore {
             allowMigrations: options.allowMigrations === true,
         });
         (0, schema_js_1.createTriggers)(this.db);
+        // The outbox is drained by acking a successful push, so on a machine that
+        // never pushes it is a leak: every write leaves a full copy of the entry
+        // behind and nothing ever collects it. Measured on 2026-08-12, one day of
+        // bulk re-tagging put 9.3 MB there, against 4.8 MB of actual entry text in
+        // the whole database.
+        (0, schema_js_1.setStagingEnabled)(this.db, options.staging ?? (0, tim_core_1.loadConfig)().sync?.staging ?? true);
         // Acked staging records are push history that nothing reads back. Collect
         // the old ones once per process — without a caller the table only grows.
         this.db.prepare('DELETE FROM staging WHERE acked = 1 AND lww_timestamp < ?')

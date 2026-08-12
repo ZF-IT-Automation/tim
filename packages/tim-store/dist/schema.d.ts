@@ -33,4 +33,17 @@ export declare function runMigrations(db: Database.Database, migrations?: {
     sql: string;
 }[], options?: RunMigrationsOptions): MigrationRunResult | null;
 export declare function createTriggers(db: Database.Database): void;
+/**
+ * Turn the sync outbox on or off for this database.
+ *
+ * Off is enforced by a trigger rather than by a flag at each write, because
+ * thirteen call sites across four packages stage rows and every one of them
+ * would have to remember the check. The trigger fires only for `acked = 0`, so
+ * an inbound record being applied locally is never swallowed — only the outbox
+ * inserts a local change writes for itself.
+ *
+ * The state is idempotent: a store that opens a database already in the wanted
+ * state touches no schema at all.
+ */
+export declare function setStagingEnabled(db: Database.Database, enabled: boolean): void;
 //# sourceMappingURL=schema.d.ts.map

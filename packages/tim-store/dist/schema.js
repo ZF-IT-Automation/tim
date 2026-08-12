@@ -10,6 +10,7 @@ exports.getCurrentVersion = getCurrentVersion;
 exports.isSchemaMigrationPendingError = isSchemaMigrationPendingError;
 exports.runMigrations = runMigrations;
 exports.createTriggers = createTriggers;
+exports.setStagingEnabled = setStagingEnabled;
 const node_fs_1 = __importDefault(require("node:fs"));
 exports.MIGRATIONS = [
     {
@@ -447,6 +448,34 @@ function createTriggers(db) {
          AND acked = 0
          AND rowid <> new.rowid
          AND lww_timestamp <= new.lww_timestamp;
+    END;
+  `);
+}
+/**
+ * Turn the sync outbox on or off for this database.
+ *
+ * Off is enforced by a trigger rather than by a flag at each write, because
+ * thirteen call sites across four packages stage rows and every one of them
+ * would have to remember the check. The trigger fires only for `acked = 0`, so
+ * an inbound record being applied locally is never swallowed — only the outbox
+ * inserts a local change writes for itself.
+ *
+ * The state is idempotent: a store that opens a database already in the wanted
+ * state touches no schema at all.
+ */
+function setStagingEnabled(db, enabled) {
+    const present = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'trigger' AND name = 'staging_disabled'").get() !== undefined;
+    if (present === !enabled)
+        return;
+    if (enabled) {
+        db.exec('DROP TRIGGER IF EXISTS staging_disabled;');
+        return;
+    }
+    db.exec(`
+    CREATE TRIGGER staging_disabled BEFORE INSERT ON staging
+    WHEN new.acked = 0
+    BEGIN
+      SELECT RAISE(IGNORE);
     END;
   `);
 }

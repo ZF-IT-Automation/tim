@@ -68,6 +68,32 @@ describe('staging queue stays bounded', () => {
     store.close();
   });
 
+  it('stages nothing at all when staging is off, and resumes when it is back on', async () => {
+    const off = new TimStore(':memory:', { staging: false });
+    const entry = await off.write('Title\nbody');
+    await off.update(entry.id, { content: 'changed' });
+    expect(getUnackedStaging(off.getDb())).toHaveLength(0);
+    // The write itself is unaffected — only the outbox record is dropped.
+    expect((await off.read(entry.id))?.content).toBe('changed');
+    off.close();
+
+    const on = new TimStore(':memory:', { staging: true });
+    await on.write('Title\nbody');
+    expect(getUnackedStaging(on.getDb()).length).toBeGreaterThan(0);
+    on.close();
+  });
+
+  it('lets an inbound record through while the outbox is off', () => {
+    const store = new TimStore(':memory:', { staging: false });
+    const db = store.getDb();
+    // What a pull applies locally carries acked = 1; only outbox rows are suppressed.
+    db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
+      lww_timestamp, lww_device, lww_confidence, acked)
+      VALUES ('E1', 'entry', 'upsert', 'inbound', 1000, 'remote', 1.0, 1)`).run();
+    expect(db.prepare('SELECT COUNT(*) c FROM staging').get()).toEqual({ c: 1 });
+    store.close();
+  });
+
   it('gcStaging drops acked records older than the cutoff', async () => {
     const store = new TimStore(':memory:');
     const db = store.getDb();

@@ -290,6 +290,14 @@ export interface TimConfig {
   sync?: {
     server: string;
     token?: string;
+    /**
+     * Write outbox rows for local changes. Default true. Set false on a machine
+     * that does not sync: the outbox is only ever drained by a successful push,
+     * so without one it grows by the full payload of every write, forever.
+     * Turning it back on stages only changes made from then on — the entries
+     * already in the database need a one-time full mirror to reach the server.
+     */
+    staging?: boolean;
   };
   summarizer?: {
     timeout_sec?: number;

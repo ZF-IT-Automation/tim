@@ -34,6 +34,11 @@ export interface TimStoreOptions {
      * `tim migrate-schema` should set this. Fresh (version 0) DBs still bootstrap.
      */
     allowMigrations?: boolean;
+    /**
+     * Write outbox rows for local changes. Overrides `sync.staging` from
+     * config.json, which is where the answer normally comes from.
+     */
+    staging?: boolean;
 }
 export interface CreateProjectOptions {
     content?: string;

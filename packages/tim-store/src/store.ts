@@ -14,10 +14,14 @@ import type {
   ResolveProjectResult, ResolveSectionResult, SectionCandidate,
   TaskStatusValue,
 } from 'tim-core';
-import { stripDeprecatedTags, resolveLWW, SCHEMA_KINDS, staleDays, isStale } from 'tim-core';
+import {
+  stripDeprecatedTags, resolveLWW, SCHEMA_KINDS, staleDays, isStale,
+  loadConfig as loadTimConfig,
+} from 'tim-core';
 import {
   runMigrations,
   createTriggers,
+  setStagingEnabled,
   MIGRATIONS,
   type MigrationRunResult,
 } from './schema.js';
@@ -124,6 +128,11 @@ export interface TimStoreOptions {
    * `tim migrate-schema` should set this. Fresh (version 0) DBs still bootstrap.
    */
   allowMigrations?: boolean;
+  /**
+   * Write outbox rows for local changes. Overrides `sync.staging` from
+   * config.json, which is where the answer normally comes from.
+   */
+  staging?: boolean;
 }
 
 export interface CreateProjectOptions {
@@ -256,6 +265,12 @@ export class TimStore implements MemoryInterface {
       allowMigrations: options.allowMigrations === true,
     });
     createTriggers(this.db);
+    // The outbox is drained by acking a successful push, so on a machine that
+    // never pushes it is a leak: every write leaves a full copy of the entry
+    // behind and nothing ever collects it. Measured on 2026-08-12, one day of
+    // bulk re-tagging put 9.3 MB there, against 4.8 MB of actual entry text in
+    // the whole database.
+    setStagingEnabled(this.db, options.staging ?? loadTimConfig().sync?.staging ?? true);
     // Acked staging records are push history that nothing reads back. Collect
     // the old ones once per process — without a caller the table only grows.
     this.db.prepare('DELETE FROM staging WHERE acked = 1 AND lww_timestamp < ?')
