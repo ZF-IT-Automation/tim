@@ -1,4 +1,4 @@
-import type { TimStore } from 'tim-store';
+import { type TimStore } from 'tim-store';
 export interface SpawnContext {
     sessionId: string;
     cwd: string;
@@ -42,6 +42,25 @@ export declare function onSessionStop(store: TimStore, cwd: string, opts?: {
     spawn?: Spawner;
     timeoutSec?: number;
 }): Promise<SessionStopResult>;
+export interface IdleSweepOptions {
+    idleMinutes?: number;
+    maxSpawnsPerPass?: number;
+    /** Reserved for issue #20 — attempt counter / give-up after repeated failures. */
+    maxAttempts?: number;
+    spawn?: Spawner;
+    now?: () => number;
+}
+export type IdleSweepReason = SessionStopReason | 'no-cwd' | 'not-idle' | 'no-pending' | 'exhausted';
+export interface IdleSweepResult {
+    sessionId: string;
+    reason: IdleSweepReason;
+}
+/**
+ * Walk all sessions and spawn the summarizer for idle ones with pending exchanges.
+ * Always passes sessionId explicitly — never resolves by cwd.
+ * Scan cost on the live DB (389 sessions): listing 7 ms, deriveCounters 223 ms.
+ */
+export declare function sweepIdleSessions(store: TimStore, opts?: IdleSweepOptions): Promise<IdleSweepResult[]>;
 export declare const DEFAULT_PROJECT_SUMMARY_THRESHOLD = 5;
 /** Shell snippet: run tim-summarizer in --project-summary mode for a label. */
 export declare function buildProjectSummaryCommand(label: string, logPath: string, timeoutSec?: number): string;

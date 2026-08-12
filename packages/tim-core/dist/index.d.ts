@@ -215,6 +215,12 @@ export interface TimConfig {
              */
             args?: string[];
         }>;
+        idle_sweep?: {
+            enabled?: boolean;
+            interval_minutes?: number;
+            idle_minutes?: number;
+            max_spawns_per_pass?: number;
+        };
     };
     projectSummary?: {
         sessions_threshold?: number;

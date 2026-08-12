@@ -1,8 +1,15 @@
 import { spawn as nodeSpawn } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
-import type { TimStore } from 'tim-store';
-import { deriveCounters, resolveCurrentSession } from 'tim-store';
+import {
+  deriveCounters,
+  resolveCurrentSession,
+  findChildByKind,
+  KIND_EXCHANGE_BATCH,
+  KIND_EXCHANGES_ROOT,
+  ErrorLogger,
+  type TimStore,
+} from 'tim-store';
 import {
   detectProject,
   acquireLock,
@@ -166,6 +173,147 @@ export async function onSessionStop(
   opts: { spawn?: Spawner; timeoutSec?: number } = {},
 ): Promise<SessionStopResult> {
   return maybeSpawnSummarizer(store, cwd, opts);
+}
+
+const ALL_SESSIONS = 1_000_000;
+const KIND_SESSION = 'session';
+
+export interface IdleSweepOptions {
+  idleMinutes?: number;
+  maxSpawnsPerPass?: number;
+  /** Reserved for issue #20 — attempt counter / give-up after repeated failures. */
+  maxAttempts?: number;
+  spawn?: Spawner;
+  now?: () => number;
+}
+
+export type IdleSweepReason =
+  | SessionStopReason
+  | 'no-cwd'
+  | 'not-idle'
+  | 'no-pending'
+  | 'exhausted';
+
+export interface IdleSweepResult {
+  sessionId: string;
+  reason: IdleSweepReason;
+}
+
+/** Latest exchange timestamp anywhere in the session's Exchanges subtree. */
+async function getSessionLastExchangeAt(
+  store: TimStore,
+  sessionId: string,
+): Promise<string | null> {
+  const exNode = await findChildByKind(store, sessionId, KIND_EXCHANGES_ROOT);
+  if (!exNode) return null;
+
+  let latest: string | null = null;
+  const consider = (createdAt: string) => {
+    if (!latest || createdAt > latest) latest = createdAt;
+  };
+
+  const batches = await store.getChildByKind(exNode.id, KIND_EXCHANGE_BATCH);
+  for (const batch of batches) {
+    const children = await store.getChildrenBySeq(batch.id);
+    for (const child of children) {
+      consider(child.createdAt);
+      const replies = await store.getChildren(child.id);
+      for (const r of replies) consider(r.createdAt);
+    }
+  }
+  return latest;
+}
+
+/**
+ * Walk all sessions and spawn the summarizer for idle ones with pending exchanges.
+ * Always passes sessionId explicitly — never resolves by cwd.
+ * Scan cost on the live DB (389 sessions): listing 7 ms, deriveCounters 223 ms.
+ */
+export async function sweepIdleSessions(
+  store: TimStore,
+  opts: IdleSweepOptions = {},
+): Promise<IdleSweepResult[]> {
+  const idleMinutes = opts.idleMinutes ?? 15;
+  const maxSpawns = opts.maxSpawnsPerPass ?? 3;
+  const nowMs = opts.now ?? (() => Date.now());
+  const idleCutoff = new Date(nowMs() - idleMinutes * 60_000).toISOString();
+  const errorLogger = new ErrorLogger(store.getDb());
+  const loggedSkip = new Set<string>();
+  const results: IdleSweepResult[] = [];
+  let spawns = 0;
+
+  const sessions = await store.getByMetadataKind(KIND_SESSION, ALL_SESSIONS);
+  for (const session of sessions) {
+    if (spawns >= maxSpawns) break;
+
+    const sessionId = session.id;
+    const batchSize = typeof session.metadata.batch_size === 'number'
+      ? session.metadata.batch_size
+      : 5;
+    const { exchangeCount, batchesSummarized } = await deriveCounters(store, sessionId);
+    const pending = exchangeCount - batchesSummarized * batchSize;
+    if (pending <= 0) continue;
+
+    const lastAt = await getSessionLastExchangeAt(store, sessionId);
+    if (!lastAt || lastAt > idleCutoff) {
+      results.push({ sessionId, reason: 'not-idle' });
+      continue;
+    }
+
+    const cwdRaw = session.metadata.cwd;
+    if (typeof cwdRaw !== 'string' || !cwdRaw.trim()) {
+      const key = `${sessionId}:no-cwd`;
+      if (!loggedSkip.has(key)) {
+        errorLogger.logError({
+          tool: 'idle_sweep',
+          error: 'session missing metadata.cwd — skipped',
+          sessionId,
+        });
+        loggedSkip.add(key);
+      }
+      results.push({ sessionId, reason: 'no-cwd' });
+      continue;
+    }
+    const cwd = cwdRaw.trim();
+
+    if (!fs.existsSync(cwd)) {
+      const key = `${sessionId}:missing-dir`;
+      if (!loggedSkip.has(key)) {
+        errorLogger.logError({
+          tool: 'idle_sweep',
+          error: `session cwd does not exist: ${cwd}`,
+          sessionId,
+        });
+        loggedSkip.add(key);
+      }
+      results.push({ sessionId, reason: 'no-cwd' });
+      continue;
+    }
+
+    if (!detectProject(cwd)) {
+      const key = `${sessionId}:no-marker`;
+      if (!loggedSkip.has(key)) {
+        errorLogger.logError({
+          tool: 'idle_sweep',
+          error: `session cwd has no .tim-project marker: ${cwd}`,
+          sessionId,
+        });
+        loggedSkip.add(key);
+      }
+      results.push({ sessionId, reason: 'no-marker' });
+      continue;
+    }
+
+    const res = await maybeSpawnSummarizer(store, cwd, {
+      spawn: opts.spawn,
+      batchFull: true,
+      sessionId,
+    });
+    results.push({ sessionId, reason: res.reason });
+    if (res.spawned) spawns++;
+  }
+
+  return results;
 }
 
 export const DEFAULT_PROJECT_SUMMARY_THRESHOLD = 5;

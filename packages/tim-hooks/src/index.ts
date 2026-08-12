@@ -111,6 +111,7 @@ export {
 export {
   onSessionStop,
   maybeSpawnSummarizer,
+  sweepIdleSessions,
   buildSummarizerCommand,
   isSummarizerChild,
   SUMMARIZER_ENV_FLAG,
@@ -123,6 +124,9 @@ export {
   type SessionStopResult,
   type SessionStopReason,
   type MaybeSpawnSummarizerOptions,
+  type IdleSweepOptions,
+  type IdleSweepResult,
+  type IdleSweepReason,
 } from './session-hooks.js';
 
 export {

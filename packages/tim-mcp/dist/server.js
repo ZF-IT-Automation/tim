@@ -57,6 +57,7 @@ const provenance_js_1 = require("./provenance.js");
 const project_path_js_1 = require("./project-path.js");
 const task_status_js_1 = require("./task-status.js");
 const tim_hooks_1 = require("tim-hooks");
+const idle_sweep_timer_js_1 = require("./idle-sweep-timer.js");
 const tim_migrate_1 = require("tim-migrate");
 const tim_sync_client_1 = require("tim-sync-client");
 const write_validate_js_1 = require("./write-validate.js");
@@ -3196,6 +3197,7 @@ async function createMcpServer(options = {}) {
             };
         }
     });
+    (0, idle_sweep_timer_js_1.startIdleSweepTimer)(getStore());
     return server;
 }
 async function createHttpServer(options) {
@@ -3238,6 +3240,7 @@ async function createHttpServer(options) {
         await transport.handlePostMessage(req, res, req.body);
     });
     installProcessErrorGuards();
+    (0, idle_sweep_timer_js_1.startIdleSweepTimer)(getStore());
     const httpServer = await new Promise((resolve, reject) => {
         const listener = app.listen(port, host);
         listener.once('listening', () => resolve(listener));
@@ -3251,6 +3254,7 @@ async function createHttpServer(options) {
     const addr = httpServer.address();
     const actualPort = typeof addr === 'object' && addr !== null ? addr.port : port;
     const close = async () => {
+        (0, idle_sweep_timer_js_1.stopIdleSweepTimer)();
         for (const transport of transports.values()) {
             try {
                 await transport.close();
@@ -3283,6 +3287,7 @@ async function startServer() {
         }
         console.error(`TIM MCP server started (HTTP/SSE http://${CLI.host}:${handle.port}, DB: ${DB_PATH})`);
         const shutdown = async () => {
+            (0, idle_sweep_timer_js_1.stopIdleSweepTimer)();
             await handle.close();
             process.exit(0);
         };
