@@ -37,6 +37,7 @@ exports.getActiveProjectLabel = getActiveProjectLabel;
 exports.resolveActiveProjectFromCwd = resolveActiveProjectFromCwd;
 exports.loadProjectContext = loadProjectContext;
 exports.runCheckpoint = runCheckpoint;
+exports.runCheckpointWithSummarizerSpawn = runCheckpointWithSummarizerSpawn;
 exports.runSessionStart = runSessionStart;
 exports.previewSessionStart = previewSessionStart;
 exports.runSessionEnd = runSessionEnd;
@@ -145,6 +146,16 @@ async function resolveSessionProjectId(store, cwd, explicitProjectId) {
 async function runCheckpoint(store, sessionId, opts = {}) {
     const sessions = new tim_store_1.SessionManager(store);
     return sessions.checkpoint(sessionId, opts);
+}
+/** Checkpoint then spawn summarizer — same ordering as `tim checkpoint` (issue #18). */
+async function runCheckpointWithSummarizerSpawn(store, sessionId, cwd, opts = {}) {
+    const summary = await runCheckpoint(store, sessionId, { handoffNote: opts.handoffNote });
+    await (0, session_hooks_js_1.maybeSpawnSummarizer)(store, cwd, {
+        batchFull: true,
+        sessionId,
+        spawn: opts.spawn,
+    });
+    return summary;
 }
 async function runSessionStart(store, params) {
     const sessions = new tim_store_1.SessionManager(store);

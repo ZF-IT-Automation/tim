@@ -10,6 +10,7 @@ export {
 
 export {
   runCheckpoint,
+  runCheckpointWithSummarizerSpawn,
   runSessionStart,
   runSessionEnd,
   runHarnessSessionEnd,

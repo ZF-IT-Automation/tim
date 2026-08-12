@@ -4,7 +4,7 @@
 import { TimStore, SessionManager, ErrorLogger, resolveProjectBindingLabel, getCurrentVersion, isSchemaMigrationPendingError } from 'tim-store';
 import { loadConfig, getTimDir, normalizeLegacyTypeTag, type TimConfigFile } from 'tim-core';
 import {
-  runCheckpoint,
+  runCheckpointWithSummarizerSpawn,
   runSessionEnd,
   runHarnessSessionEnd,
   runSessionStart,
@@ -909,7 +909,12 @@ async function cmdCheckpoint(args: string[]) {
   const store = new TimStore(getDbPath(config));
 
   try {
-    const summary = await runCheckpoint(store, sessionId, {
+    const session = await store.read(sessionId);
+    const cwd =
+      typeof session?.metadata.cwd === 'string' && session.metadata.cwd.trim()
+        ? session.metadata.cwd.trim()
+        : process.cwd();
+    const summary = await runCheckpointWithSummarizerSpawn(store, sessionId, cwd, {
       handoffNote: flags['handoff-note'],
     });
     console.log(JSON.stringify({ summary }, null, 2));

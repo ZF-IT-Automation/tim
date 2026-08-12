@@ -175,6 +175,22 @@ export async function runCheckpoint(
   return sessions.checkpoint(sessionId, opts);
 }
 
+/** Checkpoint then spawn summarizer — same ordering as `tim checkpoint` (issue #18). */
+export async function runCheckpointWithSummarizerSpawn(
+  store: TimStore,
+  sessionId: string,
+  cwd: string,
+  opts: { handoffNote?: string; spawn?: Spawner } = {},
+): Promise<Entry> {
+  const summary = await runCheckpoint(store, sessionId, { handoffNote: opts.handoffNote });
+  await maybeSpawnSummarizer(store, cwd, {
+    batchFull: true,
+    sessionId,
+    spawn: opts.spawn,
+  });
+  return summary;
+}
+
 export async function runSessionStart(
   store: TimStore,
   params: {

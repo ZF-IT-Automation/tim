@@ -820,7 +820,11 @@ async function cmdCheckpoint(args) {
     const config = (0, tim_core_1.loadConfig)();
     const store = new tim_store_1.TimStore(getDbPath(config));
     try {
-        const summary = await (0, tim_hooks_1.runCheckpoint)(store, sessionId, {
+        const session = await store.read(sessionId);
+        const cwd = typeof session?.metadata.cwd === 'string' && session.metadata.cwd.trim()
+            ? session.metadata.cwd.trim()
+            : process.cwd();
+        const summary = await (0, tim_hooks_1.runCheckpointWithSummarizerSpawn)(store, sessionId, cwd, {
             handoffNote: flags['handoff-note'],
         });
         console.log(JSON.stringify({ summary }, null, 2));
