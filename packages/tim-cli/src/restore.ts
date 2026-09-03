@@ -18,8 +18,11 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { execFileSync } from 'child_process';
-import { resolveDbPath } from './snapshot.js';
+import { acquireMaintenanceLock } from 'tim-core';
+import { resolveDbPath, readFreeBytes } from './snapshot.js';
 import { parseArgs, valueOptionsFor } from './args.js';
+import { requireNoWriters } from './writers.js';
+import { checkpointOutputMeansFailure } from './wal-watchdog.js';
 
 const DEFAULT_SNAPSHOT_DIR = '/tmp/tim-snapshots';
 const MIN_AGE_MS = 3600 * 1000; // 1h safety: refuse restore if current db is younger
@@ -44,9 +47,9 @@ export function walSidecarsMayBeDropped(writerPids: string[]): boolean {
   return writerPids.length === 0;
 }
 
-export function parseWriterPids(pgrepOutput: string): string[] {
-  return pgrepOutput.trim().split(/\s+/).filter(Boolean);
-}
+export { parseWriterPids } from './writers.js';
+
+export { discoverTimMcpWriters, listTimMcpWriterPids, requireNoWriters } from './writers.js';
 
 export function isBenignSidecarUnlinkError(err: unknown): boolean {
   return (err as NodeJS.ErrnoException | undefined)?.code === 'ENOENT';
@@ -67,6 +70,26 @@ export function discardWalSidecars(
     }
   }
   return { ok: true };
+}
+
+function runWalCheckpoint(dbPath: string): { ok: true } | { ok: false; error: string } {
+  try {
+    const Database = require('better-sqlite3');
+    const db = new Database(dbPath);
+    const row = db.pragma('wal_checkpoint(TRUNCATE)') as
+      | { busy: number; log: number; checkpointed: number }
+      | Array<{ busy: number; log: number; checkpointed: number }>;
+    db.close();
+    const result = Array.isArray(row) ? row[0] : row;
+    const output = result ? `${result.busy}|${result.log}|${result.checkpointed}` : '';
+    if (checkpointOutputMeansFailure(output)) {
+      return { ok: false, error: `wal_checkpoint busy or malformed: ${output}` };
+    }
+    return { ok: true };
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : String(e);
+    return { ok: false, error: message };
+  }
 }
 
 const STOP_SCRIPT_CANDIDATES = [
@@ -137,15 +160,6 @@ function resolveSource(flags: Record<string, string>): { source: string; isLates
     );
   }
   return { source: match.path, isLatest: false, isAbsolute: false };
-}
-
-export function listTimMcpWriterPids(): string[] {
-  try {
-    const out = execFileSync('pgrep', ['-f', 'tim-mcp.*dist/server\\.js'], { encoding: 'utf8' });
-    return parseWriterPids(out);
-  } catch {
-    return [];
-  }
 }
 
 function runScript(script: string, args: string[] = []): { ok: boolean; stdout: string; stderr: string } {
@@ -257,97 +271,108 @@ export async function cmdRestore(args: string[]): Promise<void> {
     return;
   }
 
-  // 1. Take pre-restore safety copy of current db (if exists and it fits)
-  if (fs.existsSync(dbPath)) {
-    const liveBytes = fs.statSync(dbPath).size;
-    const snapshotBytes = fs.statSync(source).size;
-    let freeBytes = Number.POSITIVE_INFINITY;
-    try {
-      const st = fs.statfsSync(path.dirname(dbPath));
-      freeBytes = Number(st.bavail) * Number(st.bsize);
-    } catch {
-      // statfs missing — keep the copy unless other heuristics fire
-    }
-    if (!shouldCopyLiveDbForSafety(liveBytes, snapshotBytes, freeBytes)) {
-      console.log(`⚠ skipping pre-restore copy of live db (${liveBytes} bytes); not enough free space or live file is bloated relative to snapshot`);
-    } else {
-      try {
-        fs.copyFileSync(dbPath, preRestore);
-        console.log(`✓ pre-restore safety copy written: ${preRestore}`);
-      } catch (e: any) {
-        console.error(`restore: cannot create safety copy: ${e.message}`);
-        process.exit(1);
-      }
-    }
-  }
-
-  // 2. Stop MCP server
-  console.log(`→ stopping MCP server (${stopScript})...`);
-  const stop = runScript(stopScript);
-  if (!stop.ok) {
-    console.error(`restore: stop script failed: ${stop.stderr || stop.stdout}`);
-    process.exit(1);
-  }
-  console.log(`✓ MCP server stopped`);
-
-  // Stop scripts used to exit 0 with leftovers. Re-check before touching WAL.
-  const leftoverPids = listTimMcpWriterPids();
-  if (!walSidecarsMayBeDropped(leftoverPids)) {
-    console.error(
-      `restore: refusing to unlink WAL/SHM; writers still hold the DB: ${leftoverPids.join(' ')}`,
-    );
+  let maintenance: ReturnType<typeof acquireMaintenanceLock> | null = null;
+  const restartOnExit = (): void => {
     if (startScript) runScript(startScript);
-    process.exit(1);
-  }
+  };
 
-  // 3. Discard leftover WAL/SHM *before* the snapshot is copied. Opening a
-  // fresh 38 MB file next to a 69 GB WAL would replay the runaway into it.
-  const sidecars = discardWalSidecars([`${dbPath}-wal`, `${dbPath}-shm`]);
-  if (!sidecars.ok) {
-    console.error(`restore: cannot unlink ${sidecars.path}: ${sidecars.error}`);
-    if (startScript) runScript(startScript);
-    process.exit(1);
-  }
-
-  // 4. Copy snapshot → live DB
   try {
-    fs.copyFileSync(source, dbPath);
-    console.log(`✓ restored: ${source} → ${dbPath} (${fs.statSync(dbPath).size} bytes)`);
-  } catch (e: any) {
-    console.error(`restore: copy failed: ${e.message}`);
-    if (startScript) runScript(startScript); // try to restart server
-    process.exit(1);
-  }
+    maintenance = acquireMaintenanceLock({ dbPath, operation: 'restore' });
 
-  // 5. PRAGMA wal_checkpoint(TRUNCATE) — clear stale WAL/SHM
-  // We use a tiny node one-liner to run this without leaving better-sqlite3 here.
-  try {
-    const Database = require('better-sqlite3');
-    const db = new Database(dbPath);
-    db.pragma('wal_checkpoint(TRUNCATE)');
-    db.close();
-    console.log(`✓ WAL checkpointed (TRUNCATE)`);
-  } catch (e: any) {
-    console.warn(`warn: wal_checkpoint failed: ${e.message}`);
-  }
-
-  // 5. Start MCP server
-  if (startScript) {
-    console.log(`→ starting MCP server (${startScript})...`);
-    const start = runScript(startScript);
-    if (!start.ok) {
-      console.error(`restore: start script failed: ${start.stderr || start.stdout}`);
-      console.error(`(restored DB is on disk; you must restart the MCP server manually)`);
+    // 1. Stop MCP server before any filesystem mutation on the live DB.
+    console.log(`→ stopping MCP server (${stopScript})...`);
+    const stop = runScript(stopScript);
+    if (!stop.ok) {
+      console.error(`restore: stop script failed: ${stop.stderr || stop.stdout}`);
       process.exit(1);
     }
-    console.log(`✓ MCP server started`);
-  } else {
-    console.warn(`warn: no tim-mcp-start.sh found — restart server manually`);
-  }
+    console.log(`✓ MCP server stopped`);
 
-  console.log(`\n# Restore complete`);
-  console.log(`  from:    ${source}`);
-  console.log(`  to:      ${dbPath}`);
-  console.log(`  safety:  ${preRestore}`);
-  console.log(`  size:    ${fs.statSync(dbPath).size} bytes`);
+    try {
+      requireNoWriters('restore');
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
+      console.error(`restore: ${message}`);
+      restartOnExit();
+      process.exit(1);
+    }
+
+    // 2. Pre-restore safety copy (writers are stopped; statfs must succeed).
+    if (fs.existsSync(dbPath)) {
+      const liveBytes = fs.statSync(dbPath).size;
+      const snapshotBytes = fs.statSync(source).size;
+      let freeBytes: number;
+      try {
+        freeBytes = readFreeBytes(path.dirname(dbPath));
+      } catch (e: unknown) {
+        const message = e instanceof Error ? e.message : String(e);
+        console.error(`restore: cannot stat filesystem for safety copy: ${message}`);
+        restartOnExit();
+        process.exit(1);
+      }
+      if (!shouldCopyLiveDbForSafety(liveBytes, snapshotBytes, freeBytes)) {
+        console.log(
+          `⚠ skipping pre-restore copy of live db (${liveBytes} bytes); not enough free space or live file is bloated relative to snapshot`,
+        );
+      } else {
+        try {
+          fs.copyFileSync(dbPath, preRestore);
+          console.log(`✓ pre-restore safety copy written: ${preRestore}`);
+        } catch (e: any) {
+          console.error(`restore: cannot create safety copy: ${e.message}`);
+          restartOnExit();
+          process.exit(1);
+        }
+      }
+    }
+
+    // 3. Discard leftover WAL/SHM before copying the snapshot.
+    const sidecars = discardWalSidecars([`${dbPath}-wal`, `${dbPath}-shm`]);
+    if (!sidecars.ok) {
+      console.error(`restore: cannot unlink ${sidecars.path}: ${sidecars.error}`);
+      restartOnExit();
+      process.exit(1);
+    }
+
+    // 4. Copy snapshot → live DB
+    try {
+      fs.copyFileSync(source, dbPath);
+      console.log(`✓ restored: ${source} → ${dbPath} (${fs.statSync(dbPath).size} bytes)`);
+    } catch (e: any) {
+      console.error(`restore: copy failed: ${e.message}`);
+      restartOnExit();
+      process.exit(1);
+    }
+
+    // 5. WAL checkpoint — failure makes restore fail.
+    const checkpoint = runWalCheckpoint(dbPath);
+    if (!checkpoint.ok) {
+      console.error(`restore: wal_checkpoint failed: ${checkpoint.error}`);
+      restartOnExit();
+      process.exit(1);
+    }
+    console.log(`✓ WAL checkpointed (TRUNCATE)`);
+
+    // 6. Start MCP server
+    if (startScript) {
+      console.log(`→ starting MCP server (${startScript})...`);
+      const start = runScript(startScript);
+      if (!start.ok) {
+        console.error(`restore: start script failed: ${start.stderr || start.stdout}`);
+        console.error(`(restored DB is on disk; you must restart the MCP server manually)`);
+        process.exit(1);
+      }
+      console.log(`✓ MCP server started`);
+    } else {
+      console.warn(`warn: no tim-mcp-start.sh found — restart server manually`);
+    }
+
+    console.log(`\n# Restore complete`);
+    console.log(`  from:    ${source}`);
+    console.log(`  to:      ${dbPath}`);
+    console.log(`  safety:  ${preRestore}`);
+    console.log(`  size:    ${fs.statSync(dbPath).size} bytes`);
+  } finally {
+    maintenance?.release();
+  }
 }

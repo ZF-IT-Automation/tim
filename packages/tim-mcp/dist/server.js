@@ -1460,6 +1460,16 @@ let commitMgr;
 let errorLogger;
 function getStore() {
     if (!store) {
+        if (!CLI.http && !process.env.HERMES_SKIP_DB_GUARD) {
+            try {
+                (0, tim_core_1.assertMaintenanceClear)(DB_PATH);
+            }
+            catch (e) {
+                const message = e instanceof Error ? e.message : String(e);
+                console.error(`FATAL: ${message}`);
+                process.exit(1);
+            }
+        }
         store = new tim_store_1.TimStore(DB_PATH);
     }
     return store;

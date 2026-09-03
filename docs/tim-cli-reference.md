@@ -542,16 +542,17 @@ use --force to override (NOT recommended unless you know what you are doing)
 
 ---
 
-### 21b. `tim compact-error-log [--db <path>] [--max-entries <n>] [--vacuum]`
+### 21b. `tim compact-error-log [--db <path>] [--max-entries <n>] [--vacuum] [--dry-run]`
 
 Rebuild `error_log` to the newest N rows (default 10_000) without a
-multi-million-row DELETE. Refuses while any `tim-mcp` writer holds the DB.
-`--vacuum` then shrinks the file. Host wrapper: `scripts/tim-compact-error-log.sh`
-(stop → compact → start).
+multi-million-row DELETE. Requires exclusive maintenance, fail-closed writer
+verification, and (when `--vacuum` is set) free-space preflight. Refuses
+while any `tim-mcp` writer holds the DB. Host wrapper:
+`scripts/tim-compact-error-log.sh` (stop → compact → guaranteed restart).
 
 ```
 tim compact-error-log --vacuum
-{"ok":true,"db":"/home/bbbee/.tim/tim.db","kept":10000,"vacuumed":true}
+{"ok":true,"db":"<home>/.tim/tim.db","kept":10000,"vacuumed":true}
 ```
 
 ---

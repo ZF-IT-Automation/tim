@@ -213,6 +213,28 @@ describe('ErrorLogger', () => {
       expect(remaining.c).toBe(5);
     });
 
+    it('logError on an oversized table does not rebuild, drop, or mass-delete', () => {
+      const insert = db.prepare(
+        `INSERT INTO error_log (timestamp, tool, args_json, error) VALUES (?, 'storm', '{}', ?)`,
+      );
+      for (let i = 0; i < 80; i++) {
+        insert.run(new Date(Date.now() + i).toISOString(), `epipe ${i}`);
+      }
+      const before = db.prepare('SELECT COUNT(*) as c FROM error_log').get() as { c: number };
+      const tablesBefore = db
+        .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'error_log%'`)
+        .all() as Array<{ name: string }>;
+
+      logger.logError({ tool: 'tim_read', error: 'one more' });
+
+      const after = db.prepare('SELECT COUNT(*) as c FROM error_log').get() as { c: number };
+      expect(after.c).toBe(before.c + 1);
+      const tablesAfter = db
+        .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'error_log%'`)
+        .all() as Array<{ name: string }>;
+      expect(tablesAfter.map((t) => t.name).sort()).toEqual(tablesBefore.map((t) => t.name).sort());
+    });
+
     it('rebuilds instead of mass-deleting when the table is already huge', () => {
       expect(shouldRebuildErrorLog(80, 5)).toBe(true);
       expect(shouldRebuildErrorLog(10, 5)).toBe(false);
