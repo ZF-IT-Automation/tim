@@ -38,7 +38,18 @@ export function shouldCopyLiveDbForSafety(
   if (liveBytes > snapshotBytes * 4 && liveBytes > 512 * 1024 * 1024) return false;
   return true;
 }
+
+/** WAL/SHM must not be unlinked while any tim-mcp process still holds the DB. */
+export function walSidecarsMayBeDropped(writerPids: string[]): boolean {
+  return writerPids.length === 0;
+}
+
+export function parseWriterPids(pgrepOutput: string): string[] {
+  return pgrepOutput.trim().split(/\s+/).filter(Boolean);
+}
+
 const STOP_SCRIPT_CANDIDATES = [
+  path.resolve(__dirname, '..', '..', '..', 'scripts', 'tim-mcp-stop.sh'),
   '~/.hermes/scripts/tim-mcp-stop.sh',
   '~/bin/tim-mcp-stop.sh',
   '/usr/local/bin/tim-mcp-stop.sh',
@@ -105,6 +116,15 @@ function resolveSource(flags: Record<string, string>): { source: string; isLates
     );
   }
   return { source: match.path, isLatest: false, isAbsolute: false };
+}
+
+export function listTimMcpWriterPids(): string[] {
+  try {
+    const out = execFileSync('pgrep', ['-f', 'tim-mcp.*dist/server\\.js'], { encoding: 'utf8' });
+    return parseWriterPids(out);
+  } catch {
+    return [];
+  }
 }
 
 function runScript(script: string, args: string[] = []): { ok: boolean; stdout: string; stderr: string } {
@@ -248,6 +268,16 @@ export async function cmdRestore(args: string[]): Promise<void> {
     process.exit(1);
   }
   console.log(`✓ MCP server stopped`);
+
+  // Stop scripts used to exit 0 with leftovers. Re-check before touching WAL.
+  const leftoverPids = listTimMcpWriterPids();
+  if (!walSidecarsMayBeDropped(leftoverPids)) {
+    console.error(
+      `restore: refusing to unlink WAL/SHM; writers still hold the DB: ${leftoverPids.join(' ')}`,
+    );
+    if (startScript) runScript(startScript);
+    process.exit(1);
+  }
 
   // 3. Discard leftover WAL/SHM *before* the snapshot is copied. Opening a
   // fresh 38 MB file next to a 69 GB WAL would replay the runaway into it.

@@ -23,3 +23,16 @@ export function handleUncaughtException(
   }
   log(err);
 }
+
+/** stdout/stderr 'error' — same rule as uncaughtException: broken pipe exits, no DB write. */
+export function handleStdioStreamError(
+  err: unknown,
+  exit: (code: number) => void,
+): void {
+  if (isBrokenPipeError(err)) {
+    exit(1);
+    return;
+  }
+  const message = err instanceof Error ? (err.stack ?? err.message) : String(err);
+  console.error('[tim-mcp] stdio stream error:', message);
+}

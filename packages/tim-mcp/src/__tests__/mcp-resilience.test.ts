@@ -203,4 +203,70 @@ describe('MCP server resilience (BUG 4)', () => {
       if (!proc.killed) proc.kill('SIGKILL');
     }
   }, 10000);
+
+  it('exits when stdin closes (parent gone)', async () => {
+    const proc = spawnServer();
+    try {
+      await waitForServerStart(proc);
+      proc.stdin!.end();
+      const code = await waitForExit(proc, 2000);
+      expect(code).not.toBeNull();
+    } finally {
+      if (proc.exitCode === null && proc.signalCode === null) {
+        proc.kill('SIGKILL');
+      }
+    }
+  }, 10000);
+
+  it('exits when stdout is destroyed (broken pipe to parent)', async () => {
+    const proc = spawnServer();
+    try {
+      await waitForServerStart(proc);
+      proc.stdout!.destroy();
+      sendLine(proc, JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: {
+          protocolVersion: '2024-11-05',
+          capabilities: {},
+          clientInfo: { name: 'test', version: '0.0.1' },
+        },
+      }));
+      const code = await waitForExit(proc, 3000);
+      expect(code).not.toBeNull();
+    } finally {
+      if (proc.exitCode === null && proc.signalCode === null) {
+        proc.kill('SIGKILL');
+      }
+    }
+  }, 10000);
 });
+
+function waitForServerStart(proc: ChildProcess): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('Timeout waiting for server start')), 5000);
+    const onErr = (chunk: Buffer) => {
+      if (chunk.toString('utf8').includes('TIM MCP server started')) {
+        clearTimeout(timer);
+        proc.stderr!.off('data', onErr);
+        resolve();
+      }
+    };
+    proc.stderr!.on('data', onErr);
+  });
+}
+
+function waitForExit(proc: ChildProcess, ms: number): Promise<number | null> {
+  return new Promise((resolve, reject) => {
+    if (proc.exitCode !== null) {
+      resolve(proc.exitCode);
+      return;
+    }
+    const timer = setTimeout(() => reject(new Error(`Timeout waiting for process exit (${ms}ms)`)), ms);
+    proc.once('exit', (code) => {
+      clearTimeout(timer);
+      resolve(code);
+    });
+  });
+}

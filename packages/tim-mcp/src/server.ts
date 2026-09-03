@@ -51,7 +51,7 @@ import {
   syncNearestProjectMarker,
 } from 'tim-hooks';
 import { startIdleSweepTimer, stopIdleSweepTimer } from './idle-sweep-timer.js';
-import { handleUncaughtException, isBrokenPipeError } from './process-error-guards.js';
+import { handleUncaughtException, handleStdioStreamError, isBrokenPipeError } from './process-error-guards.js';
 import { tim_export, tim_import, inspectHmemManifest } from 'tim-migrate';
 import { autoPush, autoPull, resetSyncCooldowns, loadConfig as loadSyncConfig } from 'tim-sync-client';
 import {
@@ -3690,6 +3690,11 @@ export async function startServer(): Promise<void> {
   };
   process.stdin.on('end', shutdownStdio);
   process.stdin.on('close', shutdownStdio);
+  const onPipeError = (err: unknown): void => {
+    handleStdioStreamError(err, (code) => process.exit(code));
+  };
+  process.stdout.on('error', onPipeError);
+  process.stderr.on('error', onPipeError);
 }
 
 // Run if executed directly

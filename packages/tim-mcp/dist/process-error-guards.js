@@ -9,6 +9,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.isBrokenPipeError = isBrokenPipeError;
 exports.handleUncaughtException = handleUncaughtException;
+exports.handleStdioStreamError = handleStdioStreamError;
 function isBrokenPipeError(err) {
     const code = err?.code;
     return code === 'EPIPE' || code === 'ECONNRESET' || code === 'ERR_STREAM_DESTROYED';
@@ -20,5 +21,14 @@ function handleUncaughtException(err, log, exit) {
         return;
     }
     log(err);
+}
+/** stdout/stderr 'error' — same rule as uncaughtException: broken pipe exits, no DB write. */
+function handleStdioStreamError(err, exit) {
+    if (isBrokenPipeError(err)) {
+        exit(1);
+        return;
+    }
+    const message = err instanceof Error ? (err.stack ?? err.message) : String(err);
+    console.error('[tim-mcp] stdio stream error:', message);
 }
 //# sourceMappingURL=process-error-guards.js.map

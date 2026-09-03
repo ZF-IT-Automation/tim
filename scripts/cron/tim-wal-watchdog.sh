@@ -7,6 +7,9 @@
 # 2026-09-03: integrity_check + PASSIVE checkpoint on a 28 GB DB hung and
 # let WAL grow to 69 GB. Skip integrity on large files, cap sqlite3 with
 # timeout, and TRUNCATE at CRIT so the WAL file actually shrinks.
+# Checkpoint timeout is failure (exit 3), not success. On CRIT timeout,
+# SIGTERM stdio writers (not the HTTP daemon) so a live-parent runaway
+# cannot keep holding the WAL.
 
 set -e
 
@@ -26,6 +29,34 @@ SQLITE_TIMEOUT_SEC="${TIM_WAL_WATCHDOG_TIMEOUT_SEC:-30}"
 
 sqlite_timed() {
   timeout --kill-after=5s "${SQLITE_TIMEOUT_SEC}s" sqlite3 "${DB_PATH}" "$1" 2>&1
+}
+
+# Keep in lockstep with packages/tim-cli/src/wal-watchdog.ts
+checkpoint_failed() {
+  local out="${1:-}"
+  [[ -z "${out}" || "${out}" == *timeout* ]]
+}
+
+reap_stdio_writers() {
+  local pid cmd
+  while read -r pid cmd; do
+    if [[ "${cmd}" == *tim-mcp* && "${cmd}" == *dist/server.js* && "${cmd}" != *"--http"* ]]; then
+      echo "[CRIT] reaping stdio writer pid=${pid}" | tee -a "${LOG_FILE}"
+      kill "${pid}" 2>/dev/null || true
+    fi
+  done < <(ps -eo pid=,args= || true)
+  return 0
+}
+
+run_checkpoint() {
+  local CHECKPOINT
+  CHECKPOINT=$(sqlite_timed "PRAGMA wal_checkpoint(TRUNCATE);" || echo "timeout")
+  echo "Checkpoint: ${CHECKPOINT}" | tee -a "${LOG_FILE}"
+  if checkpoint_failed "${CHECKPOINT}"; then
+    echo "[FAIL] checkpoint timed out or empty" | tee -a "${LOG_FILE}"
+    return 3
+  fi
+  return 0
 }
 
 if [[ ! -f "${DB_PATH}" ]]; then
@@ -53,13 +84,16 @@ fi
 
 if [[ ${WAL_MB} -ge ${WAL_CRIT_MB} ]]; then
   echo "[CRIT] WAL=${WAL_MB}MB >= ${WAL_CRIT_MB}MB — forcing TRUNCATE checkpoint" | tee -a "${LOG_FILE}"
-  CHECKPOINT=$(sqlite_timed "PRAGMA wal_checkpoint(TRUNCATE);" || echo "timeout")
-  echo "Checkpoint: ${CHECKPOINT}" | tee -a "${LOG_FILE}"
+  if ! run_checkpoint; then
+    reap_stdio_writers
+    exit 3
+  fi
   exit 0
 elif [[ ${WAL_MB} -ge ${WAL_WARN_MB} ]]; then
   echo "[WARN] WAL=${WAL_MB}MB >= ${WAL_WARN_MB}MB — TRUNCATE checkpoint" | tee -a "${LOG_FILE}"
-  CHECKPOINT=$(sqlite_timed "PRAGMA wal_checkpoint(TRUNCATE);" || echo "timeout")
-  echo "Checkpoint: ${CHECKPOINT}" | tee -a "${LOG_FILE}"
+  if ! run_checkpoint; then
+    exit 3
+  fi
   exit 0
 else
   echo "[OK] WAL within healthy bounds" | tee -a "${LOG_FILE}"
