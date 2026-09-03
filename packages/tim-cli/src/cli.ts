@@ -40,6 +40,7 @@ import { tim_export, tim_import, repairImportFlags, repairProjectKind, exportToM
 import { cmdSync } from './sync-cli.js';
 import { cmdSnapshot } from './snapshot.js';
 import { cmdRestore } from './restore.js';
+import { cmdCompactErrorLog } from './compact-error-log.js';
 import { requiresSnapshot } from './safety.js';
 import { runStatusline } from './statusline.js';
 import { cmdRecordCommit } from './record-commit.js';
@@ -155,6 +156,8 @@ const COMMAND_HELP: Record<string, string> = {
     'Usage: tim snapshot [--db <path>] [--out <path>] [--prune-hours <hours>] [--max-bytes <n>] [--no-symlink] [--quiet]',
   restore:
     'Usage: tim restore [--from <path>] [--db <path>] [--list] [--dry-run] [--force]',
+  'compact-error-log':
+    'Usage: tim compact-error-log [--db <path>] [--max-entries <n>] [--vacuum]',
   'release-check': 'Usage: tim release-check [--beta] [--json] [--skip-tests <true|false>]',
   'setup-agent':
     'Usage: tim setup-agent --host claude|codex|cursor|hermes [--dry-run]',
@@ -233,6 +236,7 @@ Commands:
   reap-checkpoints         Reap checkpoints whose session already has a summarizer rollup
   snapshot                 Snapshot the TIM database
   restore                  Restore the TIM database
+  compact-error-log        Rebuild a bloated error_log (stop writers first)
   release-check            Run release verification
   setup-agent              Install TIM for an agent host
   sync connect             Connect to o9k-sync server
@@ -1301,6 +1305,9 @@ async function main() {
       break;
     case 'restore':
       await cmdRestore(rest);
+      break;
+    case 'compact-error-log':
+      await cmdCompactErrorLog(rest);
       break;
     case 'release-check':
       await cmdReleaseCheck(rest);

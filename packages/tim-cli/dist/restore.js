@@ -51,6 +51,8 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.shouldCopyLiveDbForSafety = shouldCopyLiveDbForSafety;
 exports.walSidecarsMayBeDropped = walSidecarsMayBeDropped;
 exports.parseWriterPids = parseWriterPids;
+exports.isBenignSidecarUnlinkError = isBenignSidecarUnlinkError;
+exports.discardWalSidecars = discardWalSidecars;
 exports.listTimMcpWriterPids = listTimMcpWriterPids;
 exports.cmdRestoreList = cmdRestoreList;
 exports.cmdRestore = cmdRestore;
@@ -81,6 +83,24 @@ function walSidecarsMayBeDropped(writerPids) {
 }
 function parseWriterPids(pgrepOutput) {
     return pgrepOutput.trim().split(/\s+/).filter(Boolean);
+}
+function isBenignSidecarUnlinkError(err) {
+    return err?.code === 'ENOENT';
+}
+/** ENOENT is success (no leftover). Any other unlink error must abort restore. */
+function discardWalSidecars(paths, unlink = fs.unlinkSync) {
+    for (const sidecar of paths) {
+        try {
+            unlink(sidecar);
+        }
+        catch (e) {
+            if (isBenignSidecarUnlinkError(e))
+                continue;
+            const message = e instanceof Error ? e.message : String(e);
+            return { ok: false, path: sidecar, error: message };
+        }
+    }
+    return { ok: true };
 }
 const STOP_SCRIPT_CANDIDATES = [
     path.resolve(__dirname, '..', '..', '..', 'scripts', 'tim-mcp-stop.sh'),
@@ -292,13 +312,12 @@ async function cmdRestore(args) {
     }
     // 3. Discard leftover WAL/SHM *before* the snapshot is copied. Opening a
     // fresh 38 MB file next to a 69 GB WAL would replay the runaway into it.
-    for (const extra of [`${dbPath}-wal`, `${dbPath}-shm`]) {
-        try {
-            fs.unlinkSync(extra);
-        }
-        catch {
-            // no leftover sidecar
-        }
+    const sidecars = discardWalSidecars([`${dbPath}-wal`, `${dbPath}-shm`]);
+    if (!sidecars.ok) {
+        console.error(`restore: cannot unlink ${sidecars.path}: ${sidecars.error}`);
+        if (startScript)
+            runScript(startScript);
+        process.exit(1);
     }
     // 4. Copy snapshot → live DB
     try {

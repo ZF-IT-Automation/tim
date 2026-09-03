@@ -44,6 +44,17 @@ export function snapshotHasRoom(opts: {
   return opts.freeBytes >= opts.sourceBytes + headroom;
 }
 
+/** Online backup copies committed WAL frames; room checks must cover db+WAL. */
+export function snapshotFootprintBytes(dbPath: string): number {
+  let bytes = fs.statSync(dbPath).size;
+  try {
+    bytes += fs.statSync(`${dbPath}-wal`).size;
+  } catch {
+    // no WAL sidecar
+  }
+  return bytes;
+}
+
 function readFreeBytes(dir: string): number {
   const st = fs.statfsSync(dir);
   return Number(st.bavail) * Number(st.bsize);
@@ -66,6 +77,9 @@ export function makeRoomForSnapshot(opts: {
   const hasRoom = () => snapshotHasRoom({ sourceBytes: opts.sourceBytes, freeBytes });
   if (hasRoom()) return { ok: true, pruned: 0, freeBytes };
 
+  // Age-prune happens after a successful backup. Doing it here deleted the
+  // last valid copy on 2026-09-03 when cron had been off >48h and the new
+  // snapshot then failed.
   const sizeBefore = listSnapshots(opts.dir).reduce((sum, f) => {
     try {
       return sum + fs.statSync(f).size;
@@ -73,8 +87,7 @@ export function makeRoomForSnapshot(opts: {
       return sum;
     }
   }, 0);
-  let pruned = pruneOld(opts.dir, opts.pruneHours, log);
-  pruned += pruneToMaxBytes(opts.dir, opts.maxBytes, log);
+  let pruned = pruneToMaxBytes(opts.dir, opts.maxBytes, log);
 
   const sizeAfterCap = listSnapshots(opts.dir).reduce((sum, f) => {
     try {
@@ -149,13 +162,16 @@ function listSnapshots(dir: string): string[] {
 function pruneOld(dir: string, maxAgeHours: number, log: (s: string) => void): number {
   if (maxAgeHours <= 0) return 0;
   const cutoff = Date.now() - maxAgeHours * 3600 * 1000;
-  const files = listSnapshots(dir);
+  const files = listSnapshots(dir)
+    .map((f) => ({ path: f, mtime: fs.statSync(f).mtimeMs }))
+    .sort((a, b) => b.mtime - a.mtime);
   let removed = 0;
-  for (const f of files) {
+  // Never delete the newest snapshot — a failed follow-up backup must not
+  // leave the host with zero restore points.
+  for (const f of files.slice(1)) {
     try {
-      const st = fs.statSync(f);
-      if (st.mtimeMs < cutoff) {
-        fs.unlinkSync(f);
+      if (f.mtime < cutoff) {
+        fs.unlinkSync(f.path);
         removed++;
       }
     } catch {
@@ -235,7 +251,7 @@ export async function runSnapshot(opts: {
 
   ensureDir(snapshotDir);
 
-  const sourceBytes = fs.statSync(dbPath).size;
+  const sourceBytes = snapshotFootprintBytes(dbPath);
   let freeBytes = opts.freeBytes;
   if (freeBytes === undefined) {
     try {

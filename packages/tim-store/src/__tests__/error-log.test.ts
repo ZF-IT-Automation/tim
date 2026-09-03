@@ -2,7 +2,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import Database from 'better-sqlite3';
-import { ErrorLogger } from '../error-log.js';
+import { ErrorLogger, shouldRebuildErrorLog, compactErrorLog } from '../error-log.js';
 import { runMigrations } from '../schema.js';
 
 function createTestDb(): Database.Database {
@@ -213,13 +213,43 @@ describe('ErrorLogger', () => {
       expect(remaining.c).toBe(5);
     });
 
-    it('logError itself rotates so a write storm cannot grow the table past maxEntries', () => {
+    it('rebuilds instead of mass-deleting when the table is already huge', () => {
+      expect(shouldRebuildErrorLog(80, 5)).toBe(true);
+      expect(shouldRebuildErrorLog(10, 5)).toBe(false);
+
       const tight = new ErrorLogger(db, { maxEntries: 5, maxAgeDays: 365 });
-      for (let i = 0; i < 40; i++) {
-        tight.logError({ tool: 'mcp-server', error: `uncaughtException: write EPIPE ${i}` });
+      const insert = db.prepare(
+        `INSERT INTO error_log (timestamp, tool, args_json, error) VALUES (?, 'storm', '{}', ?)`,
+      );
+      for (let i = 0; i < 80; i++) {
+        insert.run(new Date(Date.now() + i).toISOString(), `epipe ${i}`);
       }
+      const before = db.prepare('SELECT COUNT(*) as c FROM error_log').get() as { c: number };
+      expect(before.c).toBeGreaterThan(50);
+
+      const result = tight.rotate({ maxEntries: 5, maxAgeDays: 365 });
+      expect(result.deleted).toBe(before.c - 5);
+
+      const remaining = db.prepare('SELECT error FROM error_log ORDER BY timestamp ASC').all() as Array<{
+        error: string;
+      }>;
+      expect(remaining).toHaveLength(5);
+      expect(remaining[0]!.error).toBe('epipe 75');
+      expect(remaining[4]!.error).toBe('epipe 79');
+    });
+
+    it('compactErrorLog keeps the newest rows and can VACUUM', () => {
+      const insert = db.prepare(
+        `INSERT INTO error_log (timestamp, tool, args_json, error) VALUES (?, 'storm', '{}', ?)`,
+      );
+      for (let i = 0; i < 80; i++) {
+        insert.run(new Date(Date.now() + i).toISOString(), `epipe ${i}`);
+      }
+      const result = compactErrorLog(db, { maxEntries: 5, vacuum: true });
+      expect(result.kept).toBe(5);
+      expect(result.vacuumed).toBe(true);
       const remaining = db.prepare('SELECT COUNT(*) as c FROM error_log').get() as { c: number };
-      expect(remaining.c).toBeLessThanOrEqual(5);
+      expect(remaining.c).toBe(5);
     });
   });
 

@@ -38,13 +38,32 @@ checkpoint_failed() {
 }
 
 reap_stdio_writers() {
-  local pid cmd
-  while read -r pid cmd; do
+  # Keep in lockstep with packages/tim-cli/src/wal-watchdog.ts stdioWritersToReap:
+  # all PPID-1 stdio orphans, else the single hottest live-parent writer.
+  local pid ppid cmd writes
+  local orphans=()
+  local best_pid="" best_writes=0
+  while read -r pid ppid cmd; do
     if [[ "${cmd}" == *tim-mcp* && "${cmd}" == *dist/server.js* && "${cmd}" != *"--http"* ]]; then
-      echo "[CRIT] reaping stdio writer pid=${pid}" | tee -a "${LOG_FILE}"
-      kill "${pid}" 2>/dev/null || true
+      writes=$(awk '/^write_bytes:/ {print $2}' "/proc/${pid}/io" 2>/dev/null || echo 0)
+      writes=${writes:-0}
+      if [[ "${ppid}" == "1" ]]; then
+        orphans+=("${pid}")
+      elif [[ "${writes}" -gt "${best_writes}" ]]; then
+        best_writes="${writes}"
+        best_pid="${pid}"
+      fi
     fi
-  done < <(ps -eo pid=,args= || true)
+  done < <(ps -eo pid=,ppid=,args= || true)
+  if [[ ${#orphans[@]} -gt 0 ]]; then
+    echo "[CRIT] reaping stdio orphans: ${orphans[*]}" | tee -a "${LOG_FILE}"
+    kill "${orphans[@]}" 2>/dev/null || true
+    return 0
+  fi
+  if [[ -n "${best_pid}" && "${best_writes}" -gt 0 ]]; then
+    echo "[CRIT] reaping hottest live-parent stdio writer pid=${best_pid} write_bytes=${best_writes}" | tee -a "${LOG_FILE}"
+    kill "${best_pid}" 2>/dev/null || true
+  fi
   return 0
 }
 

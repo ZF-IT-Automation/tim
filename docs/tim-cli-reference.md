@@ -29,7 +29,7 @@ node packages/tim-cli/dist/cli.js statusline
 
 ---
 
-## Command Overview (39 commands)
+## Command Overview (40 commands)
 
 ### Top-Level Summary
 
@@ -58,22 +58,23 @@ node packages/tim-cli/dist/cli.js statusline
 | 21 | `tim reap-checkpoints` | Reap checkpoints whose session already has a summarizer rollup |
 | 22 | `tim snapshot` | Snapshot live DB to `/tmp/tim-snapshots/` (SQLite backup) |
 | 23 | `tim restore` | Restore DB from a snapshot |
-| 24 | `tim release-check` | Verify release gates, beta smoke checks, and packaging safety |
-| 25 | `tim setup-agent` | Install TIM MCP, skills, hooks, and smoke guidance for one agent host |
-| 26 | `tim sync connect` | Connect to o9k-sync server |
-| 27 | `tim sync disconnect` | Remove local sync configuration |
-| 28 | `tim sync push` | Push unacked staging to server |
-| 29 | `tim sync pull` | Pull remote changes |
-| 30 | `tim sync status` | Show sync configuration and health |
-| 31 | `tim sync dev` | Start local dev sync server (port 3100) |
-| 32 | `tim user init` | Create the human profile scaffold |
-| 33 | `tim user profile` | Show the human profile tree summary |
-| 34 | `tim update-skills` | Copy bundled TIM skills to detected agent hosts |
-| 35 | `tim root-entries` | List root entries |
-| 36 | `tim consolidate` | Run memory consolidation |
-| 37 | `tim secret` | Manage secret entry metadata |
-| 38 | `tim viewer` | Browse the entry tree in a local web UI; move and soft-delete nodes |
-| 39 | `tim --help` | Show top-level help |
+| 24 | `tim compact-error-log` | Rebuild a bloated error_log; refuses while writers hold the DB |
+| 25 | `tim release-check` | Verify release gates, beta smoke checks, and packaging safety |
+| 26 | `tim setup-agent` | Install TIM MCP, skills, hooks, and smoke guidance for one agent host |
+| 27 | `tim sync connect` | Connect to o9k-sync server |
+| 28 | `tim sync disconnect` | Remove local sync configuration |
+| 29 | `tim sync push` | Push unacked staging to server |
+| 30 | `tim sync pull` | Pull remote changes |
+| 31 | `tim sync status` | Show sync configuration and health |
+| 32 | `tim sync dev` | Start local dev sync server (port 3100) |
+| 33 | `tim user init` | Create the human profile scaffold |
+| 34 | `tim user profile` | Show the human profile tree summary |
+| 35 | `tim update-skills` | Copy bundled TIM skills to detected agent hosts |
+| 36 | `tim root-entries` | List root entries |
+| 37 | `tim consolidate` | Run memory consolidation |
+| 38 | `tim secret` | Manage secret entry metadata |
+| 39 | `tim viewer` | Browse the entry tree in a local web UI; move and soft-delete nodes |
+| 40 | `tim --help` | Show top-level help |
 
 ---
 
@@ -538,6 +539,20 @@ use --force to override (NOT recommended unless you know what you are doing)
 | `--list` | List available snapshots without restoring |
 | `--dry-run` | Show what would happen without writing |
 | `--force` | Override the 60-minute safety guard |
+
+---
+
+### 21b. `tim compact-error-log [--db <path>] [--max-entries <n>] [--vacuum]`
+
+Rebuild `error_log` to the newest N rows (default 10_000) without a
+multi-million-row DELETE. Refuses while any `tim-mcp` writer holds the DB.
+`--vacuum` then shrinks the file. Host wrapper: `scripts/tim-compact-error-log.sh`
+(stop → compact → start).
+
+```
+tim compact-error-log --vacuum
+{"ok":true,"db":"/home/bbbee/.tim/tim.db","kept":10000,"vacuumed":true}
+```
 
 ---
 

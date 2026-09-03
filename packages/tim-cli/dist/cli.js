@@ -44,6 +44,7 @@ const tim_migrate_1 = require("tim-migrate");
 const sync_cli_js_1 = require("./sync-cli.js");
 const snapshot_js_1 = require("./snapshot.js");
 const restore_js_1 = require("./restore.js");
+const compact_error_log_js_1 = require("./compact-error-log.js");
 const safety_js_1 = require("./safety.js");
 const statusline_js_1 = require("./statusline.js");
 const record_commit_js_1 = require("./record-commit.js");
@@ -127,6 +128,7 @@ const COMMAND_HELP = {
     'reap-checkpoints': 'Usage: tim reap-checkpoints',
     snapshot: 'Usage: tim snapshot [--db <path>] [--out <path>] [--prune-hours <hours>] [--max-bytes <n>] [--no-symlink] [--quiet]',
     restore: 'Usage: tim restore [--from <path>] [--db <path>] [--list] [--dry-run] [--force]',
+    'compact-error-log': 'Usage: tim compact-error-log [--db <path>] [--max-entries <n>] [--vacuum]',
     'release-check': 'Usage: tim release-check [--beta] [--json] [--skip-tests <true|false>]',
     'setup-agent': 'Usage: tim setup-agent --host claude|codex|cursor|hermes [--dry-run]',
     sync: 'Usage: tim sync <connect|disconnect|push|pull|status|dev> [options]',
@@ -195,6 +197,7 @@ Commands:
   reap-checkpoints         Reap checkpoints whose session already has a summarizer rollup
   snapshot                 Snapshot the TIM database
   restore                  Restore the TIM database
+  compact-error-log        Rebuild a bloated error_log (stop writers first)
   release-check            Run release verification
   setup-agent              Install TIM for an agent host
   sync connect             Connect to o9k-sync server
@@ -1169,6 +1172,9 @@ async function main() {
             break;
         case 'restore':
             await (0, restore_js_1.cmdRestore)(rest);
+            break;
+        case 'compact-error-log':
+            await (0, compact_error_log_js_1.cmdCompactErrorLog)(rest);
             break;
         case 'release-check':
             await cmdReleaseCheck(rest);

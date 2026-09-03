@@ -39,6 +39,7 @@ const COMMAND_VALUE_OPTIONS: Record<string, ReadonlySet<string>> = {
   'migrate retire-deprecated-tags': new Set(['sample-limit']),
   snapshot: new Set(['db', 'out', 'prune-hours', 'max-bytes']),
   restore: new Set(['from', 'db']),
+  'compact-error-log': new Set(['db', 'max-entries']),
   'release-check': new Set(['skip-tests']),
   'setup-agent': new Set(['host']),
   'sync connect': new Set(['server-url', 'user-id', 'token', 'tier', 'passphrase']),

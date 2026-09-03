@@ -48,6 +48,27 @@ export function parseWriterPids(pgrepOutput: string): string[] {
   return pgrepOutput.trim().split(/\s+/).filter(Boolean);
 }
 
+export function isBenignSidecarUnlinkError(err: unknown): boolean {
+  return (err as NodeJS.ErrnoException | undefined)?.code === 'ENOENT';
+}
+
+/** ENOENT is success (no leftover). Any other unlink error must abort restore. */
+export function discardWalSidecars(
+  paths: string[],
+  unlink: (p: string) => void = fs.unlinkSync,
+): { ok: true } | { ok: false; path: string; error: string } {
+  for (const sidecar of paths) {
+    try {
+      unlink(sidecar);
+    } catch (e: unknown) {
+      if (isBenignSidecarUnlinkError(e)) continue;
+      const message = e instanceof Error ? e.message : String(e);
+      return { ok: false, path: sidecar, error: message };
+    }
+  }
+  return { ok: true };
+}
+
 const STOP_SCRIPT_CANDIDATES = [
   path.resolve(__dirname, '..', '..', '..', 'scripts', 'tim-mcp-stop.sh'),
   '~/.hermes/scripts/tim-mcp-stop.sh',
@@ -281,12 +302,11 @@ export async function cmdRestore(args: string[]): Promise<void> {
 
   // 3. Discard leftover WAL/SHM *before* the snapshot is copied. Opening a
   // fresh 38 MB file next to a 69 GB WAL would replay the runaway into it.
-  for (const extra of [`${dbPath}-wal`, `${dbPath}-shm`]) {
-    try {
-      fs.unlinkSync(extra);
-    } catch {
-      // no leftover sidecar
-    }
+  const sidecars = discardWalSidecars([`${dbPath}-wal`, `${dbPath}-shm`]);
+  if (!sidecars.ok) {
+    console.error(`restore: cannot unlink ${sidecars.path}: ${sidecars.error}`);
+    if (startScript) runScript(startScript);
+    process.exit(1);
   }
 
   // 4. Copy snapshot → live DB

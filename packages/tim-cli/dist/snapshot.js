@@ -49,6 +49,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.SNAPSHOT_HEADROOM_BYTES = exports.DEFAULT_MAX_BYTES = void 0;
 exports.parseSnapshotBudget = parseSnapshotBudget;
 exports.snapshotHasRoom = snapshotHasRoom;
+exports.snapshotFootprintBytes = snapshotFootprintBytes;
 exports.makeRoomForSnapshot = makeRoomForSnapshot;
 exports.resolveDbPath = resolveDbPath;
 exports.pruneToMaxBytes = pruneToMaxBytes;
@@ -80,6 +81,17 @@ function snapshotHasRoom(opts) {
     const headroom = opts.headroomBytes ?? exports.SNAPSHOT_HEADROOM_BYTES;
     return opts.freeBytes >= opts.sourceBytes + headroom;
 }
+/** Online backup copies committed WAL frames; room checks must cover db+WAL. */
+function snapshotFootprintBytes(dbPath) {
+    let bytes = fs.statSync(dbPath).size;
+    try {
+        bytes += fs.statSync(`${dbPath}-wal`).size;
+    }
+    catch {
+        // no WAL sidecar
+    }
+    return bytes;
+}
 function readFreeBytes(dir) {
     const st = fs.statfsSync(dir);
     return Number(st.bavail) * Number(st.bsize);
@@ -94,6 +106,9 @@ function makeRoomForSnapshot(opts) {
     const hasRoom = () => snapshotHasRoom({ sourceBytes: opts.sourceBytes, freeBytes });
     if (hasRoom())
         return { ok: true, pruned: 0, freeBytes };
+    // Age-prune happens after a successful backup. Doing it here deleted the
+    // last valid copy on 2026-09-03 when cron had been off >48h and the new
+    // snapshot then failed.
     const sizeBefore = listSnapshots(opts.dir).reduce((sum, f) => {
         try {
             return sum + fs.statSync(f).size;
@@ -102,8 +117,7 @@ function makeRoomForSnapshot(opts) {
             return sum;
         }
     }, 0);
-    let pruned = pruneOld(opts.dir, opts.pruneHours, log);
-    pruned += pruneToMaxBytes(opts.dir, opts.maxBytes, log);
+    let pruned = pruneToMaxBytes(opts.dir, opts.maxBytes, log);
     const sizeAfterCap = listSnapshots(opts.dir).reduce((sum, f) => {
         try {
             return sum + fs.statSync(f).size;
@@ -169,13 +183,16 @@ function pruneOld(dir, maxAgeHours, log) {
     if (maxAgeHours <= 0)
         return 0;
     const cutoff = Date.now() - maxAgeHours * 3600 * 1000;
-    const files = listSnapshots(dir);
+    const files = listSnapshots(dir)
+        .map((f) => ({ path: f, mtime: fs.statSync(f).mtimeMs }))
+        .sort((a, b) => b.mtime - a.mtime);
     let removed = 0;
-    for (const f of files) {
+    // Never delete the newest snapshot — a failed follow-up backup must not
+    // leave the host with zero restore points.
+    for (const f of files.slice(1)) {
         try {
-            const st = fs.statSync(f);
-            if (st.mtimeMs < cutoff) {
-                fs.unlinkSync(f);
+            if (f.mtime < cutoff) {
+                fs.unlinkSync(f.path);
                 removed++;
             }
         }
@@ -235,7 +252,7 @@ async function runSnapshot(opts = {}) {
         return { ok: false, error: `db not found: ${dbPath}` };
     }
     ensureDir(snapshotDir);
-    const sourceBytes = fs.statSync(dbPath).size;
+    const sourceBytes = snapshotFootprintBytes(dbPath);
     let freeBytes = opts.freeBytes;
     if (freeBytes === undefined) {
         try {

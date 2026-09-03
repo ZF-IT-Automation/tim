@@ -41,6 +41,7 @@ const HELP_CASES: HelpCase[] = [
   { args: ['migrate', 'project-kind'], usage: 'Usage: tim migrate project-kind' },
   { args: ['snapshot'], usage: 'Usage: tim snapshot' },
   { args: ['restore'], usage: 'Usage: tim restore' },
+  { args: ['compact-error-log'], usage: 'Usage: tim compact-error-log' },
   { args: ['release-check'], usage: 'Usage: tim release-check' },
   { args: ['setup-agent'], usage: 'Usage: tim setup-agent' },
   { args: ['sync'], usage: 'Usage: tim sync' },

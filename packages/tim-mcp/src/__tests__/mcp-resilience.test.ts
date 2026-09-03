@@ -204,13 +204,16 @@ describe('MCP server resilience (BUG 4)', () => {
     }
   }, 10000);
 
-  it('exits when stdin closes (parent gone)', async () => {
+  it('exits when stdin closes (parent gone) without writing error_log', async () => {
     const proc = spawnServer();
+    const dbPath = childServerDbPath();
     try {
       await waitForServerStart(proc);
+      const before = errorLogCount(dbPath);
       proc.stdin!.end();
       const code = await waitForExit(proc, 2000);
       expect(code).not.toBeNull();
+      expect(errorLogCount(dbPath)).toBe(before);
     } finally {
       if (proc.exitCode === null && proc.signalCode === null) {
         proc.kill('SIGKILL');
@@ -218,10 +221,12 @@ describe('MCP server resilience (BUG 4)', () => {
     }
   }, 10000);
 
-  it('exits when stdout is destroyed (broken pipe to parent)', async () => {
+  it('exits when stdout is destroyed (broken pipe to parent) without writing error_log', async () => {
     const proc = spawnServer();
+    const dbPath = childServerDbPath();
     try {
       await waitForServerStart(proc);
+      const before = errorLogCount(dbPath);
       proc.stdout!.destroy();
       sendLine(proc, JSON.stringify({
         jsonrpc: '2.0',
@@ -235,6 +240,7 @@ describe('MCP server resilience (BUG 4)', () => {
       }));
       const code = await waitForExit(proc, 3000);
       expect(code).not.toBeNull();
+      expect(errorLogCount(dbPath)).toBe(before);
     } finally {
       if (proc.exitCode === null && proc.signalCode === null) {
         proc.kill('SIGKILL');
@@ -242,6 +248,18 @@ describe('MCP server resilience (BUG 4)', () => {
     }
   }, 10000);
 });
+
+function errorLogCount(dbPath: string): number {
+  if (!fs.existsSync(dbPath)) return 0;
+  const Database = require('better-sqlite3') as typeof import('better-sqlite3');
+  const db = new Database(dbPath, { readonly: true, fileMustExist: true });
+  try {
+    const row = db.prepare('SELECT COUNT(*) as c FROM error_log').get() as { c: number } | undefined;
+    return row?.c ?? 0;
+  } finally {
+    db.close();
+  }
+}
 
 function waitForServerStart(proc: ChildProcess): Promise<void> {
   return new Promise((resolve, reject) => {

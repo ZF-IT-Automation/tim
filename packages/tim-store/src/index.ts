@@ -113,7 +113,7 @@ export {
   validateIdeaMetadata,
   validateTagsDeprecated,
 } from './validate.js';
-export { ErrorLogger, type ErrorLogEntry, type ErrorStats } from './error-log.js';
+export { ErrorLogger, compactErrorLog, shouldRebuildErrorLog, type ErrorLogEntry, type ErrorStats } from './error-log.js';
 export { formatEntryId, sessionShortFromMetadata } from './entry-id.js';
 export {
   ackStaging,
