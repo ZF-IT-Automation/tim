@@ -78,9 +78,8 @@ export class ErrorLogger {
         INSERT INTO error_log (timestamp, tool, args_json, error, stack, session_id)
         VALUES (?, ?, ?, ?, ?, ?)
       `).run(timestamp, tool, argsJson, error, stack ?? null, sessionId ?? null);
-      // Rotate on the write path. rotate() existed but nothing in production
-      // called it, so a stdio EPIPE storm grew error_log to 2.2M rows / 1.8 GB.
-      this.rotate();
+      // Heavy cleanup is explicit (tim compact-error-log). Routine logging must
+      // not rebuild, DROP, VACUUM, or mass-DELETE on the write path.
     } catch {
       // Never let error logging itself cause a crash
     }

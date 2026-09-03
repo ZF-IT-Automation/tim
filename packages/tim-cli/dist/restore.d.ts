@@ -1,7 +1,8 @@
 export declare function shouldCopyLiveDbForSafety(liveBytes: number, snapshotBytes: number, freeBytes: number): boolean;
 /** WAL/SHM must not be unlinked while any tim-mcp process still holds the DB. */
 export declare function walSidecarsMayBeDropped(writerPids: string[]): boolean;
-export declare function parseWriterPids(pgrepOutput: string): string[];
+export { parseWriterPids } from './writers.js';
+export { discoverTimMcpWriters, listTimMcpWriterPids, requireNoWriters } from './writers.js';
 export declare function isBenignSidecarUnlinkError(err: unknown): boolean;
 /** ENOENT is success (no leftover). Any other unlink error must abort restore. */
 export declare function discardWalSidecars(paths: string[], unlink?: (p: string) => void): {
@@ -11,7 +12,6 @@ export declare function discardWalSidecars(paths: string[], unlink?: (p: string)
     path: string;
     error: string;
 };
-export declare function listTimMcpWriterPids(): string[];
 export declare function cmdRestoreList(): Promise<void>;
 export declare function cmdRestore(args: string[]): Promise<void>;
 //# sourceMappingURL=restore.d.ts.map

@@ -47,9 +47,12 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.SNAPSHOT_HEADROOM_BYTES = exports.DEFAULT_MAX_BYTES = void 0;
+exports.parseSnapshotBudgetStrict = parseSnapshotBudgetStrict;
+exports.parseSnapshotBudgetFromEnv = parseSnapshotBudgetFromEnv;
 exports.parseSnapshotBudget = parseSnapshotBudget;
 exports.snapshotHasRoom = snapshotHasRoom;
 exports.snapshotFootprintBytes = snapshotFootprintBytes;
+exports.readFreeBytes = readFreeBytes;
 exports.makeRoomForSnapshot = makeRoomForSnapshot;
 exports.resolveDbPath = resolveDbPath;
 exports.pruneToMaxBytes = pruneToMaxBytes;
@@ -65,33 +68,50 @@ const DEFAULT_PRUNE_HOURS = 48;
 exports.DEFAULT_MAX_BYTES = 8 * 1024 * 1024 * 1024;
 /** Extra free space required beyond the source DB size before creating a snapshot. */
 exports.SNAPSHOT_HEADROOM_BYTES = 64 * 1024 * 1024;
-/**
- * Invalid or negative TIM_SNAPSHOT_MAX_BYTES used to become NaN, which
- * skipped prune (`maxBytes <= 0` is false for NaN). Fall back instead.
- */
-function parseSnapshotBudget(raw, fallback) {
-    if (raw === undefined || raw === '')
-        return fallback;
+function parseSnapshotBudgetStrict(raw) {
+    if (raw === '') {
+        return { ok: false, error: 'snapshot budget is empty' };
+    }
     const n = Number(raw);
-    if (!Number.isFinite(n) || n < 0)
-        return fallback;
-    return n;
+    if (!Number.isFinite(n) || n < 0) {
+        return { ok: false, error: `invalid snapshot budget: ${raw}` };
+    }
+    return { ok: true, value: n };
+}
+function parseSnapshotBudgetFromEnv(raw, fallback) {
+    if (raw === undefined)
+        return { ok: true, value: fallback };
+    return parseSnapshotBudgetStrict(raw);
+}
+/** @deprecated Use parseSnapshotBudgetFromEnv / parseSnapshotBudgetStrict */
+function parseSnapshotBudget(raw, fallback) {
+    const result = parseSnapshotBudgetFromEnv(raw, fallback);
+    if (!result.ok)
+        throw new Error(result.error);
+    return result.value;
 }
 function snapshotHasRoom(opts) {
     const headroom = opts.headroomBytes ?? exports.SNAPSHOT_HEADROOM_BYTES;
     return opts.freeBytes >= opts.sourceBytes + headroom;
 }
 /** Online backup copies committed WAL frames; room checks must cover db+WAL. */
-function snapshotFootprintBytes(dbPath) {
-    let bytes = fs.statSync(dbPath).size;
+function snapshotFootprintBytes(dbPath, io = {}) {
+    const statDb = io.statDb ?? ((p) => fs.statSync(p));
+    const statWal = io.statWal ?? ((p) => fs.statSync(p));
+    let bytes = statDb(dbPath).size;
+    const walPath = `${dbPath}-wal`;
     try {
-        bytes += fs.statSync(`${dbPath}-wal`).size;
+        bytes += statWal(walPath).size;
     }
-    catch {
-        // no WAL sidecar
+    catch (e) {
+        const code = e?.code;
+        if (code === 'ENOENT')
+            return bytes;
+        throw e;
     }
     return bytes;
 }
+/** Returns free bytes on the filesystem hosting dir. Throws on statfs failure. */
 function readFreeBytes(dir) {
     const st = fs.statfsSync(dir);
     return Number(st.bavail) * Number(st.bsize);
@@ -245,21 +265,37 @@ async function runSnapshot(opts = {}) {
     const dbPath = opts.dbPath ?? resolveDbPath();
     const snapshotDir = opts.snapshotDir ?? DEFAULT_SNAPSHOT_DIR;
     const pruneHours = opts.pruneHours ?? DEFAULT_PRUNE_HOURS;
-    const maxBytes = opts.maxBytes !== undefined
-        ? opts.maxBytes
-        : parseSnapshotBudget(process.env.TIM_SNAPSHOT_MAX_BYTES, exports.DEFAULT_MAX_BYTES);
+    let maxBytes;
+    if (opts.maxBytes !== undefined) {
+        maxBytes = opts.maxBytes;
+    }
+    else {
+        const budget = parseSnapshotBudgetFromEnv(process.env.TIM_SNAPSHOT_MAX_BYTES, exports.DEFAULT_MAX_BYTES);
+        if (!budget.ok) {
+            return { ok: false, error: budget.error };
+        }
+        maxBytes = budget.value;
+    }
     if (!fs.existsSync(dbPath)) {
         return { ok: false, error: `db not found: ${dbPath}` };
     }
     ensureDir(snapshotDir);
-    const sourceBytes = snapshotFootprintBytes(dbPath);
+    let sourceBytes;
+    try {
+        sourceBytes = snapshotFootprintBytes(dbPath);
+    }
+    catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        return { ok: false, error: `cannot stat database footprint: ${message}` };
+    }
     let freeBytes = opts.freeBytes;
     if (freeBytes === undefined) {
         try {
             freeBytes = readFreeBytes(snapshotDir);
         }
-        catch {
-            freeBytes = Number.POSITIVE_INFINITY;
+        catch (e) {
+            const message = e instanceof Error ? e.message : String(e);
+            return { ok: false, error: `cannot stat filesystem capacity: ${message}` };
         }
     }
     const room = makeRoomForSnapshot({
@@ -347,13 +383,20 @@ async function runSnapshot(opts = {}) {
 }
 async function cmdSnapshot(args) {
     const { flags } = (0, args_js_1.parseArgs)(args, { valueOptions: (0, args_js_1.valueOptionsFor)('snapshot') });
+    let maxBytes;
+    if (flags['max-bytes'] !== undefined) {
+        const budget = parseSnapshotBudgetStrict(flags['max-bytes']);
+        if (!budget.ok) {
+            console.error(`snapshot: ${budget.error}`);
+            process.exit(1);
+        }
+        maxBytes = budget.value;
+    }
     const result = await runSnapshot({
         dbPath: flags.db || undefined,
         snapshotDir: flags.out ? path.dirname(flags.out) : undefined,
         pruneHours: flags['prune-hours'] !== undefined ? Number(flags['prune-hours']) : undefined,
-        maxBytes: flags['max-bytes'] !== undefined
-            ? parseSnapshotBudget(flags['max-bytes'], exports.DEFAULT_MAX_BYTES)
-            : undefined,
+        maxBytes,
         noSymlink: flags['no-symlink'] === 'true',
         quiet: flags.quiet === 'true',
     });

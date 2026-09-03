@@ -52,6 +52,12 @@ describe('handleStdioStreamError', () => {
     expect(exit).toHaveBeenCalledWith(1);
   });
 
+  it('handleStdioStreamError exits stderr EPIPE the same as stdout', () => {
+    const exit = vi.fn();
+    handleStdioStreamError(Object.assign(new Error('write EPIPE'), { code: 'EPIPE' }), exit);
+    expect(exit).toHaveBeenCalledWith(1);
+  });
+
   it('does not exit on unrelated stream errors', () => {
     const exit = vi.fn();
     handleStdioStreamError(Object.assign(new Error('ENOSPC'), { code: 'ENOSPC' }), exit);

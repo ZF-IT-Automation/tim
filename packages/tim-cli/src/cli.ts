@@ -157,7 +157,7 @@ const COMMAND_HELP: Record<string, string> = {
   restore:
     'Usage: tim restore [--from <path>] [--db <path>] [--list] [--dry-run] [--force]',
   'compact-error-log':
-    'Usage: tim compact-error-log [--db <path>] [--max-entries <n>] [--vacuum]',
+    'Usage: tim compact-error-log [--db <path>] [--max-entries <n>] [--vacuum] [--dry-run]',
   'release-check': 'Usage: tim release-check [--beta] [--json] [--skip-tests <true|false>]',
   'setup-agent':
     'Usage: tim setup-agent --host claude|codex|cursor|hermes [--dry-run]',

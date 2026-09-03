@@ -4,11 +4,10 @@
 # Order is mandatory:
 #   1. stop every tim-mcp writer (HTTP + stdio)
 #   2. rebuild error_log to the newest 10_000 rows (no mass DELETE)
-#   3. VACUUM
+#   3. VACUUM (opt-in via CLI --vacuum)
 #   4. start the HTTP daemon again
 #
-# Does not run against a live writer. Restore from /tmp/tim-snapshots if this
-# exits non-zero after stop.
+# Guaranteed restart: trap ensures tim-mcp-start runs even on failure.
 
 set -euo pipefail
 
@@ -19,6 +18,22 @@ if [[ ! -x "${STOP}" ]]; then
 fi
 START="${HOME}/.hermes/scripts/tim-mcp-start.sh"
 CLI="${ROOT}/packages/tim-cli/dist/cli.js"
+STARTED=0
+
+restart_mcp() {
+  if [[ "${STARTED}" -eq 1 ]]; then
+    return 0
+  fi
+  if [[ -x "${START}" ]]; then
+    echo "[tim-compact-error-log] starting MCP"
+    "${START}" || true
+    STARTED=1
+  else
+    echo "[tim-compact-error-log] no start script at ${START} — start MCP manually" >&2
+  fi
+}
+
+trap restart_mcp EXIT
 
 if [[ ! -f "${CLI}" ]]; then
   echo "tim-compact-error-log: missing ${CLI} — run npm run build" >&2
@@ -28,12 +43,11 @@ fi
 echo "[tim-compact-error-log] stopping MCP"
 "${STOP}"
 
-echo "[tim-compact-error-log] compacting error_log + VACUUM"
-node "${CLI}" compact-error-log --vacuum
-
-if [[ -x "${START}" ]]; then
-  echo "[tim-compact-error-log] starting MCP"
-  "${START}"
-else
-  echo "[tim-compact-error-log] no start script at ${START} — start MCP manually" >&2
+echo "[tim-compact-error-log] compacting error_log"
+if ! node "${CLI}" compact-error-log --vacuum; then
+  echo "[tim-compact-error-log] compaction failed — backup may exist as *.pre-compact-*" >&2
+  exit 1
 fi
+
+restart_mcp
+trap - EXIT

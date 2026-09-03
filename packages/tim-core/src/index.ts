@@ -394,3 +394,12 @@ export {
   type SectionEntryType,
 } from './project-schema.js';
 export { isStale, staleDays, daysSinceLastVerified } from './staleness.js';
+export {
+  acquireMaintenanceLock,
+  assertMaintenanceClear,
+  isMaintenanceActive,
+  maintenanceLockPathForDb,
+  readMaintenanceLock,
+  type MaintenanceLockHandle,
+  type MaintenanceLockMeta,
+} from './maintenance-lock.js';

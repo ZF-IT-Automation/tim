@@ -265,4 +265,5 @@ export { SCHEMA_KINDS } from './schema-kinds.js';
 export { BATCH_SUMMARY_MAX_CHARS, BATCH_SUMMARY_RENDER_CHARS, ROLLUP_INPUT_MAX_CHARS, rollupInputBudget, clampForPrompt, truncateSummary, } from './summary-budget.js';
 export { PROJECT_SCHEMA, findSchemaSection, schemaSectionNames, type ProjectSchema, type ProjectSchemaSection, type SectionEntryType, } from './project-schema.js';
 export { isStale, staleDays, daysSinceLastVerified } from './staleness.js';
+export { acquireMaintenanceLock, assertMaintenanceClear, isMaintenanceActive, maintenanceLockPathForDb, readMaintenanceLock, type MaintenanceLockHandle, type MaintenanceLockMeta, } from './maintenance-lock.js';
 //# sourceMappingURL=index.d.ts.map

@@ -33,7 +33,7 @@ import {
 } from 'tim-store';
 import { formatProjectOutput, type ProjectSchema } from './project-output.js';
 import { collectTopicResume, formatTopicResume } from './topic-resume.js';
-import { loadConfig, resolveActiveSessionId, evaluateLoadGate, stripDeprecatedTags, SCHEMA_KINDS, PROJECT_SCHEMA, type EdgeType, type Entry } from 'tim-core';
+import { loadConfig, resolveActiveSessionId, evaluateLoadGate, stripDeprecatedTags, SCHEMA_KINDS, PROJECT_SCHEMA, type EdgeType, type Entry, assertMaintenanceClear } from 'tim-core';
 import { annotateTrust } from './trust.js';
 import { captureProvenance } from './provenance.js';
 import { resolveCallerProjectPath } from './project-path.js';
@@ -1640,6 +1640,15 @@ let errorLogger: ErrorLogger;
 
 function getStore(): TimStore {
   if (!store) {
+    if (!CLI.http && !process.env.HERMES_SKIP_DB_GUARD) {
+      try {
+        assertMaintenanceClear(DB_PATH);
+      } catch (e: unknown) {
+        const message = e instanceof Error ? e.message : String(e);
+        console.error(`FATAL: ${message}`);
+        process.exit(1);
+      }
+    }
     store = new TimStore(DB_PATH);
   }
   return store;

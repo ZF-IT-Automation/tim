@@ -212,8 +212,9 @@ describe('MCP server resilience (BUG 4)', () => {
       const before = errorLogCount(dbPath);
       proc.stdin!.end();
       const code = await waitForExit(proc, 2000);
-      expect(code).not.toBeNull();
+      expect(code).toBe(0);
       expect(errorLogCount(dbPath)).toBe(before);
+      expect(dbIntegrityOk(dbPath)).toBe(true);
     } finally {
       if (proc.exitCode === null && proc.signalCode === null) {
         proc.kill('SIGKILL');
@@ -239,15 +240,63 @@ describe('MCP server resilience (BUG 4)', () => {
         },
       }));
       const code = await waitForExit(proc, 3000);
-      expect(code).not.toBeNull();
+      expect(code).toBe(1);
       expect(errorLogCount(dbPath)).toBe(before);
+      expect(dbIntegrityOk(dbPath)).toBe(true);
     } finally {
       if (proc.exitCode === null && proc.signalCode === null) {
         proc.kill('SIGKILL');
       }
     }
   }, 10000);
+
+  it('exits when the intermediate parent is killed while stdio child remains', async () => {
+    const dbPath = childServerDbPath();
+    const parent = spawn(
+      'node',
+      [
+        '-e',
+        `const {spawn}=require('child_process');
+const child=spawn(process.execPath,[${JSON.stringify(SERVER_PATH)}],{
+  stdio:['pipe','pipe','pipe'],
+  env:process.env,
+  cwd:${JSON.stringify(childServerCwd())},
 });
+child.stderr.on('data',(d)=>process.stderr.write(d));
+setInterval(()=>{},60000);`,
+      ],
+      {
+        env: { ...process.env, TIM_DB_PATH: dbPath },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
+    );
+
+    try {
+      await waitForServerStart(parent);
+      const before = errorLogCount(dbPath);
+      parent.kill('SIGKILL');
+      await new Promise((r) => setTimeout(r, 1500));
+      expect(errorLogCount(dbPath)).toBe(before);
+      expect(dbIntegrityOk(dbPath)).toBe(true);
+    } finally {
+      if (parent.exitCode === null && parent.signalCode === null) {
+        parent.kill('SIGKILL');
+      }
+    }
+  }, 15000);
+});
+
+function dbIntegrityOk(dbPath: string): boolean {
+  if (!fs.existsSync(dbPath)) return false;
+  const Database = require('better-sqlite3') as typeof import('better-sqlite3');
+  const db = new Database(dbPath, { readonly: true, fileMustExist: true });
+  try {
+    const row = db.pragma('integrity_check') as Array<{ integrity_check: string }>;
+    return row[0]?.integrity_check === 'ok';
+  } finally {
+    db.close();
+  }
+}
 
 function errorLogCount(dbPath: string): number {
   if (!fs.existsSync(dbPath)) return 0;

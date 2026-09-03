@@ -10,10 +10,14 @@ LOG_PREFIX="[tim-mcp-stop]"
 
 reap_stdio_children() {
   local pids
-  pids=$(pgrep -f 'tim-mcp.*dist/server\.js' || true)
-  if [ -z "$pids" ]; then
-    echo "$LOG_PREFIX no leftover tim-mcp processes"
-    return 0
+  if ! pids=$(pgrep -f 'tim-mcp.*dist/server\.js'); then
+    local rc=$?
+    if [[ "${rc}" -eq 1 ]]; then
+      echo "$LOG_PREFIX no leftover tim-mcp processes"
+      return 0
+    fi
+    echo "$LOG_PREFIX FAIL: pgrep error (rc=${rc}) — refusing to assume no writers" >&2
+    exit 1
   fi
   echo "$LOG_PREFIX killing leftover tim-mcp processes: $pids"
   kill $pids 2>/dev/null || true
