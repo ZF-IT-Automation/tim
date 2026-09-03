@@ -322,9 +322,12 @@ export function runMigrations(
   migrations: { version: number; sql: string }[] = MIGRATIONS,
   options: RunMigrationsOptions = {},
 ): MigrationRunResult | null {
-  db.pragma('journal_mode = WAL');
+    db.pragma('journal_mode = WAL');
   db.pragma('busy_timeout = 5000');
   db.pragma('foreign_keys = ON');
+  // After a checkpoint, SQLite may keep a large WAL file around. Cap that
+  // residue at 100 MB so a PASSIVE watchdog checkpoint cannot leave tens of GB.
+  db.pragma('journal_size_limit = 104857600');
 
   db.exec(`CREATE TABLE IF NOT EXISTS _schema_version (version INTEGER NOT NULL)`);
 

@@ -40,7 +40,8 @@ TIMEOUT_SEC="${TIM_SNAPSHOT_TIMEOUT_SEC:-300}"
 echo "[$(date -Iseconds)] snapshot start" >> "${LOG_FILE}"
 
 set +e
-RESULT=$(timeout --kill-after=15s "${TIMEOUT_SEC}s" node "${TIM}" snapshot --prune-hours "${PRUNE_HOURS}" --quiet 2>&1)
+MAX_BYTES="${TIM_SNAPSHOT_MAX_BYTES:-8589934592}"
+RESULT=$(timeout --kill-after=15s "${TIMEOUT_SEC}s" node "${TIM}" snapshot --prune-hours "${PRUNE_HOURS}" --max-bytes "${MAX_BYTES}" --quiet 2>&1)
 ec=$?
 set -e
 if [ "${ec}" -ne 0 ]; then

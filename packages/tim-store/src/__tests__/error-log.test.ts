@@ -193,11 +193,10 @@ describe('ErrorLogger', () => {
         VALUES (?, 'tim_old', '{}', 'old')
       `).run(oldDate);
 
-      logger.logError({ tool: 'tim_new', error: 'new' });
-
       const result = logger.rotate({ maxAgeDays: 30 });
       expect(result.deleted).toBe(1);
 
+      logger.logError({ tool: 'tim_new', error: 'new' });
       const remaining = db.prepare('SELECT COUNT(*) as c FROM error_log').get() as any;
       expect(remaining.c).toBe(1);
     });
@@ -212,6 +211,15 @@ describe('ErrorLogger', () => {
 
       const remaining = db.prepare('SELECT COUNT(*) as c FROM error_log').get() as any;
       expect(remaining.c).toBe(5);
+    });
+
+    it('logError itself rotates so a write storm cannot grow the table past maxEntries', () => {
+      const tight = new ErrorLogger(db, { maxEntries: 5, maxAgeDays: 365 });
+      for (let i = 0; i < 40; i++) {
+        tight.logError({ tool: 'mcp-server', error: `uncaughtException: write EPIPE ${i}` });
+      }
+      const remaining = db.prepare('SELECT COUNT(*) as c FROM error_log').get() as { c: number };
+      expect(remaining.c).toBeLessThanOrEqual(5);
     });
   });
 
