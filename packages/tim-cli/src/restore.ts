@@ -23,6 +23,21 @@ import { parseArgs, valueOptionsFor } from './args.js';
 
 const DEFAULT_SNAPSHOT_DIR = '/tmp/tim-snapshots';
 const MIN_AGE_MS = 3600 * 1000; // 1h safety: refuse restore if current db is younger
+
+export function shouldCopyLiveDbForSafety(
+  liveBytes: number,
+  snapshotBytes: number,
+  freeBytes: number,
+): boolean {
+  if (liveBytes <= 0) return false;
+  // A safety copy that would leave less than 1 GB free is how this host
+  // filled the root filesystem during the 2026-09-03 WAL runaway.
+  if (liveBytes + 1_073_741_824 > freeBytes) return false;
+  // Bloated live file vs a much smaller snapshot: the live copy is not a
+  // useful rollback, just another copy of the junk.
+  if (liveBytes > snapshotBytes * 4 && liveBytes > 512 * 1024 * 1024) return false;
+  return true;
+}
 const STOP_SCRIPT_CANDIDATES = [
   '~/.hermes/scripts/tim-mcp-stop.sh',
   '~/bin/tim-mcp-stop.sh',
@@ -201,14 +216,27 @@ export async function cmdRestore(args: string[]): Promise<void> {
     return;
   }
 
-  // 1. Take pre-restore safety copy of current db (if exists)
+  // 1. Take pre-restore safety copy of current db (if exists and it fits)
   if (fs.existsSync(dbPath)) {
+    const liveBytes = fs.statSync(dbPath).size;
+    const snapshotBytes = fs.statSync(source).size;
+    let freeBytes = Number.POSITIVE_INFINITY;
     try {
-      fs.copyFileSync(dbPath, preRestore);
-      console.log(`✓ pre-restore safety copy written: ${preRestore}`);
-    } catch (e: any) {
-      console.error(`restore: cannot create safety copy: ${e.message}`);
-      process.exit(1);
+      const st = fs.statfsSync(path.dirname(dbPath));
+      freeBytes = Number(st.bavail) * Number(st.bsize);
+    } catch {
+      // statfs missing — keep the copy unless other heuristics fire
+    }
+    if (!shouldCopyLiveDbForSafety(liveBytes, snapshotBytes, freeBytes)) {
+      console.log(`⚠ skipping pre-restore copy of live db (${liveBytes} bytes); not enough free space or live file is bloated relative to snapshot`);
+    } else {
+      try {
+        fs.copyFileSync(dbPath, preRestore);
+        console.log(`✓ pre-restore safety copy written: ${preRestore}`);
+      } catch (e: any) {
+        console.error(`restore: cannot create safety copy: ${e.message}`);
+        process.exit(1);
+      }
     }
   }
 
@@ -221,7 +249,17 @@ export async function cmdRestore(args: string[]): Promise<void> {
   }
   console.log(`✓ MCP server stopped`);
 
-  // 3. Copy snapshot → live DB
+  // 3. Discard leftover WAL/SHM *before* the snapshot is copied. Opening a
+  // fresh 38 MB file next to a 69 GB WAL would replay the runaway into it.
+  for (const extra of [`${dbPath}-wal`, `${dbPath}-shm`]) {
+    try {
+      fs.unlinkSync(extra);
+    } catch {
+      // no leftover sidecar
+    }
+  }
+
+  // 4. Copy snapshot → live DB
   try {
     fs.copyFileSync(source, dbPath);
     console.log(`✓ restored: ${source} → ${dbPath} (${fs.statSync(dbPath).size} bytes)`);
@@ -231,7 +269,7 @@ export async function cmdRestore(args: string[]): Promise<void> {
     process.exit(1);
   }
 
-  // 4. PRAGMA wal_checkpoint(TRUNCATE) — clear stale WAL/SHM
+  // 5. PRAGMA wal_checkpoint(TRUNCATE) — clear stale WAL/SHM
   // We use a tiny node one-liner to run this without leaving better-sqlite3 here.
   try {
     const Database = require('better-sqlite3');

@@ -125,7 +125,7 @@ const COMMAND_HELP = {
     'migrate project-kind': 'Usage: tim migrate project-kind [--dry-run]',
     'migrate retire-deprecated-tags': 'Usage: tim migrate retire-deprecated-tags [--dry-run] [--sample-limit <count>]',
     'reap-checkpoints': 'Usage: tim reap-checkpoints',
-    snapshot: 'Usage: tim snapshot [--db <path>] [--out <path>] [--prune-hours <hours>] [--no-symlink] [--quiet]',
+    snapshot: 'Usage: tim snapshot [--db <path>] [--out <path>] [--prune-hours <hours>] [--max-bytes <n>] [--no-symlink] [--quiet]',
     restore: 'Usage: tim restore [--from <path>] [--db <path>] [--list] [--dry-run] [--force]',
     'release-check': 'Usage: tim release-check [--beta] [--json] [--skip-tests <true|false>]',
     'setup-agent': 'Usage: tim setup-agent --host claude|codex|cursor|hermes [--dry-run]',

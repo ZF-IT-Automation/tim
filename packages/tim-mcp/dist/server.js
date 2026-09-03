@@ -58,6 +58,7 @@ const project_path_js_1 = require("./project-path.js");
 const task_status_js_1 = require("./task-status.js");
 const tim_hooks_1 = require("tim-hooks");
 const idle_sweep_timer_js_1 = require("./idle-sweep-timer.js");
+const process_error_guards_js_1 = require("./process-error-guards.js");
 const tim_migrate_1 = require("tim-migrate");
 const tim_sync_client_1 = require("tim-sync-client");
 const write_validate_js_1 = require("./write-validate.js");
@@ -1686,6 +1687,9 @@ function installProcessErrorGuards() {
     processErrorGuardsInstalled = true;
     process.on('unhandledRejection', (reason) => {
         const err = reason instanceof Error ? reason : new Error(String(reason));
+        if ((0, process_error_guards_js_1.isBrokenPipeError)(err) || (0, process_error_guards_js_1.isBrokenPipeError)(reason)) {
+            process.exit(1);
+        }
         console.error('[tim-mcp] unhandledRejection:', err.stack ?? err.message);
         try {
             getErrorLogger().logError({
@@ -1699,17 +1703,18 @@ function installProcessErrorGuards() {
         }
     });
     process.on('uncaughtException', (err) => {
-        console.error('[tim-mcp] uncaughtException:', err.stack ?? err.message);
-        try {
-            getErrorLogger().logError({
-                tool: 'mcp-server',
-                error: `uncaughtException: ${err.message}`,
-                stack: err.stack,
-            });
-        }
-        catch {
-            // Same as above.
-        }
+        (0, process_error_guards_js_1.handleUncaughtException)(err, (e) => {
+            try {
+                getErrorLogger().logError({
+                    tool: 'mcp-server',
+                    error: `uncaughtException: ${e.message}`,
+                    stack: e.stack,
+                });
+            }
+            catch {
+                // ErrorLogger itself failed — stay alive.
+            }
+        }, (code) => process.exit(code));
     });
 }
 /**
@@ -3299,6 +3304,14 @@ async function startServer() {
     const transport = new stdio_js_1.StdioServerTransport();
     await server.connect(transport);
     console.error(`TIM MCP server started (DB: ${DB_PATH})`);
+    // Parent (Cursor/Claude/Codex) death closes stdin. Exit instead of
+    // becoming a PID-1 orphan that logs write-EPIPE into error_log forever.
+    const shutdownStdio = () => {
+        (0, idle_sweep_timer_js_1.stopIdleSweepTimer)();
+        process.exit(0);
+    };
+    process.stdin.on('end', shutdownStdio);
+    process.stdin.on('close', shutdownStdio);
 }
 // Run if executed directly
 if (process.argv[1]?.endsWith('server.js') || process.argv[1]?.endsWith('server.ts')) {

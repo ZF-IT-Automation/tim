@@ -10,6 +10,7 @@
 //   tim snapshot --out /custom/path.db    # override destination
 //   tim snapshot --no-symlink             # skip latest.db update
 //   tim snapshot --prune-hours 48         # prune files older than 48h (0 = skip)
+//   tim snapshot --max-bytes 8589934592   # also prune oldest until total size fits
 //   tim snapshot --quiet                  # suppress non-error output
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
@@ -46,6 +47,7 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.resolveDbPath = resolveDbPath;
+exports.pruneToMaxBytes = pruneToMaxBytes;
 exports.runSnapshot = runSnapshot;
 exports.cmdSnapshot = cmdSnapshot;
 const fs = __importStar(require("fs"));
@@ -54,6 +56,8 @@ const os = __importStar(require("os"));
 const args_js_1 = require("./args.js");
 const DEFAULT_SNAPSHOT_DIR = '/tmp/tim-snapshots';
 const DEFAULT_PRUNE_HOURS = 48;
+/** 48h of 2 GB snapshots every 30 min is ~192 GB. Cap on-host copies. */
+const DEFAULT_MAX_BYTES = 8 * 1024 * 1024 * 1024;
 function ts() {
     const d = new Date();
     const pad = (n) => String(n).padStart(2, '0');
@@ -103,6 +107,34 @@ function pruneOld(dir, maxAgeHours, log) {
     return removed;
 }
 /**
+ * Delete oldest snapshots until total size is under maxBytes.
+ * Always keeps the newest file, even if it alone exceeds the budget.
+ */
+function pruneToMaxBytes(dir, maxBytes, log = () => { }) {
+    if (maxBytes <= 0)
+        return 0;
+    const files = listSnapshots(dir)
+        .map((f) => ({ path: f, mtime: fs.statSync(f).mtimeMs, size: fs.statSync(f).size }))
+        .sort((a, b) => b.mtime - a.mtime);
+    if (files.length <= 1)
+        return 0;
+    let total = files.reduce((sum, f) => sum + f.size, 0);
+    let removed = 0;
+    for (let i = files.length - 1; i >= 1 && total > maxBytes; i--) {
+        try {
+            fs.unlinkSync(files[i].path);
+            total -= files[i].size;
+            removed++;
+        }
+        catch {
+            // ignore
+        }
+    }
+    if (removed)
+        log(`prune: removed ${removed} snapshot(s) to stay under ${maxBytes} bytes`);
+    return removed;
+}
+/**
  * Run a hot SQLite backup using the online backup API.
  * Returns { ok, error?, bytes, durationMs }.
  */
@@ -115,6 +147,7 @@ async function runSnapshot(opts = {}) {
     const dbPath = opts.dbPath ?? resolveDbPath();
     const snapshotDir = opts.snapshotDir ?? DEFAULT_SNAPSHOT_DIR;
     const pruneHours = opts.pruneHours ?? DEFAULT_PRUNE_HOURS;
+    const maxBytes = opts.maxBytes ?? Number(process.env.TIM_SNAPSHOT_MAX_BYTES || DEFAULT_MAX_BYTES);
     if (!fs.existsSync(dbPath)) {
         return { ok: false, error: `db not found: ${dbPath}` };
     }
@@ -167,7 +200,9 @@ async function runSnapshot(opts = {}) {
             fs.symlinkSync(path.basename(target), latest);
         }
         const bytes = fs.statSync(target).size;
-        const pruned = pruneOld(snapshotDir, pruneHours, log);
+        const prunedAge = pruneOld(snapshotDir, pruneHours, log);
+        const prunedBytes = pruneToMaxBytes(snapshotDir, maxBytes, log);
+        const pruned = prunedAge + prunedBytes;
         const durationMs = Date.now() - start;
         log(`snapshot: ${target} (${bytes} bytes, ${durationMs}ms)`);
         return { ok: true, target, bytes, durationMs, pruned };
@@ -195,6 +230,7 @@ async function cmdSnapshot(args) {
         dbPath: flags.db || undefined,
         snapshotDir: flags.out ? path.dirname(flags.out) : undefined,
         pruneHours: flags['prune-hours'] !== undefined ? Number(flags['prune-hours']) : undefined,
+        maxBytes: flags['max-bytes'] !== undefined ? Number(flags['max-bytes']) : undefined,
         noSymlink: flags['no-symlink'] === 'true',
         quiet: flags.quiet === 'true',
     });
