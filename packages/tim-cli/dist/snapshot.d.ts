@@ -1,3 +1,34 @@
+/** 48h of 2 GB snapshots every 30 min is ~192 GB. Cap on-host copies. */
+export declare const DEFAULT_MAX_BYTES: number;
+/** Extra free space required beyond the source DB size before creating a snapshot. */
+export declare const SNAPSHOT_HEADROOM_BYTES: number;
+/**
+ * Invalid or negative TIM_SNAPSHOT_MAX_BYTES used to become NaN, which
+ * skipped prune (`maxBytes <= 0` is false for NaN). Fall back instead.
+ */
+export declare function parseSnapshotBudget(raw: string | undefined, fallback: number): number;
+export declare function snapshotHasRoom(opts: {
+    sourceBytes: number;
+    freeBytes: number;
+    headroomBytes?: number;
+}): boolean;
+/**
+ * If the snapshot directory cannot hold another copy of the source DB,
+ * prune oldest files first, then abort rather than filling the disk.
+ */
+export declare function makeRoomForSnapshot(opts: {
+    dir: string;
+    sourceBytes: number;
+    freeBytes: number;
+    pruneHours: number;
+    maxBytes: number;
+    log?: (s: string) => void;
+}): {
+    ok: boolean;
+    pruned: number;
+    freeBytes: number;
+    error?: string;
+};
 export declare function resolveDbPath(): string;
 /**
  * Delete oldest snapshots until total size is under maxBytes.
@@ -15,6 +46,7 @@ export declare function runSnapshot(opts?: {
     maxBytes?: number;
     noSymlink?: boolean;
     quiet?: boolean;
+    freeBytes?: number;
 }): Promise<{
     ok: boolean;
     target?: string;

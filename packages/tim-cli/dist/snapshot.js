@@ -46,6 +46,10 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.SNAPSHOT_HEADROOM_BYTES = exports.DEFAULT_MAX_BYTES = void 0;
+exports.parseSnapshotBudget = parseSnapshotBudget;
+exports.snapshotHasRoom = snapshotHasRoom;
+exports.makeRoomForSnapshot = makeRoomForSnapshot;
 exports.resolveDbPath = resolveDbPath;
 exports.pruneToMaxBytes = pruneToMaxBytes;
 exports.runSnapshot = runSnapshot;
@@ -57,7 +61,84 @@ const args_js_1 = require("./args.js");
 const DEFAULT_SNAPSHOT_DIR = '/tmp/tim-snapshots';
 const DEFAULT_PRUNE_HOURS = 48;
 /** 48h of 2 GB snapshots every 30 min is ~192 GB. Cap on-host copies. */
-const DEFAULT_MAX_BYTES = 8 * 1024 * 1024 * 1024;
+exports.DEFAULT_MAX_BYTES = 8 * 1024 * 1024 * 1024;
+/** Extra free space required beyond the source DB size before creating a snapshot. */
+exports.SNAPSHOT_HEADROOM_BYTES = 64 * 1024 * 1024;
+/**
+ * Invalid or negative TIM_SNAPSHOT_MAX_BYTES used to become NaN, which
+ * skipped prune (`maxBytes <= 0` is false for NaN). Fall back instead.
+ */
+function parseSnapshotBudget(raw, fallback) {
+    if (raw === undefined || raw === '')
+        return fallback;
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n < 0)
+        return fallback;
+    return n;
+}
+function snapshotHasRoom(opts) {
+    const headroom = opts.headroomBytes ?? exports.SNAPSHOT_HEADROOM_BYTES;
+    return opts.freeBytes >= opts.sourceBytes + headroom;
+}
+function readFreeBytes(dir) {
+    const st = fs.statfsSync(dir);
+    return Number(st.bavail) * Number(st.bsize);
+}
+/**
+ * If the snapshot directory cannot hold another copy of the source DB,
+ * prune oldest files first, then abort rather than filling the disk.
+ */
+function makeRoomForSnapshot(opts) {
+    const log = opts.log ?? (() => { });
+    let freeBytes = opts.freeBytes;
+    const hasRoom = () => snapshotHasRoom({ sourceBytes: opts.sourceBytes, freeBytes });
+    if (hasRoom())
+        return { ok: true, pruned: 0, freeBytes };
+    const sizeBefore = listSnapshots(opts.dir).reduce((sum, f) => {
+        try {
+            return sum + fs.statSync(f).size;
+        }
+        catch {
+            return sum;
+        }
+    }, 0);
+    let pruned = pruneOld(opts.dir, opts.pruneHours, log);
+    pruned += pruneToMaxBytes(opts.dir, opts.maxBytes, log);
+    const sizeAfterCap = listSnapshots(opts.dir).reduce((sum, f) => {
+        try {
+            return sum + fs.statSync(f).size;
+        }
+        catch {
+            return sum;
+        }
+    }, 0);
+    freeBytes += Math.max(0, sizeBefore - sizeAfterCap);
+    const sized = () => listSnapshots(opts.dir)
+        .map((f) => ({ path: f, mtime: fs.statSync(f).mtimeMs, size: fs.statSync(f).size }))
+        .sort((a, b) => b.mtime - a.mtime);
+    // Cap prune is not enough when the disk is full of other files: keep
+    // dropping oldest snapshots (never the newest) until the new copy fits.
+    for (let files = sized(); files.length > 1 && !hasRoom(); files = sized()) {
+        const oldest = files[files.length - 1];
+        try {
+            fs.unlinkSync(oldest.path);
+            freeBytes += oldest.size;
+            pruned++;
+        }
+        catch {
+            break;
+        }
+    }
+    if (!hasRoom()) {
+        return {
+            ok: false,
+            pruned,
+            freeBytes,
+            error: `not enough free disk for snapshot (need ${opts.sourceBytes + exports.SNAPSHOT_HEADROOM_BYTES} bytes, have ${freeBytes})`,
+        };
+    }
+    return { ok: true, pruned, freeBytes };
+}
 function ts() {
     const d = new Date();
     const pad = (n) => String(n).padStart(2, '0');
@@ -147,11 +228,34 @@ async function runSnapshot(opts = {}) {
     const dbPath = opts.dbPath ?? resolveDbPath();
     const snapshotDir = opts.snapshotDir ?? DEFAULT_SNAPSHOT_DIR;
     const pruneHours = opts.pruneHours ?? DEFAULT_PRUNE_HOURS;
-    const maxBytes = opts.maxBytes ?? Number(process.env.TIM_SNAPSHOT_MAX_BYTES || DEFAULT_MAX_BYTES);
+    const maxBytes = opts.maxBytes !== undefined
+        ? opts.maxBytes
+        : parseSnapshotBudget(process.env.TIM_SNAPSHOT_MAX_BYTES, exports.DEFAULT_MAX_BYTES);
     if (!fs.existsSync(dbPath)) {
         return { ok: false, error: `db not found: ${dbPath}` };
     }
     ensureDir(snapshotDir);
+    const sourceBytes = fs.statSync(dbPath).size;
+    let freeBytes = opts.freeBytes;
+    if (freeBytes === undefined) {
+        try {
+            freeBytes = readFreeBytes(snapshotDir);
+        }
+        catch {
+            freeBytes = Number.POSITIVE_INFINITY;
+        }
+    }
+    const room = makeRoomForSnapshot({
+        dir: snapshotDir,
+        sourceBytes,
+        freeBytes,
+        pruneHours,
+        maxBytes,
+        log,
+    });
+    if (!room.ok) {
+        return { ok: false, error: room.error, pruned: room.pruned };
+    }
     const target = path.join(snapshotDir, `tim-${ts()}.db`);
     const targetTmp = target + '.partial';
     let Database;
@@ -230,7 +334,9 @@ async function cmdSnapshot(args) {
         dbPath: flags.db || undefined,
         snapshotDir: flags.out ? path.dirname(flags.out) : undefined,
         pruneHours: flags['prune-hours'] !== undefined ? Number(flags['prune-hours']) : undefined,
-        maxBytes: flags['max-bytes'] !== undefined ? Number(flags['max-bytes']) : undefined,
+        maxBytes: flags['max-bytes'] !== undefined
+            ? parseSnapshotBudget(flags['max-bytes'], exports.DEFAULT_MAX_BYTES)
+            : undefined,
         noSymlink: flags['no-symlink'] === 'true',
         quiet: flags.quiet === 'true',
     });

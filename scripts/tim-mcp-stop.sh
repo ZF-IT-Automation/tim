@@ -53,5 +53,5 @@ for i in 1 2 3 4 5; do
   sleep 1
 done
 
-echo "$LOG_PREFIX WARN: tim-mcp processes still alive after 5s, proceeding anyway" >&2
-exit 0
+echo "$LOG_PREFIX FAIL: tim-mcp processes still alive after 5s — refusing to proceed" >&2
+exit 1

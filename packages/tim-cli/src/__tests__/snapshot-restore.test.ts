@@ -148,6 +148,21 @@ describe('snapshot (integration)', () => {
     expect(result.ok).toBe(false);
     expect(result.error).toContain('not found');
   });
+
+  it('fails when free disk cannot hold the snapshot', async () => {
+    if (!Database) return;
+
+    const result = await runSnapshot({
+      dbPath,
+      snapshotDir: SNAPSHOT_DIR,
+      pruneHours: 0,
+      quiet: true,
+      freeBytes: 1,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/free disk/i);
+  });
 });
 
 describe('restore (integration)', () => {

@@ -49,6 +49,9 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.shouldCopyLiveDbForSafety = shouldCopyLiveDbForSafety;
+exports.walSidecarsMayBeDropped = walSidecarsMayBeDropped;
+exports.parseWriterPids = parseWriterPids;
+exports.listTimMcpWriterPids = listTimMcpWriterPids;
 exports.cmdRestoreList = cmdRestoreList;
 exports.cmdRestore = cmdRestore;
 const fs = __importStar(require("fs"));
@@ -72,7 +75,15 @@ function shouldCopyLiveDbForSafety(liveBytes, snapshotBytes, freeBytes) {
         return false;
     return true;
 }
+/** WAL/SHM must not be unlinked while any tim-mcp process still holds the DB. */
+function walSidecarsMayBeDropped(writerPids) {
+    return writerPids.length === 0;
+}
+function parseWriterPids(pgrepOutput) {
+    return pgrepOutput.trim().split(/\s+/).filter(Boolean);
+}
 const STOP_SCRIPT_CANDIDATES = [
+    path.resolve(__dirname, '..', '..', '..', 'scripts', 'tim-mcp-stop.sh'),
     '~/.hermes/scripts/tim-mcp-stop.sh',
     '~/bin/tim-mcp-stop.sh',
     '/usr/local/bin/tim-mcp-stop.sh',
@@ -133,6 +144,15 @@ function resolveSource(flags) {
             `use --list to see available snapshots`);
     }
     return { source: match.path, isLatest: false, isAbsolute: false };
+}
+function listTimMcpWriterPids() {
+    try {
+        const out = (0, child_process_1.execFileSync)('pgrep', ['-f', 'tim-mcp.*dist/server\\.js'], { encoding: 'utf8' });
+        return parseWriterPids(out);
+    }
+    catch {
+        return [];
+    }
 }
 function runScript(script, args = []) {
     try {
@@ -262,6 +282,14 @@ async function cmdRestore(args) {
         process.exit(1);
     }
     console.log(`✓ MCP server stopped`);
+    // Stop scripts used to exit 0 with leftovers. Re-check before touching WAL.
+    const leftoverPids = listTimMcpWriterPids();
+    if (!walSidecarsMayBeDropped(leftoverPids)) {
+        console.error(`restore: refusing to unlink WAL/SHM; writers still hold the DB: ${leftoverPids.join(' ')}`);
+        if (startScript)
+            runScript(startScript);
+        process.exit(1);
+    }
     // 3. Discard leftover WAL/SHM *before* the snapshot is copied. Opening a
     // fresh 38 MB file next to a 69 GB WAL would replay the runaway into it.
     for (const extra of [`${dbPath}-wal`, `${dbPath}-shm`]) {

@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import {
   isBrokenPipeError,
   handleUncaughtException,
+  handleStdioStreamError,
 } from '../process-error-guards.js';
 
 describe('isBrokenPipeError', () => {
@@ -37,6 +38,23 @@ describe('handleUncaughtException', () => {
     handleUncaughtException(err, log, exit);
 
     expect(log).toHaveBeenCalledOnce();
+    expect(exit).not.toHaveBeenCalled();
+  });
+});
+
+describe('handleStdioStreamError', () => {
+  it('exits on EPIPE without logging to the database', () => {
+    const exit = vi.fn();
+    const err = Object.assign(new Error('write EPIPE'), { code: 'EPIPE' });
+
+    handleStdioStreamError(err, exit);
+
+    expect(exit).toHaveBeenCalledWith(1);
+  });
+
+  it('does not exit on unrelated stream errors', () => {
+    const exit = vi.fn();
+    handleStdioStreamError(Object.assign(new Error('ENOSPC'), { code: 'ENOSPC' }), exit);
     expect(exit).not.toHaveBeenCalled();
   });
 });

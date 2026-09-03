@@ -3312,6 +3312,11 @@ async function startServer() {
     };
     process.stdin.on('end', shutdownStdio);
     process.stdin.on('close', shutdownStdio);
+    const onPipeError = (err) => {
+        (0, process_error_guards_js_1.handleStdioStreamError)(err, (code) => process.exit(code));
+    };
+    process.stdout.on('error', onPipeError);
+    process.stderr.on('error', onPipeError);
 }
 // Run if executed directly
 if (process.argv[1]?.endsWith('server.js') || process.argv[1]?.endsWith('server.ts')) {
