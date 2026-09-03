@@ -152,7 +152,7 @@ const COMMAND_HELP: Record<string, string> = {
     'Usage: tim migrate retire-deprecated-tags [--dry-run] [--sample-limit <count>]',
   'reap-checkpoints': 'Usage: tim reap-checkpoints',
   snapshot:
-    'Usage: tim snapshot [--db <path>] [--out <path>] [--prune-hours <hours>] [--no-symlink] [--quiet]',
+    'Usage: tim snapshot [--db <path>] [--out <path>] [--prune-hours <hours>] [--max-bytes <n>] [--no-symlink] [--quiet]',
   restore:
     'Usage: tim restore [--from <path>] [--db <path>] [--list] [--dry-run] [--force]',
   'release-check': 'Usage: tim release-check [--beta] [--json] [--skip-tests <true|false>]',

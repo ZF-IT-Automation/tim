@@ -88,3 +88,10 @@ describe('FTS5 column-name resilience (BUG 3)', () => {
     // The FTS5 rowid column is implicit and not in PRAGMA table_info.
   });
 });
+
+describe('WAL residue cap', () => {
+  it('sets journal_size_limit so checkpoints cannot leave a multi-GB WAL', () => {
+    const rows = store.getDb().pragma('journal_size_limit') as Array<{ journal_size_limit: number }>;
+    expect(rows[0]?.journal_size_limit).toBe(104857600);
+  });
+});
