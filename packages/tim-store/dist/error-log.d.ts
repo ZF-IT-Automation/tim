@@ -27,6 +27,16 @@ export interface ErrorLoggerOptions {
     maxEntries?: number;
     maxAgeDays?: number;
 }
+/** Mass DELETE of a multi-million-row error_log wrote a huge WAL. Rebuild instead. */
+export declare const ERROR_LOG_REBUILD_MULTIPLE = 10;
+export declare function shouldRebuildErrorLog(count: number, maxEntries: number): boolean;
+export declare function compactErrorLog(db: Database.Database, options?: {
+    maxEntries?: number;
+    vacuum?: boolean;
+}): {
+    kept: number;
+    vacuumed: boolean;
+};
 export declare class ErrorLogger {
     private db;
     private maxEntries;
@@ -51,6 +61,7 @@ export declare class ErrorLogger {
     }): {
         deleted: number;
     };
+    private rebuildKeepNewest;
     /**
      * Migrate summarizer.log file content into error_log table.
      * Parses lines like: "2026-06-01T12:00:00.000Z FAIL codex/gpt-5: timeout=600s exit=null"

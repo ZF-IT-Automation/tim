@@ -12,6 +12,8 @@ export declare function snapshotHasRoom(opts: {
     freeBytes: number;
     headroomBytes?: number;
 }): boolean;
+/** Online backup copies committed WAL frames; room checks must cover db+WAL. */
+export declare function snapshotFootprintBytes(dbPath: string): number;
 /**
  * If the snapshot directory cannot hold another copy of the source DB,
  * prune oldest files first, then abort rather than filling the disk.

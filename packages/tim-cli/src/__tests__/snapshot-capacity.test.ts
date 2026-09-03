@@ -7,9 +7,18 @@ import {
   parseSnapshotBudget,
   snapshotHasRoom,
   makeRoomForSnapshot,
+  snapshotFootprintBytes,
 } from '../snapshot.js';
-import { shouldCopyLiveDbForSafety, walSidecarsMayBeDropped } from '../restore.js';
-import { checkpointOutputMeansFailure, isStdioMcpCommand } from '../wal-watchdog.js';
+import {
+  shouldCopyLiveDbForSafety,
+  walSidecarsMayBeDropped,
+  discardWalSidecars,
+} from '../restore.js';
+import {
+  checkpointOutputMeansFailure,
+  isStdioMcpCommand,
+  stdioWritersToReap,
+} from '../wal-watchdog.js';
 
 describe('shouldCopyLiveDbForSafety', () => {
   const GB = 1024 * 1024 * 1024;
@@ -166,6 +175,24 @@ describe('makeRoomForSnapshot', () => {
     expect(result.ok).toBe(true);
     expect(result.pruned).toBe(0);
   });
+
+  it('does not delete the only remaining snapshot when there is no room', () => {
+    const old = Date.now() - 50 * 3600 * 1000;
+    const only = path.join(dir, 'tim-20260901-0830.db');
+    fs.writeFileSync(only, Buffer.alloc(1000));
+    fs.utimesSync(only, new Date(old / 1000), new Date(old / 1000));
+
+    const result = makeRoomForSnapshot({
+      dir,
+      sourceBytes: 2_000_000_000,
+      freeBytes: 1_000,
+      pruneHours: 48,
+      maxBytes: 8 * 1024 * 1024 * 1024,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(fs.existsSync(only)).toBe(true);
+  });
 });
 
 describe('checkpointOutputMeansFailure', () => {
@@ -184,5 +211,73 @@ describe('isStdioMcpCommand', () => {
     expect(
       isStdioMcpCommand('node /home/bbbee/projects/tim/packages/tim-mcp/dist/server.js --http --port 3847'),
     ).toBe(false);
+  });
+});
+
+describe('discardWalSidecars', () => {
+  it('treats a missing sidecar as success', () => {
+    const result = discardWalSidecars(['/tmp/missing-wal'], () => {
+      const err = Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+      throw err;
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  it('fails open no longer: EBUSY aborts instead of continuing', () => {
+    const result = discardWalSidecars(['/tmp/tim.db-wal'], () => {
+      const err = Object.assign(new Error('EBUSY'), { code: 'EBUSY' });
+      throw err;
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.path).toBe('/tmp/tim.db-wal');
+  });
+});
+
+describe('snapshotFootprintBytes', () => {
+  it('adds the WAL file size so room checks cover a consistent backup', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tim-snap-foot-'));
+    try {
+      const dbPath = path.join(dir, 'tim.db');
+      fs.writeFileSync(dbPath, Buffer.alloc(1000));
+      fs.writeFileSync(`${dbPath}-wal`, Buffer.alloc(4000));
+      expect(snapshotFootprintBytes(dbPath)).toBe(5000);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('stdioWritersToReap', () => {
+  const http = {
+    pid: '10',
+    ppid: '1',
+    cmd: 'node /x/packages/tim-mcp/dist/server.js --http --port 3847',
+    writeBytes: 9_000_000_000,
+  };
+  const orphan = {
+    pid: '11',
+    ppid: '1',
+    cmd: 'node /x/packages/tim-mcp/dist/server.js',
+    writeBytes: 100,
+  };
+  const quietCursor = {
+    pid: '12',
+    ppid: '500',
+    cmd: 'node /x/packages/tim-mcp/dist/server.js',
+    writeBytes: 50,
+  };
+  const runawayCodex = {
+    pid: '13',
+    ppid: '501',
+    cmd: 'node /x/packages/tim-mcp/dist/server.js',
+    writeBytes: 8_000_000_000,
+  };
+
+  it('reaps every PPID-1 stdio orphan and never the HTTP daemon', () => {
+    expect(stdioWritersToReap([http, orphan, quietCursor])).toEqual(['11']);
+  });
+
+  it('reaps only the hottest live-parent stdio writer, not every client', () => {
+    expect(stdioWritersToReap([http, quietCursor, runawayCodex])).toEqual(['13']);
   });
 });

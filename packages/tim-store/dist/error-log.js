@@ -2,9 +2,26 @@
 // TIM Error Logger — v0.1.0-alpha
 // Structured error logging with stats, rotation, and alert thresholds.
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.ErrorLogger = void 0;
+exports.ErrorLogger = exports.ERROR_LOG_REBUILD_MULTIPLE = void 0;
+exports.shouldRebuildErrorLog = shouldRebuildErrorLog;
+exports.compactErrorLog = compactErrorLog;
 /** Burst window for the alert threshold, independent of any stats window. */
 const ALERT_WINDOW_HOURS = 1;
+/** Mass DELETE of a multi-million-row error_log wrote a huge WAL. Rebuild instead. */
+exports.ERROR_LOG_REBUILD_MULTIPLE = 10;
+function shouldRebuildErrorLog(count, maxEntries) {
+    return count > maxEntries * exports.ERROR_LOG_REBUILD_MULTIPLE;
+}
+function compactErrorLog(db, options = {}) {
+    const maxEntries = options.maxEntries ?? 10_000;
+    const logger = new ErrorLogger(db, { maxEntries, maxAgeDays: 365 });
+    logger.rotate({ maxEntries, maxAgeDays: 365 });
+    const kept = db.prepare(`SELECT COUNT(*) as total FROM error_log`).get().total;
+    if (options.vacuum) {
+        db.exec('VACUUM');
+    }
+    return { kept, vacuumed: Boolean(options.vacuum) };
+}
 class ErrorLogger {
     db;
     maxEntries;
@@ -92,6 +109,10 @@ class ErrorLogger {
     rotate(options = {}) {
         const maxEntries = options.maxEntries ?? this.maxEntries;
         const maxAgeDays = options.maxAgeDays ?? this.maxAgeDays;
+        const countRow = this.db.prepare(`SELECT COUNT(*) as total FROM error_log`).get();
+        if (shouldRebuildErrorLog(countRow.total, maxEntries)) {
+            return this.rebuildKeepNewest(maxEntries, countRow.total);
+        }
         let deleted = 0;
         // Delete by age
         const ageCutoff = new Date(Date.now() - maxAgeDays * 86400 * 1000).toISOString();
@@ -100,9 +121,9 @@ class ErrorLogger {
     `).run(ageCutoff);
         deleted += ageResult.changes;
         // Delete by count (keep newest maxEntries)
-        const countRow = this.db.prepare(`SELECT COUNT(*) as total FROM error_log`).get();
-        if (countRow.total > maxEntries) {
-            const excess = countRow.total - maxEntries;
+        const afterAge = this.db.prepare(`SELECT COUNT(*) as total FROM error_log`).get();
+        if (afterAge.total > maxEntries) {
+            const excess = afterAge.total - maxEntries;
             const result = this.db.prepare(`
         DELETE FROM error_log WHERE id IN (
           SELECT id FROM error_log ORDER BY timestamp ASC LIMIT ?
@@ -111,6 +132,33 @@ class ErrorLogger {
             deleted += result.changes;
         }
         return { deleted };
+    }
+    rebuildKeepNewest(keep, total) {
+        this.db.exec(`
+      CREATE TABLE error_log_keep (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp TEXT NOT NULL,
+        tool TEXT NOT NULL,
+        args_json TEXT NOT NULL DEFAULT '{}',
+        error TEXT NOT NULL DEFAULT '',
+        stack TEXT,
+        session_id TEXT
+      );
+    `);
+        this.db.prepare(`
+      INSERT INTO error_log_keep (timestamp, tool, args_json, error, stack, session_id)
+      SELECT timestamp, tool, args_json, error, stack, session_id
+      FROM error_log
+      ORDER BY timestamp DESC, id DESC
+      LIMIT ?
+    `).run(keep);
+        this.db.exec(`
+      DROP TABLE error_log;
+      ALTER TABLE error_log_keep RENAME TO error_log;
+      CREATE INDEX IF NOT EXISTS idx_error_log_timestamp ON error_log(timestamp);
+      CREATE INDEX IF NOT EXISTS idx_error_log_tool ON error_log(tool);
+    `);
+        return { deleted: Math.max(0, total - keep) };
     }
     /**
      * Migrate summarizer.log file content into error_log table.

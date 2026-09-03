@@ -30,6 +30,27 @@ export interface ErrorLoggerOptions {
   maxAgeDays?: number;
 }
 
+/** Mass DELETE of a multi-million-row error_log wrote a huge WAL. Rebuild instead. */
+export const ERROR_LOG_REBUILD_MULTIPLE = 10;
+
+export function shouldRebuildErrorLog(count: number, maxEntries: number): boolean {
+  return count > maxEntries * ERROR_LOG_REBUILD_MULTIPLE;
+}
+
+export function compactErrorLog(
+  db: Database.Database,
+  options: { maxEntries?: number; vacuum?: boolean } = {},
+): { kept: number; vacuumed: boolean } {
+  const maxEntries = options.maxEntries ?? 10_000;
+  const logger = new ErrorLogger(db, { maxEntries, maxAgeDays: 365 });
+  logger.rotate({ maxEntries, maxAgeDays: 365 });
+  const kept = (db.prepare(`SELECT COUNT(*) as total FROM error_log`).get() as { total: number }).total;
+  if (options.vacuum) {
+    db.exec('VACUUM');
+  }
+  return { kept, vacuumed: Boolean(options.vacuum) };
+}
+
 export class ErrorLogger {
   private db: Database.Database;
   private maxEntries: number;
@@ -139,6 +160,12 @@ export class ErrorLogger {
   rotate(options: { maxEntries?: number; maxAgeDays?: number } = {}): { deleted: number } {
     const maxEntries = options.maxEntries ?? this.maxEntries;
     const maxAgeDays = options.maxAgeDays ?? this.maxAgeDays;
+    const countRow = this.db.prepare(`SELECT COUNT(*) as total FROM error_log`).get() as { total: number };
+
+    if (shouldRebuildErrorLog(countRow.total, maxEntries)) {
+      return this.rebuildKeepNewest(maxEntries, countRow.total);
+    }
+
     let deleted = 0;
 
     // Delete by age
@@ -149,9 +176,9 @@ export class ErrorLogger {
     deleted += ageResult.changes;
 
     // Delete by count (keep newest maxEntries)
-    const countRow = this.db.prepare(`SELECT COUNT(*) as total FROM error_log`).get() as { total: number };
-    if (countRow.total > maxEntries) {
-      const excess = countRow.total - maxEntries;
+    const afterAge = this.db.prepare(`SELECT COUNT(*) as total FROM error_log`).get() as { total: number };
+    if (afterAge.total > maxEntries) {
+      const excess = afterAge.total - maxEntries;
       const result = this.db.prepare(`
         DELETE FROM error_log WHERE id IN (
           SELECT id FROM error_log ORDER BY timestamp ASC LIMIT ?
@@ -161,6 +188,34 @@ export class ErrorLogger {
     }
 
     return { deleted };
+  }
+
+  private rebuildKeepNewest(keep: number, total: number): { deleted: number } {
+    this.db.exec(`
+      CREATE TABLE error_log_keep (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp TEXT NOT NULL,
+        tool TEXT NOT NULL,
+        args_json TEXT NOT NULL DEFAULT '{}',
+        error TEXT NOT NULL DEFAULT '',
+        stack TEXT,
+        session_id TEXT
+      );
+    `);
+    this.db.prepare(`
+      INSERT INTO error_log_keep (timestamp, tool, args_json, error, stack, session_id)
+      SELECT timestamp, tool, args_json, error, stack, session_id
+      FROM error_log
+      ORDER BY timestamp DESC, id DESC
+      LIMIT ?
+    `).run(keep);
+    this.db.exec(`
+      DROP TABLE error_log;
+      ALTER TABLE error_log_keep RENAME TO error_log;
+      CREATE INDEX IF NOT EXISTS idx_error_log_timestamp ON error_log(timestamp);
+      CREATE INDEX IF NOT EXISTS idx_error_log_tool ON error_log(tool);
+    `);
+    return { deleted: Math.max(0, total - keep) };
   }
 
   /**

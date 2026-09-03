@@ -10,7 +10,7 @@ export { COMMITS_SECTION_TITLE, COMMITS_SECTION_ORDER, KIND_COMMITS_ROOT, KIND_C
 export { CurateManager, type UpdateManyFlags } from './curate.js';
 export { ConsolidationManager, type ConsolidationCandidate, type ConsolidationType, type CurationStatus, type CurationMetadata, } from './consolidate.js';
 export { validateTaskMetadata, validateRuleMetadata, validateBugMetadata, validateIdeaMetadata, validateTagsDeprecated, } from './validate.js';
-export { ErrorLogger, type ErrorLogEntry, type ErrorStats } from './error-log.js';
+export { ErrorLogger, compactErrorLog, shouldRebuildErrorLog, type ErrorLogEntry, type ErrorStats } from './error-log.js';
 export { formatEntryId, sessionShortFromMetadata } from './entry-id.js';
 export { ackStaging, applyRemoteEntry, applyRemoteEdge, getUnackedStaging, recordFromPayload, type StagingRow, } from './sync-methods.js';
 export { coerceMetadataBooleans, isTaskMarker, isIdeaMarker, normalizeTaskValue, metadataNeedsCoercion, parseAndCoerceMetadata, BOOLEAN_METADATA_KEYS, } from './metadata-coerce.js';
