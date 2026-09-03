@@ -51,6 +51,7 @@ import {
   syncNearestProjectMarker,
 } from 'tim-hooks';
 import { startIdleSweepTimer, stopIdleSweepTimer } from './idle-sweep-timer.js';
+import { handleUncaughtException, isBrokenPipeError } from './process-error-guards.js';
 import { tim_export, tim_import, inspectHmemManifest } from 'tim-migrate';
 import { autoPush, autoPull, resetSyncCooldowns, loadConfig as loadSyncConfig } from 'tim-sync-client';
 import {
@@ -1897,6 +1898,9 @@ function installProcessErrorGuards(): void {
   processErrorGuardsInstalled = true;
   process.on('unhandledRejection', (reason) => {
     const err = reason instanceof Error ? reason : new Error(String(reason));
+    if (isBrokenPipeError(err) || isBrokenPipeError(reason)) {
+      process.exit(1);
+    }
     console.error('[tim-mcp] unhandledRejection:', err.stack ?? err.message);
     try {
       getErrorLogger().logError({
@@ -1910,16 +1914,21 @@ function installProcessErrorGuards(): void {
   });
 
   process.on('uncaughtException', (err) => {
-    console.error('[tim-mcp] uncaughtException:', err.stack ?? err.message);
-    try {
-      getErrorLogger().logError({
-        tool: 'mcp-server',
-        error: `uncaughtException: ${err.message}`,
-        stack: err.stack,
-      });
-    } catch {
-      // Same as above.
-    }
+    handleUncaughtException(
+      err,
+      (e) => {
+        try {
+          getErrorLogger().logError({
+            tool: 'mcp-server',
+            error: `uncaughtException: ${e.message}`,
+            stack: e.stack,
+          });
+        } catch {
+          // ErrorLogger itself failed — stay alive.
+        }
+      },
+      (code) => process.exit(code),
+    );
   });
 }
 
@@ -3672,6 +3681,15 @@ export async function startServer(): Promise<void> {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error(`TIM MCP server started (DB: ${DB_PATH})`);
+
+  // Parent (Cursor/Claude/Codex) death closes stdin. Exit instead of
+  // becoming a PID-1 orphan that logs write-EPIPE into error_log forever.
+  const shutdownStdio = (): void => {
+    stopIdleSweepTimer();
+    process.exit(0);
+  };
+  process.stdin.on('end', shutdownStdio);
+  process.stdin.on('close', shutdownStdio);
 }
 
 // Run if executed directly

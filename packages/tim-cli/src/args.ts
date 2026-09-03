@@ -37,7 +37,7 @@ const COMMAND_VALUE_OPTIONS: Record<string, ReadonlySet<string>> = {
   export: new Set(['format']),
   'migrate tags-to-types': new Set(['sample-limit']),
   'migrate retire-deprecated-tags': new Set(['sample-limit']),
-  snapshot: new Set(['db', 'out', 'prune-hours']),
+  snapshot: new Set(['db', 'out', 'prune-hours', 'max-bytes']),
   restore: new Set(['from', 'db']),
   'release-check': new Set(['skip-tests']),
   'setup-agent': new Set(['host']),
