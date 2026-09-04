@@ -57,6 +57,38 @@ is: `tim doctor`, `tim import <file.hmem> --dry-run --deduplicate`,
 
 Use `tim snapshot` to create a backup copy of the SQLite database, then `tim restore` to bring it back. The snapshot/restore flow is intended for local recovery and migration between machines.
 
+## Building on the production host
+
+`packages/*/dist` is build output and is **not tracked**. `npm install` runs
+`prepare`, which is `npm run clean && npm run build` — and `clean` is
+`rm -rf packages/*/dist packages/*/tsconfig.tsbuildinfo`.
+
+That is harmless on a laptop and dangerous on the host where this checkout *is*
+the install:
+
+```
+~/.local/bin/tim            ->  <checkout>/packages/tim-cli/dist/cli.js
+~/.claude.json MCP server   ->  <checkout>/packages/tim-mcp/dist/server.js
+```
+
+There, `npm install`, `npm run prepare`, `npm test` (its `pretest` chains to
+`build`) and `npm run test:build-pipeline` all delete the running CLI and MCP
+server mid-command. The safe sequences are:
+
+- **Stop the MCP server first**, then build: `bash scripts/tim-mcp-stop.sh && npm run build`.
+- **Or build incrementally** and never go through `prepare`: `npx tsc -b && node scripts/ensure-executable-dist.mjs`.
+
+Verify a build with `node scripts/check-build-output.mjs`, which fails naming
+any `src/**/*.ts` that has no compiled counterpart. A partial `dist/` is exactly
+what took the host down on 2026-09-03: `dist/index.js` was present and required
+`./maintenance-lock.js`, which was not.
+
+To run the test suite without rebuilding, use `npx vitest run` — it skips the
+`pretest` hook.
+
+Cron scripts have the same merged-is-not-running problem; see
+[docs/cron.md](docs/cron.md).
+
 ## Sync
 
 TIM-sync exists in this workspace, but it is optional and outside the core local-memory path documented here. Do not expect it to be required for basic CLI, MCP, or migration workflows.
