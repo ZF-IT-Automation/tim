@@ -15,6 +15,11 @@ import { requireNoWriters } from './writers.js';
 /** VACUUM may need roughly the current file size in free space. */
 export const VACUUM_HEADROOM_FACTOR = 1.1;
 
+/** Backup copy needs at least the current DB size in free space. */
+export function backupHasRoom(dbBytes: number, freeBytes: number): boolean {
+  return freeBytes >= dbBytes;
+}
+
 export function vacuumHasRoom(dbBytes: number, freeBytes: number): boolean {
   return freeBytes >= dbBytes * VACUUM_HEADROOM_FACTOR;
 }
@@ -28,6 +33,7 @@ export function planCompactErrorLog(opts: {
   const plan: string[] = [
     `acquire maintenance lock on ${opts.dbPath}`,
     'verify no tim-mcp writers',
+    `backup ${opts.dbPath} before mutation`,
     `rebuild error_log keeping newest ${opts.maxEntries} rows`,
   ];
   if (opts.vacuum) {
@@ -59,15 +65,13 @@ export async function cmdCompactErrorLog(args: string[]): Promise<void> {
     process.exit(1);
   }
 
-  let freeBytes: number | undefined;
-  if (vacuum || dryRun) {
-    try {
-      freeBytes = readFreeBytes(path.dirname(dbPath));
-    } catch (e: unknown) {
-      const message = e instanceof Error ? e.message : String(e);
-      console.error(`compact-error-log: cannot stat filesystem: ${message}`);
-      process.exit(1);
-    }
+  let freeBytes: number;
+  try {
+    freeBytes = readFreeBytes(path.dirname(dbPath));
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : String(e);
+    console.error(`compact-error-log: cannot stat filesystem: ${message}`);
+    process.exit(1);
   }
 
   const planned = planCompactErrorLog({ dbPath, maxEntries, vacuum, freeBytes });
@@ -81,6 +85,14 @@ export async function cmdCompactErrorLog(args: string[]): Promise<void> {
     return;
   }
 
+  const dbBytes = fs.statSync(dbPath).size;
+  if (!backupHasRoom(dbBytes, freeBytes)) {
+    console.error(
+      `compact-error-log: insufficient free space for backup (need ${dbBytes} bytes, have ${freeBytes})`,
+    );
+    process.exit(1);
+  }
+
   let maintenance: ReturnType<typeof acquireMaintenanceLock> | null = null;
   const backupPath = `${dbPath}.pre-compact-${Date.now()}`;
 
@@ -92,6 +104,7 @@ export async function cmdCompactErrorLog(args: string[]): Promise<void> {
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : String(e);
       console.error(`compact-error-log: ${message}`);
+      // process.exit() skips finally — lock self-heals via isMaintenanceActive().
       process.exit(1);
     }
 
@@ -113,7 +126,12 @@ export async function cmdCompactErrorLog(args: string[]): Promise<void> {
       if (check !== 'ok') {
         throw new Error(`integrity_check failed after compaction: ${String(check)}`);
       }
-      console.log(JSON.stringify({ ok: true, db: dbPath, backup: backupPath, ...result }));
+      try {
+        fs.unlinkSync(backupPath);
+      } catch {
+        // Wrapper script prunes *.pre-compact-* on failed runs; success should not leave a copy.
+      }
+      console.log(JSON.stringify({ ok: true, db: dbPath, ...result }));
     } catch (e: unknown) {
       db.close();
       try {
@@ -124,6 +142,7 @@ export async function cmdCompactErrorLog(args: string[]): Promise<void> {
       }
       const message = e instanceof Error ? e.message : String(e);
       console.error(`compact-error-log: ${message}`);
+      // process.exit() skips finally — lock self-heals via isMaintenanceActive().
       process.exit(1);
     } finally {
       try {
