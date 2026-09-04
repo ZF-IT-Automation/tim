@@ -273,6 +273,60 @@ describe('ErrorLogger', () => {
       const remaining = db.prepare('SELECT COUNT(*) as c FROM error_log').get() as { c: number };
       expect(remaining.c).toBe(5);
     });
+
+    it('rebuild preserves schema_migration audit rows', () => {
+      const auditInsert = db.prepare(
+        `INSERT INTO error_log (timestamp, tool, args_json, error) VALUES (?, 'schema_migration', '{}', '')`,
+      );
+      auditInsert.run(new Date(Date.now() - 1000).toISOString());
+      auditInsert.run(new Date(Date.now() - 500).toISOString());
+      const insert = db.prepare(
+        `INSERT INTO error_log (timestamp, tool, args_json, error) VALUES (?, ?, '{}', ?)`,
+      );
+      for (let i = 0; i < 80; i++) {
+        insert.run(new Date(Date.now() + i).toISOString(), 'storm', `epipe ${i}`);
+      }
+
+      const tight = new ErrorLogger(db, { maxEntries: 5, maxAgeDays: 365 });
+      tight.rotate({ maxEntries: 5, maxAgeDays: 365 });
+
+      const audit = db
+        .prepare(`SELECT COUNT(*) as c FROM error_log WHERE tool = 'schema_migration'`)
+        .get() as { c: number };
+      expect(audit.c).toBe(2);
+      const total = db.prepare('SELECT COUNT(*) as c FROM error_log').get() as { c: number };
+      expect(total.c).toBe(7);
+    });
+
+    it('rebuild runs atomically and tolerates a leftover error_log_keep table', () => {
+      const insert = db.prepare(
+        `INSERT INTO error_log (timestamp, tool, args_json, error) VALUES (?, ?, '{}', ?)`,
+      );
+      for (let i = 0; i < 80; i++) {
+        insert.run(new Date(Date.now() + i).toISOString(), 'storm', `epipe ${i}`);
+      }
+      db.exec(`
+        CREATE TABLE error_log_keep (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          timestamp TEXT NOT NULL,
+          tool TEXT NOT NULL,
+          args_json TEXT NOT NULL DEFAULT '{}',
+          error TEXT NOT NULL DEFAULT '',
+          stack TEXT,
+          session_id TEXT
+        );
+      `);
+
+      const tight = new ErrorLogger(db, { maxEntries: 5, maxAgeDays: 365 });
+      expect(() => tight.rotate({ maxEntries: 5, maxAgeDays: 365 })).not.toThrow();
+
+      const tables = db
+        .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'error_log%'`)
+        .all() as Array<{ name: string }>;
+      expect(tables.map((t) => t.name)).toEqual(['error_log']);
+      const remaining = db.prepare('SELECT COUNT(*) as c FROM error_log').get() as { c: number };
+      expect(remaining.c).toBe(5);
+    });
   });
 
   describe('migrateSummarizerLog', () => {
