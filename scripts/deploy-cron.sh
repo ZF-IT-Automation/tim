@@ -37,9 +37,15 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-SOURCES=("${ROOT}"/scripts/cron/*.sh "${ROOT}/scripts/tim-compact-error-log.sh")
-# tim-mcp-stop.sh stays repo-resident on purpose: tim-compact-error-log.sh finds
-# it via TIM_ROOT, and it is not a cron entry of its own.
+SOURCES=(
+  "${ROOT}"/scripts/cron/*.sh
+  "${ROOT}/scripts/tim-compact-error-log.sh"
+  # Not cron entries themselves, but the cron job and `tim restore` both invoke
+  # them from ~/.hermes/scripts. Leaving them unsynced is how the deployed
+  # stop script stayed fail-open and the start script kept its user-unit bug.
+  "${ROOT}/scripts/tim-mcp-stop.sh"
+  "${ROOT}/scripts/tim-mcp-start.sh"
+)
 
 if [[ ! -e "${SOURCES[0]}" ]]; then
   echo "deploy-cron: no scripts found under ${ROOT}/scripts/cron" >&2

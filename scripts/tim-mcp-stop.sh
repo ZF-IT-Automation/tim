@@ -9,9 +9,12 @@ set -euo pipefail
 LOG_PREFIX="[tim-mcp-stop]"
 
 reap_stdio_children() {
-  local pids
-  if ! pids=$(pgrep -f 'tim-mcp.*dist/server\.js'); then
-    local rc=$?
+  local pids rc=0
+  # Capture pgrep's status via ||, not via `if ! pids=$(...)`. Inside the then-
+  # branch of a negated compound, $? is the negation's status (0), not pgrep's,
+  # so the old form took the FAIL branch every time there was nothing to stop.
+  pids=$(pgrep -f 'tim-mcp.*dist/server\.js') || rc=$?
+  if [[ "${rc}" -ne 0 ]]; then
     if [[ "${rc}" -eq 1 ]]; then
       echo "$LOG_PREFIX no leftover tim-mcp processes"
       return 0
