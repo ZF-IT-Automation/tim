@@ -284,6 +284,7 @@ export async function cmdRestore(args: string[]): Promise<void> {
     const stop = runScript(stopScript);
     if (!stop.ok) {
       console.error(`restore: stop script failed: ${stop.stderr || stop.stdout}`);
+      // process.exit() skips finally — lock self-heals via isMaintenanceActive().
       process.exit(1);
     }
     console.log(`✓ MCP server stopped`);
@@ -294,6 +295,7 @@ export async function cmdRestore(args: string[]): Promise<void> {
       const message = e instanceof Error ? e.message : String(e);
       console.error(`restore: ${message}`);
       restartOnExit();
+      // process.exit() skips finally — lock self-heals via isMaintenanceActive().
       process.exit(1);
     }
 
@@ -308,6 +310,7 @@ export async function cmdRestore(args: string[]): Promise<void> {
         const message = e instanceof Error ? e.message : String(e);
         console.error(`restore: cannot stat filesystem for safety copy: ${message}`);
         restartOnExit();
+        // process.exit() skips finally — lock self-heals via isMaintenanceActive().
         process.exit(1);
       }
       if (!shouldCopyLiveDbForSafety(liveBytes, snapshotBytes, freeBytes)) {
@@ -321,6 +324,7 @@ export async function cmdRestore(args: string[]): Promise<void> {
         } catch (e: any) {
           console.error(`restore: cannot create safety copy: ${e.message}`);
           restartOnExit();
+          // process.exit() skips finally — lock self-heals via isMaintenanceActive().
           process.exit(1);
         }
       }
@@ -331,6 +335,7 @@ export async function cmdRestore(args: string[]): Promise<void> {
     if (!sidecars.ok) {
       console.error(`restore: cannot unlink ${sidecars.path}: ${sidecars.error}`);
       restartOnExit();
+      // process.exit() skips finally — lock self-heals via isMaintenanceActive().
       process.exit(1);
     }
 
@@ -341,6 +346,7 @@ export async function cmdRestore(args: string[]): Promise<void> {
     } catch (e: any) {
       console.error(`restore: copy failed: ${e.message}`);
       restartOnExit();
+      // process.exit() skips finally — lock self-heals via isMaintenanceActive().
       process.exit(1);
     }
 
@@ -349,9 +355,14 @@ export async function cmdRestore(args: string[]): Promise<void> {
     if (!checkpoint.ok) {
       console.error(`restore: wal_checkpoint failed: ${checkpoint.error}`);
       restartOnExit();
+      // process.exit() skips finally — lock self-heals via isMaintenanceActive().
       process.exit(1);
     }
     console.log(`✓ WAL checkpointed (TRUNCATE)`);
+
+    // Writers call assertMaintenanceClear on getStore() — release before restart.
+    maintenance.release();
+    maintenance = null;
 
     // 6. Start MCP server
     if (startScript) {
@@ -360,6 +371,7 @@ export async function cmdRestore(args: string[]): Promise<void> {
       if (!start.ok) {
         console.error(`restore: start script failed: ${start.stderr || start.stdout}`);
         console.error(`(restored DB is on disk; you must restart the MCP server manually)`);
+        // process.exit() skips finally — lock already released; stale lock self-heals via PID check.
         process.exit(1);
       }
       console.log(`✓ MCP server started`);
