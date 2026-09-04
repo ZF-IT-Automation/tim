@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# Git hook template — symlink into ~/.hermes/git-hooks/ as post-merge AND
+# post-checkout (core.hooksPath is set globally to that directory on this host,
+# so .git/hooks/ is ignored everywhere).
+#
+# Why this exists: commit 0708e77 removed packages/*/dist from the index. Any
+# checkout or merge that crosses it deletes the build output from the working
+# tree. On a host where the checkout *is* the install — ~/.local/bin/tim and the
+# MCP server both run out of packages/*/dist — that silently replaces the running
+# binaries with nothing. It happened twice on 2026-09-04: once during the merge
+# that introduced the untracking, once during the fast-forward of master.
+#
+# Because core.hooksPath is global, this runs in every repository. It resolves
+# the repository git is actually operating on and does nothing unless that
+# repository carries the TIM build guard.
+#
+# Never blocks: a hook that fails a checkout is worse than a stale build. It
+# warns, loudly, and names the command that fixes it.
+
+set -uo pipefail
+
+command -v node >/dev/null 2>&1 || exit 0
+
+REPO="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+[[ -n "${REPO}" ]] || exit 0
+
+GUARD="${REPO}/scripts/check-build-output.mjs"
+[[ -f "${GUARD}" ]] || exit 0
+
+# Only a built checkout can be judged incomplete; a fresh clone has no dist yet
+# and its "missing output" is expected, not a warning worth printing.
+compgen -G "${REPO}/packages/*/dist" >/dev/null 2>&1 || exit 0
+
+if node "${GUARD}" >/dev/null 2>&1; then
+  exit 0
+fi
+
+cat >&2 <<EOF
+
+⚠  Build output is incomplete after this git operation.
+
+   packages/*/dist is not tracked, so a checkout or merge across 0708e77
+   removes it. If this checkout is also the running install, the MCP server
+   and the 'tim' CLI are broken right now.
+
+   Rebuild (--force is required: tsconfig.tsbuildinfo survives the deletion
+   and plain 'tsc -b' will consider the missing output up to date):
+
+     cd ${REPO} && npx tsc -b --force && node scripts/ensure-executable-dist.mjs
+
+   Then check with: node scripts/check-build-output.mjs
+
+EOF
+
+exit 0
