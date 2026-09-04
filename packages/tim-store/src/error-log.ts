@@ -85,9 +85,8 @@ export class ErrorLogger {
     }
   }
 
-  // `error_log` also carries schema_migration audit rows, which are records of a
-  // successful migration and not failures. Every read path here filters them out;
-  // rotate() deliberately does not, so they age out with everything else.
+  // `error_log` also carries schema_migration audit rows. Reads filter them out;
+  // rotate/rebuild always preserves them regardless of retention limits.
   private static readonly EXCLUDE_AUDIT = `AND tool != 'schema_migration'`;
 
   getStats(params: { hours?: number; limit?: number } = {}): ErrorStats {
@@ -167,10 +166,10 @@ export class ErrorLogger {
 
     let deleted = 0;
 
-    // Delete by age
+    // Delete by age (never prune schema_migration audit rows)
     const ageCutoff = new Date(Date.now() - maxAgeDays * 86400 * 1000).toISOString();
     const ageResult = this.db.prepare(`
-      DELETE FROM error_log WHERE timestamp < ?
+      DELETE FROM error_log WHERE timestamp < ? AND tool != 'schema_migration'
     `).run(ageCutoff);
     deleted += ageResult.changes;
 
@@ -180,7 +179,9 @@ export class ErrorLogger {
       const excess = afterAge.total - maxEntries;
       const result = this.db.prepare(`
         DELETE FROM error_log WHERE id IN (
-          SELECT id FROM error_log ORDER BY timestamp ASC LIMIT ?
+          SELECT id FROM error_log
+          WHERE tool != 'schema_migration'
+          ORDER BY timestamp ASC LIMIT ?
         )
       `).run(excess);
       deleted += result.changes;
@@ -190,31 +191,50 @@ export class ErrorLogger {
   }
 
   private rebuildKeepNewest(keep: number, total: number): { deleted: number } {
-    this.db.exec(`
-      CREATE TABLE error_log_keep (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        timestamp TEXT NOT NULL,
-        tool TEXT NOT NULL,
-        args_json TEXT NOT NULL DEFAULT '{}',
-        error TEXT NOT NULL DEFAULT '',
-        stack TEXT,
-        session_id TEXT
-      );
-    `);
-    this.db.prepare(`
-      INSERT INTO error_log_keep (timestamp, tool, args_json, error, stack, session_id)
-      SELECT timestamp, tool, args_json, error, stack, session_id
-      FROM error_log
-      ORDER BY timestamp DESC, id DESC
-      LIMIT ?
-    `).run(keep);
-    this.db.exec(`
-      DROP TABLE error_log;
-      ALTER TABLE error_log_keep RENAME TO error_log;
-      CREATE INDEX IF NOT EXISTS idx_error_log_timestamp ON error_log(timestamp);
-      CREATE INDEX IF NOT EXISTS idx_error_log_tool ON error_log(tool);
-    `);
-    return { deleted: Math.max(0, total - keep) };
+    const auditCount = (
+      this.db.prepare(`SELECT COUNT(*) as c FROM error_log WHERE tool = 'schema_migration'`).get() as {
+        c: number;
+      }
+    ).c;
+
+    const rebuild = this.db.transaction(() => {
+      this.db.exec(`DROP TABLE IF EXISTS error_log_keep`);
+      this.db.exec(`
+        CREATE TABLE error_log_keep (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          timestamp TEXT NOT NULL,
+          tool TEXT NOT NULL,
+          args_json TEXT NOT NULL DEFAULT '{}',
+          error TEXT NOT NULL DEFAULT '',
+          stack TEXT,
+          session_id TEXT
+        );
+      `);
+      this.db.prepare(`
+        INSERT INTO error_log_keep (timestamp, tool, args_json, error, stack, session_id)
+        SELECT timestamp, tool, args_json, error, stack, session_id
+        FROM error_log
+        WHERE tool != 'schema_migration'
+        ORDER BY timestamp DESC, id DESC
+        LIMIT ?
+      `).run(keep);
+      this.db.prepare(`
+        INSERT INTO error_log_keep (timestamp, tool, args_json, error, stack, session_id)
+        SELECT timestamp, tool, args_json, error, stack, session_id
+        FROM error_log
+        WHERE tool = 'schema_migration'
+      `).run();
+      this.db.exec(`
+        DROP TABLE error_log;
+        ALTER TABLE error_log_keep RENAME TO error_log;
+        CREATE INDEX IF NOT EXISTS idx_error_log_timestamp ON error_log(timestamp);
+        CREATE INDEX IF NOT EXISTS idx_error_log_tool ON error_log(tool);
+      `);
+    });
+    rebuild();
+
+    const kept = keep + auditCount;
+    return { deleted: Math.max(0, total - kept) };
   }
 
   /**
