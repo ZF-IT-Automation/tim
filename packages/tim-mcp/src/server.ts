@@ -1646,6 +1646,7 @@ function getStore(): TimStore {
       } catch (e: unknown) {
         const message = e instanceof Error ? e.message : String(e);
         console.error(`FATAL: ${message}`);
+        // Stale lock from a dead restore/compact holder is removed by isMaintenanceActive().
         process.exit(1);
       }
     }
@@ -3703,7 +3704,9 @@ export async function startServer(): Promise<void> {
     handleStdioStreamError(err, (code) => process.exit(code));
   };
   process.stdout.on('error', onPipeError);
-  process.stderr.on('error', onPipeError);
+  process.stderr.on('error', (err: unknown): void => {
+    handleStdioStreamError(err, (code) => process.exit(code), 'stderr');
+  });
 }
 
 // Run if executed directly
