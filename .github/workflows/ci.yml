@@ -17,3 +17,19 @@ jobs:
       - run: npm run build
       - run: npm run lint
       - run: npm test
+
+  # Own job on purpose: `test:build-pipeline` starts with `npm run clean`
+  # (rm -rf packages/*/dist). Appended to build-test it would either destroy the
+  # dist/ that `npm test` resolves through, or have to run after it and leave the
+  # job's artefacts wiped. A separate job also fails independently, so a missing
+  # compiled module is not hidden behind a test failure.
+  build-pipeline:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run test:build-pipeline
