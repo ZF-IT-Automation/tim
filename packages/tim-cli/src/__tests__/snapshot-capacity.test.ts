@@ -255,6 +255,7 @@ describe('makeRoomForSnapshot', () => {
 describe('isStdioMcpCommand', () => {
   it('selects stdio writers and leaves the HTTP daemon alone', () => {
     expect(isStdioMcpCommand('node /home/bbbee/projects/tim/packages/tim-mcp/dist/server.js')).toBe(true);
+    expect(isStdioMcpCommand('node dist/server.js')).toBe(true);
     expect(
       isStdioMcpCommand('node /home/bbbee/projects/tim/packages/tim-mcp/dist/server.js --http --port 3847'),
     ).toBe(false);

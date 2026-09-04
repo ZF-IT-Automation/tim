@@ -48,13 +48,34 @@ sample_stdio_writers() {
   local outfile="${1}"
   : > "${outfile}"
   while read -r pid ppid cmd; do
-    if [[ "${cmd}" == *tim-mcp* && "${cmd}" == *dist/server.js* && "${cmd}" != *"--http"* ]]; then
+    if is_tim_mcp_stdio_writer "${pid}" "${cmd}"; then
       local writes
       writes=$(awk '/^write_bytes:/ {print $2}' "/proc/${pid}/io" 2>/dev/null || echo 0)
       writes=${writes:-0}
       printf '%s %s %s %s\n' "${pid}" "${ppid}" "${writes}" "${cmd}" >> "${outfile}"
     fi
   done < <(ps -eo pid=,ppid=,args= || true)
+}
+
+# Keep in lockstep with packages/tim-cli/src/mcp-writer-process.ts
+is_tim_mcp_stdio_writer() {
+  local pid="${1}"
+  local cmd="${2}"
+  [[ "${cmd}" == *"--http"* ]] && return 1
+  local cmdline cwd server_arg script_path
+  cmdline=$(tr '\0' ' ' < "/proc/${pid}/cmdline" 2>/dev/null || true)
+  [[ "${cmdline}" == *dist/server.js* ]] || return 1
+  server_arg=$(awk -v RS='\0' '$0 ~ /dist\/server\.js/ || $0 ~ /server\.js$/ {print; exit}' "/proc/${pid}/cmdline" 2>/dev/null || true)
+  [[ -n "${server_arg}" ]] || return 1
+  if [[ "${server_arg}" == /* ]]; then
+    script_path="${server_arg}"
+  else
+    cwd=$(readlink "/proc/${pid}/cwd" 2>/dev/null || true)
+    [[ -n "${cwd}" ]] || return 1
+    script_path="${cwd}/${server_arg}"
+  fi
+  [[ "${script_path}" == */tim-mcp/dist/server.js ]] || return 1
+  return 0
 }
 
 reap_stdio_writers() {

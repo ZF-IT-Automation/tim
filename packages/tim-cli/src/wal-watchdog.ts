@@ -1,8 +1,22 @@
 // Predicates shared with scripts/cron/tim-wal-watchdog.sh.
 // Checkpoint: busy flag must be 0. Writer reap: rate over interval, not lifetime bytes.
 
+import { isTimMcpWriterPid, resolveMcpServerScriptPath, isTimMcpServerScript } from './mcp-writer-process.js';
+
 export function isStdioMcpCommand(cmd: string): boolean {
-  return cmd.includes('tim-mcp') && cmd.includes('dist/server.js') && !cmd.includes('--http');
+  return cmd.includes('dist/server.js') && !cmd.includes('--http');
+}
+
+/** Prefer pid + /proc resolution; cmd fallback when /proc is unavailable (unit tests). */
+export function isStdioMcpWriter(pid: string, cmd: string): boolean {
+  if (cmd.includes('--http')) return false;
+  if (process.platform === 'linux') {
+    const scriptPath = resolveMcpServerScriptPath(pid);
+    if (scriptPath) {
+      return isTimMcpServerScript(scriptPath);
+    }
+  }
+  return cmd.includes('tim-mcp') && cmd.includes('dist/server.js');
 }
 
 export interface McpProc {
@@ -59,8 +73,8 @@ export function stdioWritersToReap(
   opts?: { minRateBytesPerSec?: number },
 ): string[] {
   const minRate = opts?.minRateBytesPerSec ?? DEFAULT_MIN_WRITE_RATE_BPS;
-  const stdioAfter = sample.after.filter((p) => isStdioMcpCommand(p.cmd));
-  const stdioBefore = sample.before.filter((p) => isStdioMcpCommand(p.cmd));
+  const stdioAfter = sample.after.filter((p) => isStdioMcpWriter(p.pid, p.cmd));
+  const stdioBefore = sample.before.filter((p) => isStdioMcpWriter(p.pid, p.cmd));
   const beforeByPid = new Map(stdioBefore.map((p) => [p.pid, p]));
 
   const orphans = stdioAfter.filter((p) => p.ppid === '1').map((p) => p.pid);
