@@ -28,9 +28,13 @@ export function handleUncaughtException(
 export function handleStdioStreamError(
   err: unknown,
   exit: (code: number) => void,
+  stream: 'stdout' | 'stderr' = 'stdout',
 ): void {
   if (isBrokenPipeError(err)) {
     exit(1);
+    return;
+  }
+  if (stream === 'stderr') {
     return;
   }
   const message = err instanceof Error ? (err.stack ?? err.message) : String(err);

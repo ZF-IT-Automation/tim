@@ -63,4 +63,13 @@ describe('handleStdioStreamError', () => {
     handleStdioStreamError(Object.assign(new Error('ENOSPC'), { code: 'ENOSPC' }), exit);
     expect(exit).not.toHaveBeenCalled();
   });
+
+  it('does not log stderr stream errors to stderr (avoids recursion)', () => {
+    const exit = vi.fn();
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    handleStdioStreamError(Object.assign(new Error('ENOSPC'), { code: 'ENOSPC' }), exit, 'stderr');
+    expect(exit).not.toHaveBeenCalled();
+    expect(errSpy).not.toHaveBeenCalled();
+    errSpy.mockRestore();
+  });
 });
