@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Same check as post-merge — a checkout across 0708e77 deletes dist too.
+exec "$(dirname "${BASH_SOURCE[0]}")/post-merge" "$@"
