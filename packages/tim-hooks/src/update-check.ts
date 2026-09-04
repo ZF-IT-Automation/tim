@@ -20,6 +20,34 @@ function installedVersion(): string {
   }
 }
 
+/** Numeric + prerelease compare — no external semver dependency. */
+export function compareVersions(a: string, b: string): number {
+  const parse = (v: string): [number, number, number, string] => {
+    const main = v.split('-')[0] ?? '0.0.0';
+    const prerelease = v.includes('-') ? v.slice(v.indexOf('-') + 1) : '';
+    const parts = main.split('.').map((n) => Number(n));
+    return [parts[0] ?? 0, parts[1] ?? 0, parts[2] ?? 0, prerelease];
+  };
+
+  const [aMaj, aMin, aPat, aPre] = parse(a);
+  const [bMaj, bMin, bPat, bPre] = parse(b);
+  if (aMaj !== bMaj) return aMaj < bMaj ? -1 : 1;
+  if (aMin !== bMin) return aMin < bMin ? -1 : 1;
+  if (aPat !== bPat) return aPat < bPat ? -1 : 1;
+  if (aPre === bPre) return 0;
+  if (!aPre) return 1;
+  if (!bPre) return -1;
+  const aBeta = aPre.match(/^beta\.(\d+)$/);
+  const bBeta = bPre.match(/^beta\.(\d+)$/);
+  if (aBeta && bBeta) {
+    const aN = Number(aBeta[1]);
+    const bN = Number(bBeta[1]);
+    if (aN !== bN) return aN < bN ? -1 : 1;
+    return 0;
+  }
+  return aPre < bPre ? -1 : 1;
+}
+
 async function fetchLatestVersion(timeoutMs = DEFAULT_FETCH_TIMEOUT_MS): Promise<string | null> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -51,7 +79,7 @@ export async function getUpdateCheckLine(options: { fetchTimeoutMs?: number } = 
   saveConfig({ ...loadConfig(), updateCheckLastAt: new Date().toISOString() });
   if (!latest) return null;
   const installed = installedVersion();
-  if (latest === installed) return null;
+  if (compareVersions(latest, installed) <= 0) return null;
   return `TIM ${latest} available (installed: ${installed}) — npm i -g ${PACKAGE_NAME}`;
 }
 
