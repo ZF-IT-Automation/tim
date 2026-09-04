@@ -78,6 +78,11 @@ export function assertMaintenanceClear(dbPath: string): void {
 /**
  * Acquire an exclusive maintenance lock. Fails if another live holder exists.
  * Caller must call release() in a finally block.
+ *
+ * process.exit() inside that try skips finally — intentional. Holders that
+ * die without releasing leave a lock file; isMaintenanceActive() unlinks it
+ * once the recorded PID is gone, so a leftover /tmp/tim-maintenance-*.lock
+ * is not evidence of a stuck operation.
  */
 export function acquireMaintenanceLock(opts: {
   dbPath: string;
