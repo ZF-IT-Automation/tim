@@ -165,8 +165,8 @@ const COMMAND_HELP: Record<string, string> = {
   'sync connect':
     'Usage: tim sync connect [--server-url <url>] [--user-id <id>] [--token <token>] [--passphrase <text>] [--register] [--tier free|pro]',
   'sync disconnect': 'Usage: tim sync disconnect',
-  'sync push': 'Usage: tim sync push [--passphrase <text>]',
-  'sync pull': 'Usage: tim sync pull [--passphrase <text>]',
+  'sync push': 'Usage: tim sync push [--passphrase <text>] [--secret-passphrase <text>]',
+  'sync pull': 'Usage: tim sync pull [--passphrase <text>] [--secret-passphrase <text>]',
   'sync status': 'Usage: tim sync status',
   'sync dev': 'Usage: tim sync dev [--port <number>]',
   'root-entries':
