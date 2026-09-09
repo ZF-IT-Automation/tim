@@ -45,8 +45,55 @@ export function ackStaging(
 export function entryLocalLwwTimestamp(row: {
   updated_at?: string;
   created_at: string;
+  tombstoned_at?: string | null;
 }): number {
+  if (row.tombstoned_at) return Date.parse(row.tombstoned_at);
   return Date.parse(String(row.updated_at ?? row.created_at));
+}
+
+export type EntryLwwRow = {
+  id: string;
+  updated_at?: string;
+  created_at: string;
+  tombstoned_at?: string | null;
+  lww_device?: string | null;
+  confidence?: number | null;
+};
+
+export function localEntryRecordFromRow(row: EntryLwwRow): StagingRecord {
+  const id = row.id;
+  return recordFromPayload(
+    id,
+    'entry',
+    row.tombstoned_at ? 'delete' : 'upsert',
+    JSON.stringify(row),
+    entryLocalLwwTimestamp(row),
+    String(row.lww_device ?? 'local'),
+    Number(row.confidence ?? 1),
+  );
+}
+
+/** Persist a deletion tombstone, creating a placeholder row when the entry never existed locally. */
+export function applyEntryTombstone(
+  db: Database.Database,
+  entryId: string,
+  lwwTimestamp: number,
+  lwwDevice: string,
+): void {
+  const tombstoneAt = new Date(lwwTimestamp).toISOString();
+  const existing = db.prepare('SELECT id FROM entries WHERE id = ?').get(entryId);
+  if (existing) {
+    db.prepare(
+      'UPDATE entries SET tombstoned_at = ?, updated_at = ?, lww_device = ? WHERE id = ?',
+    ).run(tombstoneAt, tombstoneAt, lwwDevice, entryId);
+  } else {
+    db.prepare(`INSERT INTO entries
+      (id, parent_id, title, content, content_type, depth, confidence, created_at,
+       accessed_at, updated_at, decay_rate, visibility, tags, irrelevant, favorite, tombstoned_at, metadata, lww_device)
+      VALUES (?, NULL, '', '', 'text', 1, 1.0, ?, ?, ?, 0, 1, '[]', 0, 0, ?, '{}', ?)`).run(
+      entryId, tombstoneAt, tombstoneAt, tombstoneAt, tombstoneAt, lwwDevice,
+    );
+  }
 }
 
 export function edgeLocalLwwTimestamp(row: { updated_at?: string }): number {
@@ -99,30 +146,17 @@ export function applyRemoteEntry(
   );
 
   const existing = db.prepare('SELECT * FROM entries WHERE id = ?').get(entryId) as
-    | Record<string, unknown>
+    | EntryLwwRow
     | undefined;
 
   if (existing) {
-    const local = recordFromPayload(
-      entryId,
-      'entry',
-      existing.tombstoned_at ? 'delete' : 'upsert',
-      JSON.stringify(existing),
-      entryLocalLwwTimestamp(existing as { updated_at?: string; created_at: string }),
-      String(existing.lww_device ?? 'local'),
-      Number(existing.confidence ?? 1),
-    );
+    const local = localEntryRecordFromRow(existing);
     const { winner } = resolveLWW(local, remote);
     if (winner !== remote) return false;
-  } else if (deleted) {
-    return false;
   }
 
   if (deleted) {
-    db.prepare('UPDATE entries SET tombstoned_at = ? WHERE id = ?').run(
-      new Date(lwwTimestamp).toISOString(),
-      entryId,
-    );
+    applyEntryTombstone(db, entryId, lwwTimestamp, lwwDevice);
     return true;
   }
 
@@ -164,17 +198,9 @@ export function applyRemoteEntry(
          WHERE parent_id = ? AND json_extract(metadata, '$.batch_index') = ?
            AND json_extract(metadata, '$.kind') = 'batch-summary'
            AND id != ?`,
-      ).get(entry.parent_id, meta.batch_index, entry.id) as Record<string, unknown> | undefined;
+      ).get(entry.parent_id, meta.batch_index, entry.id) as EntryLwwRow | undefined;
       if (slotOccupant) {
-        const localSlot = recordFromPayload(
-          String(slotOccupant.id),
-          'entry',
-          slotOccupant.tombstoned_at ? 'delete' : 'upsert',
-          JSON.stringify(slotOccupant),
-          entryLocalLwwTimestamp(slotOccupant as { updated_at?: string; created_at: string }),
-          String(slotOccupant.lww_device ?? 'local'),
-          Number(slotOccupant.confidence ?? 1),
-        );
+        const localSlot = localEntryRecordFromRow(slotOccupant);
         const slotRemote = recordFromPayload(
           entry.id, 'entry', 'upsert', payloadJson, lwwTimestamp, lwwDevice,
         );
