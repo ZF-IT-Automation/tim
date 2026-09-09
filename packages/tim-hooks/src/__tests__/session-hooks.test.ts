@@ -4,11 +4,11 @@ import * as path from 'path';
 import * as os from 'os';
 import {
   onSessionStop,
-  buildSummarizerCommand,
+  buildSummarizerSpawnRequest,
   isSummarizerChild,
   maybeSpawnSummarizer,
   maybeSpawnProjectSummary,
-  buildProjectSummaryCommand,
+  buildProjectSummarySpawnRequest,
 } from '../session-hooks.js';
 import { writeMarker, summarizerLockPath } from '../marker.js';
 import { TimStore, SessionManager } from 'tim-store';
@@ -54,12 +54,11 @@ describe('onSessionStop', () => {
     const res = await onSessionStop(store, dir, { spawn });
     expect(res.spawned).toBe(true);
     expect(spawn).toHaveBeenCalledOnce();
-    const [cmd, ctx] = spawn.mock.calls[0];
-    expect(cmd).toContain('trap');
-    expect(cmd).toContain('timeout');
-    expect(cmd).toContain('.tim/summarizer.log');
-    expect(cmd).toContain(summarizerLockPath(dir));
-    expect(ctx.sessionId).toBe('st');
+    const [req] = spawn.mock.calls[0];
+    expect(req.sessionId).toBe('st');
+    expect(req.cwd).toBe(dir);
+    expect(req.lockPath).toBe(summarizerLockPath(dir));
+    expect(req.logPath).toContain('.tim/summarizer.log');
   });
 
   it('maybeSpawnSummarizer honors an explicit sessionId option', async () => {
@@ -73,7 +72,7 @@ describe('onSessionStop', () => {
     const spawn = vi.fn();
     const res = await maybeSpawnSummarizer(store, dir, { spawn, sessionId: 'st' });
     expect(res.spawned).toBe(true);
-    expect(spawn.mock.calls[0][1].sessionId).toBe('st');
+    expect(spawn.mock.calls[0][0].sessionId).toBe('st');
   });
 
   it('maybeSpawnSummarizer resolves session via store when sessionId omitted', async () => {
@@ -87,18 +86,16 @@ describe('onSessionStop', () => {
     const spawn = vi.fn();
     const res = await onSessionStop(store, dir, { spawn });
     expect(res.spawned).toBe(true);
-    expect(spawn.mock.calls[0][1].sessionId).toBe('st');
+    expect(spawn.mock.calls[0][0].sessionId).toBe('st');
   });
 
-  it('buildSummarizerCommand uses EXIT trap and tim-summarizer path', () => {
-    const cmd = buildSummarizerCommand('sid', '/tmp/lock', '/tmp/log', 120);
-    expect(cmd).toContain('trap');
-    expect(cmd).toContain('EXIT');
-    expect(cmd).toContain('tim-summarizer');
-    expect(cmd).toContain('timeout 120');
-    expect(cmd).toContain('TIM_SESSION_ID');
-    // Without this the child's agent CLIs log the summarizer prompt back as exchanges.
-    expect(cmd).toContain('TIM_SUMMARIZER=1');
+  it('buildSummarizerSpawnRequest carries session, paths and timeout', () => {
+    const req = buildSummarizerSpawnRequest('sid', dir, summarizerLockPath(dir), '/tmp/log', 120);
+    expect(req.sessionId).toBe('sid');
+    expect(req.cwd).toBe(dir);
+    expect(req.timeoutSec).toBe(120);
+    expect(req.lockPath).toBe(summarizerLockPath(dir));
+    expect(req.logPath).toBe('/tmp/log');
   });
 
   it('isSummarizerChild only fires on the exact flag value', () => {
@@ -177,9 +174,9 @@ describe('maybeSpawnProjectSummary', () => {
     expect(res.spawned).toBe(true);
     expect(res.count).toBe(5);
     expect(spawn).toHaveBeenCalledOnce();
-    const [cmd] = spawn.mock.calls[0];
-    expect(cmd).toContain('--project-summary');
-    expect(cmd).toContain('P0011');
+    const [req] = spawn.mock.calls[0];
+    expect(req.projectSummaryLabel).toBe('P0011');
+    expect(req.sessionId).toBe('P0011');
   });
 
   it('does not spawn below threshold multiple', async () => {
@@ -208,11 +205,11 @@ describe('maybeSpawnProjectSummary', () => {
     expect(spawn).not.toHaveBeenCalled();
   });
 
-  it('buildProjectSummaryCommand targets the summarizer in project-summary mode', () => {
-    const cmd = buildProjectSummaryCommand('P0014', '/tmp/log', 120);
-    expect(cmd).toContain('--project-summary');
-    expect(cmd).toContain('P0014');
-    expect(cmd).toContain('timeout 120');
-    expect(cmd).toContain('tim-summarizer');
+  it('buildProjectSummarySpawnRequest targets project-summary mode', () => {
+    const req = buildProjectSummarySpawnRequest('P0014', dir, '/tmp/log', 120);
+    expect(req.projectSummaryLabel).toBe('P0014');
+    expect(req.sessionId).toBe('P0014');
+    expect(req.timeoutSec).toBe(120);
+    expect(req.logPath).toBe('/tmp/log');
   });
 });

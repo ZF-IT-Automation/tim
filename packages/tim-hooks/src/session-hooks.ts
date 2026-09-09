@@ -1,4 +1,3 @@
-import { spawn as nodeSpawn } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import {
@@ -17,13 +16,24 @@ import {
   summarizerLockPath,
 } from './marker.js';
 import { DEFAULT_SUMMARIZER_TIMEOUT_SEC } from './constants.js';
+import {
+  buildProjectSummarySpawnRequest,
+  buildSummarizerSpawnRequest,
+  spawnSummarizer,
+  type SpawnContext,
+  type Spawner,
+  type SummarizerSpawnRequest,
+} from './summarizer-spawn.js';
 
-export interface SpawnContext {
-  sessionId: string;
-  cwd: string;
-}
-
-export type Spawner = (command: string, ctx: SpawnContext) => void;
+export type { SpawnContext, Spawner, SummarizerSpawnRequest } from './summarizer-spawn.js';
+export {
+  buildSummarizerSpawnRequest,
+  buildProjectSummarySpawnRequest,
+  spawnSummarizer,
+  detachedSpawner,
+  resolveSummarizeScriptPath,
+  resolveSupervisorScriptPath,
+} from './summarizer-spawn.js';
 
 export type SessionStopReason =
   | 'spawned'
@@ -59,60 +69,20 @@ export function isSummarizerChild(env: NodeJS.ProcessEnv = process.env): boolean
   return env[SUMMARIZER_ENV_FLAG] === '1';
 }
 
-/** Shell snippet: trap lock release, timeout, run tim-summarizer CLI with log append. */
+/**
+ * @deprecated Shell-based spawn removed — use {@link buildSummarizerSpawnRequest}.
+ * Kept for callers that logged the old command string.
+ */
 export function buildSummarizerCommand(
   sessionId: string,
   lockPath: string,
   logPath: string,
   timeoutSec: number = DEFAULT_SUMMARIZER_TIMEOUT_SEC,
 ): string {
-  const q = (s: string) => JSON.stringify(s);
-  const cmd = 'node ' + JSON.stringify(path.resolve(__dirname, '..', '..', 'tim-summarizer', 'dist', 'summarize.js'));
-  return (
-    `{ trap ${q(`rm -f ${lockPath}`)} EXIT; ` +
-    `timeout ${timeoutSec} env ${SUMMARIZER_ENV_FLAG}=1 TIM_SESSION_ID=${q(sessionId)} ${cmd} >>${q(logPath)} 2>&1; }`
+  return JSON.stringify(
+    buildSummarizerSpawnRequest(sessionId, path.dirname(path.dirname(lockPath)), lockPath, logPath, timeoutSec),
   );
 }
-
-/** Detached spawn with log dir creation and spawn-error capture (does not throw). */
-export const spawnSummarizer: Spawner = (command, ctx) => {
-  const timDir = path.join(ctx.cwd, '.tim');
-  try {
-    fs.mkdirSync(timDir, { recursive: true });
-  } catch {
-    /* ignore */
-  }
-  const logPath = summarizerLogPath(ctx.cwd);
-  try {
-    const child = nodeSpawn(command, {
-      shell: true,
-      cwd: ctx.cwd,
-      detached: true,
-      stdio: 'ignore',
-      env: { ...process.env, TIM_SESSION_ID: ctx.sessionId, [SUMMARIZER_ENV_FLAG]: '1' },
-    });
-    child.on('error', err => {
-      try {
-        fs.appendFileSync(logPath, `[${new Date().toISOString()}] spawn error: ${err.message}\n`);
-      } catch {
-        /* ignore */
-      }
-      releaseLock(ctx.cwd);
-    });
-    child.unref();
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    try {
-      fs.appendFileSync(logPath, `[${new Date().toISOString()}] spawn failed: ${msg}\n`);
-    } catch {
-      /* ignore */
-    }
-    releaseLock(ctx.cwd);
-  }
-};
-
-/** @deprecated Use spawnSummarizer */
-export const detachedSpawner: Spawner = spawnSummarizer;
 
 export interface MaybeSpawnSummarizerOptions {
   spawn?: Spawner;
@@ -156,10 +126,7 @@ export async function maybeSpawnSummarizer(
   const timeoutSec = opts.timeoutSec ?? DEFAULT_SUMMARIZER_TIMEOUT_SEC;
 
   try {
-    spawn(buildSummarizerCommand(sessionId, lockPath, logPath, timeoutSec), {
-      sessionId,
-      cwd,
-    });
+    spawn(buildSummarizerSpawnRequest(sessionId, cwd, lockPath, logPath, timeoutSec));
     return { spawned: true, reason: 'spawned', pending };
   } catch {
     releaseLock(cwd);
@@ -406,15 +373,15 @@ export async function sweepIdleSessions(
 
 export const DEFAULT_PROJECT_SUMMARY_THRESHOLD = 5;
 
-/** Shell snippet: run tim-summarizer in --project-summary mode for a label. */
+/**
+ * @deprecated Shell-based spawn removed — use {@link buildProjectSummarySpawnRequest}.
+ */
 export function buildProjectSummaryCommand(
   label: string,
   logPath: string,
   timeoutSec: number = DEFAULT_SUMMARIZER_TIMEOUT_SEC,
 ): string {
-  const q = (s: string) => JSON.stringify(s);
-  const cmd = 'node ' + JSON.stringify(path.resolve(__dirname, '..', '..', 'tim-summarizer', 'dist', 'summarize.js'));
-  return `timeout ${timeoutSec} ${cmd} --project-summary ${q(label)} >>${q(logPath)} 2>&1`;
+  return JSON.stringify(buildProjectSummarySpawnRequest(label, path.dirname(path.dirname(logPath)), logPath, timeoutSec));
 }
 
 export type ProjectSummaryReason =
@@ -462,7 +429,7 @@ export async function maybeSpawnProjectSummary(
   const timeoutSec = opts.timeoutSec ?? DEFAULT_SUMMARIZER_TIMEOUT_SEC;
 
   try {
-    spawn(buildProjectSummaryCommand(label, logPath, timeoutSec), { sessionId: label, cwd });
+    spawn(buildProjectSummarySpawnRequest(label, cwd, logPath, timeoutSec));
     return { spawned: true, reason: 'spawned', count };
   } catch {
     return { spawned: false, reason: 'spawn-failed', count };

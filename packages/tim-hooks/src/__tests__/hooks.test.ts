@@ -126,7 +126,7 @@ describe('session-end checkpoint orchestration', () => {
     expect(spawn).toHaveBeenCalledOnce();
     // The session it summarizes has to be the one that ended, not whatever
     // resolveCurrentSession picks out of the same directory.
-    expect(spawn.mock.calls[0][1].sessionId).toBe('short-end');
+    expect(spawn.mock.calls[0][0].sessionId).toBe('short-end');
 
     fs.rmSync(tmpDir, { recursive: true, force: true });
     store.close();
