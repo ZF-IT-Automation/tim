@@ -2334,7 +2334,7 @@ export async function createMcpServer(
 
         case 'tim_search': {
           const parsed = TimSearchSchema.parse(args);
-          const { query, root, type, tag, status } = parsed;
+          const { query, root, type, tag, status, searchType } = parsed;
           if (query === undefined && tag === undefined) {
             return {
               content: [{ type: 'text', text: 'tim_search needs a query, a tag, or both.' }],
@@ -2344,14 +2344,21 @@ export async function createMcpServer(
           const { topK, excerptChars, clamped } =
             clampSearchRequest(parsed.topK, parsed.excerptChars);
           const usageSid = await usageSessionId();
-          const hasFilters = Boolean(root || type || tag || status);
           // Two different retrievals behind one tool. With a query it stays what
-          // it was — relevance order, tag as a post-filter — so existing callers
+          // it was — relevance order, tag as a filter — so existing callers
           // see no reordering. Without one there is nothing to rank against, and
           // a topic reads in the order it happened.
           let results = query === undefined
-            ? await s.searchByTag(tag!, hasFilters ? 1000 : topK, root)
-            : await s.search({ query, topK: hasFilters ? 1000 : topK });
+            ? await s.searchByTag(tag!, topK, root, { type, status })
+            : await s.search({
+                query,
+                topK,
+                searchType,
+                project: root,
+                type,
+                tag,
+                status,
+              });
           if (root) {
             const roots = await resolveRoots(s, root);
             if (roots.error) {
@@ -2363,19 +2370,6 @@ export async function createMcpServer(
             results = results.filter(r =>
               roots.labels!.includes(s.getProjectLabel(r.id) ?? ''),
             );
-          }
-          if (type) {
-            results = results.filter(r => r.metadata.type === type);
-          }
-          if (tag) {
-            const tg = tag.startsWith('#') ? tag : `#${tag}`;
-            results = results.filter(r => r.tags.includes(tg) || r.tags.includes(tag));
-          }
-          if (status) {
-            results = results.filter(r => r.metadata.status === status);
-          }
-          if (hasFilters) {
-            results = results.slice(0, topK);
           }
           const response = {
             ...buildBoundedSearchResponse(results, excerptChars),

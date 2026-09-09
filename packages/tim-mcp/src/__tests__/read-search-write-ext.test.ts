@@ -333,6 +333,74 @@ describe('tim_search extended', () => {
     expect(missResponse.results).toHaveLength(0);
   });
 
+  it('passes searchType through to store.search', async () => {
+    await seedScopedEntry('P0525', 'SearchTypeNeedle alpha beta', ['#note', '#test']);
+
+    const resp = await client.callTool('tim_search', {
+      query: 'SearchTypeNeedle',
+      searchType: 'fts',
+      root: 'P0525',
+    });
+    expect(resp.result?.isError).toBeFalsy();
+    const response = JSON.parse(resp.result!.content[0].text);
+    expect(response.results.length).toBeGreaterThanOrEqual(1);
+    expect(response.results[0].title).toBe('SearchTypeNeedle alpha beta');
+  });
+
+  it('scoped MCP search finds in-project match despite foreign dominance', async () => {
+    const foreignProj = await client.callTool('tim_create_project', {
+      label: 'P0998',
+      content: 'Foreign',
+      memoryOnly: true,
+    });
+    const foreign = JSON.parse(foreignProj.result!.content[0].text);
+    for (let i = 0; i < 14; i++) {
+      await client.callTool('tim_write', {
+        content: `DominantForeignToken filler ${i}\nForeign memory line.`,
+        parentId: foreign.id,
+        tags: ['#note', '#test'],
+      });
+    }
+
+    await seedScopedEntry('P0999', 'ScopedUniqueNeedle\nProject-local recall.', ['#note', '#test']);
+
+    const resp = await client.callTool('tim_search', {
+      query: 'ScopedUniqueNeedle',
+      root: 'P0999',
+      topK: 3,
+    });
+    const response = JSON.parse(resp.result!.content[0].text);
+    expect(response.results).toHaveLength(1);
+    expect(response.results[0].title).toBe('ScopedUniqueNeedle');
+  });
+
+  it('status filter resolves nested task.status via MCP', async () => {
+    await seedScopedEntry('P0526', 'NestedStatusNeedle open', ['#task', '#test'], {
+      task: { status: 'todo' },
+    });
+    await seedScopedEntry('P0527', 'NestedStatusNeedle done', ['#task', '#test'], {
+      task: { status: 'done' },
+    });
+
+    const openResp = await client.callTool('tim_search', {
+      query: 'NestedStatusNeedle',
+      root: 'P0526',
+      status: 'todo',
+    });
+    const openResults = JSON.parse(openResp.result!.content[0].text);
+    expect(openResults.results).toHaveLength(1);
+    expect(openResults.results[0].title).toBe('NestedStatusNeedle open');
+
+    const doneResp = await client.callTool('tim_search', {
+      query: 'NestedStatusNeedle',
+      root: 'P0527',
+      status: 'done',
+    });
+    const doneResults = JSON.parse(doneResp.result!.content[0].text);
+    expect(doneResults.results).toHaveLength(1);
+    expect(doneResults.results[0].title).toBe('NestedStatusNeedle done');
+  });
+
   it('clamps requested excerpts above 500 Unicode code points and says so', async () => {
     client.kill();
     const store = new TimStore(dbPath);
