@@ -183,6 +183,73 @@ describe('sweepIdleSessions (criteria 5–9, 13)', () => {
     expect(spawn2).toHaveBeenCalledOnce();
   });
 
+  it('spawns for idle session with partial batch coverage (seq 3–4 after seq 1–2 summary)', async () => {
+    const dir = fs.mkdtempSync(path.join(TEST_ROOT, 'partial-'));
+    writeMarker(dir, { project: 'P0100' });
+    const old = '2026-01-01T10:00:00.000Z';
+    const now = () => new Date('2026-08-12T16:20:00.000Z').getTime();
+
+    await sessions.startProjectSession({
+      sessionId: 'partial-s',
+      projectId: 'P0100',
+      agentName: 'test',
+      cwd: dir,
+      harness: 'codex',
+      batchSize: 5,
+    });
+    await sessions.logExchange('partial-s', [
+      { role: 'user', content: 'Q1' },
+      { role: 'agent', content: 'A1' },
+      { role: 'user', content: 'Q2' },
+      { role: 'agent', content: 'A2' },
+    ]);
+    await sessions.writeBatchSummary('partial-s', 1, 'partial', { seqFrom: 1, seqTo: 2 });
+    await sessions.logExchange('partial-s', [
+      { role: 'user', content: 'Q3' },
+      { role: 'agent', content: 'A3' },
+      { role: 'user', content: 'Q4' },
+      { role: 'agent', content: 'A4' },
+    ]);
+    backdateSessionExchanges(store, 'partial-s', old);
+
+    const spawn = vi.fn();
+    const results = await sweepIdleSessions(store, { spawn, now, idleMinutes: 15 });
+
+    expect(spawn).toHaveBeenCalledOnce();
+    expect(spawn.mock.calls[0][1]).toMatchObject({ sessionId: 'partial-s', cwd: dir });
+    expect(results.some(r => r.sessionId === 'partial-s' && r.reason === 'spawned')).toBe(true);
+  });
+
+  it('does not spawn for idle session when partial batch is fully covered', async () => {
+    const dir = fs.mkdtempSync(path.join(TEST_ROOT, 'covered-'));
+    writeMarker(dir, { project: 'P0100' });
+    const old = '2026-01-01T10:00:00.000Z';
+    const now = () => new Date('2026-08-12T16:20:00.000Z').getTime();
+
+    await sessions.startProjectSession({
+      sessionId: 'covered-s',
+      projectId: 'P0100',
+      agentName: 'test',
+      cwd: dir,
+      harness: 'codex',
+      batchSize: 5,
+    });
+    await sessions.logExchange('covered-s', [
+      { role: 'user', content: 'Q1' },
+      { role: 'agent', content: 'A1' },
+      { role: 'user', content: 'Q2' },
+      { role: 'agent', content: 'A2' },
+    ]);
+    await sessions.writeBatchSummary('covered-s', 1, 'done', { seqFrom: 1, seqTo: 2 });
+    backdateSessionExchanges(store, 'covered-s', old);
+
+    const spawn = vi.fn();
+    const results = await sweepIdleSessions(store, { spawn, now, idleMinutes: 15 });
+
+    expect(spawn).not.toHaveBeenCalled();
+    expect(results.some(r => r.sessionId === 'covered-s' && r.reason === 'no-pending')).toBe(true);
+  });
+
   it('criterion 13: sweep spawn does not write checkpoint or change handoff note', async () => {
     const dir = fs.mkdtempSync(path.join(TEST_ROOT, 'c13-'));
     writeMarker(dir, { project: 'P0100' });
