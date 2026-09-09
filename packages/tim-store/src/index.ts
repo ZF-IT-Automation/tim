@@ -64,6 +64,13 @@ export {
   type ResumableSession,
 } from './session.js';
 export {
+  batchHasUncoveredExchanges,
+  deriveSessionCoverage,
+  type CoveredRange,
+  type SessionCoverage,
+  type UncoveredExchange,
+} from './session-coverage.js';
+export {
   deriveCounters,
   findChildByKind,
   findManagedRoot,
