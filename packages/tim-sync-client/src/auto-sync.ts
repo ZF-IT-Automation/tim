@@ -1,5 +1,6 @@
 import type { TimStore } from 'tim-store';
 import { loadConfig, getDeviceId } from './config.js';
+import { resolveSecretPassphrase } from './credentials.js';
 import { buildSyncContext, runPush, runPull } from './sync.js';
 
 const syncCooldowns = new Map<string, number>();
@@ -40,7 +41,13 @@ export async function autoPush(store: TimStore): Promise<AutoPushResult> {
 
   pushInFlight = true;
   try {
-    const ctx = buildSyncContext(store, config, passphrase, getDeviceId());
+    const ctx = buildSyncContext(
+      store,
+      config,
+      passphrase,
+      getDeviceId(),
+      resolveSecretPassphrase(),
+    );
     const result = await runPush(ctx);
     markSynced('push'); // ONLY arm cooldown on success
     return { ran: true, pushed: result.pushed, queued: result.queued };
@@ -71,7 +78,13 @@ export async function autoPull(store: TimStore): Promise<AutoPullResult> {
 
   pullInFlight = true;
   try {
-    const ctx = buildSyncContext(store, config, passphrase, getDeviceId());
+    const ctx = buildSyncContext(
+      store,
+      config,
+      passphrase,
+      getDeviceId(),
+      resolveSecretPassphrase(),
+    );
     const result = await runPull(ctx);
     markSynced('pull'); // ONLY arm cooldown on success
     return { ran: true, pulled: result.pulled, conflicts: result.conflicts };

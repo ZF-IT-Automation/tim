@@ -19,6 +19,8 @@ import {
   buildSyncContext,
   runPush,
   runPull,
+  resolveSecretPassphrase,
+  MissingSecretPassphraseError,
   startDevServer,
 } from 'tim-sync-client';
 import { loadConfig as loadTimConfig, getTimDir } from 'tim-core';
@@ -132,11 +134,18 @@ export async function cmdSyncPush(args: string[]): Promise<void> {
   }
 
   const passphrase = requirePassphrase(flags);
+  const secretPassphrase = resolveSecretPassphrase(flags);
   const store = new TimStore(getDbPath());
   try {
-    const ctx = buildSyncContext(store, config, passphrase, getDeviceId());
+    const ctx = buildSyncContext(store, config, passphrase, getDeviceId(), secretPassphrase);
     const { pushed, queued } = await runPush(ctx);
     console.log(`Pushed ${pushed} records${queued ? ' (more queued — retry push)' : ''}`);
+  } catch (err) {
+    if (err instanceof MissingSecretPassphraseError) {
+      console.error(err.message);
+      process.exit(1);
+    }
+    throw err;
   } finally {
     store.close();
   }
@@ -151,9 +160,10 @@ export async function cmdSyncPull(args: string[]): Promise<void> {
   }
 
   const passphrase = requirePassphrase(flags);
+  const secretPassphrase = resolveSecretPassphrase(flags);
   const store = new TimStore(getDbPath());
   try {
-    const ctx = buildSyncContext(store, config, passphrase, getDeviceId());
+    const ctx = buildSyncContext(store, config, passphrase, getDeviceId(), secretPassphrase);
     const { pulled, conflicts } = await runPull(ctx);
     console.log(`Pulled ${pulled} records, ${conflicts} conflicts`);
   } finally {

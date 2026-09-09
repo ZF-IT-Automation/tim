@@ -628,10 +628,15 @@ device locally; it does not delete remote data.
 **`tim sync push`**
 Push unacknowledged staging changes to the server.
 Requires `TIM_SYNC_PASSPHRASE` env var or `--passphrase`.
+Secret-marked entries additionally require `TIM_SECRET_PASSPHRASE` or
+`--secret-passphrase`; without it, non-secret entries still push but secret
+entries are blocked with an error.
 
 **`tim sync pull`**
 Pull remote changes from the server.
 Requires `TIM_SYNC_PASSPHRASE` env var or `--passphrase`.
+`TIM_SECRET_PASSPHRASE` or `--secret-passphrase` is optional; without it,
+encrypted secret payloads arrive as local placeholders (title `🔒 [secret]`).
 
 **`tim sync status`**
 Show sync configuration and health:
@@ -901,6 +906,7 @@ tim resolve-session --session $SESSION_ID --format json
 |----------|---------|-------------|
 | `TIM_DB_PATH` | MCP & CLI | Override DB location (default: `~/.tim/tim.db`) |
 | `TIM_SYNC_PASSPHRASE` | `sync push/pull` | Passphrase for sync authentication |
+| `TIM_SECRET_PASSPHRASE` | `sync push/pull` | Extra passphrase for secret entry inner encryption (required to push secrets) |
 
 ### Paths & Locations
 
