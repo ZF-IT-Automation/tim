@@ -1,6 +1,7 @@
 import type { Entry } from 'tim-core';
 import { loadConfig } from 'tim-core';
 import type { TimStore } from './store.js';
+import { batchHasUncoveredExchanges } from './session-coverage.js';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -523,18 +524,6 @@ export class SessionManager {
       summaryBatches.map(s => [Number(s.metadata.batch_index), s]),
     );
 
-    const batchHasUncovered = async (batchNode: Entry): Promise<boolean> => {
-      const batchIdx = Number(batchNode.metadata.batch_index);
-      const summary = summaryByIndex.get(batchIdx);
-      const users = (await this.store.getChildrenBySeq(batchNode.id)).filter(
-        u => u.metadata.role === 'user',
-      );
-      if (users.length === 0) return false;
-      if (!summary) return true;
-      const maxSeq = Math.max(...users.map(u => Number(u.metadata.seq)));
-      return maxSeq > Number(summary.metadata.seq_to);
-    };
-
     let targetBatchIndex: number | null = null;
     let seqFloor = 0;
     for (const batchNode of exchangeBatches) {
@@ -589,7 +578,7 @@ export class SessionManager {
     const hasMore = await (async () => {
       for (const b of exchangeBatches) {
         if (Number(b.metadata.batch_index) <= batchIndex) continue;
-        if (await batchHasUncovered(b)) return true;
+        if (await batchHasUncoveredExchanges(this.store, b, summaryByIndex)) return true;
       }
       return false;
     })();
