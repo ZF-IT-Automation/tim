@@ -127,6 +127,14 @@ export interface SearchOptions {
   searchType?: 'fts' | 'vector' | 'hybrid';
   confidenceAbove?: number;
   visibilityMask?: number;
+  /** Project label/alias/name — scope retrieval to project subtree before limits. */
+  project?: string;
+  /** Filter metadata.type before ranking/limiting. */
+  type?: string;
+  /** Filter exact tag before ranking/limiting. */
+  tag?: string;
+  /** Filter resolved task/bug status before ranking/limiting. */
+  status?: string;
 }
 
 // ─── Staging (for sync) ───────────────────────────────────
@@ -394,6 +402,12 @@ export {
   type SectionEntryType,
 } from './project-schema.js';
 export { isStale, staleDays, daysSinceLastVerified } from './staleness.js';
+export { resolveEntryTaskStatus } from './task-status.js';
+export {
+  PROMPT_STOP_WORDS,
+  extractPromptTerms,
+  buildPromptSearchQuery,
+} from './extract-prompt-terms.js';
 export {
   acquireMaintenanceLock,
   assertMaintenanceClear,
