@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import {
   deriveCounters,
+  deriveSessionCoverage,
   resolveCurrentSession,
   findChildByKind,
   KIND_EXCHANGE_BATCH,
@@ -290,12 +291,12 @@ export async function sweepIdleSessions(
     if (spawns >= maxSpawns) break;
 
     const sessionId = session.id;
-    const batchSize = typeof session.metadata.batch_size === 'number'
-      ? session.metadata.batch_size
-      : 5;
-    const { exchangeCount, batchesSummarized } = await deriveCounters(store, sessionId);
-    const pending = exchangeCount - batchesSummarized * batchSize;
-    if (pending <= 0) continue;
+    const coverage = await deriveSessionCoverage(store, sessionId);
+    const { batchesSummarized } = coverage;
+    if (!coverage.hasPendingSummarization) {
+      results.push({ sessionId, reason: 'no-pending' });
+      continue;
+    }
 
     const lastAt = await getSessionLastExchangeAt(store, sessionId);
     if (!lastAt || lastAt > idleCutoff) {
