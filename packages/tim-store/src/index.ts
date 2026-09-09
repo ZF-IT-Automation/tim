@@ -119,7 +119,10 @@ export {
   ackStaging,
   applyRemoteEntry,
   applyRemoteEdge,
+  applyEntryTombstone,
+  entryLocalLwwTimestamp,
   getUnackedStaging,
+  localEntryRecordFromRow,
   recordFromPayload,
   type StagingRow,
 } from './sync-methods.js';
