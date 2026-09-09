@@ -111,23 +111,36 @@ export {
 export {
   onSessionStop,
   maybeSpawnSummarizer,
+  maybeSpawnProjectSummary,
   sweepIdleSessions,
   buildSummarizerCommand,
+  buildSummarizerSpawnRequest,
+  buildProjectSummaryCommand,
+  buildProjectSummarySpawnRequest,
   isSummarizerChild,
   SUMMARIZER_ENV_FLAG,
   spawnSummarizer,
   detachedSpawner,
+  resolveSummarizeScriptPath,
+  resolveSupervisorScriptPath,
   summarizerLogPath,
   DEFAULT_SUMMARIZER_TIMEOUT_SEC,
+  DEFAULT_PROJECT_SUMMARY_THRESHOLD,
   type SpawnContext,
   type Spawner,
+  type SummarizerSpawnRequest,
   type SessionStopResult,
   type SessionStopReason,
   type MaybeSpawnSummarizerOptions,
+  type ProjectSummaryResult,
+  type ProjectSummaryReason,
+  type MaybeSpawnProjectSummaryOptions,
   type IdleSweepOptions,
   type IdleSweepResult,
   type IdleSweepReason,
 } from './session-hooks.js';
+
+export { runSupervisor, parseSupervisorArgv, type SupervisorOptions } from './summarizer-supervisor.js';
 
 export {
   MODE_ERROR,

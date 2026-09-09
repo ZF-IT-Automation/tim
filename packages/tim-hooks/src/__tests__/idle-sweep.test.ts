@@ -117,7 +117,7 @@ describe('sweepIdleSessions (criteria 5–9, 13)', () => {
     const results = await sweepIdleSessions(store, { spawn, now, idleMinutes: 15 });
 
     expect(spawn).toHaveBeenCalledOnce();
-    expect(spawn.mock.calls[0][1]).toMatchObject({ sessionId: 'idle-s', cwd: idleDir });
+    expect(spawn.mock.calls[0][0]).toMatchObject({ sessionId: 'idle-s', cwd: idleDir });
 
     const spawned = results.filter(r => r.reason === 'spawned');
     expect(spawned).toHaveLength(1);

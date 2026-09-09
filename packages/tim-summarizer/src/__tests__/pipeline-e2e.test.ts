@@ -118,10 +118,10 @@ describe('pipeline e2e — happy path', () => {
     });
     expect(spawnRes).toMatchObject({ spawned: true, reason: 'spawned' });
     expect(fakeSpawner).toHaveBeenCalledOnce();
-    const [cmd, ctx] = fakeSpawner.mock.calls[0]!;
-    expect(cmd).toContain('summarize.js');
-    expect(cmd).toContain('TIM_SESSION_ID');
-    expect(ctx.sessionId).toBe(SESSION_ID);
+    const [req] = fakeSpawner.mock.calls[0]!;
+    expect(req.sessionId).toBe(SESSION_ID);
+    expect(req.cwd).toBe(tmpCwd);
+    expect(req.logPath).toContain('summarizer.log');
 
     const batch = await sessions.showUnsummarized(SESSION_ID);
     expect(batch.batchIndex).toBe(1);

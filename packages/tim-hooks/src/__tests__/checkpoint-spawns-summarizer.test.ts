@@ -46,7 +46,7 @@ describe('checkpoint spawns summarizer (criteria 14–15)', () => {
     const spawn = vi.fn();
     await runCheckpointWithSummarizerSpawn(store, 'sess-cp', dir, { spawn });
     expect(spawn).toHaveBeenCalledOnce();
-    expect(spawn.mock.calls[0][1]).toMatchObject({ sessionId: 'sess-cp', cwd: dir });
+    expect(spawn.mock.calls[0][0]).toMatchObject({ sessionId: 'sess-cp', cwd: dir });
   });
 
   it('criterion 14: batchFull skips below-threshold pending gate', async () => {
@@ -62,10 +62,10 @@ describe('checkpoint spawns summarizer (criteria 14–15)', () => {
 
   it('criterion 15: handoff note survives rollup when spawn runs after checkpoint', async () => {
     let noteAtSpawn: string | undefined;
-    const spawn = vi.fn(async (_cmd, ctx) => {
-      const root = await findChildByKind(store, ctx.sessionId, KIND_SUMMARY_ROOT);
+    const spawn = vi.fn(async req => {
+      const root = await findChildByKind(store, req.sessionId, KIND_SUMMARY_ROOT);
       noteAtSpawn = root?.metadata.handoff_note as string | undefined;
-      await sessions.updateSessionSummary(ctx.sessionId, 'rollup from spawned summarizer');
+      await sessions.updateSessionSummary(req.sessionId, 'rollup from spawned summarizer');
     });
     await runCheckpointWithSummarizerSpawn(store, 'sess-cp', dir, {
       handoffNote: 'done: ship | next: verify',
