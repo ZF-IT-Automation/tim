@@ -17,6 +17,7 @@ import {
   type SyncState,
 } from './config.js';
 import { enqueue, flushQueue, loadQueue } from './queue.js';
+import { MissingSecretPassphraseError } from './credentials.js';
 
 export type { SyncState } from './config.js';
 
@@ -210,9 +211,14 @@ export async function pushCycle(
   const db = store.getDb();
   const allRows = getUnackedStaging(db);
   const placeholderKeys: Array<{ key: string; lww: number }> = [];
+  let blockedSecretCount = 0;
   const rows = allRows.filter((row) => {
     if (row.entity_type === 'entry' && isSecretPlaceholderPayload(row.payload)) {
       placeholderKeys.push({ key: row.key, lww: row.lww_timestamp });
+      return false;
+    }
+    if (row.entity_type === 'entry' && !secretEncrypt && payloadIsSecret(row.payload)) {
+      blockedSecretCount++;
       return false;
     }
     return true;
@@ -257,6 +263,10 @@ export async function pushCycle(
 
   state.lastPush = new Date().toISOString();
   saveSyncState(state);
+
+  if (blockedSecretCount > 0) {
+    throw new MissingSecretPassphraseError(blockedSecretCount);
+  }
 
   return { pushed: pushedCount, queued: !ok };
 }
