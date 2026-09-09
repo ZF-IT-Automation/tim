@@ -103,6 +103,34 @@ describe('tim hook prompt-submit', () => {
     expect(result.stdout).not.toContain('Needle foreign memory');
   });
 
+  it('finds project match despite twelve higher-ranked foreign entries', async () => {
+    const store = new TimStore(dbPath);
+    const foreign = await store.createProject('P0002', { content: 'Foreign project' });
+    for (let i = 0; i < 14; i++) {
+      await store.write(`DominantRecallToken filler ${i}\nForeign dominance.`, {
+        parentId: foreign.id,
+        tags: ['#note'],
+      });
+    }
+    const local = await store.createProject('P0001', { content: 'Local project' });
+    await store.write('UniqueRecallNeedle\nScoped lesson for this project.', {
+      parentId: local.id,
+      tags: ['#note'],
+    });
+    store.close();
+    writeMarker(cwd, 'P0001');
+
+    const result = run({
+      session_id: 's-foreign-dominated',
+      prompt: 'Wie kann ich die UniqueRecallNeedle für dieses Projekt finden?',
+      cwd,
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain('UniqueRecallNeedle');
+    expect(result.stdout).not.toContain('Foreign dominance');
+  });
+
   it('does not walk up to a parent marker', async () => {
     const child = path.join(cwd, 'child');
     fs.mkdirSync(child);

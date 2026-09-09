@@ -1,4 +1,4 @@
-import { loadConfig } from 'tim-core';
+import { loadConfig, buildPromptSearchQuery } from 'tim-core';
 import type { TimStore } from 'tim-store';
 
 const DEFAULT_TIMEOUT_MS = 1000;
@@ -44,17 +44,15 @@ async function computePromptContext(
 
   const lines: string[] = [];
 
+  const searchQuery = buildPromptSearchQuery(query);
   let hits = await store.search({
-    query,
-    topK: RETRIEVAL_TOP_K * 3,
+    query: searchQuery,
+    topK: RETRIEVAL_TOP_K,
     searchType: 'fts',
+    project: params.projectLabel,
   });
 
-  if (params.projectLabel) {
-    hits = hits.filter(e => store.getProjectLabel(e.id) === params.projectLabel);
-  }
-
-  for (const hit of hits.slice(0, RETRIEVAL_TOP_K)) {
+  for (const hit of hits) {
     const label = hit.title?.trim() || hit.id;
     lines.push(`TIM erinnert: ${label} — ${excerpt(hit.content || hit.title)}`);
   }
