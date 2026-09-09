@@ -10,14 +10,18 @@ import {
   buildSyncContext,
   runPush,
   runPull,
+  autoPush,
+  resetSyncCooldowns,
   startDevServer,
   resetDevServer,
   encryptSecretPayload,
   decryptSecretPayload,
   isSecretPlaceholderPayload,
+  MissingSecretPassphraseError,
   SECRET_PLACEHOLDER_TITLE,
 } from '../index.js';
 import { deriveKey, encrypt, decrypt } from '../crypto.js';
+import type { TimEnvelope } from '../envelope.js';
 
 // Isolate ~/.tim (sync-state.json, queues) from the real home and from other
 // test files — vitest runs each file in its own process, so the override is safe.
@@ -269,6 +273,186 @@ describe('secret sync fixes', () => {
       expect(entry!.metadata.secret).toBe(true);
       store2.close();
       fs.unlinkSync(dbPath2);
+    });
+  });
+
+  describe('secret boundary enforcement', () => {
+    let server: Server;
+    const deviceId = 'secret-boundary-device';
+    const fileId = `tim-${deviceId}`;
+    const passphrase = 'sync-only-pass';
+    const secretPassphrase = 'inner-secret-pass';
+    const salt = generateSalt();
+    const port = 3196;
+
+    beforeAll(async () => {
+      resetDevServer();
+      try { fs.unlinkSync(path.join(os.homedir(), '.tim', 'sync-state.json')); } catch {}
+      server = startDevServer(port);
+      await new Promise<void>((r) => server.once('listening', r));
+
+      const client = new TimSyncClient(`http://127.0.0.1:${port}`, 'test-token');
+      await client.createFile(fileId, salt);
+    });
+
+    afterAll(() => {
+      server.close();
+    });
+
+    function decryptOuter(blobData: string): TimEnvelope {
+      const syncKey = deriveKey(passphrase, salt);
+      return JSON.parse(decrypt(blobData, syncKey)) as TimEnvelope;
+    }
+
+    it('blocks secret push without secret passphrase and keeps secret unacked', async () => {
+      const dbPath = path.join(os.tmpdir(), `tim-secret-block-${Date.now()}.db`);
+      const store = new TimStore(dbPath);
+      await store.write('blocked secret', { id: 'SEC-BLOCK', metadata: { secret: true } });
+
+      const client = new TimSyncClient(`http://127.0.0.1:${port}`, 'test-token');
+      const pushSpy = vi.spyOn(client, 'push');
+      const ctx = {
+        ...buildSyncContext(
+          store,
+          {
+            serverUrl: `http://127.0.0.1:${port}`,
+            token: 'test-token',
+            salt,
+            fileId,
+          },
+          passphrase,
+          deviceId,
+        ),
+        client,
+      };
+
+      await expect(runPush(ctx)).rejects.toThrow(MissingSecretPassphraseError);
+      expect(pushSpy).not.toHaveBeenCalled();
+      expect(getUnackedStaging(store.getDb()).length).toBe(1);
+      store.close();
+      fs.unlinkSync(dbPath);
+    });
+
+    it('pushes non-secret entries then errors on blocked secrets', async () => {
+      const dbPath = path.join(os.tmpdir(), `tim-secret-partial-${Date.now()}.db`);
+      const store = new TimStore(dbPath);
+      await store.write('public note', { id: 'PUB-1' });
+      await store.write('hidden note', { id: 'SEC-PARTIAL', metadata: { secret: true } });
+
+      const client = new TimSyncClient(`http://127.0.0.1:${port}`, 'test-token');
+      const ctx = {
+        ...buildSyncContext(
+          store,
+          {
+            serverUrl: `http://127.0.0.1:${port}`,
+            token: 'test-token',
+            salt,
+            fileId,
+          },
+          passphrase,
+          deviceId,
+        ),
+        client,
+      };
+
+      await expect(runPush(ctx)).rejects.toThrow(MissingSecretPassphraseError);
+      const unacked = getUnackedStaging(store.getDb());
+      expect(unacked.length).toBe(1);
+      expect(JSON.parse(unacked[0].payload).id).toBe('SEC-PARTIAL');
+      store.close();
+      fs.unlinkSync(dbPath);
+    });
+
+    it('encrypts inner secret payload; sync passphrase alone cannot read it', async () => {
+      const dbPath = path.join(os.tmpdir(), `tim-secret-inner-${Date.now()}.db`);
+      const store = new TimStore(dbPath);
+      const title = 'classified title';
+      const body = 'classified body';
+      await store.write(body, { id: 'SEC-INNER', title, metadata: { secret: true } });
+
+      const client = new TimSyncClient(`http://127.0.0.1:${port}`, 'test-token');
+      let capturedBlob: string | undefined;
+      vi.spyOn(client, 'push').mockImplementation(async (req) => {
+        capturedBlob = req.blobs[0]?.data;
+        return { mappings: req.blobs.map((b) => ({ proposed_id: b.proposed_id, final_id: b.proposed_id })) };
+      });
+
+      const ctx = {
+        ...buildSyncContext(
+          store,
+          {
+            serverUrl: `http://127.0.0.1:${port}`,
+            token: 'test-token',
+            salt,
+            fileId,
+          },
+          passphrase,
+          deviceId,
+          secretPassphrase,
+        ),
+        client,
+      };
+
+      const { pushed } = await runPush(ctx);
+      expect(pushed).toBe(1);
+      expect(capturedBlob).toBeDefined();
+
+      const inner = decryptOuter(capturedBlob!);
+      expect(inner.is_encrypted).toBe(true);
+      const payload = JSON.parse(inner.payload) as { title: string; content: string };
+      expect(payload.title).not.toBe(title);
+      expect(payload.content).not.toBe(body);
+
+      const placeholder = decryptSecretPayload(inner.payload);
+      const parsed = JSON.parse(placeholder);
+      expect(parsed.title).toBe(SECRET_PLACEHOLDER_TITLE);
+      expect(parsed.content).toBe('');
+
+      store.close();
+      fs.unlinkSync(dbPath);
+      vi.restoreAllMocks();
+    });
+
+    it('autoPush uses TIM_SECRET_PASSPHRASE to push secret entries', async () => {
+      const dbPath = path.join(os.tmpdir(), `tim-secret-auto-${Date.now()}.db`);
+      const store = new TimStore(dbPath);
+      await store.write('auto secret', { id: 'SEC-AUTO', metadata: { secret: true } });
+
+      const timDir = path.join(os.homedir(), '.tim');
+      fs.mkdirSync(timDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(timDir, 'sync.json'),
+        JSON.stringify({
+          serverUrl: `http://127.0.0.1:${port}`,
+          userId: 'u',
+          token: 'test-token',
+          salt,
+          fileId,
+        }),
+      );
+      fs.writeFileSync(
+        path.join(timDir, 'sync-state.json'),
+        JSON.stringify({ fileId, cursor: null, lastPush: null, lastPull: null }),
+      );
+
+      const origSync = process.env.TIM_SYNC_PASSPHRASE;
+      const origSecret = process.env.TIM_SECRET_PASSPHRASE;
+      process.env.TIM_SYNC_PASSPHRASE = passphrase;
+      process.env.TIM_SECRET_PASSPHRASE = secretPassphrase;
+      resetSyncCooldowns();
+
+      const result = await autoPush(store);
+      expect(result.ran).toBe(true);
+      expect(result.pushed).toBe(1);
+      expect(getUnackedStaging(store.getDb()).length).toBe(0);
+
+      if (origSync === undefined) delete process.env.TIM_SYNC_PASSPHRASE;
+      else process.env.TIM_SYNC_PASSPHRASE = origSync;
+      if (origSecret === undefined) delete process.env.TIM_SECRET_PASSPHRASE;
+      else process.env.TIM_SECRET_PASSPHRASE = origSecret;
+
+      store.close();
+      fs.unlinkSync(dbPath);
     });
   });
 });

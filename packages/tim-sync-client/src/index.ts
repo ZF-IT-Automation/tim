@@ -38,5 +38,9 @@ export {
   SECRET_PLACEHOLDER_TITLE,
   type SyncCycleContext,
 } from './sync.js';
+export {
+  MissingSecretPassphraseError,
+  resolveSecretPassphrase,
+} from './credentials.js';
 export { autoPush, autoPull, resetSyncCooldowns, _peekCooldown } from './auto-sync.js';
 export { startDevServer, resetDevServer } from './dev-server.js';
