@@ -986,6 +986,27 @@ function summarizeEntry(entry: Entry & { summary?: string }, includeBody: boolea
   return { ...rest, summary };
 }
 
+type EntryWithChildren = Entry & { children?: Entry[] };
+
+/** Summary-first read presentation with trust annotations; recurses into children. */
+function presentReadEntry(entry: EntryWithChildren, includeBody: boolean, cwd: string): unknown {
+  const annotated = annotateTrust(entry, cwd) as EntryWithChildren;
+  const nested = annotated.children;
+  const { children: _drop, ...withoutChildren } = annotated;
+  const base = summarizeEntry(withoutChildren, includeBody) as Record<string, unknown>;
+  if (nested && nested.length > 0) {
+    base.children = nested.map(child => presentReadEntry(child, includeBody, cwd));
+  }
+  return base;
+}
+
+/** Top-level read ids for telemetry: the entry plus direct children only. */
+function directReadIds(entry: EntryWithChildren): string[] {
+  const ids = [entry.id];
+  for (const child of entry.children ?? []) ids.push(child.id);
+  return ids;
+}
+
 function metadataString(value: unknown): string {
   return typeof value === 'string' ? value : '';
 }
@@ -2098,11 +2119,12 @@ export async function createMcpServer(
               }
               entries.push(entry);
             }
+            const cwd = isHttp ? '' : process.cwd();
             bestEffortTelemetry('recordRead', () =>
               s.recordRead(entries.map(e => e.id), usageSid));
             return {
               content: [{ type: 'text', text: formatToolResponse({
-                entries: entries.map(e => summarizeEntry(annotateTrust(e, isHttp ? '' : process.cwd()) as Entry, include_body)),
+                entries: entries.map(e => presentReadEntry(e, include_body, cwd)),
                 missing,
               }) }],
             };
@@ -2162,12 +2184,28 @@ export async function createMcpServer(
                 isError: true,
               };
             }
-            const sectionEntry = await s.read(sec.id, readOpts);
-            const children = await s.getChildren(sec.id, { enforceSuppression: true });
+            const cwd = isHttp ? '' : process.cwd();
+            const rawSection = await s.read(sec.id, readOpts);
+            if (!rawSection) {
+              return errorResult(`section not found: ${section}`);
+            }
+            const { children: rawChildren, ...sectionOnly } = rawSection as EntryWithChildren;
+            const payload: { section: unknown; children?: unknown[] } = {
+              section: presentReadEntry(sectionOnly as Entry, include_body, cwd),
+            };
+            if (includeChildren && depth !== 1) {
+              payload.children = (rawChildren ?? []).map(child =>
+                presentReadEntry(child, include_body, cwd));
+            }
+            const returnedIds = includeChildren && depth !== 1
+              ? directReadIds(rawSection as EntryWithChildren)
+              : [rawSection.id];
+            bestEffortTelemetry('recordRead', () =>
+              s.recordRead(returnedIds, usageSid));
             return {
               content: [{
                 type: 'text',
-                text: formatToolResponse({ section: sectionEntry, children }),
+                text: formatToolResponse(payload),
               }],
             };
           }
@@ -2191,11 +2229,12 @@ export async function createMcpServer(
               return errorResult(`Project not found: ${project}`);
             }
             const edges = includeEdges ? await s.getEdges(entry.id, 'both') : [];
+            const cwd = isHttp ? '' : process.cwd();
             bestEffortTelemetry('recordRead', () =>
               s.recordRead([entry.id], usageSid));
             return {
               content: [{ type: 'text', text: formatToolResponse({
-                entry: summarizeEntry(annotateTrust(entry, isHttp ? '' : process.cwd()) as Entry, include_body),
+                entry: presentReadEntry(entry, include_body, cwd),
                 edges,
               }) }],
             };
@@ -2227,11 +2266,12 @@ export async function createMcpServer(
               return errorResult(`Entry ${id} not found in project ${projectLabel}`);
             }
             const edges = includeEdges ? await s.getEdges(id, 'both') : [];
+            const cwd = isHttp ? '' : process.cwd();
             bestEffortTelemetry('recordRead', () =>
               s.recordRead([entry.id], usageSid));
             return {
               content: [{ type: 'text', text: formatToolResponse({
-                entry: summarizeEntry(annotateTrust(entry, isHttp ? '' : process.cwd()) as Entry, include_body),
+                entry: presentReadEntry(entry, include_body, cwd),
                 edges,
               }) }],
             };
