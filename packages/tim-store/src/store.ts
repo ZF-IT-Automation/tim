@@ -36,7 +36,13 @@ import { detectProjectVcs } from './vcs.js';
 import { BATCH_STRUCTURAL_TAGS } from './session-tree.js';
 // Constants-only module, no imports of its own — safe to pull in here.
 import { COMMIT_TAG } from './commit-tree.js';
-import { recordFromPayload, entryLocalLwwTimestamp, edgeLocalLwwTimestamp } from './sync-methods.js';
+import {
+  recordFromPayload,
+  entryLocalLwwTimestamp,
+  edgeLocalLwwTimestamp,
+  localEntryRecordFromRow,
+  applyEntryTombstone,
+} from './sync-methods.js';
 import { parentIsSecret } from './secret.js';
 
 /**
@@ -304,7 +310,7 @@ export class TimStore implements MemoryInterface {
       ).get(id) as RowEntry | undefined;
     }
 
-    if (!entry) return null;
+    if (!entry || entry.tombstoned_at) return null;
 
     // Visibility check
     const mask = options.visibilityMask ?? 7; // default: owner+trusted+leased
@@ -2950,7 +2956,7 @@ export class TimStore implements MemoryInterface {
       (id, source_id, target_id, type, weight, metadata, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?)`);
 
-    const deleteEntry = this.db.prepare('DELETE FROM entries WHERE id = ?');
+    const deleteEntry = this.db.prepare('DELETE FROM entries WHERE id = ?'); // slot-collision eviction only
     const deleteEdge = this.db.prepare('DELETE FROM edges WHERE id = ?');
 
     const transaction = this.db.transaction(() => {
@@ -2961,33 +2967,17 @@ export class TimStore implements MemoryInterface {
             const existing = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(payload.id) as
               RowEntry | undefined;
             if (existing) {
-              const local = recordFromPayload(
-                payload.id,
-                'entry',
-                existing.tombstoned_at ? 'delete' : 'upsert',
-                JSON.stringify(existing),
-                entryLocalLwwTimestamp(existing),
-                String(existing.lww_device ?? 'local'),
-                Number(existing.confidence ?? 1),
-              );
+              const local = localEntryRecordFromRow(existing);
               const { winner } = resolveLWW(local, record);
               if (winner !== record) continue;
             }
-            deleteEntry.run(payload.id);
+            applyEntryTombstone(this.db, payload.id, record.lwwTimestamp, record.lwwDevice);
           } else {
             const entry = JSON.parse(record.payload) as RowEntry;
             const existing = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(entry.id) as
               RowEntry | undefined;
             if (existing) {
-              const local = recordFromPayload(
-                entry.id,
-                'entry',
-                existing.tombstoned_at ? 'delete' : 'upsert',
-                JSON.stringify(existing),
-                entryLocalLwwTimestamp(existing),
-                String(existing.lww_device ?? 'local'),
-                Number(existing.confidence ?? 1),
-              );
+              const local = localEntryRecordFromRow(existing);
               const { winner } = resolveLWW(local, record);
               if (winner !== record) continue;
             }
@@ -3003,14 +2993,7 @@ export class TimStore implements MemoryInterface {
                      AND id != ?`,
                 ).get(entry.parent_id, meta.batch_index, entry.id) as RowEntry | undefined;
                 if (slotCollisionEntry) {
-                  const localSlot = recordFromPayload(
-                    slotCollisionEntry.id, 'entry',
-                    slotCollisionEntry.tombstoned_at ? 'delete' : 'upsert',
-                    JSON.stringify(slotCollisionEntry),
-                    entryLocalLwwTimestamp(slotCollisionEntry),
-                    String(slotCollisionEntry.lww_device ?? 'local'),
-                    Number(slotCollisionEntry.confidence ?? 1),
-                  );
+                  const localSlot = localEntryRecordFromRow(slotCollisionEntry);
                   const { winner } = resolveLWW(localSlot, record);
                   if (winner === localSlot) continue;
                   deleteEntry.run(slotCollisionEntry.id);
