@@ -216,7 +216,7 @@ describe('sweepIdleSessions (criteria 5–9, 13)', () => {
     const results = await sweepIdleSessions(store, { spawn, now, idleMinutes: 15 });
 
     expect(spawn).toHaveBeenCalledOnce();
-    expect(spawn.mock.calls[0][1]).toMatchObject({ sessionId: 'partial-s', cwd: dir });
+    expect(spawn.mock.calls[0][0]).toMatchObject({ sessionId: 'partial-s', cwd: dir });
     expect(results.some(r => r.sessionId === 'partial-s' && r.reason === 'spawned')).toBe(true);
   });
 
