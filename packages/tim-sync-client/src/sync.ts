@@ -4,6 +4,7 @@ import {
   applyRemoteEntry,
   applyRemoteEdge,
   getUnackedStaging,
+  localEntryRecordFromRow,
 } from 'tim-store';
 import { resolveLWW } from 'tim-core';
 import type { StagingRecord } from 'tim-core';
@@ -292,13 +293,7 @@ export async function pullCycle(
 
         if (existing) {
           const localRecord: StagingRecord = {
-            key: env.key,
-            entityType: 'entry',
-            operation: existing.tombstoned_at ? 'delete' : 'upsert',
-            payload: JSON.stringify(existing),
-            lwwTimestamp: Date.parse(String(existing.accessed_at ?? existing.created_at)),
-            lwwDevice: 'local',
-            lwwConfidence: Number(existing.confidence ?? 1),
+            ...localEntryRecordFromRow(existing as Parameters<typeof localEntryRecordFromRow>[0]),
             acked: true,
           };
           const resolution = resolveLWW(localRecord, remote);
