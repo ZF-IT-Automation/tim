@@ -16,7 +16,7 @@ import type {
 } from 'tim-core';
 import {
   stripDeprecatedTags, resolveLWW, SCHEMA_KINDS, staleDays, isStale,
-  loadConfig as loadTimConfig,
+  loadConfig as loadTimConfig, resolveEntryTaskStatus,
 } from 'tim-core';
 import {
   runMigrations,
@@ -84,6 +84,10 @@ export function sanitizeFtsQuery(query: string): string {
 
   for (const raw of query.split(/\s+/)) {
     if (!raw) continue;
+    if (/^(AND|OR|NOT|NEAR)$/i.test(raw)) {
+      out.push(raw.toUpperCase());
+      continue;
+    }
     const m = raw.match(/^([A-Za-z_][A-Za-z0-9_]*):(.+)$/);
     if (m && REAL_COLUMNS.has(m[1].toLowerCase())) {
       const q = quoteTerm(m[2]);
@@ -2419,8 +2423,19 @@ export class TimStore implements MemoryInterface {
     const topK = options.topK ?? 10;
     const searchType = options.searchType ?? 'hybrid';
     const patterns = this.loadActiveSuppressPatterns();
-    const candidates = (await this.searchFts(options.query, topK * 3))
-      .filter(e => !TimStore.matchesSuppressed(patterns, e));
+    const hasScopeFilters = Boolean(
+      options.project || options.type || options.tag || options.status,
+    );
+    const fetchLimit = hasScopeFilters
+      ? Math.min(1000, Math.max(topK * 10, topK * 3))
+      : topK * 3;
+    let candidates = await this.searchFts(options.query, fetchLimit, {
+      project: options.project,
+      type: options.type,
+      tag: options.tag,
+    });
+    candidates = candidates.filter(e => !TimStore.matchesSuppressed(patterns, e));
+    candidates = this.applySearchMetadataFilters(candidates, options);
 
     if (searchType === 'fts') {
       const ftsOnly = this.rankByUsage(candidates, topK);
@@ -2571,7 +2586,7 @@ export class TimStore implements MemoryInterface {
   async searchFts(
     query: string,
     limit: number = 10,
-    opts: { project?: string; excludeKinds?: string[] } = {},
+    opts: { project?: string; excludeKinds?: string[]; type?: string; tag?: string } = {},
   ): Promise<Entry[]> {
     // Sanitize FTS5 query — quote tokens; drop quoted FTS operator literals before MATCH.
     // See sanitizeFtsQuery() in store-utils for rationale.
@@ -2608,6 +2623,15 @@ export class TimStore implements MemoryInterface {
       scopeSql += ` AND COALESCE(json_extract(e.metadata, '$.kind'), '') NOT IN (${holes})`;
       params.push(...opts.excludeKinds);
     }
+    if (opts.type) {
+      scopeSql += ` AND json_extract(e.metadata, '$.type') = ?`;
+      params.push(opts.type);
+    }
+    if (opts.tag) {
+      const needle = opts.tag.startsWith('#') ? opts.tag : `#${opts.tag}`;
+      scopeSql += ` AND e.tags LIKE ?`;
+      params.push(`%"${needle}"%`);
+    }
     params.push(limit);
 
     const rows = this.db.prepare(`
@@ -2622,6 +2646,25 @@ export class TimStore implements MemoryInterface {
     `).all(...params) as RowEntry[];
 
     return rows.map(rowToEntry);
+  }
+
+  /** Apply metadata filters before ranking/limiting — status uses nested task/bug resolution. */
+  applySearchMetadataFilters(
+    entries: Entry[],
+    filters: Pick<SearchOptions, 'type' | 'tag' | 'status'>,
+  ): Entry[] {
+    let result = entries;
+    if (filters.type) {
+      result = result.filter(r => r.metadata.type === filters.type);
+    }
+    if (filters.tag) {
+      const tg = filters.tag.startsWith('#') ? filters.tag : `#${filters.tag}`;
+      result = result.filter(r => r.tags.includes(tg) || r.tags.includes(filters.tag!));
+    }
+    if (filters.status) {
+      result = result.filter(r => resolveEntryTaskStatus(r.metadata) === filters.status);
+    }
+    return result;
   }
 
   /**
@@ -3361,7 +3404,12 @@ export class TimStore implements MemoryInterface {
    * Chronological rather than ranked on purpose: the caller is reading a topic's
    * history, and a history is only legible in the order it happened.
    */
-  async searchByTag(tag: string, topK = 10, project?: string): Promise<Entry[]> {
+  async searchByTag(
+    tag: string,
+    topK = 10,
+    project?: string,
+    filters: Pick<SearchOptions, 'type' | 'status'> = {},
+  ): Promise<Entry[]> {
     const needle = tag.startsWith('#') ? tag : `#${tag}`;
 
     let scopeSql = '';
@@ -3397,11 +3445,13 @@ export class TimStore implements MemoryInterface {
     // a substring is excluded by the quotes, but a corrupt column could slip
     // through), so the exact membership check stays.
     const patterns = this.loadActiveSuppressPatterns();
-    return rows
-      .map(rowToEntry)
-      .filter(e => e.tags.includes(needle))
-      .filter(e => !TimStore.matchesSuppressed(patterns, e))
-      .slice(0, topK);
+    return this.applySearchMetadataFilters(
+      rows
+        .map(rowToEntry)
+        .filter(e => e.tags.includes(needle))
+        .filter(e => !TimStore.matchesSuppressed(patterns, e)),
+      filters,
+    ).slice(0, topK);
   }
 
   /**
