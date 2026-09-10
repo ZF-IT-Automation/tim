@@ -48,9 +48,8 @@ export function uncoveredUserSeqs(users: Entry[], summary?: Entry): number[] {
     return userSeqs;
   }
 
-  const covered = new Set<number>();
-  for (let s = seqFrom; s <= seqTo; s++) covered.add(s);
-  return userSeqs.filter(seq => !covered.has(seq));
+  // Inspect observed exchanges, never expand a potentially huge imported range.
+  return userSeqs.filter(seq => seq < seqFrom || seq > seqTo);
 }
 
 /** Same partial-batch rule as showUnsummarized, reusable for idle sweep and health reporting. */

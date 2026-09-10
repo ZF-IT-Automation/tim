@@ -136,4 +136,19 @@ describe('deriveSessionCoverage', () => {
     expect(coverage.uncovered.map(u => u.seq)).toEqual([1]);
     expect(coverage.coveredRanges).toEqual([]);
   });
+
+  it('handles huge imported ranges without enumerating their sequence numbers', async () => {
+    await sessions.startProjectSession({
+      sessionId: 'huge-range', projectId: 'P0100', agentName: 'a', cwd: '/', harness: 't', batchSize: 5,
+    });
+    await sessions.logExchange('huge-range', [
+      { role: 'user', content: 'Q1' }, { role: 'agent', content: 'A1' },
+    ]);
+    await sessions.writeBatchSummary('huge-range', 1, 'Imported range', {
+      seqFrom: 1, seqTo: Number.MAX_SAFE_INTEGER,
+    });
+    const coverage = await deriveSessionCoverage(store, 'huge-range');
+    expect(coverage.uncovered).toEqual([]);
+    expect(coverage.hasPendingSummarization).toBe(false);
+  });
 });
