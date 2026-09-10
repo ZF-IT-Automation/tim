@@ -1,6 +1,7 @@
 import type { Entry } from 'tim-core';
 import type { TimStore } from 'tim-store';
 import {
+  boundRenderedText,
   createTokenBudget,
   estimateTextTokens,
   tryChargeTokens,
@@ -72,17 +73,17 @@ export function selectBriefingBlocks(
     return a.order - b.order;
   });
 
-  const includedIds = new Set<string>();
+  const included: BriefingBlock[] = [];
   for (const block of sorted) {
     const text = block.lines.join('\n');
     if (tryChargeTokens(ledger, text)) {
-      includedIds.add(block.id);
+      included.push(block);
       continue;
     }
     // Partial inclusion for tiny budgets: keep first line if it fits.
     const firstLine = block.lines[0];
     if (firstLine && tryChargeTokens(ledger, firstLine)) {
-      includedIds.add(block.id);
+      included.push({ ...block, lines: [firstLine] });
       if (block.lines.length > 1) {
         omissions.push(`${block.id}: ${block.lines.length - 1} lines omitted (token budget)`);
       }
@@ -91,10 +92,27 @@ export function selectBriefingBlocks(
     omissions.push(`${block.id}: omitted (token budget)`);
   }
 
-  const included = blocks
-    .filter(b => includedIds.has(b.id))
-    .sort((a, b) => a.order - b.order);
+  included.sort((a, b) => a.order - b.order);
   return { included, omissions, ledger };
+}
+
+/** Shared selection + whole-response bounding for load and preview MCP surfaces. */
+export function assembleBoundedBriefingText(
+  blocks: BriefingBlock[],
+  tokenBudget: number,
+  trailingParts: string[] = [],
+): { text: string; omissions: string[]; truncated: boolean } {
+  const { included, omissions } = selectBriefingBlocks(blocks, tokenBudget);
+  const outLines: string[] = [];
+  for (const block of included) outLines.push(...block.lines);
+  if (omissions.length > 0) {
+    outLines.push('', `… briefing omissions: ${omissions.join('; ')}`);
+  }
+  for (const part of trailingParts) {
+    if (part) outLines.push(part);
+  }
+  const bounded = boundRenderedText(outLines.join('\n'), tokenBudget);
+  return { text: bounded.text, omissions, truncated: bounded.truncated };
 }
 
 export function renderSelectedBlocks(blocks: BriefingBlock[]): string {

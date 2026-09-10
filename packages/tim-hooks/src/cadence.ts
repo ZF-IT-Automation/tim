@@ -12,7 +12,9 @@ export function getCheckpointEveryN(config: TimConfigFile): number {
 
 export function getBriefingMaxTokens(config: TimConfigFile): number {
   const n = config.briefing?.maxTokens;
-  if (typeof n === 'number' && n > 0) return n;
+  if (typeof n === 'number' && Number.isFinite(n) && Number.isInteger(n) && n > 0) {
+    return Math.min(n, 64000);
+  }
   return DEFAULT_BRIEFING_MAX_TOKENS;
 }
 

@@ -81,8 +81,15 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { buildBoundedSearchResponse, clampSearchRequest } from './search-response.js';
-import { validateTokenBudget, boundRenderedText } from './briefing-budget.js';
-import { formatQueryExtrasBlock, searchTaskBriefingExtras } from './task-aware-selection.js';
+import { validateTokenBudget, clampBriefingDefaultBudget, MAX_TOKEN_BUDGET } from './briefing-budget.js';
+import { loadProjectForBriefing } from './briefing-load.js';
+import {
+  assembleBoundedBriefingText,
+  BRIEFING_PRIORITY,
+  formatQueryExtrasBlock,
+  searchTaskBriefingExtras,
+  type BriefingBlock,
+} from './task-aware-selection.js';
 
 /**
  * Format a tool response payload to JSON.
@@ -434,9 +441,9 @@ const TimPreviewBriefingSchema = z.object({
   project: z.string().describe('Project label, e.g. P0063'),
   sessionId: z.string().optional()
     .describe('Session the delta is computed against; defaults to the project\'s most recent'),
-  maxTokens: z.number().int().min(0).max(4000).optional()
-    .describe('[deprecated alias] Use tokenBudget instead'),
-  tokenBudget: z.number().int().min(1).max(4000).optional()
+  maxTokens: z.number().int().min(0).max(MAX_TOKEN_BUDGET).optional()
+    .describe('[deprecated alias] Use tokenBudget instead; 0 disables directive briefing content'),
+  tokenBudget: z.number().int().min(1).max(MAX_TOKEN_BUDGET).optional()
     .describe('Token budget for the rendered preview response; defaults to briefing.maxTokens from config'),
   query: z.string().optional()
     .describe('Optional task query — adds project-scoped context extras without changing binding'),
@@ -558,7 +565,7 @@ const TimLoadProjectSchema = z.object({
     .describe('How many child levels to load (1-5)'),
   budget: z.number().min(1).max(1000).optional().default(200)
     .describe('Max child entries to return'),
-  tokenBudget: z.number().int().min(1).max(4000).optional()
+  tokenBudget: z.number().int().min(1).max(MAX_TOKEN_BUDGET).optional()
     .describe('Token budget for the rendered project brief; defaults to briefing.maxTokens from config'),
   query: z.string().optional()
     .describe('Optional task query — adds project-scoped context extras inside the brief'),
@@ -580,7 +587,7 @@ const TimReadProjectSchema = z.object({
     .describe('How many child levels to load (1-5)'),
   budget: z.number().min(1).max(1000).optional().default(200)
     .describe('Max child entries to return'),
-  tokenBudget: z.number().int().min(1).max(4000).optional()
+  tokenBudget: z.number().int().min(1).max(MAX_TOKEN_BUDGET).optional()
     .describe('Token budget for the rendered project brief; defaults to briefing.maxTokens from config'),
   query: z.string().optional()
     .describe('Optional task query — adds project-scoped context extras inside the brief'),
@@ -1015,26 +1022,30 @@ function resolveBriefingTokenBudget(
   tokenBudget: unknown,
   legacyMaxTokens: unknown,
 ): { ok: true; value: number } | { ok: false; message: string } {
-  const defaultBudget = getBriefingMaxTokens(loadConfig());
+  const configDefault = clampBriefingDefaultBudget(getBriefingMaxTokens(loadConfig()));
+  // Deprecated maxTokens=0: historical no-directive-briefing behavior for preview.
+  if ((tokenBudget === undefined || tokenBudget === null) && legacyMaxTokens === 0) {
+    return { ok: true, value: 0 };
+  }
   const explicit = tokenBudget ?? legacyMaxTokens;
-  return validateTokenBudget(explicit, defaultBudget);
+  if (explicit === undefined || explicit === null) {
+    return { ok: true, value: configDefault };
+  }
+  return validateTokenBudget(explicit, configDefault);
 }
 
 function buildFormatProjectOptions(
   tokenBudget: number,
   query: string | undefined,
   queryExtras: Entry[],
+  trailingSuffix?: string,
 ): FormatProjectOutputOptions {
   return {
     tokenBudget,
     ...(query ? { query } : {}),
     ...(queryExtras.length > 0 ? { queryExtras } : {}),
+    ...(trailingSuffix ? { trailingSuffix } : {}),
   };
-}
-
-/** Entry budget must cover large Log sections plus reserved later sections. */
-function effectiveLoadBudget(entryBudget: number): number {
-  return Math.max(entryBudget, 350);
 }
 
 function truncText(s: string, max: number): string {
@@ -3237,21 +3248,36 @@ export async function createMcpServer(
             ? formatQueryExtrasBlock(queryExtras, query)
             : null;
 
-          const parts = [
-            `project: ${preview.projectLabel} (${preview.binding})`,
-            `session used for delta/cadence: ${preview.sessionId ?? '(none — project has no sessions)'}`,
-            '',
-            '── directive (what a start hook emits) ──',
-            preview.directive,
-            '',
-            '── briefing (what tim_session_start returns) ──',
-            preview.briefing ?? '(none)',
+          const blocks: BriefingBlock[] = [
+            {
+              id: 'preview-meta',
+              priority: BRIEFING_PRIORITY.header,
+              order: 0,
+              lines: [
+                `project: ${preview.projectLabel} (${preview.binding})`,
+                `session used for delta/cadence: ${preview.sessionId ?? '(none — project has no sessions)'}`,
+              ],
+            },
+            {
+              id: 'preview-directive',
+              priority: BRIEFING_PRIORITY.header,
+              order: 10,
+              lines: ['', '── directive (what a start hook emits) ──', preview.directive],
+            },
+            {
+              id: 'preview-briefing',
+              priority: BRIEFING_PRIORITY.recentSession,
+              order: 20,
+              lines: [
+                '',
+                '── briefing (what tim_session_start returns) ──',
+                preview.briefing ?? '(none)',
+              ],
+            },
           ];
-          if (extrasBlock) {
-            parts.push('', extrasBlock.lines.join('\n'));
-          }
+          if (extrasBlock) blocks.push(extrasBlock);
 
-          const bounded = boundRenderedText(parts.join('\n'), budgetCheck.value);
+          const bounded = assembleBoundedBriefingText(blocks, budgetCheck.value);
           return { content: [{ type: 'text', text: bounded.text }] };
         }
 
@@ -3541,9 +3567,9 @@ export async function createMcpServer(
             }
           }
 
-          const result = await s.loadProject(projectLabel, {
+          const result = await loadProjectForBriefing(s, projectLabel, {
             depth,
-            budget: effectiveLoadBudget(budget),
+            budget,
             sections,
           });
           if (!result) {
@@ -3556,10 +3582,16 @@ export async function createMcpServer(
             query,
             ftsQueryMode,
           );
+          const nextHint = bind
+            ? `\n\nNEXT: review the open tasks above (tim_show kind="tasks" for the full list). ` +
+              `Save new insights as you go: tim_write with where:"${projectLabel}/<Section>" ` +
+              `(Ideas, Decisions, Errors, Log) — never rely on chat history alone.`
+            : '';
           const formatOptions = buildFormatProjectOptions(
             budgetCheck.value,
             query,
             queryExtras,
+            nextHint || undefined,
           );
 
           if (bind && sessionId) {
@@ -3596,17 +3628,10 @@ export async function createMcpServer(
             getBriefingRecentSessions(loadConfig()),
             formatOptions,
           );
-          // Response-driven guidance: weak models follow response text more
-          // reliably than system prompts — spell out the standard next step.
-          const nextHint = bind
-            ? `\n\nNEXT: review the open tasks above (tim_show kind="tasks" for the full list). ` +
-              `Save new insights as you go: tim_write with where:"${projectLabel}/<Section>" ` +
-              `(Ideas, Decisions, Errors, Log) — never rely on chat history alone.`
-            : '';
           return {
             content: [{
               type: 'text',
-              text: formatted + nextHint,
+              text: formatted,
             }],
           };
         }
@@ -3635,9 +3660,9 @@ export async function createMcpServer(
             return errorResult(`Project not found: ${label}`);
           }
 
-          const result = await s.loadProject(resolved.label, {
+          const result = await loadProjectForBriefing(s, resolved.label, {
             depth,
-            budget: effectiveLoadBudget(budget),
+            budget,
             sections,
           });
           if (!result) {
