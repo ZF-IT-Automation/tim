@@ -50,6 +50,7 @@ async function computePromptContext(
     topK: RETRIEVAL_TOP_K,
     searchType: 'fts',
     project: params.projectLabel,
+    ftsQueryMode: searchQuery.includes(' OR ') ? 'or-terms' : 'literal',
   });
 
   for (const hit of hits) {

@@ -16,7 +16,7 @@ import type {
 } from 'tim-core';
 import {
   stripDeprecatedTags, resolveLWW, SCHEMA_KINDS, staleDays, isStale,
-  loadConfig as loadTimConfig, resolveEntryTaskStatus,
+  loadConfig as loadTimConfig, resolveEntryTaskStatus, entryTaskStatusSql,
 } from 'tim-core';
 import {
   runMigrations,
@@ -67,47 +67,89 @@ const MACHINE_STAMPED_TAGS = new Set([COMMIT_TAG, '#commits']);
  * Tokens with no alphanumeric content are dropped (a fully-punctuation
  * quoted string would match nothing or error).
  */
-export function sanitizeFtsQuery(query: string): string {
-  if (!query) return '';
-  // FTS5 columns defined in schema.ts — the ONLY names a `token:value`
-  // filter may reference. Anything else would crash ("no such column: X").
-  const REAL_COLUMNS = new Set(['title', 'content', 'tags']);
-  const out: string[] = [];
+export type FtsQueryMode = 'literal' | 'or-terms';
 
-  const quoteTerm = (term: string): string | null => {
-    // Embedded double quotes would terminate the FTS5 string — strip them.
-    const cleaned = term.replace(/"/g, ' ').trim();
-    // A quoted string with no tokenizable content matches nothing (or errors).
-    if (!/[0-9A-Za-zÀ-￿]/.test(cleaned)) return null;
-    return `"${cleaned}"`;
-  };
+const FTS_REAL_COLUMNS = new Set(['title', 'content', 'tags']);
 
-  for (const raw of query.split(/\s+/)) {
-    if (!raw) continue;
-    if (/^(AND|OR|NOT|NEAR)$/i.test(raw)) {
-      out.push(raw.toUpperCase());
+function quoteFtsTerm(term: string): string | null {
+  const cleaned = term.replace(/"/g, ' ').trim();
+  if (!/[0-9A-Za-zÀ-￿]/.test(cleaned)) return null;
+  return `"${cleaned}"`;
+}
+
+/** Tokenize a literal user query, preserving double-quoted phrases. */
+function tokenizeLiteralFtsQuery(query: string): string[] {
+  const tokens: string[] = [];
+  let i = 0;
+  while (i < query.length) {
+    while (i < query.length && /\s/.test(query[i])) i++;
+    if (i >= query.length) break;
+    if (query[i] === '"') {
+      i++;
+      let phrase = '';
+      while (i < query.length && query[i] !== '"') {
+        if (query[i] === '\\' && i + 1 < query.length) {
+          phrase += query[i + 1];
+          i += 2;
+          continue;
+        }
+        phrase += query[i++];
+      }
+      if (query[i] === '"') i++;
+      if (phrase.trim()) tokens.push(phrase);
       continue;
     }
+    let raw = '';
+    while (i < query.length && !/\s/.test(query[i])) raw += query[i++];
+    if (raw) tokens.push(raw);
+  }
+  return tokens;
+}
+
+function sanitizeFtsLiteralQuery(query: string): string {
+  const out: string[] = [];
+  for (const raw of tokenizeLiteralFtsQuery(query)) {
     const m = raw.match(/^([A-Za-z_][A-Za-z0-9_]*):(.+)$/);
-    if (m && REAL_COLUMNS.has(m[1].toLowerCase())) {
-      const q = quoteTerm(m[2]);
+    if (m && FTS_REAL_COLUMNS.has(m[1].toLowerCase())) {
+      const q = quoteFtsTerm(m[2]);
       if (q) out.push(`${m[1].toLowerCase()}:${q}`);
       continue;
     }
     if (m) {
-      // Bogus column filter: keep both sides as plain search terms.
-      const a = quoteTerm(m[1]);
+      const a = quoteFtsTerm(m[1]);
       if (a) out.push(a);
-      const b = quoteTerm(m[2]);
+      const b = quoteFtsTerm(m[2]);
       if (b) out.push(b);
       continue;
     }
-    const q = quoteTerm(raw);
+    const q = quoteFtsTerm(raw);
     if (q) out.push(q);
   }
-
-  // Implicit FTS5 AND — quoted terms joined by space.
   return out.join(' ');
+}
+
+/** Parse prompt-recall OR queries: only quoted terms joined by OR survive. */
+function sanitizeFtsOrTermsQuery(query: string): string {
+  const terms: string[] = [];
+  const re = /"((?:[^"]|"")*)"/g;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(query)) !== null) {
+    const cleaned = match[1].replace(/""/g, '"').trim();
+    const q = quoteFtsTerm(cleaned);
+    if (q) terms.push(q);
+  }
+  if (terms.length === 0) return sanitizeFtsLiteralQuery(query);
+  return terms.join(' OR ');
+}
+
+/**
+ * Sanitize a query string into a safe FTS5 MATCH expression.
+ * `literal` quotes every user token (including AND/OR/NOT/NEAR) and keeps
+ * double-quoted phrases intact. `or-terms` is for generated prompt recall.
+ */
+export function sanitizeFtsQuery(query: string, mode: FtsQueryMode = 'literal'): string {
+  if (!query) return '';
+  return mode === 'or-terms' ? sanitizeFtsOrTermsQuery(query) : sanitizeFtsLiteralQuery(query);
 }
 
 /**
@@ -2424,19 +2466,15 @@ export class TimStore implements MemoryInterface {
     const topK = options.topK ?? 10;
     const searchType = options.searchType ?? 'hybrid';
     const patterns = this.loadActiveSuppressPatterns();
-    const hasScopeFilters = Boolean(
-      options.project || options.type || options.tag || options.status,
-    );
-    const fetchLimit = hasScopeFilters
-      ? Math.min(1000, Math.max(topK * 10, topK * 3))
-      : topK * 3;
+    const fetchLimit = topK * 3;
     let candidates = await this.searchFts(options.query, fetchLimit, {
       project: options.project,
       type: options.type,
       tag: options.tag,
+      status: options.status,
+      ftsQueryMode: options.ftsQueryMode,
     });
     candidates = candidates.filter(e => !TimStore.matchesSuppressed(patterns, e));
-    candidates = this.applySearchMetadataFilters(candidates, options);
 
     if (searchType === 'fts') {
       const ftsOnly = this.rankByUsage(candidates, topK);
@@ -2587,19 +2625,21 @@ export class TimStore implements MemoryInterface {
   async searchFts(
     query: string,
     limit: number = 10,
-    opts: { project?: string; excludeKinds?: string[]; type?: string; tag?: string } = {},
+    opts: {
+      project?: string;
+      excludeKinds?: string[];
+      type?: string;
+      tag?: string;
+      status?: string;
+      ftsQueryMode?: FtsQueryMode;
+    } = {},
   ): Promise<Entry[]> {
-    // Sanitize FTS5 query — quote tokens; drop quoted FTS operator literals before MATCH.
-    // See sanitizeFtsQuery() in store-utils for rationale.
-    const sanitized = sanitizeFtsQuery(query)
-      .replace(/"(?:AND|OR|NOT|NEAR)"/gi, '')
+    const sanitized = sanitizeFtsQuery(query, opts.ftsQueryMode ?? 'literal')
       .replace(/\s+/g, ' ')
       .trim();
     if (!sanitized) return [];
 
-    // Both filters go into the SQL, never into a post-filter on the result set:
-    // LIMIT applies before the caller sees anything, so filtering afterwards
-    // returns a handful of rows out of a page that was mostly excluded matter.
+    // Scope filters go into SQL before LIMIT — post-filtering starves valid hits.
     const params: unknown[] = [sanitized];
     let scopeSql = '';
     if (opts.project) {
@@ -2630,8 +2670,16 @@ export class TimStore implements MemoryInterface {
     }
     if (opts.tag) {
       const needle = opts.tag.startsWith('#') ? opts.tag : `#${opts.tag}`;
-      scopeSql += ` AND e.tags LIKE ?`;
-      params.push(`%"${needle}"%`);
+      const rawTag = opts.tag.startsWith('#') ? opts.tag.slice(1) : opts.tag;
+      scopeSql += ` AND EXISTS (
+        SELECT 1 FROM json_each(e.tags) je
+        WHERE je.value = ? OR je.value = ?
+      )`;
+      params.push(needle, rawTag);
+    }
+    if (opts.status) {
+      scopeSql += ` AND (${entryTaskStatusSql('e.metadata')}) = ?`;
+      params.push(opts.status);
     }
     params.push(limit);
 

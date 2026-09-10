@@ -356,7 +356,7 @@ describe('tim_search extended', () => {
     const foreign = JSON.parse(foreignProj.result!.content[0].text);
     for (let i = 0; i < 14; i++) {
       await client.callTool('tim_write', {
-        content: `DominantForeignToken filler ${i}\nForeign memory line.`,
+        content: `ScopedUniqueNeedle ScopedUniqueNeedle ScopedUniqueNeedle filler ${i}\nForeign memory line.`,
         parentId: foreign.id,
         tags: ['#note', '#test'],
       });
