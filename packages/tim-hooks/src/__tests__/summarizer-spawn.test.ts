@@ -3,7 +3,11 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { spawn as nodeSpawn } from 'child_process';
-import { runSupervisor } from '../summarizer-supervisor.js';
+import {
+  runSupervisor,
+  isProcessGroupAlive,
+  safeKillProcessGroup,
+} from '../summarizer-supervisor.js';
 import { summarizerLockPath, releaseLock } from '../marker.js';
 
 const TEST_ROOT = path.join(os.tmpdir(), 'tim-test-runs');
@@ -202,5 +206,74 @@ describe('summarizer spawn lifecycle', () => {
     expect(fs.existsSync(out)).toBe(true);
     const payload = JSON.parse(fs.readFileSync(out, 'utf8')) as { sessionId: string };
     expect(payload.sessionId).toBe(`id with $ "' \`meta\``);
+  });
+
+  it('keeps lock and escalates until a SIGTERM-ignoring grandchild exits', async () => {
+    const script = path.join(dir, 'spawn-grandchild.js');
+    fs.writeFileSync(
+      script,
+      `
+        const { spawn } = require('child_process');
+        const grandchild = spawn(process.execPath, ['-e', \`
+          process.on('SIGTERM', () => {});
+          const fs = require('fs');
+          const marker = process.env.TIM_GRANDCHILD_MARKER;
+          if (marker) fs.writeFileSync(marker, 'alive');
+          setTimeout(() => {
+            if (marker) fs.writeFileSync(marker, 'done');
+            process.exit(0);
+          }, 2500);
+        \`], { stdio: 'ignore' });
+        grandchild.unref();
+        process.exit(0);
+      `,
+    );
+    const lockPath = summarizerLockPath(dir);
+    const logPath = logPathFor(dir);
+    const marker = path.join(dir, '.tim', 'grandchild.txt');
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    fs.writeFileSync(lockPath, JSON.stringify({ pid: 1, ts: Date.now() }));
+    process.env.TIM_GRANDCHILD_MARKER = marker;
+
+    const start = Date.now();
+    const code = await runSupervisor({
+      lockPath,
+      logPath,
+      timeoutSec: 1,
+      sessionId: 'grandchild-sid',
+      summarizeScript: script,
+      cwd: dir,
+    });
+    const elapsed = Date.now() - start;
+
+    expect(code).toBe(124);
+    expect(fs.existsSync(lockPath)).toBe(false);
+    expect(fs.readFileSync(marker, 'utf8')).toBe('done');
+    expect(elapsed).toBeGreaterThanOrEqual(2000);
+    expect(elapsed).toBeLessThan(15_000);
+    delete process.env.TIM_GRANDCHILD_MARKER;
+  });
+
+  it('safeKillProcessGroup skips already-reaped process groups', () => {
+    const { spawn } = require('child_process') as typeof import('child_process');
+    const child = spawn(process.execPath, ['-e', 'process.exit(0)'], {
+      detached: true,
+      stdio: 'ignore',
+    });
+    const pgid = child.pid!;
+    child.unref();
+    return new Promise<void>((resolve, reject) => {
+      child.on('exit', () => {
+        setTimeout(() => {
+          try {
+            expect(isProcessGroupAlive(pgid)).toBe(false);
+            expect(safeKillProcessGroup(pgid, 'SIGKILL')).toBe(false);
+            resolve();
+          } catch (err) {
+            reject(err);
+          }
+        }, 100);
+      });
+    });
   });
 });

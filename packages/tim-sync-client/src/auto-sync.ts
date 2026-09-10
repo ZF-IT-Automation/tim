@@ -55,8 +55,8 @@ export async function autoPush(store: TimStore): Promise<AutoPushResult> {
     return { ran: true, pushed: result.pushed, queued: result.queued };
   } catch (err) {
     if (err instanceof MissingSecretPassphraseError) {
+      markSynced('push');
       if (err.pushedCount > 0) {
-        markSynced('push');
         return { ran: true, pushed: err.pushedCount, reason: 'partial-blocked' };
       }
       console.error('[tim-sync] autoPush failed:', err.message);
