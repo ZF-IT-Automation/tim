@@ -16,7 +16,9 @@ import type {
 } from 'tim-core';
 import {
   stripDeprecatedTags, resolveLWW, SCHEMA_KINDS, staleDays, isStale,
-  loadConfig as loadTimConfig, resolveEntryTaskStatus, entryTaskStatusSql,
+  loadConfig as loadTimConfig,
+  resolveEntrySearchStatus,
+  entrySearchStatusSql,
 } from 'tim-core';
 import {
   runMigrations,
@@ -109,6 +111,12 @@ function tokenizeLiteralFtsQuery(query: string): string[] {
 function sanitizeFtsLiteralQuery(query: string): string {
   const out: string[] = [];
   for (const raw of tokenizeLiteralFtsQuery(query)) {
+    // Uppercase AND is the only FTS5 boolean operator promoted from user input.
+    // OR/NOT/NEAR stay quoted literals; lowercase and/or remain safe literals.
+    if (raw === 'AND') {
+      out.push('AND');
+      continue;
+    }
     const m = raw.match(/^([A-Za-z_][A-Za-z0-9_]*):(.+)$/);
     if (m && FTS_REAL_COLUMNS.has(m[1].toLowerCase())) {
       const q = quoteFtsTerm(m[2]);
@@ -144,8 +152,9 @@ function sanitizeFtsOrTermsQuery(query: string): string {
 
 /**
  * Sanitize a query string into a safe FTS5 MATCH expression.
- * `literal` quotes every user token (including AND/OR/NOT/NEAR) and keeps
- * double-quoted phrases intact. `or-terms` is for generated prompt recall.
+ * `literal` quotes every user token; unquoted uppercase AND becomes an FTS5
+ * intersection operator; lowercase and/or/not/near stay literal. Double-quoted
+ * phrases are preserved. `or-terms` is for generated prompt recall OR-chains.
  */
 export function sanitizeFtsQuery(query: string, mode: FtsQueryMode = 'literal'): string {
   if (!query) return '';
@@ -2462,6 +2471,33 @@ export class TimStore implements MemoryInterface {
 
   // ─── Search ────────────────────────────────────────────
 
+  /** `root: 'all'`, `''`, and unset all mean unrestricted cross-project search. */
+  private static isUnrestrictedProjectScope(project?: string): boolean {
+    return !project || project === '' || project.toLowerCase() === 'all';
+  }
+
+  private entryMatchesSearchFilters(
+    entry: Entry,
+    filters: Pick<SearchOptions, 'project' | 'type' | 'tag' | 'status'>,
+    scopeRootId?: string,
+  ): boolean {
+    if (scopeRootId) {
+      const label = this.getProjectLabel(entry.id);
+      const scopeLabel = this.getProjectLabel(scopeRootId);
+      if (label !== scopeLabel) return false;
+    }
+    if (filters.type && entry.metadata.type !== filters.type) return false;
+    if (filters.tag) {
+      const tg = filters.tag.startsWith('#') ? filters.tag : `#${filters.tag}`;
+      if (!entry.tags.includes(tg) && !entry.tags.includes(filters.tag)) return false;
+    }
+    if (filters.status) {
+      const st = resolveEntrySearchStatus(entry.metadata);
+      if (st !== filters.status) return false;
+    }
+    return true;
+  }
+
   async search(options: SearchOptions): Promise<Entry[]> {
     const topK = options.topK ?? 10;
     const searchType = options.searchType ?? 'hybrid';
@@ -2480,6 +2516,9 @@ export class TimStore implements MemoryInterface {
       const ftsOnly = this.rankByUsage(candidates, topK);
       const resolved = await this.resolveProjectLabel(options.query);
       if (resolved.status === 'found') {
+        const scopeRootId = TimStore.isUnrestrictedProjectScope(options.project)
+          ? undefined
+          : (await this.read(options.project!))?.id;
         const row = this.db.prepare(`
           SELECT * FROM entries
           WHERE json_extract(metadata, '$.kind') = 'project'
@@ -2488,7 +2527,12 @@ export class TimStore implements MemoryInterface {
             AND tombstoned_at IS NULL
         `).get(resolved.label) as RowEntry | undefined;
         const proj = row ? rowToEntry(row) : null;
-        if (proj && !TimStore.matchesSuppressed(patterns, proj) && !ftsOnly.some(e => e.id === proj.id)) {
+        if (
+          proj
+          && !TimStore.matchesSuppressed(patterns, proj)
+          && this.entryMatchesSearchFilters(proj, options, scopeRootId)
+          && !ftsOnly.some(e => e.id === proj.id)
+        ) {
           return [proj, ...ftsOnly].slice(0, topK);
         }
       }
@@ -2527,15 +2571,23 @@ export class TimStore implements MemoryInterface {
     // Broader fix: index metadata.label + aliases in fts_entries (migration + triggers).
     const resolved = await this.resolveProjectLabel(options.query);
     if (resolved.status === 'found') {
+      const scopeRootId = TimStore.isUnrestrictedProjectScope(options.project)
+        ? undefined
+        : (await this.read(options.project!))?.id;
       const row = this.db.prepare(`
         SELECT * FROM entries
         WHERE json_extract(metadata, '$.kind') = 'project'
           AND json_extract(metadata, '$.label') = ?
           AND irrelevant = 0
           AND tombstoned_at IS NULL
-      `).get(resolved.label) as RowEntry | undefined;
+        `).get(resolved.label) as RowEntry | undefined;
       const proj = row ? rowToEntry(row) : null;
-      if (proj && !TimStore.matchesSuppressed(patterns, proj) && !fts.some(e => e.id === proj.id)) {
+      if (
+        proj
+        && !TimStore.matchesSuppressed(patterns, proj)
+        && this.entryMatchesSearchFilters(proj, options, scopeRootId)
+        && !fts.some(e => e.id === proj.id)
+      ) {
         return [proj, ...fts].slice(0, topK);
       }
     }
@@ -2642,8 +2694,8 @@ export class TimStore implements MemoryInterface {
     // Scope filters go into SQL before LIMIT — post-filtering starves valid hits.
     const params: unknown[] = [sanitized];
     let scopeSql = '';
-    if (opts.project) {
-      const resolved = await this.resolveProjectLabel(opts.project);
+    if (!TimStore.isUnrestrictedProjectScope(opts.project)) {
+      const resolved = await this.resolveProjectLabel(opts.project!);
       if (resolved.status !== 'found') return [];
       const root = await this.read(resolved.label);
       if (!root) return [];
@@ -2678,7 +2730,7 @@ export class TimStore implements MemoryInterface {
       params.push(needle, rawTag);
     }
     if (opts.status) {
-      scopeSql += ` AND (${entryTaskStatusSql('e.metadata')}) = ?`;
+      scopeSql += ` AND (${entrySearchStatusSql('e.metadata')}) = ?`;
       params.push(opts.status);
     }
     params.push(limit);
@@ -2697,7 +2749,7 @@ export class TimStore implements MemoryInterface {
     return rows.map(rowToEntry);
   }
 
-  /** Apply metadata filters before ranking/limiting — status uses nested task/bug resolution. */
+  /** Apply metadata filters — status uses search resolution (plain notes have no status). */
   applySearchMetadataFilters(
     entries: Entry[],
     filters: Pick<SearchOptions, 'type' | 'tag' | 'status'>,
@@ -2711,7 +2763,7 @@ export class TimStore implements MemoryInterface {
       result = result.filter(r => r.tags.includes(tg) || r.tags.includes(filters.tag!));
     }
     if (filters.status) {
-      result = result.filter(r => resolveEntryTaskStatus(r.metadata) === filters.status);
+      result = result.filter(r => resolveEntrySearchStatus(r.metadata) === filters.status);
     }
     return result;
   }
@@ -3466,8 +3518,8 @@ export class TimStore implements MemoryInterface {
 
     let scopeSql = '';
     const params: unknown[] = [`%"${needle}"%`];
-    if (project) {
-      const resolved = await this.resolveProjectLabel(project);
+    if (!TimStore.isUnrestrictedProjectScope(project)) {
+      const resolved = await this.resolveProjectLabel(project!);
       if (resolved.status !== 'found') return [];
       const root = await this.read(resolved.label);
       if (!root) return [];
@@ -3484,12 +3536,23 @@ export class TimStore implements MemoryInterface {
       params.push(root.id);
     }
 
+    let statusSql = '';
+    if (filters.status) {
+      statusSql = ` AND (${entrySearchStatusSql('metadata')}) = ?`;
+      params.push(filters.status);
+    }
+    if (filters.type) {
+      statusSql += ` AND json_extract(metadata, '$.type') = ?`;
+      params.push(filters.type);
+    }
+
     const rows = this.db.prepare(`
       SELECT * FROM entries
       WHERE tags LIKE ?
         AND irrelevant = 0
         AND tombstoned_at IS NULL
         ${scopeSql}
+        ${statusSql}
       ORDER BY created_at ASC, rowid ASC
     `).all(...params) as RowEntry[];
 

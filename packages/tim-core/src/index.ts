@@ -407,7 +407,12 @@ export {
   type SectionEntryType,
 } from './project-schema.js';
 export { isStale, staleDays, daysSinceLastVerified } from './staleness.js';
-export { resolveEntryTaskStatus, entryTaskStatusSql } from './task-status.js';
+export {
+  resolveEntryTaskStatus,
+  entryTaskStatusSql,
+  resolveEntrySearchStatus,
+  entrySearchStatusSql,
+} from './task-status.js';
 export {
   PROMPT_STOP_WORDS,
   extractPromptTerms,
