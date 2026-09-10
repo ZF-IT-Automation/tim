@@ -43,6 +43,49 @@ export function entryTaskStatusSql(metadataColumn = 'e.metadata'): string {
   END`;
 }
 
+/**
+ * Search-filter status resolution — distinct from task-list display defaults.
+ *
+ * Precedence (first match wins):
+ * 1. `metadata.task` object → `task.status` or `'todo'`
+ * 2. `metadata.bug` object → `bug.status` or `'open'` (bug vocabulary preserved)
+ * 3. legacy flat `metadata.status` string (any value, including `fixed`/`documented`)
+ * 4. legacy `metadata.task === true` marker → `'todo'`
+ * 5. otherwise → `null` (plain notes do not inherit a status)
+ *
+ * `entryTaskStatusSql` / `resolveEntryTaskStatus` keep the display mapping
+ * (bugs → open/done, missing → todo). Use these only for search filters.
+ */
+export function entrySearchStatusSql(metadataColumn = 'e.metadata'): string {
+  const col = metadataColumn;
+  return `CASE
+    WHEN json_type(${col}, '$.task') = 'object' THEN COALESCE(json_extract(${col}, '$.task.status'), 'todo')
+    WHEN json_type(${col}, '$.bug') = 'object' THEN COALESCE(json_extract(${col}, '$.bug.status'), 'open')
+    WHEN json_type(${col}, '$.status') = 'text' THEN json_extract(${col}, '$.status')
+    WHEN json_type(${col}, '$.task') = 'true' THEN 'todo'
+    ELSE NULL
+  END`;
+}
+
+export function resolveEntrySearchStatus(metadata: Record<string, unknown>): string | null {
+  const task = metadata.task;
+  if (typeof task === 'object' && task !== null && !Array.isArray(task)) {
+    const st = (task as { status?: unknown }).status;
+    if (typeof st === 'string') return st;
+    return 'todo';
+  }
+  const bug = metadata.bug;
+  if (typeof bug === 'object' && bug !== null && !Array.isArray(bug)) {
+    const st = (bug as { status?: unknown }).status;
+    if (typeof st === 'string') return st;
+    return 'open';
+  }
+  const legacy = metadata.status;
+  if (typeof legacy === 'string') return legacy;
+  if (task === true) return 'todo';
+  return null;
+}
+
 export function resolveEntryTaskStatus(metadata: Record<string, unknown>): string {
   const task = metadata.task;
   if (typeof task === 'object' && task !== null && !Array.isArray(task)) {
