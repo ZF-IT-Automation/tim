@@ -186,7 +186,8 @@ export interface MemoryCoverageLatestBatchSummary {
 }
 
 export interface MemoryCoverageLatestRollup {
-  sessionId: string;
+  /** Owning session id when resolvable; null when only the summary root is known. */
+  sessionId: string | null;
   summaryRootId: string;
   updatedAt: string;
   hasRollupText: boolean;
@@ -204,9 +205,15 @@ export interface MemorySummaryCoverageReport {
   observedExchangeCount: number;
   coveredExchangeCount: number;
   pendingExchangeCount: number;
+  /** User exchanges with missing or invalid positive integer seq metadata. */
+  unknownSequenceExchangeCount: number;
   sessionsWithPending: number;
   pendingRanges: MemoryCoverageSeqRange[];
   coveredRanges: MemoryCoverageSeqRange[];
+  pendingRangeCount: number;
+  coveredRangeCount: number;
+  pendingRangesTruncated: boolean;
+  coveredRangesTruncated: boolean;
   latestBatchSummary: MemoryCoverageLatestBatchSummary | null;
   latestRollup: MemoryCoverageLatestRollup | null;
 }
@@ -214,7 +221,9 @@ export interface MemorySummaryCoverageReport {
 export type MemorySyncTelemetryState =
   | 'not_configured'
   | 'configured_no_state'
-  | 'available';
+  | 'available'
+  | 'malformed'
+  | 'mismatched_file';
 
 export interface MemorySyncTelemetryReport {
   telemetryState: MemorySyncTelemetryState;
