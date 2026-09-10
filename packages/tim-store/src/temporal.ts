@@ -4,42 +4,55 @@
 
 import type { Entry, TemporalMetadata } from 'tim-core';
 import {
+  isoTimestampToEpochMs,
   parseIsoTimestamp,
   parseTemporalMetadata,
   temporalEligibilityAt,
+  validateIsoTimestamp,
   validateSupersessionEffectiveAt,
 } from 'tim-core';
 import type Database from 'better-sqlite3';
 
-export function resolveSearchAsOf(asOf?: string): Date {
-  if (!asOf) return new Date();
-  const parsed = parseIsoTimestamp(asOf);
-  if (!parsed) {
-    throw new Error(`Invalid asOf: timezone-qualified ISO 8601 string required`);
-  }
-  return parsed;
+/** Safety cap for supersession graph traversal — fail closed instead of returning false. */
+export const SUPERSESSION_GRAPH_LIMIT = 10_000;
+
+export function registerTemporalSqlFunctions(db: Database.Database): void {
+  db.function('tim_iso_to_epoch_ms', (iso: unknown) => {
+    if (typeof iso !== 'string' || iso.length === 0) return null;
+    const epochMs = isoTimestampToEpochMs(iso);
+    return epochMs ?? null;
+  });
 }
 
-/** SQL fragment for half-open temporal eligibility at `asOf` (lexicographic ISO compare). */
+export function resolveSearchAsOf(asOf?: string): Date {
+  if (!asOf) return new Date();
+  const parsed = validateIsoTimestamp(asOf);
+  if (!parsed.ok) {
+    throw new Error(`Invalid asOf: ${parsed.reason}`);
+  }
+  return new Date(parsed.epochMs);
+}
+
+/** SQL fragment for half-open temporal eligibility at `asOf` (epoch-ms compare). */
 export function buildTemporalEligibilitySql(
-  asOfIso: string,
+  asOfEpochMs: number,
   entryAlias = 'e',
 ): string {
   const col = `json_extract(${entryAlias}.metadata, '$.temporal')`;
   return ` AND (
     json_extract(${col}, '$.validFrom') IS NULL
-    OR json_extract(${col}, '$.validFrom') <= ?
+    OR tim_iso_to_epoch_ms(json_extract(${col}, '$.validFrom')) <= ?
   ) AND (
     json_extract(${col}, '$.validUntil') IS NULL
-    OR json_extract(${col}, '$.validUntil') > ?
+    OR tim_iso_to_epoch_ms(json_extract(${col}, '$.validUntil')) > ?
   ) AND (
     json_extract(${col}, '$.supersededAt') IS NULL
-    OR json_extract(${col}, '$.supersededAt') > ?
+    OR tim_iso_to_epoch_ms(json_extract(${col}, '$.supersededAt')) > ?
   )`;
 }
 
-export function temporalEligibilityParams(asOfIso: string): [string, string, string] {
-  return [asOfIso, asOfIso, asOfIso];
+export function temporalEligibilityParams(asOfEpochMs: number): [number, number, number] {
+  return [asOfEpochMs, asOfEpochMs, asOfEpochMs];
 }
 
 export function entryTemporallyEligibleAt(entry: Entry, at: Date): boolean {
@@ -57,11 +70,13 @@ export function hasSupersedesPath(
   db: Database.Database,
   fromId: string,
   toId: string,
-  maxDepth = 32,
 ): boolean {
   const visited = new Set<string>();
   const queue = [fromId];
-  while (queue.length > 0 && visited.size < maxDepth) {
+  while (queue.length > 0) {
+    if (visited.size > SUPERSESSION_GRAPH_LIMIT) {
+      throw new Error('supersedes: supersession graph exceeds safety limit');
+    }
     const current = queue.shift()!;
     if (current === toId) return true;
     if (visited.has(current)) continue;
@@ -101,13 +116,20 @@ export function validateSupersessionLink(input: SupersessionValidationInput): st
     return 'supersedes: source and target must belong to the same project';
   }
 
-  if (hasSupersedesPath(db, targetId, sourceId)) {
-    return 'supersedes: would create a cycle in the supersession chain';
+  try {
+    if (hasSupersedesPath(db, targetId, sourceId)) {
+      return 'supersedes: would create a cycle in the supersession chain';
+    }
+  } catch (err) {
+    return err instanceof Error ? err.message : String(err);
   }
+
+  const normalizedEffectiveAt = validateIsoTimestamp(effectiveAt);
+  if (!normalizedEffectiveAt.ok) return `effectiveAt: ${normalizedEffectiveAt.reason}`;
+  const effectiveDate = new Date(normalizedEffectiveAt.epochMs);
 
   const targetMeta = JSON.parse(targetRow.metadata) as Record<string, unknown>;
   const targetTemporal = parseTemporalMetadata(targetMeta.temporal);
-  const effectiveDate = parseIsoTimestamp(effectiveAt)!;
 
   if (targetTemporal?.validFrom) {
     const from = parseIsoTimestamp(targetTemporal.validFrom);
@@ -126,10 +148,22 @@ export function validateSupersessionLink(input: SupersessionValidationInput): st
     if (existing && effectiveDate >= existing) {
       return 'supersedes: target is already superseded at or before effectiveAt';
     }
+    if (
+      targetTemporal.supersededBy
+      && targetTemporal.supersededBy !== sourceId
+      && existing
+      && effectiveDate < existing
+    ) {
+      return 'supersedes: target already has an incompatible supersession at a later effective date';
+    }
   }
 
   const sourceMeta = JSON.parse(sourceRow.metadata) as Record<string, unknown>;
   const sourceTemporal = parseTemporalMetadata(sourceMeta.temporal);
+  const sourceEligibility = temporalEligibilityAt(sourceTemporal, effectiveDate);
+  if (!sourceEligibility.eligible) {
+    return `supersedes: replacement is not valid at effectiveAt (${sourceEligibility.state})`;
+  }
   if (sourceTemporal?.validUntil) {
     const until = parseIsoTimestamp(sourceTemporal.validUntil);
     if (until && effectiveDate >= until) {
@@ -146,18 +180,19 @@ export function buildSupersessionTargetPatch(
   effectiveAt: string,
 ): Record<string, unknown> {
   const existingTemporal = parseTemporalMetadata(existingMetadata.temporal) ?? {};
+  const normalizedEffective = normalizeSupersessionTimestamp(effectiveAt);
   const validUntil = existingTemporal.validUntil
     ? (() => {
         const current = parseIsoTimestamp(existingTemporal.validUntil!)!;
-        const effective = parseIsoTimestamp(effectiveAt)!;
-        return effective < current ? effectiveAt : existingTemporal.validUntil;
+        const effective = parseIsoTimestamp(normalizedEffective)!;
+        return effective < current ? normalizedEffective : existingTemporal.validUntil;
       })()
-    : effectiveAt;
+    : normalizedEffective;
 
   const temporal: TemporalMetadata = {
     ...existingTemporal,
     validUntil,
-    supersededAt: effectiveAt,
+    supersededAt: normalizedEffective,
     supersededBy: sourceId,
   };
 
@@ -172,12 +207,21 @@ export function buildSupersessionSourcePatch(
   effectiveAt: string,
 ): Record<string, unknown> {
   const existingTemporal = parseTemporalMetadata(existingMetadata.temporal) ?? {};
+  const normalizedEffective = normalizeSupersessionTimestamp(effectiveAt);
   const temporal: TemporalMetadata = {
     ...existingTemporal,
-    validFrom: existingTemporal.validFrom ?? effectiveAt,
+    validFrom: existingTemporal.validFrom ?? normalizedEffective,
   };
   return {
     ...existingMetadata,
     temporal,
   };
+}
+
+function normalizeSupersessionTimestamp(value: string): string {
+  const validated = validateIsoTimestamp(value);
+  if (!validated.ok) {
+    throw new Error(`effectiveAt: ${validated.reason}`);
+  }
+  return validated.normalized;
 }

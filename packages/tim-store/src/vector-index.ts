@@ -89,7 +89,7 @@ export interface SearchEligibilityFilters {
   status?: string;
   confidenceAbove?: number;
   visibilityMask?: number;
-  asOfIso?: string;
+  asOfEpochMs?: number;
 }
 
 /**
@@ -144,9 +144,9 @@ export function buildSearchEligibilitySql(
     sql += ` AND (${entryAlias}.visibility & ?) != 0`;
     params.push(filters.visibilityMask);
   }
-  if (filters.asOfIso) {
-    sql += buildTemporalEligibilitySql(filters.asOfIso, entryAlias);
-    params.push(...temporalEligibilityParams(filters.asOfIso));
+  if (filters.asOfEpochMs !== undefined) {
+    sql += buildTemporalEligibilitySql(filters.asOfEpochMs, entryAlias);
+    params.push(...temporalEligibilityParams(filters.asOfEpochMs));
   }
   return sql;
 }
