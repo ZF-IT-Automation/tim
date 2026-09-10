@@ -25,6 +25,52 @@ export function assertValidVector(vector: Float32Array, expectedDimension: numbe
   }
 }
 
+/** True when a stored row matches current entry text under the configured model. */
+export function isVectorContentFresh(
+  title: string,
+  content: string,
+  contentHash: string | null | undefined,
+): boolean {
+  if (!contentHash) return false;
+  return contentHash === vectorContentFingerprint(title, content);
+}
+
+export function entryVectorNeedsReindex(
+  title: string,
+  content: string,
+  vectorRow: { model: string; content_hash: string } | null | undefined,
+  configuredModel: string,
+): boolean {
+  if (!vectorRow) return true;
+  if (vectorRow.model !== configuredModel) return true;
+  return !isVectorContentFresh(title, content, vectorRow.content_hash);
+}
+
+export interface ValidatedVectorHit {
+  entryId: string;
+  vector: Float32Array;
+  similarity: number;
+}
+
+export function parseStoredVector(
+  blob: Buffer,
+  expectedDimension: number,
+): Float32Array | null {
+  if (blob.byteLength % 4 !== 0) return null;
+  const vec = new Float32Array(
+    blob.buffer,
+    blob.byteOffset,
+    blob.byteLength / 4,
+  );
+  if (vec.length !== expectedDimension) return null;
+  try {
+    assertValidVector(vec, expectedDimension);
+    return vec;
+  } catch {
+    return null;
+  }
+}
+
 /** Drop device-local vector row — content/title/import/sync changed meaning. */
 export function invalidateEntryVector(db: Database.Database, entryId: string): void {
   db.prepare('DELETE FROM entry_vectors WHERE entry_id = ?').run(entryId);
@@ -129,16 +175,27 @@ export function querySemanticIndexHealth(
     db.prepare(`SELECT COUNT(*) AS c FROM entry_vectors`).get() as { c: number }
   ).c;
 
-  const unembeddedCount = configuredModel === null
-    ? 0
-    : (
-      db.prepare(`
-        SELECT COUNT(*) AS c FROM entries e
-        LEFT JOIN entry_vectors v ON v.entry_id = e.id
-        WHERE ${baseEligible}
-          AND (v.entry_id IS NULL OR v.model != ?)
-      `).get(...SCHEMA_KINDS, configuredModel) as { c: number }
-    ).c;
+  let unembeddedCount = 0;
+  if (configuredModel !== null) {
+    const unembeddedRows = db.prepare(`
+      SELECT e.title, e.content, v.model, v.content_hash FROM entries e
+      LEFT JOIN entry_vectors v ON v.entry_id = e.id
+      WHERE ${baseEligible}
+    `).all(...SCHEMA_KINDS) as Array<{
+      title: string;
+      content: string;
+      model: string | null;
+      content_hash: string | null;
+    }>;
+    for (const row of unembeddedRows) {
+      const vectorRow = row.model === null
+        ? null
+        : { model: row.model, content_hash: row.content_hash ?? '' };
+      if (entryVectorNeedsReindex(row.title, row.content, vectorRow, configuredModel)) {
+        unembeddedCount++;
+      }
+    }
+  }
 
   const wrongModelCount = configuredModel === null
     ? 0
@@ -150,16 +207,25 @@ export function querySemanticIndexHealth(
       `).get(configuredModel, ...SCHEMA_KINDS) as { c: number }
     ).c;
 
-  // Stale count requires per-row fingerprint — compute in JS for correctness.
   const staleRows = db.prepare(`
-    SELECT e.title, e.content, v.content_hash FROM entry_vectors v
+    SELECT e.title, e.content, v.content_hash, v.model FROM entry_vectors v
     INNER JOIN entries e ON e.id = v.entry_id
     WHERE ${baseEligible}
-      AND v.content_hash != ''
-  `).all(...SCHEMA_KINDS) as Array<{ title: string; content: string; content_hash: string }>;
+  `).all(...SCHEMA_KINDS) as Array<{
+    title: string;
+    content: string;
+    content_hash: string;
+    model: string;
+  }>;
   let staleCount = 0;
   for (const row of staleRows) {
-    if (row.content_hash !== vectorContentFingerprint(row.title, row.content)) staleCount++;
+    if (
+      configuredModel !== null
+      && row.model === configuredModel
+      && !isVectorContentFresh(row.title, row.content, row.content_hash)
+    ) {
+      staleCount++;
+    }
   }
 
   return {

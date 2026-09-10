@@ -25,7 +25,9 @@ Supported models are listed in `SUPPORTED_EMBEDDING_MODELS` (`packages/tim-store
 
 ## Index freshness
 
-Vectors store a `content_hash` fingerprint of indexed `title + body`. Any local edit, import, or remote sync that changes title/body deletes the vector row. `getUnembedded()` returns entries missing vectors or indexed under a non-current model ID.
+Vectors store a `content_hash` fingerprint of indexed `title + body`. Any local edit, import, or remote sync that changes title/body deletes the vector row. `getUnembedded()` returns entries missing vectors, indexed under a non-current model ID, carrying an empty legacy `content_hash`, or whose fingerprint no longer matches current text.
+
+Background embedding uses compare-and-set: `setVectors(entryId, vector, model, dimension, expectedContentHash)` writes only when `expectedContentHash` still matches the live entry fingerprint (#38). A mismatch leaves the row unembedded for a later pass.
 
 ## Injectable provider (tests and integrations)
 
@@ -50,11 +52,20 @@ Deterministic fixtures prove retrieval plumbing; they are not evidence of real-m
 const health = store.getSemanticIndexHealth();
 // {
 //   providerState: 'enabled' | 'disabled' | 'unavailable' | 'unknown',
-//   configuredModel: string | null,
+//   configuredModel: string | null,  // injected provider modelId when set
 //   supportedModel: boolean,
 //   vectorCount, unembeddedCount, staleVectorCount, wrongModelCount
 // }
 ```
+
+`providerState` meanings:
+
+| State | Meaning |
+|---|---|
+| `disabled` | `TIM_EMBEDDING_DISABLED=1` |
+| `unavailable` | Configured model ID is unsupported |
+| `unknown` | Default provider not yet initialized (or never attempted) |
+| `enabled` | Injected provider enabled, or cached default init succeeded |
 
 This accessor performs SQL counts only — it never loads a model. Absence of vectors is not reported as success when the provider is enabled.
 
