@@ -35,8 +35,8 @@ describe('evidence integration review regressions', () => {
     applyRemoteEntry(store.getDb(), JSON.stringify({
       id: entry.id, title: entry.title, content: entry.content, content_type: 'text',
       depth: entry.depth, confidence: 1, created_at: entry.createdAt,
-      accessed_at: entry.accessedAt, decay_rate: 0, visibility: 1, tags: [],
-      irrelevant: 0, metadata: { evidence: 'see old commit', topic: 'legacy' },
+      accessed_at: entry.accessedAt, decay_rate: 0, visibility: 1, tags: '[]',
+      irrelevant: 0, tombstoned_at: null, metadata: { evidence: 'see old commit', topic: 'legacy' },
     }), Date.now() + 1000, 'peer', false);
     await store.update(entry.id, { metadata: { status: 'done' } });
     store.updateSync(entry.id, { metadata: { favorite: true } });

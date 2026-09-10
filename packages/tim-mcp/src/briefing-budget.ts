@@ -1,5 +1,3 @@
-import { CHARS_PER_TOKEN } from 'tim-store';
-
 /** Shared maximum for explicit tokenBudget parameters and clamped config defaults. */
 export const MAX_TOKEN_BUDGET = 64000;
 
@@ -21,7 +19,7 @@ export type TokenBudgetValidation =
 export function estimateTextTokens(text: string): number {
   if (!text) return 0;
   const bytes = Buffer.byteLength(text, 'utf8');
-  return Math.max(1, Math.ceil(bytes / CHARS_PER_TOKEN));
+  return bytes;
 }
 
 /** Clamp configured briefing.maxTokens to a safe finite default. */
@@ -78,19 +76,15 @@ function clipToTokenBudget(text: string, maxTokens: number): string {
   if (!text || maxTokens <= 0) return '';
   if (estimateTextTokens(text) <= maxTokens) return text;
 
-  const units = [...text];
-  let lo = 0;
-  let hi = units.length;
-  while (lo < hi) {
-    const mid = Math.ceil((lo + hi) / 2);
-    if (estimateTextTokens(units.slice(0, mid).join('')) <= maxTokens) {
-      lo = mid;
-    } else {
-      hi = mid - 1;
-    }
+  const units: string[] = [];
+  let used = 0;
+  for (const unit of text) {
+    const cost = Buffer.byteLength(unit, 'utf8');
+    if (used + cost > maxTokens) break;
+    units.push(unit);
+    used += cost;
   }
-  if (lo === 0 && units.length > 0) return units[0] ?? '';
-  return units.slice(0, lo).join('');
+  return units.join('');
 }
 
 /** Charge up to maxTokens from text; returns rendered slice and whether it was truncated. */
@@ -99,13 +93,13 @@ export function chargePartialTokens(
   text: string,
   maxTokens?: number,
 ): { text: string; charged: number; truncated: boolean } {
-  const cap = maxTokens ?? ledger.remaining;
+  const cap = Math.min(maxTokens ?? ledger.remaining, ledger.remaining);
   if (cap <= 0 || !text) return { text: '', charged: 0, truncated: !!text };
 
-  const built = clipToTokenBudget(text, cap);
-  const truncated = built.length < text.length;
-  const finalText = truncated ? `${built.trimEnd()}…` : built;
-  const charged = Math.min(estimateTextTokens(finalText), ledger.remaining);
+  const bounded = boundRenderedText(text, cap);
+  const finalText = bounded.text;
+  const truncated = bounded.truncated;
+  const charged = estimateTextTokens(finalText);
   ledger.used += charged;
   ledger.remaining -= charged;
   return { text: finalText, charged, truncated };
@@ -122,25 +116,16 @@ export function boundRenderedText(text: string, tokenBudget: number): {
     return { text, truncated: false, estimatedTokens: estimated };
   }
 
-  const ellipsis = '…';
+  const limit = Math.max(0, Math.floor(tokenBudget));
+  const ellipsis = limit >= 3 ? '…' : '.'.repeat(limit);
   const ellipsisCost = estimateTextTokens(ellipsis);
-  const contentBudget = Math.max(1, tokenBudget - ellipsisCost);
-  let clipped = clipToTokenBudget(text, contentBudget);
-  if (clipped.length === 0) clipped = clipToTokenBudget(text, tokenBudget);
-  const wasShortened = clipped.length < text.length || estimateTextTokens(text) > tokenBudget;
-  const finalText = wasShortened ? `${clipped.trimEnd()}${ellipsis}` : clipped;
+  const contentBudget = Math.max(0, limit - ellipsisCost);
+  const clipped = clipToTokenBudget(text, contentBudget);
+  const finalText = `${clipped.trimEnd()}${ellipsis}`;
   const finalEstimate = estimateTextTokens(finalText);
-  if (finalEstimate > tokenBudget) {
-    const tighter = clipToTokenBudget(text, Math.max(1, tokenBudget));
-    return {
-      text: tighter.length < text.length ? `${tighter}${ellipsis}` : tighter,
-      truncated: true,
-      estimatedTokens: Math.min(estimateTextTokens(tighter), tokenBudget),
-    };
-  }
   return {
     text: finalText,
     truncated: true,
-    estimatedTokens: Math.min(finalEstimate, tokenBudget),
+    estimatedTokens: finalEstimate,
   };
 }

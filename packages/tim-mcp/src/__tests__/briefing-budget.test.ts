@@ -10,12 +10,12 @@ import { selectBriefingBlocks, type BriefingBlock } from '../task-aware-selectio
 
 describe('briefing-budget', () => {
   it('estimates tokens from UTF-8 bytes conservatively', () => {
-    expect(estimateTextTokens('abcd')).toBe(1);
-    expect(estimateTextTokens('hello world')).toBe(3);
-    // Four emoji = 16 UTF-8 bytes → 4 estimated tokens (not 1 from code points)
-    expect(estimateTextTokens('🙂🙂🙂🙂')).toBe(4);
+    expect(estimateTextTokens('abcd')).toBe(4);
+    expect(estimateTextTokens('hello world')).toBe(11);
+    // Use every UTF-8 byte, never assume four bytes fit in one model token.
+    expect(estimateTextTokens('🙂🙂🙂🙂')).toBe(16);
     // German umlaut uses two bytes per character
-    expect(estimateTextTokens('über')).toBe(2);
+    expect(estimateTextTokens('über')).toBe(5);
   });
 
   it('validates tokenBudget overrides including config default 9000', () => {
@@ -52,6 +52,15 @@ describe('briefing-budget', () => {
     expect(bounded.estimatedTokens).toBeLessThanOrEqual(100);
     expect(bounded.text.length).toBeLessThan(text.length);
   });
+
+  it('reports the actual bounded size for every tiny Unicode budget', () => {
+    for (let budget = 1; budget <= 32; budget++) {
+      const bounded = boundRenderedText('🙂中über'.repeat(20), budget);
+      expect(Buffer.byteLength(bounded.text, 'utf8')).toBeLessThanOrEqual(budget);
+      expect(bounded.estimatedTokens).toBe(Buffer.byteLength(bounded.text, 'utf8'));
+      expect(bounded.text).not.toContain('\uFFFD');
+    }
+  });
 });
 
 describe('selectBriefingBlocks partial inclusion', () => {
@@ -62,10 +71,10 @@ describe('selectBriefingBlocks partial inclusion', () => {
       order: 1,
       lines: ['Hi', 'second line should not appear', 'third either'],
     }];
-    const { included, ledger } = selectBriefingBlocks(blocks, 1);
+    const { included, ledger } = selectBriefingBlocks(blocks, 2);
     expect(included).toHaveLength(1);
     expect(included[0]!.lines).toEqual(['Hi']);
-    expect(ledger.used).toBeLessThanOrEqual(1);
+    expect(ledger.used).toBeLessThanOrEqual(2);
     expect(included[0]!.lines.join('\n')).not.toContain('second line');
   });
 });
