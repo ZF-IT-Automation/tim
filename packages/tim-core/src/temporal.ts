@@ -19,24 +19,92 @@ export const CALLER_TEMPORAL_FIELDS = ['validFrom', 'validUntil'] as const;
 /** Fields only set atomically by the supersedes link operation. */
 export const SYSTEM_TEMPORAL_FIELDS = ['supersededAt', 'supersededBy'] as const;
 
-const ALL_TEMPORAL_FIELDS = [...CALLER_TEMPORAL_FIELDS, ...SYSTEM_TEMPORAL_FIELDS];
-
 const ISO_WITH_TZ_RE =
-  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/;
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.(\d+))?(?:Z|[+-]\d{2}:\d{2})$/;
+
+const MAX_FRACTION_DIGITS = 3;
 
 export type TemporalValidationResult =
   | { ok: true; temporal: TemporalMetadata }
   | { ok: false; errors: string[] };
 
+export type IsoValidationResult =
+  | { ok: true; normalized: string; epochMs: number }
+  | { ok: false; reason: string };
+
+function isRealCalendarDate(year: number, month: number, day: number): boolean {
+  const probe = new Date(Date.UTC(year, month - 1, day));
+  return (
+    probe.getUTCFullYear() === year
+    && probe.getUTCMonth() === month - 1
+    && probe.getUTCDate() === day
+  );
+}
+
+/** Strict ISO 8601 validation with canonical UTC normalization. */
+export function validateIsoTimestamp(value: string): IsoValidationResult {
+  const match = ISO_WITH_TZ_RE.exec(value);
+  if (!match) {
+    return { ok: false, reason: 'timezone-qualified ISO 8601 string required' };
+  }
+
+  const fraction = match[1];
+  if (fraction && fraction.length > MAX_FRACTION_DIGITS) {
+    return { ok: false, reason: 'sub-millisecond precision is not supported' };
+  }
+
+  const offset = match[2] ?? 'Z';
+  if (offset !== 'Z') {
+    const offsetHours = Number(offset.slice(1, 3));
+    const offsetMinutes = Number(offset.slice(4, 6));
+    if (
+      offsetHours > 14
+      || offsetMinutes > 59
+      || (offsetHours === 14 && offsetMinutes > 0)
+    ) {
+      return { ok: false, reason: 'invalid timezone offset' };
+    }
+  }
+
+  const year = Number(value.slice(0, 4));
+  const month = Number(value.slice(5, 7));
+  const day = Number(value.slice(8, 10));
+  const hour = Number(value.slice(11, 13));
+  const minute = Number(value.slice(14, 16));
+  const second = Number(value.slice(17, 19));
+
+  if (!isRealCalendarDate(year, month, day)) {
+    return { ok: false, reason: 'impossible calendar date' };
+  }
+  if (hour > 23 || minute > 59 || second > 59) {
+    return { ok: false, reason: 'invalid time-of-day' };
+  }
+
+  const epochMs = Date.parse(value);
+  if (!Number.isFinite(epochMs)) {
+    return { ok: false, reason: 'unparseable timestamp' };
+  }
+
+  return { ok: true, normalized: new Date(epochMs).toISOString(), epochMs };
+}
+
+export function isoTimestampToEpochMs(value: string): number | null {
+  const result = validateIsoTimestamp(value);
+  return result.ok ? result.epochMs : null;
+}
+
 export function isTimezoneQualifiedIso(value: string): boolean {
-  if (!ISO_WITH_TZ_RE.test(value)) return false;
-  const ms = Date.parse(value);
-  return Number.isFinite(ms);
+  return validateIsoTimestamp(value).ok;
+}
+
+export function normalizeIsoTimestamp(value: string): string | null {
+  const result = validateIsoTimestamp(value);
+  return result.ok ? result.normalized : null;
 }
 
 export function parseIsoTimestamp(value: string): Date | null {
-  if (!isTimezoneQualifiedIso(value)) return null;
-  return new Date(value);
+  const result = validateIsoTimestamp(value);
+  return result.ok ? new Date(result.epochMs) : null;
 }
 
 function validateOptionalIsoField(
@@ -46,11 +114,16 @@ function validateOptionalIsoField(
 ): string | undefined {
   const raw = obj[field];
   if (raw === undefined) return undefined;
-  if (typeof raw !== 'string' || !isTimezoneQualifiedIso(raw)) {
+  if (typeof raw !== 'string') {
     errors.push(`temporal.${field}: timezone-qualified ISO 8601 string required`);
     return undefined;
   }
-  return raw;
+  const validated = validateIsoTimestamp(raw);
+  if (!validated.ok) {
+    errors.push(`temporal.${field}: ${validated.reason}`);
+    return undefined;
+  }
+  return validated.normalized;
 }
 
 /** Structural validator for caller-supplied temporal fields (validFrom/validUntil only). */
@@ -75,8 +148,8 @@ export function validateCallerTemporalMetadata(value: unknown): TemporalValidati
   const validFrom = validateOptionalIsoField(obj, 'validFrom', errors);
   const validUntil = validateOptionalIsoField(obj, 'validUntil', errors);
   if (validFrom && validUntil) {
-    const fromMs = Date.parse(validFrom);
-    const untilMs = Date.parse(validUntil);
+    const fromMs = isoTimestampToEpochMs(validFrom)!;
+    const untilMs = isoTimestampToEpochMs(validUntil)!;
     if (fromMs >= untilMs) {
       errors.push('temporal: validFrom must be strictly before validUntil (half-open interval)');
     }
@@ -94,13 +167,72 @@ export function parseTemporalMetadata(value: unknown): TemporalMetadata | undefi
   if (typeof value !== 'object' || Array.isArray(value)) return undefined;
   const obj = value as Record<string, unknown>;
   const temporal: TemporalMetadata = {};
-  for (const field of ALL_TEMPORAL_FIELDS) {
+
+  for (const field of CALLER_TEMPORAL_FIELDS) {
     const raw = obj[field];
-    if (typeof raw === 'string' && isTimezoneQualifiedIso(raw)) {
-      temporal[field] = raw;
+    if (typeof raw === 'string') {
+      const normalized = normalizeIsoTimestamp(raw);
+      if (normalized) temporal[field] = normalized;
     }
   }
+
+  const supersededAtRaw = obj.supersededAt;
+  if (typeof supersededAtRaw === 'string') {
+    const normalized = normalizeIsoTimestamp(supersededAtRaw);
+    if (normalized) temporal.supersededAt = normalized;
+  }
+
+  const supersededByRaw = obj.supersededBy;
+  if (typeof supersededByRaw === 'string' && supersededByRaw.length > 0) {
+    temporal.supersededBy = supersededByRaw;
+  }
+
   return Object.keys(temporal).length > 0 ? temporal : undefined;
+}
+
+/** Merge caller temporal patches while preserving system-managed supersession fields. */
+export function mergeCallerTemporalMetadata(
+  existing: TemporalMetadata,
+  patch: TemporalMetadata,
+): TemporalMetadata {
+  const merged: TemporalMetadata = { ...existing, ...patch };
+  if (existing.supersededAt !== undefined) merged.supersededAt = existing.supersededAt;
+  if (existing.supersededBy !== undefined) merged.supersededBy = existing.supersededBy;
+  return merged;
+}
+
+/** Reject patches that would clear managed supersession state. */
+export function rejectTemporalManagedFieldClearing(
+  existingMetadata: Record<string, unknown> | undefined,
+  patchMetadata: Record<string, unknown> | undefined,
+): void {
+  const existing = parseTemporalMetadata(existingMetadata?.temporal);
+  if (!existing?.supersededAt && !existing?.supersededBy) return;
+  if (patchMetadata?.temporal === undefined) return;
+
+  if (patchMetadata.temporal === null) {
+    throw new Error(
+      'Invalid metadata.temporal: cannot clear temporal metadata while supersession state exists',
+    );
+  }
+  if (typeof patchMetadata.temporal !== 'object' || Array.isArray(patchMetadata.temporal)) {
+    return;
+  }
+
+  const patch = patchMetadata.temporal as Record<string, unknown>;
+  if (Object.keys(patch).length === 0) {
+    throw new Error(
+      'Invalid metadata.temporal: cannot clear supersession state via empty temporal patch',
+    );
+  }
+
+  for (const field of SYSTEM_TEMPORAL_FIELDS) {
+    if (patch[field] === null) {
+      throw new Error(
+        `Invalid metadata.temporal.${field}: supersession state is system-managed`,
+      );
+    }
+  }
 }
 
 export type TemporalEligibilityState =
@@ -163,8 +295,12 @@ export function rejectForgedTemporalSupersession(
 }
 
 export function validateSupersessionEffectiveAt(value: unknown): TemporalValidationResult {
-  if (typeof value !== 'string' || !isTimezoneQualifiedIso(value)) {
+  if (typeof value !== 'string') {
     return { ok: false, errors: ['effectiveAt: timezone-qualified ISO 8601 string required'] };
+  }
+  const validated = validateIsoTimestamp(value);
+  if (!validated.ok) {
+    return { ok: false, errors: [`effectiveAt: ${validated.reason}`] };
   }
   return { ok: true, temporal: {} };
 }
