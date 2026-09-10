@@ -105,6 +105,28 @@ describe('summarizer spawn lifecycle', () => {
     expect(payload.argv).toEqual([]);
   });
 
+  it('settles immediately and releases the lock when spawn has no PID', async () => {
+    const lockPath = summarizerLockPath(dir);
+    const logPath = logPathFor(dir);
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    fs.writeFileSync(lockPath, 'locked');
+    const code = await runSupervisor({
+      cwd: path.join(dir, 'missing-directory'), lockPath, logPath,
+      sessionId: 'failed-spawn', timeoutSec: 60,
+      summarizeScript: path.join(dir, 'unused.js'),
+    });
+    expect(code).toBe(1);
+    expect(fs.existsSync(lockPath)).toBe(false);
+    expect(fs.readFileSync(logPath, 'utf8')).toContain('summarizer child error');
+  });
+
+  it('does not probe or signal invalid process group identifiers', () => {
+    for (const pid of [undefined, NaN, 0, -1, 1.5]) {
+      expect(isProcessGroupAlive(pid)).toBe(false);
+      expect(safeKillProcessGroup(pid, 'SIGTERM')).toBe(false);
+    }
+  });
+
   it('releases lock on timeout and records it in the log', async () => {
     const fakeScript = writeFakeSummarizeScript(dir, 'slow');
     const lockPath = summarizerLockPath(dir);

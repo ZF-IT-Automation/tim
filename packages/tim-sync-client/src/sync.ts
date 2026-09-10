@@ -341,7 +341,7 @@ export async function pushCycle(
       placeholderKeys.push({ key: row.key, lww: row.lww_timestamp });
       return false;
     }
-    if (row.entity_type === 'entry' && !secretEncrypt && entryRequiresSecretPassphrase(db, row.payload, row.key)) {
+    if (row.entity_type === 'entry' && row.operation !== 'delete' && !secretEncrypt && entryRequiresSecretPassphrase(db, row.payload, row.key)) {
       blockedSecretCount++;
       return false;
     }
