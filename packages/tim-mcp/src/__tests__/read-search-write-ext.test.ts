@@ -347,6 +347,20 @@ describe('tim_search extended', () => {
     expect(response.results[0].title).toBe('SearchTypeNeedle alpha beta');
   });
 
+  it('propagates semantic retrieval metadata from store.search', async () => {
+    await seedScopedEntry('P0528', 'SemanticMetaNeedle alpha', ['#note', '#test']);
+
+    const resp = await client.callTool('tim_search', {
+      query: 'SemanticMetaNeedle',
+      searchType: 'hybrid',
+      root: 'P0528',
+    });
+    const response = JSON.parse(resp.result!.content[0].text);
+    expect(response.semantic).toBeDefined();
+    expect(response.semantic.requestedMode).toBe('hybrid');
+    expect(response.semantic.configuredModel).toBeTruthy();
+  });
+
   it('scoped MCP search finds in-project match despite foreign dominance', async () => {
     const foreignProj = await client.callTool('tim_create_project', {
       label: 'P0998',

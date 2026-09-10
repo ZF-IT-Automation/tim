@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { TimStore } from 'tim-store';
+import { TimStore, resetDefaultEmbeddingProviderCache, type EmbeddingProvider } from 'tim-store';
 import { embedUnembeddedEntries } from '../hooks.js';
 
 function mockFastembed() {
@@ -18,6 +18,20 @@ function mockFastembed() {
   };
 }
 
+function testEmbeddingProvider(): EmbeddingProvider {
+  return {
+    modelId: 'all-MiniLM-L6-v2',
+    dimension: 384,
+    state: 'enabled',
+    embed: async (texts: string[]) =>
+      texts.map(() => {
+        const v = new Float32Array(384);
+        for (let i = 0; i < 384; i++) v[i] = i / 384;
+        return v;
+      }),
+  };
+}
+
 vi.mock('fastembed', mockFastembed);
 
 describe('embedUnembeddedEntries', () => {
@@ -25,13 +39,17 @@ describe('embedUnembeddedEntries', () => {
   let store: TimStore;
 
   beforeEach(() => {
+    resetDefaultEmbeddingProviderCache();
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tim-test-'));
-    store = new TimStore(path.join(dir, 'test.db'));
+    store = new TimStore(path.join(dir, 'test.db'), {
+      embeddingProvider: testEmbeddingProvider(),
+    });
   });
 
   afterEach(() => {
     store.close();
     fs.rmSync(dir, { recursive: true, force: true });
+    resetDefaultEmbeddingProviderCache();
   });
 
   it('embeds entries that have no vectors yet', async () => {
@@ -48,7 +66,7 @@ describe('embedUnembeddedEntries', () => {
 
   it('skips entries that are already embedded', async () => {
     const e = await store.write('Test\nBody.', { tags: ['#a', '#b'] });
-    store.setVectors(e.id, new Float32Array(384), 'test-model');
+    store.setVectors(e.id, new Float32Array(384), 'all-MiniLM-L6-v2');
 
     const count = await embedUnembeddedEntries(store, { batchSize: 5 });
     expect(count).toBe(0);

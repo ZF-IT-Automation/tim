@@ -1,12 +1,19 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { TimStore } from '../store.js';
 import { resolveEntrySearchStatus } from 'tim-core';
+import { TimStore, type EmbeddingProvider } from '../store.js';
+
+const TEST_PROVIDER: EmbeddingProvider = {
+  modelId: 'all-MiniLM-L6-v2',
+  dimension: 384,
+  state: 'enabled',
+  embed: async (texts) => texts.map(() => new Float32Array(384)),
+};
 
 describe('retrieval review repros', () => {
   let store: TimStore;
 
   beforeEach(() => {
-    store = new TimStore(':memory:');
+    store = new TimStore(':memory:', { embeddingProvider: TEST_PROVIDER });
   });
 
   afterEach(() => {

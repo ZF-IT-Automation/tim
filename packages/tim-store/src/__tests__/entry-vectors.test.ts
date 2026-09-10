@@ -27,6 +27,7 @@ describe('entry_vectors table', () => {
     expect(names).toContain('entry_id');
     expect(names).toContain('model');
     expect(names).toContain('vector');
+    expect(names).toContain('content_hash');
   });
 
   it('getUnembedded returns entries without vectors, newest content first', async () => {
