@@ -63,7 +63,7 @@ export interface Entry {
 
 export type EdgeType = 'relates' | 'extends' | 'contradicts' | 'implements' |
                        'blocks' | 'leases' | 'tagged' | 'summarizes' |
-                       'session_exchange' | 'contradicted_by';
+                       'session_exchange' | 'contradicted_by' | 'supersedes';
 
 export interface Edge {
   id: string;                    // ULID
@@ -140,6 +140,8 @@ export interface SearchOptions {
    * `or-terms` preserves OR between quoted prompt-recall terms.
    */
   ftsQueryMode?: 'literal' | 'or-terms';
+  /** Reconstruct validity at this timezone-qualified ISO timestamp (default: now). */
+  asOf?: string;
 }
 
 // ─── Staging (for sync) ───────────────────────────────────
@@ -443,3 +445,18 @@ export {
   type EvidenceSource,
   type EvidenceValidationResult,
 } from './evidence.js';
+export {
+  CALLER_TEMPORAL_FIELDS,
+  SYSTEM_TEMPORAL_FIELDS,
+  assertValidCallerTemporalMetadata,
+  isTimezoneQualifiedIso,
+  parseIsoTimestamp,
+  parseTemporalMetadata,
+  rejectForgedTemporalSupersession,
+  temporalEligibilityAt,
+  validateCallerTemporalMetadata,
+  validateSupersessionEffectiveAt,
+  type TemporalEligibilityState,
+  type TemporalMetadata,
+  type TemporalValidationResult,
+} from './temporal.js';

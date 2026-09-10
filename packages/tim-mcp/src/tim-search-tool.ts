@@ -11,6 +11,7 @@ export interface TimSearchToolArgs {
   type?: string;
   tag?: string;
   status?: string;
+  asOf?: string;
 }
 
 export interface TimSearchToolResult {
@@ -39,6 +40,7 @@ export async function executeTimSearch(
         type,
         tag,
         status,
+        asOf: parsed.asOf,
       });
 
   const response = {
