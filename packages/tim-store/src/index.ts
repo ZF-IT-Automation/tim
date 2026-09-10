@@ -100,6 +100,10 @@ export {
   type UncoveredExchange,
 } from './session-coverage.js';
 export {
+  computeMemoryHealth,
+  formatMemoryHealthLines,
+} from './memory-health.js';
+export {
   resolveEntrySourceStatus,
   resolveSessionSourceStatus,
   type EvidenceSourceStatus,
