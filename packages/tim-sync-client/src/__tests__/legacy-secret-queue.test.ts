@@ -250,6 +250,127 @@ describe('legacy secret retry queue', () => {
     }
   });
 
+  it('keeps blocked legacy items on disk while a push is in flight', async () => {
+    isolated.queue = freshQueuePath();
+    const store = new TimStore(':memory:');
+    const client = new TimSyncClient('http://127.0.0.1:1', 'test');
+    saveQueue(isolated.queue, [
+      queueItem('inflight-attempt', [makePublicEnvelope('pub-inflight'), makeSecretEnvelope('sec-inflight')]),
+    ]);
+
+    let releasePush!: () => void;
+    const pushGate = new Promise<void>(resolve => { releasePush = resolve; });
+    const push = vi.spyOn(client, 'push').mockImplementation(async () => {
+      await pushGate;
+      return { mappings: [{ proposed_id: 'pub-inflight', final_id: 'pub-inflight' }] };
+    });
+
+    try {
+      const cycle = pushCycle(
+        client,
+        store,
+        { fileId: 'isolated-test', cursor: null, lastPush: null, lastPull: null },
+        'test',
+        s => s,
+      );
+      await vi.waitFor(() => push.mock.calls.length > 0, { timeout: 2000 });
+      const during = loadQueue(isolated.queue);
+      expect(during.length).toBeGreaterThan(0);
+      expect(during.some(item => item.envelopes.some(e => e.key === 'sec-inflight'))).toBe(true);
+      releasePush();
+      await expect(cycle).rejects.toThrow(MissingSecretPassphraseError);
+      const after = loadQueue(isolated.queue);
+      expect(after).toHaveLength(1);
+      expect(after[0].envelopes[0].key).toBe('sec-inflight');
+    } finally {
+      store.close();
+    }
+  });
+
+  it('retries failed sends with identical idempotency key and blob bytes', async () => {
+    isolated.queue = freshQueuePath();
+    const store = new TimStore(':memory:');
+    const client = new TimSyncClient('http://127.0.0.1:1', 'test');
+    const salt = generateSalt();
+    const syncKey = deriveKey('sync-pass', salt);
+    const encryptFn = (s: string) => encrypt(s, syncKey);
+    const originalKey = 'stable-retry-key';
+    saveQueue(isolated.queue, [queueItem(originalKey, [makePublicEnvelope('pub-stable')])]);
+
+    let attempts = 0;
+    const captured: Array<{ key: string; blob: string }> = [];
+    vi.spyOn(client, 'push').mockImplementation(async (req) => {
+      attempts++;
+      captured.push({ key: req.idempotency_key, blob: req.blobs[0].data });
+      if (attempts === 1) throw new Error('network down');
+      return { mappings: [{ proposed_id: 'pub-stable', final_id: 'pub-stable' }] };
+    });
+
+    try {
+      const first = await pushCycle(
+        client,
+        store,
+        { fileId: 'isolated-test', cursor: null, lastPush: null, lastPull: null },
+        'test',
+        encryptFn,
+      );
+      expect(first.pushed).toBe(0);
+      expect(first.queued).toBe(true);
+      expect(loadQueue(isolated.queue).length).toBe(1);
+
+      const second = await pushCycle(
+        client,
+        store,
+        { fileId: 'isolated-test', cursor: null, lastPush: null, lastPull: null },
+        'test',
+        encryptFn,
+      );
+      expect(second.pushed).toBe(1);
+      expect(captured).toHaveLength(2);
+      expect(captured[0].key).toBe(originalKey);
+      expect(captured[1].key).toBe(originalKey);
+      expect(captured[0].blob).toBe(captured[1].blob);
+    } finally {
+      store.close();
+    }
+  });
+
+  it('assigns fresh idempotency keys when a mixed queue item is split', async () => {
+    isolated.queue = freshQueuePath();
+    const store = new TimStore(':memory:');
+    const client = new TimSyncClient('http://127.0.0.1:1', 'test');
+    const originalKey = 'mixed-split-key';
+    saveQueue(isolated.queue, [
+      queueItem(originalKey, [makePublicEnvelope('pub-split'), makeSecretEnvelope('sec-split')]),
+    ]);
+
+    let sentKey: string | undefined;
+    vi.spyOn(client, 'push').mockImplementation(async (req) => {
+      sentKey = req.idempotency_key;
+      return { mappings: [{ proposed_id: 'pub-split', final_id: 'pub-split' }] };
+    });
+
+    try {
+      await expect(
+        pushCycle(
+          client,
+          store,
+          { fileId: 'isolated-test', cursor: null, lastPush: null, lastPull: null },
+          'test',
+          s => s,
+        ),
+      ).rejects.toThrow(MissingSecretPassphraseError);
+      expect(sentKey).toBeDefined();
+      expect(sentKey).not.toBe(originalKey);
+      const remaining = loadQueue(isolated.queue);
+      expect(remaining).toHaveLength(1);
+      expect(remaining[0].idempotency_key).not.toBe(originalKey);
+      expect(remaining[0].idempotency_key).not.toBe(sentKey);
+    } finally {
+      store.close();
+    }
+  });
+
   it('end-to-end: queued legacy secret decrypts into a temporary store after retry', async () => {
     isolated.queue = freshQueuePath();
     const dbPath = join(mkdtempSync(join(tmpdir(), 'tim-legacy-e2e-')), 'store.db');
