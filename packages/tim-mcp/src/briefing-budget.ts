@@ -1,20 +1,35 @@
 import { CHARS_PER_TOKEN } from 'tim-store';
 
-/** Upper bound for explicit tokenBudget tool parameters (not config default). */
-export const MAX_TOKEN_BUDGET_PARAM = 4000;
+/** Shared maximum for explicit tokenBudget parameters and clamped config defaults. */
+export const MAX_TOKEN_BUDGET = 64000;
+
+/** @deprecated Use MAX_TOKEN_BUDGET — kept for existing importers. */
+export const MAX_TOKEN_BUDGET_PARAM = MAX_TOKEN_BUDGET;
+
+export const DEFAULT_BRIEFING_TOKEN_BUDGET = 9000;
 
 export type TokenBudgetValidation =
   | { ok: true; value: number }
   | { ok: false; message: string };
 
 /**
- * Conservative Unicode-safe token estimate for rendered briefing text.
- * Uses code-point count, not UTF-16 length or byte length. Not an exact tokenizer.
+ * Conservative tokenizer-independent estimate for rendered briefing text.
+ * Uses UTF-8 byte length (not code points): emoji, CJK and German umlauts
+ * occupy more bytes per visible character, so byte-based sizing is deliberately
+ * conservative. This is not an exact model tokenizer count.
  */
 export function estimateTextTokens(text: string): number {
   if (!text) return 0;
-  const codePoints = [...text].length;
-  return Math.max(1, Math.ceil(codePoints / CHARS_PER_TOKEN));
+  const bytes = Buffer.byteLength(text, 'utf8');
+  return Math.max(1, Math.ceil(bytes / CHARS_PER_TOKEN));
+}
+
+/** Clamp configured briefing.maxTokens to a safe finite default. */
+export function clampBriefingDefaultBudget(raw: unknown): number {
+  if (typeof raw !== 'number' || !Number.isFinite(raw) || !Number.isInteger(raw) || raw <= 0) {
+    return DEFAULT_BRIEFING_TOKEN_BUDGET;
+  }
+  return Math.min(raw, MAX_TOKEN_BUDGET);
 }
 
 /** Validate an optional tokenBudget override; absent values fall back to defaultBudget. */
@@ -23,7 +38,7 @@ export function validateTokenBudget(
   defaultBudget: number,
 ): TokenBudgetValidation {
   if (raw === undefined || raw === null) {
-    return { ok: true, value: defaultBudget };
+    return { ok: true, value: clampBriefingDefaultBudget(defaultBudget) };
   }
   if (typeof raw !== 'number' || !Number.isFinite(raw)) {
     return { ok: false, message: 'tokenBudget must be a finite integer' };
@@ -34,8 +49,8 @@ export function validateTokenBudget(
   if (raw <= 0) {
     return { ok: false, message: 'tokenBudget must be a positive integer' };
   }
-  if (raw > MAX_TOKEN_BUDGET_PARAM) {
-    return { ok: false, message: `tokenBudget must be at most ${MAX_TOKEN_BUDGET_PARAM}` };
+  if (raw > MAX_TOKEN_BUDGET) {
+    return { ok: false, message: `tokenBudget must be at most ${MAX_TOKEN_BUDGET}` };
   }
   return { ok: true, value: raw };
 }
@@ -59,6 +74,25 @@ export function tryChargeTokens(ledger: TokenBudgetLedger, text: string): boolea
   return true;
 }
 
+function clipToTokenBudget(text: string, maxTokens: number): string {
+  if (!text || maxTokens <= 0) return '';
+  if (estimateTextTokens(text) <= maxTokens) return text;
+
+  const units = [...text];
+  let lo = 0;
+  let hi = units.length;
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    if (estimateTextTokens(units.slice(0, mid).join('')) <= maxTokens) {
+      lo = mid;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  if (lo === 0 && units.length > 0) return units[0] ?? '';
+  return units.slice(0, lo).join('');
+}
+
 /** Charge up to maxTokens from text; returns rendered slice and whether it was truncated. */
 export function chargePartialTokens(
   ledger: TokenBudgetLedger,
@@ -68,18 +102,7 @@ export function chargePartialTokens(
   const cap = maxTokens ?? ledger.remaining;
   if (cap <= 0 || !text) return { text: '', charged: 0, truncated: !!text };
 
-  const chars = [...text];
-  let built = '';
-  for (const ch of chars) {
-    const candidate = built + ch;
-    if (estimateTextTokens(candidate) > cap) break;
-    built = candidate;
-  }
-
-  if (built.length === 0 && chars.length > 0) {
-    built = chars[0];
-  }
-
+  const built = clipToTokenBudget(text, cap);
   const truncated = built.length < text.length;
   const finalText = truncated ? `${built.trimEnd()}…` : built;
   const charged = Math.min(estimateTextTokens(finalText), ledger.remaining);
@@ -98,15 +121,25 @@ export function boundRenderedText(text: string, tokenBudget: number): {
   if (estimated <= tokenBudget) {
     return { text, truncated: false, estimatedTokens: estimated };
   }
-  let clipped = text;
-  while (clipped.length > 0 && estimateTextTokens(clipped) > tokenBudget) {
-    clipped = [...clipped].slice(0, -1).join('');
-  }
-  if (clipped.length === 0) clipped = '…';
-  const finalText = clipped.length < text.length ? `${clipped.trimEnd()}…` : clipped;
+
+  const ellipsis = '…';
+  const ellipsisCost = estimateTextTokens(ellipsis);
+  const contentBudget = Math.max(1, tokenBudget - ellipsisCost);
+  let clipped = clipToTokenBudget(text, contentBudget);
+  if (clipped.length === 0) clipped = clipToTokenBudget(text, tokenBudget);
+  const wasShortened = clipped.length < text.length || estimateTextTokens(text) > tokenBudget;
+  const finalText = wasShortened ? `${clipped.trimEnd()}${ellipsis}` : clipped;
   const finalEstimate = estimateTextTokens(finalText);
+  if (finalEstimate > tokenBudget) {
+    const tighter = clipToTokenBudget(text, Math.max(1, tokenBudget));
+    return {
+      text: tighter.length < text.length ? `${tighter}${ellipsis}` : tighter,
+      truncated: true,
+      estimatedTokens: Math.min(estimateTextTokens(tighter), tokenBudget),
+    };
+  }
   return {
-    text: finalEstimate <= tokenBudget ? finalText : clipped,
+    text: finalText,
     truncated: true,
     estimatedTokens: Math.min(finalEstimate, tokenBudget),
   };

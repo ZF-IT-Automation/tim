@@ -6,6 +6,7 @@ import * as path from 'node:path';
 import * as fs from 'node:fs';
 import { TimStore } from 'tim-store';
 import { formatProjectOutput } from '../project-output.js';
+import { estimateTextTokens } from '../briefing-budget.js';
 import { childServerCwd, childServerDbPath, isolateChildServerCwd } from './helpers/child-server-workspace.js';
 
 const SERVER_PATH = path.resolve(__dirname, '..', '..', 'dist', 'server.js');
@@ -96,14 +97,14 @@ class McpClient {
   }
 }
 
-async function seedPriorityFixture(store: TimStore, label: string): Promise<void> {
+async function seedPriorityFixture(store: TimStore, label: string, logCount = 201): Promise<void> {
   const project = await store.createProject(label, { content: 'Briefing priority fixture', memoryOnly: true });
 
   const log = await store.write('Log', {
     parentId: project.id,
     metadata: { kind: 'section', label: 'Log', order: 1 },
   });
-  for (let i = 0; i < 201; i++) {
+  for (let i = 0; i < logCount; i++) {
     await store.write(`Log filler ${i}`, { parentId: log.id, content: `noise-${i}` });
   }
 
@@ -191,7 +192,82 @@ describe('task-aware briefing MCP contract', () => {
     expect(text).toContain('Always use MCP');
     expect(text).toContain('Urgent briefing fix');
     expect(text).toContain('Recent Sessions');
+    expect(text).toContain('Worked on briefing');
     expect(text).toMatch(/log entries omitted|… \d+ log entries omitted/);
+  });
+
+  it('keeps reserved content when Log has 1201 entries under default entry budget', async () => {
+    client.kill();
+    await new Promise(r => setTimeout(r, 150));
+    const heavyDb = path.join(path.dirname(childServerDbPath()), `heavy-log-${Date.now()}.db`);
+    if (fs.existsSync(heavyDb)) fs.unlinkSync(heavyDb);
+    store = new TimStore(heavyDb);
+    await seedPriorityFixture(store, 'P3403', 1201);
+    store.close();
+    dbPath = heavyDb;
+    client = new McpClient(dbPath);
+    await client.init();
+
+    const resp = await client.callTool('tim_load_project', {
+      label: 'P3403',
+      bind: false,
+      tokenBudget: 400,
+      budget: 200,
+    });
+    expect(resp.result?.isError).toBeFalsy();
+    const text = resp.result!.content[0].text;
+    expect(text).toContain('Always use MCP');
+    expect(text).toContain('Urgent briefing fix');
+    expect(text).toContain('Worked on briefing');
+    expect(text).toMatch(/log entries omitted|… \d+ log entries omitted/);
+  });
+
+  it('keeps rules and tasks when a huge early non-Log section precedes them', async () => {
+    client.kill();
+    await new Promise(r => setTimeout(r, 150));
+    const heavyDb = path.join(path.dirname(childServerDbPath()), `heavy-ideas-${Date.now()}.db`);
+    if (fs.existsSync(heavyDb)) fs.unlinkSync(heavyDb);
+    store = new TimStore(heavyDb);
+    const project = await store.createProject('P3404', { content: 'Huge ideas fixture', memoryOnly: true });
+    const ideas = await store.write('Ideas', {
+      parentId: project.id,
+      metadata: { kind: 'section', label: 'Ideas', order: 1 },
+    });
+    for (let i = 0; i < 150; i++) {
+      await store.write(`Idea ${i}`, { parentId: ideas.id, content: `idea-body-${i}` });
+    }
+    const rules = await store.write('Rules', {
+      parentId: project.id,
+      metadata: { kind: 'section', label: 'Rules', order: 2 },
+    });
+    await store.write('Critical rule text', {
+      parentId: rules.id,
+      tags: ['#rule'],
+      metadata: { type: 'rule', rule: { action: 'never drop rules' } },
+    });
+    const tasks = await store.write('Tasks', {
+      parentId: project.id,
+      metadata: { kind: 'section', label: 'Tasks', order: 900 },
+    });
+    await store.write('Starved task title', {
+      parentId: tasks.id,
+      metadata: { task: { status: 'todo', priority: 'high', order: 1 } },
+      content: 'Must appear despite Ideas volume',
+    });
+    store.close();
+    dbPath = heavyDb;
+    client = new McpClient(dbPath);
+    await client.init();
+
+    const resp = await client.callTool('tim_load_project', {
+      label: 'P3404',
+      bind: false,
+      tokenBudget: 500,
+      budget: 200,
+    });
+    const text = resp.result!.content[0].text;
+    expect(text).toContain('Critical rule text');
+    expect(text).toContain('Starved task title');
   });
 
   it('includes query-relevant extras and excludes adversarial other-project hits', async () => {
@@ -208,7 +284,7 @@ describe('task-aware briefing MCP contract', () => {
   });
 
   it('rejects invalid tokenBudget values', async () => {
-    for (const bad of [0, -5, Number.NaN, 1.2, 5000]) {
+    for (const bad of [0, -5, Number.NaN, 1.2, 70000]) {
       const resp = await client.callTool('tim_load_project', {
         label: 'P3400',
         bind: false,
@@ -218,6 +294,16 @@ describe('task-aware briefing MCP contract', () => {
     }
   });
 
+  it('accepts explicit default config budget 9000', async () => {
+    const resp = await client.callTool('tim_load_project', {
+      label: 'P3400',
+      bind: false,
+      tokenBudget: 9000,
+    });
+    expect(resp.result?.isError).toBeFalsy();
+    expect(resp.result!.content[0].text).toContain('Always use MCP');
+  });
+
   it('returns deterministic rendered output for repeated calls', async () => {
     const args = { label: 'P3400', bind: false, tokenBudget: 350, query: 'UniqueAlphaNeedleToken' };
     const a = await client.callTool('tim_load_project', args);
@@ -225,16 +311,28 @@ describe('task-aware briefing MCP contract', () => {
     expect(a.result!.content[0].text).toBe(b.result!.content[0].text);
   });
 
-  it('preview briefing uses the same query extras without binding', async () => {
+  it('preview briefing uses the same selection contract as load for query extras', async () => {
+    const load = await client.callTool('tim_load_project', {
+      label: 'P3400',
+      bind: false,
+      tokenBudget: 500,
+      query: 'UniqueAlphaNeedleToken',
+    });
     const preview = await client.callTool('tim_preview_briefing', {
       project: 'P3400',
       tokenBudget: 500,
       query: 'UniqueAlphaNeedleToken',
     });
-    const text = preview.result!.content[0].text;
-    expect(text).toContain('Task context');
-    expect(text).toContain('UniqueAlphaNeedleToken');
-    expect(text).toContain('── directive');
+    const loadText = load.result!.content[0].text;
+    const previewText = preview.result!.content[0].text;
+    expect(loadText).toContain('Task context');
+    expect(loadText).toContain('UniqueAlphaNeedleToken');
+    expect(previewText).toContain('Task context');
+    expect(previewText).toContain('UniqueAlphaNeedleToken');
+    expect(previewText).toContain('── directive');
+    // Both must retain query needle under the same budget (preview no longer drops extras via tail clamp).
+    expect(loadText).not.toContain('Foreign UniqueAlphaNeedleToken');
+    expect(previewText).not.toContain('Foreign UniqueAlphaNeedleToken');
   });
 
   it('preserves legacy shape when no query is requested', async () => {
@@ -244,7 +342,7 @@ describe('task-aware briefing MCP contract', () => {
     expect(text).not.toContain('Task context');
   });
 
-  it('bounds tiny Unicode budgets', async () => {
+  it('bounds tiny Unicode budgets with explicit omission markers', async () => {
     const resp = await client.callTool('tim_load_project', {
       label: 'P3400',
       bind: false,
@@ -253,6 +351,7 @@ describe('task-aware briefing MCP contract', () => {
     const text = resp.result!.content[0].text;
     expect(text.length).toBeGreaterThan(0);
     expect(text).toMatch(/truncated|omitted|…/);
+    expect(estimateTextTokens(text)).toBeLessThanOrEqual(8);
   });
 });
 
