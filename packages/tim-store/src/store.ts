@@ -72,6 +72,7 @@ import {
   type SemanticIndexHealthReport,
   type SearchEligibilityFilters,
 } from './vector-index.js';
+import { computeMemoryHealth } from './memory-health.js';
 
 /**
  * Tags TIM stamps itself when recording a commit. They describe how an entry got
@@ -3673,6 +3674,25 @@ export class TimStore implements MemoryInterface {
       issues.push(message);
     }
 
+    const memory = await computeMemoryHealth(this);
+    const { summaryCoverage, semanticIndex } = memory;
+    if (summaryCoverage.pendingExchangeCount > 0) {
+      const message =
+        `${summaryCoverage.pendingExchangeCount} exchange(s) pending summarization ` +
+        `across ${summaryCoverage.sessionsWithPending} session(s)`;
+      warnings.push(message);
+      issues.push(message);
+    }
+    if (semanticIndex.providerState === 'enabled') {
+      const backlog =
+        semanticIndex.unembeddedCount + semanticIndex.staleVectorCount + semanticIndex.wrongModelCount;
+      if (backlog > 0) {
+        const message = `${backlog} entry vector(s) need (re)indexing`;
+        warnings.push(message);
+        issues.push(message);
+      }
+    }
+
     const status = blockers.length > 0 ? 'BLOCKER' : warnings.length > 0 ? 'WARN' : 'OK';
 
     return {
@@ -3686,6 +3706,7 @@ export class TimStore implements MemoryInterface {
       totalEdges,
       staleEntries: stale.count,
       issues,
+      memory,
     };
   }
 
