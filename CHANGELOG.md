@@ -36,7 +36,33 @@ All notable changes to TIM are documented in this file.
 
 - **The automatic session start no longer injects past work.** `collectDirectiveBriefing` takes `includePastWork`: the two start-hook callers pass `false`, so a fresh session gets the project header, open work and the binding instruction; `tim_preview_briefing` passes `true`. The previous session used to be chosen by recency alone, which made it noise in every session about something else. Use `/tim-continue` for the last session, `/tim-resume-topic` for a subject.
 
+- **`tim-hooks` spawn shims** — `buildSummarizerCommand` and `buildProjectSummaryCommand` now throw
+  with a migration message instead of returning JSON that looked like a shell command. Use
+  `buildSummarizerSpawnRequest` / `buildProjectSummarySpawnRequest` with `spawnSummarizer`.
+- **`TimStore.read` tombstones** — with `showIrrelevant: true`, soft/hard-deleted rows are returned
+  for inspection; default reads still return `null`.
+
 ### Fixed
+
+- **Sync push secret boundary** — push and auto-push now treat inherited secret ancestry the same as
+  `metadata.secret` on the row itself (`isSecret` walks parents). Retroactive marking of a parent as
+  secret blocks future pushes of existing children, but cannot retract content already synced under the
+  sync passphrase alone. Edge rows (ids and relation types only) still push without the secret
+  passphrase.
+- **Auto-push cooldown after partial secret block** — when non-secret rows push successfully but secret
+  rows remain blocked, `autoPush` arms the 30 s cooldown and reports `partial-blocked` with the pushed
+  count instead of retrying a full cycle on every MCP write.
+- **`tim_health` counts live entries only** — `totalEntries` and broken-link detection exclude
+  tombstone placeholder rows retained for replication history; only edges whose endpoint row is truly
+  missing count as broken.
+- **Session coverage gaps** — `deriveSessionCoverage` reports uncovered exchanges below a summary's
+  `seq_from` and when summary ranges are invalid (`seq_from > seq_to`), not only the tail above
+  `seq_to`.
+- **Section read `depth: 1`** — `tim_read` with default `includeChildren` now returns `children: []`
+  instead of omitting the key; usage telemetry records all descendant ids actually returned in nested
+  reads.
+- **Summarizer supervisor timeout** — the SIGKILL escalation timer is cleared when the child exits,
+  avoiding pid-reuse kills of unrelated process groups.
 
 - **Structural counts are taken by kind, not by tag.** A batch summary carries `#session-summary` as well as `#batch-summary`, so `searchByTag('#session-summary')` returns the session roots and their batches together. Several figures in this changelog and in the code comments around the summarizer were first measured that way and were inflated: 984 Summary roots where there are 385, 553 batch summaries where there are 445, 336 sessions with batch summaries where there are 312. The numbers above are the corrected ones, taken with `getByMetadataKind`. Nothing shipped was wrong — the 13 empty briefings and the one poisoned rollup are both confirmed by the clean measurement — but the denominators were.
 

@@ -1000,10 +1000,10 @@ function presentReadEntry(entry: EntryWithChildren, includeBody: boolean, cwd: s
   return base;
 }
 
-/** Top-level read ids for telemetry: the entry plus direct children only. */
-function directReadIds(entry: EntryWithChildren): string[] {
+/** All entry ids actually returned in a nested read tree. */
+function nestedReadIds(entry: EntryWithChildren): string[] {
   const ids = [entry.id];
-  for (const child of entry.children ?? []) ids.push(child.id);
+  for (const child of entry.children ?? []) ids.push(...nestedReadIds(child));
   return ids;
 }
 
@@ -2193,13 +2193,17 @@ export async function createMcpServer(
             const payload: { section: unknown; children?: unknown[] } = {
               section: presentReadEntry(sectionOnly as Entry, include_body, cwd),
             };
-            if (includeChildren && depth !== 1) {
-              payload.children = (rawChildren ?? []).map(child =>
-                presentReadEntry(child, include_body, cwd));
+            if (includeChildren) {
+              payload.children = depth === 1
+                ? []
+                : (rawChildren ?? []).map(child =>
+                  presentReadEntry(child, include_body, cwd));
             }
-            const returnedIds = includeChildren && depth !== 1
-              ? directReadIds(rawSection as EntryWithChildren)
-              : [rawSection.id];
+            const returnedIds = !includeChildren
+              ? [rawSection.id]
+              : depth === 1
+                ? [rawSection.id]
+                : nestedReadIds(rawSection as EntryWithChildren);
             bestEffortTelemetry('recordRead', () =>
               s.recordRead(returnedIds, usageSid));
             return {

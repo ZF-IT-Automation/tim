@@ -167,6 +167,15 @@ describe('tim_read section read contract (#31)', () => {
     expect(parsed.children![0].content).toContain('Full child body here');
   });
 
+  it('depth:1 with default includeChildren returns stable children:[]', async () => {
+    const { section } = await readTasksSection();
+    await writeTask('Depth one child\nbody', section.id as string);
+
+    const parsed = await readTasksSection({ depth: 1 });
+    expect(parsed.section.id).toBe(section.id);
+    expect(parsed.children).toEqual([]);
+  });
+
   it('includeChildren=false returns section only (no child payloads)', async () => {
     const { section } = await readTasksSection();
     await writeTask('Hidden from payload\nchild body', section.id as string);
@@ -199,6 +208,26 @@ describe('tim_read section read contract (#31)', () => {
     expect(deeper[0].title).toBe('Great grand');
     expect(deeper[0].content).toBeUndefined();
     expect(deeper[0].summary).toBeDefined();
+  });
+
+  it('records all returned descendant ids for nested depth reads', async () => {
+    const { section } = await readTasksSection();
+    const parent = await writeTask('Parent task\nparent', section.id as string);
+    const grandchild = await writeTask('Grandchild\ngrand body', parent.id);
+
+    await readTasksSection({ depth: 3 });
+
+    const db = new Database(dbPath, { readonly: true });
+    try {
+      const rows = db.prepare(
+        'SELECT DISTINCT entry_id FROM entry_usage WHERE session_id = ?',
+      ).all('section-read-session') as Array<{ entry_id: string }>;
+      expect(new Set(rows.map(r => r.entry_id))).toEqual(
+        new Set([section.id as string, parent.id, grandchild.id]),
+      );
+    } finally {
+      db.close();
+    }
   });
 
   it('records section and direct children as reads once each', async () => {
