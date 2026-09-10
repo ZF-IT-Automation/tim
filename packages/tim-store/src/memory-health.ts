@@ -21,16 +21,31 @@ import type { SemanticIndexHealthReport } from './vector-index.js';
 const ALL_SESSIONS = 1_000_000;
 const MAX_RANGE_SAMPLES = 50;
 
+interface SyncConfigShape {
+  fileId?: unknown;
+}
+
 interface SyncFileState {
-  lastPush: string | null;
-  lastPull: string | null;
+  fileId?: unknown;
+  lastPush?: unknown;
+  lastPull?: unknown;
+}
+
+function isValidIsoTimestamp(value: unknown): value is string {
+  if (typeof value !== 'string' || value.length === 0) return false;
+  const ms = Date.parse(value);
+  return Number.isFinite(ms);
+}
+
+function parseSyncTimestamp(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  return isValidIsoTimestamp(value) ? value : null;
 }
 
 function readSyncTelemetry(unackedStaging: number): MemorySyncTelemetryReport {
   const syncConfigPath = path.join(getTimDir(), 'sync.json');
   const syncStatePath = path.join(getTimDir(), 'sync-state.json');
-  const configured = fs.existsSync(syncConfigPath);
-  if (!configured) {
+  if (!fs.existsSync(syncConfigPath)) {
     return {
       telemetryState: 'not_configured',
       lastPush: null,
@@ -39,20 +54,96 @@ function readSyncTelemetry(unackedStaging: number): MemorySyncTelemetryReport {
     };
   }
 
-  let state: SyncFileState | null = null;
-  if (fs.existsSync(syncStatePath)) {
-    try {
-      state = JSON.parse(fs.readFileSync(syncStatePath, 'utf8')) as SyncFileState;
-    } catch {
-      state = null;
-    }
+  let config: SyncConfigShape | null = null;
+  try {
+    config = JSON.parse(fs.readFileSync(syncConfigPath, 'utf8')) as SyncConfigShape;
+  } catch {
+    return {
+      telemetryState: 'malformed',
+      lastPush: null,
+      lastPull: null,
+      unackedStaging,
+    };
   }
 
-  const telemetryState: MemorySyncTelemetryState = state ? 'available' : 'configured_no_state';
+  if (!config || typeof config !== 'object') {
+    return {
+      telemetryState: 'malformed',
+      lastPush: null,
+      lastPull: null,
+      unackedStaging,
+    };
+  }
+
+  const configuredFileId = typeof config.fileId === 'string' ? config.fileId : null;
+  if (!configuredFileId) {
+    return {
+      telemetryState: 'malformed',
+      lastPush: null,
+      lastPull: null,
+      unackedStaging,
+    };
+  }
+
+  if (!fs.existsSync(syncStatePath)) {
+    return {
+      telemetryState: 'configured_no_state',
+      lastPush: null,
+      lastPull: null,
+      unackedStaging,
+    };
+  }
+
+  let state: SyncFileState | null = null;
+  try {
+    state = JSON.parse(fs.readFileSync(syncStatePath, 'utf8')) as SyncFileState;
+  } catch {
+    return {
+      telemetryState: 'malformed',
+      lastPush: null,
+      lastPull: null,
+      unackedStaging,
+    };
+  }
+
+  if (!state || typeof state !== 'object') {
+    return {
+      telemetryState: 'malformed',
+      lastPush: null,
+      lastPull: null,
+      unackedStaging,
+    };
+  }
+
+  const stateFileId = typeof state.fileId === 'string' ? state.fileId : null;
+  if (!stateFileId || stateFileId !== configuredFileId) {
+    return {
+      telemetryState: 'mismatched_file',
+      lastPush: null,
+      lastPull: null,
+      unackedStaging,
+    };
+  }
+
+  const lastPush = parseSyncTimestamp(state.lastPush);
+  const lastPull = parseSyncTimestamp(state.lastPull);
+  const hasInvalidTimestamp =
+    (state.lastPush !== null && state.lastPush !== undefined && lastPush === null)
+    || (state.lastPull !== null && state.lastPull !== undefined && lastPull === null);
+  if (hasInvalidTimestamp) {
+    return {
+      telemetryState: 'malformed',
+      lastPush: null,
+      lastPull: null,
+      unackedStaging,
+    };
+  }
+
+  const telemetryState: MemorySyncTelemetryState = 'available';
   return {
     telemetryState,
-    lastPush: state?.lastPush ?? null,
-    lastPull: state?.lastPull ?? null,
+    lastPush,
+    lastPull,
     unackedStaging,
   };
 }
@@ -85,10 +176,90 @@ function isValidSummaryRange(seqFrom: number, seqTo: number): boolean {
   return Number.isFinite(seqFrom) && Number.isFinite(seqTo) && seqFrom <= seqTo;
 }
 
-function parseLatestBatchSummary(entry: Entry): MemoryCoverageLatestBatchSummary {
-  const sessionId = typeof entry.metadata.sessionId === 'string'
-    ? entry.metadata.sessionId
-    : '';
+function isSuccessfulBatchSummary(entry: Entry): boolean {
+  if (entry.metadata.kind !== KIND_BATCH) return false;
+  const content = (entry.content ?? '').trim();
+  return content.length > 0;
+}
+
+function batchSummaryTimestamp(entry: Entry): string {
+  const summarizedAt = entry.metadata.summarized_at;
+  if (typeof summarizedAt === 'string' && summarizedAt.length > 0) return summarizedAt;
+  return entry.updatedAt || entry.createdAt;
+}
+
+function resolveOwningSessionId(store: TimStore, entry: Entry): string | null {
+  if (typeof entry.metadata.sessionId === 'string' && entry.metadata.sessionId.trim()) {
+    return entry.metadata.sessionId;
+  }
+  let parentId = entry.parentId;
+  while (parentId) {
+    const parent = store.readSync(parentId);
+    if (!parent) break;
+    if (parent.metadata.kind === KIND_SESSION) {
+      const sid = typeof parent.metadata.sessionId === 'string'
+        ? parent.metadata.sessionId
+        : parent.id;
+      return sid;
+    }
+    parentId = parent.parentId;
+  }
+  return null;
+}
+
+async function findLatestSuccessfulBatchSummary(store: TimStore): Promise<Entry | null> {
+  const rows = store.getDb().prepare(`
+    SELECT * FROM entries
+    WHERE json_extract(metadata, '$.kind') = ?
+      AND irrelevant = 0
+      AND tombstoned_at IS NULL
+      AND trim(COALESCE(content, '')) != ''
+  `).all(KIND_BATCH) as Array<{
+    id: string;
+    parent_id: string | null;
+    content: string;
+    metadata: string;
+    created_at: string;
+    updated_at: string;
+  }>;
+
+  const candidates: Entry[] = [];
+  for (const row of rows) {
+    const entry = await store.read(row.id, { showIrrelevant: true, includeChildren: false });
+    if (entry && isSuccessfulBatchSummary(entry)) candidates.push(entry);
+  }
+
+  candidates.sort((a, b) => batchSummaryTimestamp(b).localeCompare(batchSummaryTimestamp(a)));
+  return candidates[0] ?? null;
+}
+
+async function findLatestSuccessfulRollup(store: TimStore): Promise<Entry | null> {
+  const rows = store.getDb().prepare(`
+    SELECT * FROM entries
+    WHERE json_extract(metadata, '$.kind') = ?
+      AND irrelevant = 0
+      AND tombstoned_at IS NULL
+      AND trim(COALESCE(json_extract(metadata, '$.summary'), '')) != ''
+  `).all(KIND_SUMMARY_ROOT) as Array<{ id: string }>;
+
+  const candidates: Entry[] = [];
+  for (const row of rows) {
+    const entry = await store.read(row.id, { showIrrelevant: true, includeChildren: false });
+    if (!entry) continue;
+    const rollup = entry.metadata.summary;
+    if (typeof rollup === 'string' && rollup.trim().length > 0) candidates.push(entry);
+  }
+
+  candidates.sort((a, b) => (b.updatedAt || b.createdAt).localeCompare(a.updatedAt || a.createdAt));
+  return candidates[0] ?? null;
+}
+
+function parseLatestBatchSummary(
+  store: TimStore,
+  entry: Entry,
+): MemoryCoverageLatestBatchSummary | null {
+  if (!isSuccessfulBatchSummary(entry)) return null;
+  const sessionId = resolveOwningSessionId(store, entry) ?? '';
   const batchIndex = Number(entry.metadata.batch_index);
   const seqFrom = Number(entry.metadata.seq_from);
   const seqTo = Number(entry.metadata.seq_to);
@@ -107,14 +278,12 @@ function parseLatestBatchSummary(entry: Entry): MemoryCoverageLatestBatchSummary
   };
 }
 
-function parseLatestRollup(entry: Entry): MemoryCoverageLatestRollup {
-  const sessionId = typeof entry.metadata.sessionId === 'string'
-    ? entry.metadata.sessionId
-    : entry.id;
+function parseLatestRollup(store: TimStore, entry: Entry): MemoryCoverageLatestRollup | null {
   const rollup = entry.metadata.summary;
   const hasRollupText = typeof rollup === 'string' && rollup.trim().length > 0;
+  if (!hasRollupText) return null;
   return {
-    sessionId,
+    sessionId: resolveOwningSessionId(store, entry),
     summaryRootId: entry.id,
     updatedAt: entry.updatedAt || entry.createdAt,
     hasRollupText,
@@ -149,6 +318,12 @@ function buildGuidance(
       break;
   }
 
+  if (summary.unknownSequenceExchangeCount > 0) {
+    guidance.push(
+      `${summary.unknownSequenceExchangeCount} exchange(s) have missing or invalid seq metadata — coverage unknown for those rows.`,
+    );
+  }
+
   if (summary.latestBatchSummary && !summary.latestBatchSummary.rangeKnown) {
     guidance.push(
       'Latest batch summary has invalid or missing seq range — associated exchanges stay pending.',
@@ -166,13 +341,14 @@ function buildGuidance(
       guidance.push('Embedding provider not initialized — health reads never load models.');
       break;
     case 'enabled': {
-      const backlog = semantic.unembeddedCount + semantic.staleVectorCount + semantic.wrongModelCount;
+      const backlog = semantic.unembeddedCount;
       if (backlog > 0) {
-        guidance.push(
-          `${backlog} eligible entry vector(s) need (re)indexing ` +
-          `(unembedded=${semantic.unembeddedCount}, stale=${semantic.staleVectorCount}, ` +
-          `wrongModel=${semantic.wrongModelCount}).`,
-        );
+        const parts: string[] = [`${backlog} eligible entry vector(s) need (re)indexing`];
+        const breakdown: string[] = [];
+        if (semantic.staleVectorCount > 0) breakdown.push(`stale=${semantic.staleVectorCount}`);
+        if (semantic.wrongModelCount > 0) breakdown.push(`wrongModel=${semantic.wrongModelCount}`);
+        if (breakdown.length > 0) parts.push(`(${breakdown.join(', ')})`);
+        guidance.push(parts.join(' '));
       } else if (semantic.vectorCount === 0) {
         guidance.push('Embedding enabled but no vectors indexed yet — backlog may be zero work.');
       }
@@ -187,14 +363,33 @@ function buildGuidance(
     case 'configured_no_state':
       guidance.push('Sync configured but no sync-state.json telemetry yet.');
       break;
+    case 'malformed':
+      guidance.push('Sync telemetry unreadable or invalid — treat push/pull history as unknown.');
+      break;
+    case 'mismatched_file':
+      guidance.push('Sync state fileId does not match sync.json — local push/pull timestamps ignored.');
+      break;
     case 'available':
       if (sync.unackedStaging > 0) {
         guidance.push(`${sync.unackedStaging} staging row(s) await sync push.`);
+      }
+      if (sync.lastPush || sync.lastPull) {
+        guidance.push('Sync timestamps are historical local evidence only — not current server reachability.');
       }
       break;
   }
 
   return guidance;
+}
+
+function sampleRanges(
+  ranges: MemoryCoverageSeqRange[],
+): { samples: MemoryCoverageSeqRange[]; total: number; truncated: boolean } {
+  return {
+    samples: ranges.slice(0, MAX_RANGE_SAMPLES),
+    total: ranges.length,
+    truncated: ranges.length > MAX_RANGE_SAMPLES,
+  };
 }
 
 async function computeSummaryCoverage(store: TimStore): Promise<MemorySummaryCoverageReport> {
@@ -205,9 +400,14 @@ async function computeSummaryCoverage(store: TimStore): Promise<MemorySummaryCov
       observedExchangeCount: 0,
       coveredExchangeCount: 0,
       pendingExchangeCount: 0,
+      unknownSequenceExchangeCount: 0,
       sessionsWithPending: 0,
       pendingRanges: [],
       coveredRanges: [],
+      pendingRangeCount: 0,
+      coveredRangeCount: 0,
+      pendingRangesTruncated: false,
+      coveredRangesTruncated: false,
       latestBatchSummary: null,
       latestRollup: null,
     };
@@ -215,15 +415,17 @@ async function computeSummaryCoverage(store: TimStore): Promise<MemorySummaryCov
 
   let observedExchangeCount = 0;
   let pendingExchangeCount = 0;
+  let unknownSequenceExchangeCount = 0;
   let sessionsWithPending = 0;
-  const pendingRanges: MemoryCoverageSeqRange[] = [];
-  const coveredRanges: MemoryCoverageSeqRange[] = [];
+  const allPendingRanges: MemoryCoverageSeqRange[] = [];
+  const allCoveredRanges: MemoryCoverageSeqRange[] = [];
   let workState: MemoryCoverageWorkState = 'fully_covered';
 
   for (const session of sessions) {
     const coverage = await deriveSessionCoverage(store, session.id);
     observedExchangeCount += coverage.exchangeCount;
     pendingExchangeCount += coverage.uncovered.length;
+    unknownSequenceExchangeCount += coverage.unknownSequenceExchangeCount;
     if (coverage.hasPendingSummarization) sessionsWithPending++;
 
     const byBatch = new Map<number, number[]>();
@@ -234,7 +436,7 @@ async function computeSummaryCoverage(store: TimStore): Promise<MemorySummaryCov
     }
     for (const [batchIndex, seqs] of byBatch) {
       for (const range of compactSeqRanges(session.id, batchIndex, seqs)) {
-        if (pendingRanges.length < MAX_RANGE_SAMPLES) pendingRanges.push(range);
+        allPendingRanges.push(range);
       }
     }
 
@@ -245,18 +447,18 @@ async function computeSummaryCoverage(store: TimStore): Promise<MemorySummaryCov
         workState = 'unknown';
         continue;
       }
-      if (coveredRanges.length < MAX_RANGE_SAMPLES) {
-        coveredRanges.push({
-          sessionId: session.id,
-          batchIndex: covered.batchIndex,
-          seqFrom,
-          seqTo,
-        });
-      }
+      allCoveredRanges.push({
+        sessionId: session.id,
+        batchIndex: covered.batchIndex,
+        seqFrom,
+        seqTo,
+      });
     }
   }
 
-  if (observedExchangeCount === 0) {
+  if (unknownSequenceExchangeCount > 0) {
+    workState = 'unknown';
+  } else if (observedExchangeCount === 0) {
     workState = 'no_exchanges';
   } else if (pendingExchangeCount > 0) {
     workState = 'pending';
@@ -264,17 +466,10 @@ async function computeSummaryCoverage(store: TimStore): Promise<MemorySummaryCov
     workState = 'fully_covered';
   }
 
-  const recentBatches = await store.getRecentBatchSummaries({ limit: 1, maxAgeDays: 36500 });
-  const latestBatchRow = recentBatches[0];
-
-  const rollupRoots = await store.getByMetadataKind(KIND_SUMMARY_ROOT, 200);
-  const latestRollupRow = rollupRoots
-    .filter(e => {
-      const rollup = e.metadata.summary;
-      return typeof rollup === 'string' && rollup.trim().length > 0;
-    })
-    .sort((a, b) => (b.updatedAt || b.createdAt).localeCompare(a.updatedAt || a.createdAt))[0];
-
+  const latestBatchRow = await findLatestSuccessfulBatchSummary(store);
+  const latestRollupRow = await findLatestSuccessfulRollup(store);
+  const pendingSample = sampleRanges(allPendingRanges);
+  const coveredSample = sampleRanges(allCoveredRanges);
   const coveredExchangeCount = Math.max(0, observedExchangeCount - pendingExchangeCount);
 
   return {
@@ -282,11 +477,16 @@ async function computeSummaryCoverage(store: TimStore): Promise<MemorySummaryCov
     observedExchangeCount,
     coveredExchangeCount,
     pendingExchangeCount,
+    unknownSequenceExchangeCount,
     sessionsWithPending,
-    pendingRanges,
-    coveredRanges,
-    latestBatchSummary: latestBatchRow ? parseLatestBatchSummary(latestBatchRow) : null,
-    latestRollup: latestRollupRow ? parseLatestRollup(latestRollupRow) : null,
+    pendingRanges: pendingSample.samples,
+    coveredRanges: coveredSample.samples,
+    pendingRangeCount: pendingSample.total,
+    coveredRangeCount: coveredSample.total,
+    pendingRangesTruncated: pendingSample.truncated,
+    coveredRangesTruncated: coveredSample.truncated,
+    latestBatchSummary: latestBatchRow ? parseLatestBatchSummary(store, latestBatchRow) : null,
+    latestRollup: latestRollupRow ? parseLatestRollup(store, latestRollupRow) : null,
   };
 }
 
@@ -309,24 +509,38 @@ export async function computeMemoryHealth(store: TimStore): Promise<MemoryHealth
 /** Human-readable memory lines for CLI/MCP doctor output. */
 export function formatMemoryHealthLines(memory: MemoryHealthReport): string[] {
   const { summaryCoverage: s, semanticIndex: idx, sync } = memory;
+  const pendingRangeNote = s.pendingRangesTruncated
+    ? `, showing ${s.pendingRanges.length}/${s.pendingRangeCount}`
+    : '';
+  const coveredRangeNote = s.coveredRangesTruncated
+    ? `, showing ${s.coveredRanges.length}/${s.coveredRangeCount}`
+    : '';
   const lines = [
     `Memory exchanges: ${s.observedExchangeCount} observed, ${s.coveredExchangeCount} covered, ` +
       `${s.pendingExchangeCount} pending (${s.workState})`,
+    `Memory ranges: pending=${s.pendingRangeCount}${pendingRangeNote}, ` +
+      `covered=${s.coveredRangeCount}${coveredRangeNote}`,
     `Semantic index: provider=${idx.providerState}, vectors=${idx.vectorCount}, ` +
-      `unembedded=${idx.unembeddedCount}, stale=${idx.staleVectorCount}, ` +
-      `wrongModel=${idx.wrongModelCount}`,
-    `Sync telemetry: ${sync.telemetryState}, unacked=${sync.unackedStaging}`,
+      `needsIndexing=${idx.unembeddedCount}` +
+      (idx.staleVectorCount > 0 || idx.wrongModelCount > 0
+        ? ` (stale=${idx.staleVectorCount}, wrongModel=${idx.wrongModelCount})`
+        : ''),
+    `Sync telemetry: ${sync.telemetryState}, unacked=${sync.unackedStaging}` +
+      (sync.lastPush ? `, lastPush=${sync.lastPush}` : '') +
+      (sync.lastPull ? `, lastPull=${sync.lastPull}` : ''),
   ];
   if (s.latestBatchSummary) {
     const b = s.latestBatchSummary;
     lines.push(
-      `Latest batch summary: session=${b.sessionId} batch=${b.batchIndex} ` +
+      `Latest batch summary: session=${b.sessionId || 'unknown'} batch=${b.batchIndex} ` +
         `rangeKnown=${b.rangeKnown} at=${b.summarizedAt ?? 'unknown'}`,
     );
   }
   if (s.latestRollup) {
     const r = s.latestRollup;
-    lines.push(`Latest session rollup: session=${r.sessionId} at=${r.updatedAt}`);
+    lines.push(
+      `Latest session rollup: session=${r.sessionId ?? 'unknown'} at=${r.updatedAt}`,
+    );
   }
   for (const g of memory.guidance) {
     lines.push(`  → ${g}`);

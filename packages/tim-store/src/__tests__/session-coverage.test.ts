@@ -137,6 +137,29 @@ describe('deriveSessionCoverage', () => {
     expect(coverage.coveredRanges).toEqual([]);
   });
 
+  it('covers flat unbound session exchanges and pending tail after checkpoint', async () => {
+    await sessions.sessionStart({ sessionId: 'flat', agentName: 'a', cwd: '/', harness: 't' });
+    await sessions.sessionLog('flat', [
+      { role: 'user', content: 'Q1' },
+      { role: 'agent', content: 'A1' },
+    ]);
+    let coverage = await deriveSessionCoverage(store, 'flat');
+    expect(coverage.exchangeCount).toBe(1);
+    expect(coverage.hasPendingSummarization).toBe(true);
+
+    await sessions.checkpoint('flat', {
+      summarize: async () => 'Checkpoint summary',
+      runDecay: false,
+    });
+    await sessions.sessionLog('flat', [
+      { role: 'user', content: 'Q2' },
+      { role: 'agent', content: 'A2' },
+    ]);
+    coverage = await deriveSessionCoverage(store, 'flat');
+    expect(coverage.exchangeCount).toBe(2);
+    expect(coverage.uncovered.map(u => u.seq)).toEqual([3]);
+  });
+
   it('handles huge imported ranges without enumerating their sequence numbers', async () => {
     await sessions.startProjectSession({
       sessionId: 'huge-range', projectId: 'P0100', agentName: 'a', cwd: '/', harness: 't', batchSize: 5,
