@@ -40,6 +40,11 @@ Supported MCP/store writes and updates validate `metadata.evidence` structurally
 Malformed evidence is rejected atomically (including `tim_write_many` pre-checks).
 References may later become unavailable; that is reported on read, not at write time.
 
+The evidence object and each source have a closed schema: unknown fields are rejected,
+not silently stripped. Validation does not mutate caller objects. Older or peer-written
+nonconforming evidence remains stored and reads as unknown; unrelated updates still work.
+An explicit evidence replacement must satisfy the current schema.
+
 Legacy rows without `metadata.evidence` read as `authority: unknown` with no sources.
 
 ## Automatic evidence
@@ -54,6 +59,7 @@ Legacy rows without `metadata.evidence` read as `authority: unknown` with no sou
 projection alongside summary-first entry bodies:
 
 - Entry/session sources resolve through normal visibility and suppression rules.
+- Session sources support both batched project sessions and flat legacy/unbound sessions.
 - Secret or suppressed sources are never presented as verified; bodies and hidden titles
   are not returned for source entries.
 - Git/document sources are always `unverified` — availability is not checked.

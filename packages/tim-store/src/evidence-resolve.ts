@@ -8,6 +8,7 @@ import { isSecret } from './secret.js';
 import {
   findChildByKind,
   KIND_EXCHANGE_BATCH,
+  KIND_EXCHANGE,
   KIND_EXCHANGES_ROOT,
   KIND_SESSION,
 } from './session-tree.js';
@@ -56,7 +57,14 @@ async function userExchangesInSeqRange(
   sessionId = canonicalSessionId;
 
   const exNode = await findChildByKind(store, sessionId, KIND_EXCHANGES_ROOT);
-  if (!exNode) return [];
+  if (!exNode) {
+    // Unbound and legacy sessions store exchanges directly below the session.
+    return (await store.getChildren(sessionId, { metadataKind: KIND_EXCHANGE })).filter(
+      entry => entry.metadata.role === 'user'
+        && Number(entry.metadata.seq) >= seqFrom
+        && Number(entry.metadata.seq) <= seqTo,
+    );
+  }
 
   const batches = await store.getChildByKind(exNode.id, KIND_EXCHANGE_BATCH);
   const users: Entry[] = [];

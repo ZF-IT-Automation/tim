@@ -71,6 +71,15 @@ function validateEvidenceSource(source: unknown, index: number): string[] {
   }
   const obj = source as Record<string, unknown>;
   const kind = obj.kind;
+  const fields: Record<string, readonly string[]> = {
+    entry: ['kind', 'entryId'],
+    session: ['kind', 'sessionId', 'seqFrom', 'seqTo'],
+    git: ['kind', 'revision', 'path'],
+    document: ['kind', 'uri'],
+  };
+  const allowed = typeof kind === 'string' && Object.hasOwn(fields, kind) ? fields[kind] : [];
+  const unknown = Object.keys(obj).filter(key => !allowed.includes(key));
+  if (unknown.length) return [`sources[${index}]: unknown fields: ${unknown.join(', ')}`];
   if (kind === 'entry') {
     const errors: string[] = [];
     if (!isNonEmptyString(obj.entryId)) errors.push(`sources[${index}].entryId: required non-empty string`);
@@ -128,6 +137,8 @@ export function validateEvidenceMetadata(value: unknown): EvidenceValidationResu
   }
   const obj = value as Record<string, unknown>;
   const errors: string[] = [];
+  const unknown = Object.keys(obj).filter(key => key !== 'authority' && key !== 'sources');
+  if (unknown.length) errors.push(`evidence: unknown fields: ${unknown.join(', ')}`);
   if (!isEvidenceAuthority(obj.authority)) {
     errors.push(`evidence.authority: must be one of ${EVIDENCE_AUTHORITIES.join(', ')}`);
   }
@@ -207,5 +218,4 @@ export function assertValidEvidenceMetadata(
   if (!result.ok) {
     throw new Error(`Invalid metadata.evidence: ${result.errors.join('; ')}`);
   }
-  metadata.evidence = result.evidence;
 }

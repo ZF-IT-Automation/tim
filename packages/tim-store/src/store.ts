@@ -2160,7 +2160,8 @@ export class TimStore implements MemoryInterface {
           };
         }
         const merged = { ...existingMeta, ...patchMeta };
-        assertValidEvidenceMetadata(merged);
+        // Legacy/peer metadata remains readable and editable until explicitly replaced.
+        assertValidEvidenceMetadata(patchMeta);
 
         const promote = applyIdeaPromote(merged, now, {
           hadIdeaMarker: isIdeaMarker(existingMeta.idea),
