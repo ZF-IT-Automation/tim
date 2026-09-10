@@ -195,6 +195,14 @@ describe('HTTP/SSE transport', () => {
     await stopServer();
   }, 2_000);
 
+  it('cleanup of an earlier child cannot kill its replacement', async () => {
+    await stopServer();
+    await startServer(testPort);
+    await new Promise(resolve => setTimeout(resolve, 3_200));
+    const { sessionId } = await openSseSession(baseUrl);
+    expect(sessionId).toBeTruthy();
+  }, 6_000);
+
   it('starts server and responds to GET /sse', async () => {
     const { sessionId } = await openSseSession(baseUrl);
     expect(sessionId).toBeTruthy();
