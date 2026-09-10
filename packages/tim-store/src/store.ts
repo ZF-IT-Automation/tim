@@ -2504,6 +2504,13 @@ export class TimStore implements MemoryInterface {
   async search(options: SearchOptions): Promise<Entry[]> {
     const topK = options.topK ?? 10;
     const searchType = options.searchType ?? 'hybrid';
+    let scopeRootId: string | undefined;
+    if (!TimStore.isUnrestrictedProjectScope(options.project)) {
+      const scope = await this.resolveProjectLabel(options.project!);
+      if (scope.status !== 'found') return [];
+      scopeRootId = (await this.read(scope.label))?.id;
+      if (!scopeRootId) return [];
+    }
     const patterns = this.loadActiveSuppressPatterns();
     const fetchLimit = topK * 3;
     let candidates = await this.searchFts(options.query, fetchLimit, {
@@ -2519,9 +2526,6 @@ export class TimStore implements MemoryInterface {
       const ftsOnly = this.rankByUsage(candidates, topK);
       const resolved = await this.resolveProjectLabel(options.query);
       if (resolved.status === 'found') {
-        const scopeRootId = TimStore.isUnrestrictedProjectScope(options.project)
-          ? undefined
-          : (await this.read(options.project!))?.id;
         const row = this.db.prepare(`
           SELECT * FROM entries
           WHERE json_extract(metadata, '$.kind') = 'project'
@@ -2574,9 +2578,6 @@ export class TimStore implements MemoryInterface {
     // Broader fix: index metadata.label + aliases in fts_entries (migration + triggers).
     const resolved = await this.resolveProjectLabel(options.query);
     if (resolved.status === 'found') {
-      const scopeRootId = TimStore.isUnrestrictedProjectScope(options.project)
-        ? undefined
-        : (await this.read(options.project!))?.id;
       const row = this.db.prepare(`
         SELECT * FROM entries
         WHERE json_extract(metadata, '$.kind') = 'project'

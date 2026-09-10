@@ -152,6 +152,20 @@ describe('retrieval review repros', () => {
     expect(hits).toHaveLength(0);
   });
 
+  it('resolves alias and name scope before a project prepend can spend topK', async () => {
+    const project = await store.createProject('P0920', { content: 'Requested project' });
+    await store.update(project.id, { metadata: { aliases: ['alpha-scope'] } });
+    await store.createProject('P0921', { content: 'Foreign project' });
+    const hit = await store.write('P0921 local reference', { parentId: project.id });
+    for (const searchType of ['fts', 'hybrid'] as const) {
+      for (const scope of ['P0920', 'alpha-scope']) {
+        const hits = await store.search({ query: 'P0921', project: scope, topK: 1, searchType });
+        expect(hits.map(e => e.id)).toEqual([hit.id]);
+      }
+      expect(await store.search({ query: 'P0921', project: 'missing-scope', searchType })).toEqual([]);
+    }
+  });
+
   it('parity: SQL and TS search status agree on fixture shapes', async () => {
     const project = await store.createProject('P0910', { content: 'Parity project' });
     const fixtures: Array<{ content: string; metadata: Record<string, unknown>; expected: string | null }> = [

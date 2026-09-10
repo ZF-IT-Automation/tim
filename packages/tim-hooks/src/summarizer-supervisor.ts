@@ -90,7 +90,8 @@ function appendLog(logPath: string, chunk: string | Buffer): void {
 }
 
 /** True when process group `pgid` still has at least one live member. */
-export function isProcessGroupAlive(pgid: number): boolean {
+export function isProcessGroupAlive(pgid: number | undefined): boolean {
+  if (pgid === undefined || !Number.isInteger(pgid) || pgid <= 0) return false;
   try {
     process.kill(-pgid, 0);
     return true;
@@ -102,9 +103,9 @@ export function isProcessGroupAlive(pgid: number): boolean {
   }
 }
 
-/** Send `signal` to `pgid` only when the group is still live (avoids recycled-PID SIGKILL). */
-export function safeKillProcessGroup(pgid: number, signal: NodeJS.Signals): boolean {
-  if (!isProcessGroupAlive(pgid)) return false;
+/** Best-effort signal delivery; an existence probe is not a process identity guarantee. */
+export function safeKillProcessGroup(pgid: number | undefined, signal: NodeJS.Signals): boolean {
+  if (pgid === undefined || !isProcessGroupAlive(pgid)) return false;
   try {
     process.kill(-pgid, signal);
     return true;
@@ -125,7 +126,7 @@ function killProcessTree(child: ReturnType<typeof spawn>, signal: NodeJS.Signals
   }
 }
 
-function waitForProcessGroupExit(pgid: number, pollMs = 100): Promise<void> {
+function waitForProcessGroupExit(pgid: number | undefined, pollMs = 100): Promise<void> {
   return new Promise(resolve => {
     const tick = () => {
       if (!isProcessGroupAlive(pgid)) {
@@ -167,7 +168,7 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<number> {
     child.stdout?.on('data', chunk => appendLog(opts.logPath, chunk));
     child.stderr?.on('data', chunk => appendLog(opts.logPath, chunk));
 
-    const pgid = child.pid!;
+    const pgid = child.pid;
     let killTimer: ReturnType<typeof setTimeout> | undefined;
     let childExitCode = 1;
     let childExited = false;

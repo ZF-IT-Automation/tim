@@ -81,6 +81,34 @@ describe('inherited secret push boundary (#F8)', () => {
     fs.unlinkSync(dbPath);
   });
 
+  it('replicates id-only hard-delete tombstones without the secret key', async () => {
+    const store = new TimStore(':memory:');
+    try {
+      const entry = await store.write('Secret body must not be transmitted', { metadata: { secret: true } });
+      await store.delete(entry.id, true);
+      const rows = getUnackedStaging(store.getDb());
+      expect(rows).toHaveLength(1);
+      expect(rows[0].operation).toBe('delete');
+      expect(rows[0].payload).not.toContain('Secret body');
+      const client = new TimSyncClient(`http://127.0.0.1:${port}`, 'test-token');
+      expect((await runPush(makeCtx(store, client))).pushed).toBe(1);
+      expect(getUnackedStaging(store.getDb())).toEqual([]);
+    } finally { store.close(); }
+  });
+
+  it('keeps full-row soft-delete upserts behind the secret key', async () => {
+    const store = new TimStore(':memory:');
+    try {
+      const entry = await store.write('Secret soft-delete body', { metadata: { secret: true } });
+      await store.delete(entry.id, false);
+      const client = new TimSyncClient(`http://127.0.0.1:${port}`, 'test-token');
+      const push = vi.spyOn(client, 'push');
+      await expect(runPush(makeCtx(store, client))).rejects.toBeInstanceOf(MissingSecretPassphraseError);
+      expect(push).not.toHaveBeenCalled();
+      expect(getUnackedStaging(store.getDb())[0].operation).toBe('upsert');
+    } finally { store.close(); }
+  });
+
   it('still pushes edge rows touching secret entries (ids only, no content)', async () => {
     const dbPath = path.join(os.tmpdir(), `tim-secret-edge-${Date.now()}.db`);
     const store = new TimStore(dbPath);
