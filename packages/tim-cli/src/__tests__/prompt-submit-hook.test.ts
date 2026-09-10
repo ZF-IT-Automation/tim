@@ -107,10 +107,13 @@ describe('tim hook prompt-submit', () => {
     const store = new TimStore(dbPath);
     const foreign = await store.createProject('P0002', { content: 'Foreign project' });
     for (let i = 0; i < 14; i++) {
-      await store.write(`DominantRecallToken filler ${i}\nForeign dominance.`, {
-        parentId: foreign.id,
-        tags: ['#note'],
-      });
+      await store.write(
+        `UniqueRecallNeedle UniqueRecallNeedle UniqueRecallNeedle filler ${i}\nForeign dominance.`,
+        {
+          parentId: foreign.id,
+          tags: ['#note'],
+        },
+      );
     }
     const local = await store.createProject('P0001', { content: 'Local project' });
     await store.write('UniqueRecallNeedle\nScoped lesson for this project.', {

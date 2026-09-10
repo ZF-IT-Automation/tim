@@ -135,6 +135,11 @@ export interface SearchOptions {
   tag?: string;
   /** Filter resolved task/bug status before ranking/limiting. */
   status?: string;
+  /**
+   * FTS query sanitization mode. `literal` (default) quotes all user tokens;
+   * `or-terms` preserves OR between quoted prompt-recall terms.
+   */
+  ftsQueryMode?: 'literal' | 'or-terms';
 }
 
 // ─── Staging (for sync) ───────────────────────────────────
@@ -402,7 +407,7 @@ export {
   type SectionEntryType,
 } from './project-schema.js';
 export { isStale, staleDays, daysSinceLastVerified } from './staleness.js';
-export { resolveEntryTaskStatus } from './task-status.js';
+export { resolveEntryTaskStatus, entryTaskStatusSql } from './task-status.js';
 export {
   PROMPT_STOP_WORDS,
   extractPromptTerms,

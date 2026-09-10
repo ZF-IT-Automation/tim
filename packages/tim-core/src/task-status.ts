@@ -24,6 +24,25 @@ const TASK_STATUSES = new Set([
  * bug statuses are mapped onto it here: 'open' (or missing) is still open work,
  * 'wontfix'/'duplicate' are closed without a fix, everything else is done.
  */
+/** SQLite expression mirroring resolveEntryTaskStatus() for pre-limit search filters. */
+export function entryTaskStatusSql(metadataColumn = 'e.metadata'): string {
+  const col = metadataColumn;
+  const legacyStatuses =
+    "('todo','in_progress','changes_pending','pushed','reviewed','done','cancelled')";
+  return `CASE
+    WHEN json_type(${col}, '$.task') = 'object' THEN COALESCE(json_extract(${col}, '$.task.status'), 'todo')
+    WHEN json_type(${col}, '$.bug') = 'object' THEN
+      CASE
+        WHEN json_extract(${col}, '$.bug.status') IN ('wontfix', 'duplicate') THEN 'cancelled'
+        WHEN json_extract(${col}, '$.bug.status') IS NOT NULL
+             AND json_extract(${col}, '$.bug.status') != 'open' THEN 'done'
+        ELSE 'todo'
+      END
+    WHEN json_extract(${col}, '$.status') IN ${legacyStatuses} THEN json_extract(${col}, '$.status')
+    ELSE 'todo'
+  END`;
+}
+
 export function resolveEntryTaskStatus(metadata: Record<string, unknown>): string {
   const task = metadata.task;
   if (typeof task === 'object' && task !== null && !Array.isArray(task)) {

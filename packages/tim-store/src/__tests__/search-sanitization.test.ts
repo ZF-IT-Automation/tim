@@ -43,6 +43,18 @@ describe('sanitizeFtsQuery (quoting strategy)', () => {
 
   it('treats operator words as literal terms (quoted)', () => {
     expect(sanitizeFtsQuery('foo AND bar')).toBe('"foo" "AND" "bar"');
+    expect(sanitizeFtsQuery('or')).toBe('"or"');
+    expect(sanitizeFtsQuery('notes or tasks')).toBe('"notes" "or" "tasks"');
+  });
+
+  it('preserves double-quoted phrases as a single FTS term', () => {
+    expect(sanitizeFtsQuery('"hello world"')).toBe('"hello world"');
+    expect(sanitizeFtsQuery('say "hello world" now')).toBe('"say" "hello world" "now"');
+  });
+
+  it('or-terms mode keeps generated prompt OR recall', () => {
+    expect(sanitizeFtsQuery('"fix" OR "sqlite" OR "wal"', 'or-terms'))
+      .toBe('"fix" OR "sqlite" OR "wal"');
   });
 
   it('strips embedded double quotes', () => {
@@ -76,7 +88,7 @@ describe('searchFts resilience (quoting strategy)', () => {
   it('does not crash on column-filter notation (task:true)', async () => {
     const results = await store.searchFts('task:true', 10);
     expect(Array.isArray(results)).toBe(true);
-    const good = await store.searchFts('task AND notes', 10);
+    const good = await store.searchFts('task notes', 10);
     expect(good.length).toBeGreaterThan(0);
     expect(good.map(r => r.title)).toContain('Task management notes');
   });
@@ -115,10 +127,15 @@ describe('searchFts resilience (quoting strategy)', () => {
   });
 
   it('returns matching entries for a sanitized multi-token query', async () => {
-    // "task AND management" → both tokens searched literally via quotes.
-    const results = await store.searchFts('task AND management', 10);
+    const results = await store.searchFts('task management', 10);
     expect(results.length).toBeGreaterThan(0);
     expect(results[0].title).toBe('Task management notes');
+  });
+
+  it('treats explicit AND as a literal token in user queries', async () => {
+    const results = await store.searchFts('task AND management', 10);
+    expect(Array.isArray(results)).toBe(true);
+    expect(results).toHaveLength(0);
   });
 
   it('returns empty array for pure-operator / empty input (not crash)', async () => {
@@ -127,5 +144,24 @@ describe('searchFts resilience (quoting strategy)', () => {
     // Each token (AND, OR, NOT) survives as a quoted literal; if no doc
     // contains those words, result is empty.
     expect(await store.searchFts('   ', 10)).toEqual([]);
+  });
+
+  it('does not error on lone function words or trailing operators', async () => {
+    await expect(store.searchFts('or', 10)).resolves.toBeDefined();
+    await expect(store.searchFts('and', 10)).resolves.toBeDefined();
+    await expect(store.searchFts('foo or', 10)).resolves.toBeDefined();
+  });
+
+  it('or-terms mode finds prompt recall hits without requiring every term', async () => {
+    await store.write('German recall\nDie Wal-Größe für sqlite muss kleiner werden.', {
+      tags: ['#note'],
+    });
+    const results = await store.searchFts(
+      '"wal" OR "größe" OR "sqlite" OR "optimieren"',
+      10,
+      { ftsQueryMode: 'or-terms' },
+    );
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0].title).toBe('German recall');
   });
 });

@@ -19,15 +19,15 @@ describe('scoped search before limits', () => {
     }
   }
 
-  it('finds in-project match despite higher-ranked foreign FTS hits', async () => {
+  it('finds in-project match despite higher-ranked foreign FTS hits on the same query', async () => {
     const foreign = Array.from({ length: 14 }, (_, i) =>
-      `common filler topic alpha beta gamma ${i}\nForeign dominance line.`,
+      `UniqueNeedleToken UniqueNeedleToken UniqueNeedleToken filler ${i}\nForeign dominance line.`,
     );
     await seedProject('P0002', foreign);
     await seedProject('P0001', ['UniqueNeedleToken\nKeep this project-specific memory.']);
 
     const hits = await store.search({
-      query: '"UniqueNeedleToken"',
+      query: 'UniqueNeedleToken',
       topK: 3,
       searchType: 'fts',
       project: 'P0001',
@@ -70,5 +70,62 @@ describe('scoped search before limits', () => {
     });
     expect(doneHits).toHaveLength(1);
     expect(doneHits[0].title).toContain('done task');
+  });
+
+  it('status filter survives more than 1000 higher-ranked excluded matches', async () => {
+    const project = await store.createProject('P0200', { content: 'Status starvation project' });
+    for (let i = 0; i < 1001; i++) {
+      await store.write(
+        `StatusStarveToken StatusStarveToken StatusStarveToken done filler ${i}`,
+        {
+          parentId: project.id,
+          tags: ['#task'],
+          metadata: { task: { status: 'done' } },
+        },
+      );
+    }
+    await store.write('StatusStarveToken weak todo match', {
+      parentId: project.id,
+      tags: ['#task'],
+      metadata: { task: { status: 'todo' } },
+    });
+
+    const hits = await store.search({
+      query: 'StatusStarveToken',
+      topK: 1,
+      searchType: 'fts',
+      project: 'P0200',
+      status: 'todo',
+    });
+
+    expect(hits).toHaveLength(1);
+    expect(hits[0].title).toContain('weak todo match');
+  });
+
+  it('exact tag filter survives LIKE wildcard characters and foreign dominance', async () => {
+    const project = await store.createProject('P0300', { content: 'Tag project' });
+    const wildcardTag = '#wild%_tag';
+    for (let i = 0; i < 14; i++) {
+      await store.write(`TagStarveToken TagStarveToken TagStarveToken filler ${i}`, {
+        parentId: project.id,
+        tags: ['#note'],
+      });
+    }
+    await store.write('TagStarveToken tagged needle', {
+      parentId: project.id,
+      tags: [wildcardTag],
+    });
+
+    const hits = await store.search({
+      query: 'TagStarveToken',
+      topK: 1,
+      searchType: 'fts',
+      project: 'P0300',
+      tag: wildcardTag,
+    });
+
+    expect(hits).toHaveLength(1);
+    expect(hits[0].title).toContain('tagged needle');
+    expect(hits[0].tags).toContain(wildcardTag);
   });
 });
