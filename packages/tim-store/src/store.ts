@@ -46,7 +46,20 @@ import {
   applyEntryTombstone,
 } from './sync-methods.js';
 import { parentIsSecret } from './secret.js';
-import { assertValidEvidenceMetadata } from 'tim-core';
+import {
+  assertValidEvidenceMetadata,
+  assertValidCallerTemporalMetadata,
+  rejectForgedTemporalSupersession,
+} from 'tim-core';
+import {
+  buildSupersessionSourcePatch,
+  buildSupersessionTargetPatch,
+  buildTemporalEligibilitySql,
+  entryTemporallyEligibleAt,
+  resolveSearchAsOf,
+  temporalEligibilityParams,
+  validateSupersessionLink,
+} from './temporal.js';
 import {
   type EmbeddingProvider,
   type SearchSemanticInfo,
@@ -2167,7 +2180,9 @@ export class TimStore implements MemoryInterface {
         }
         const merged = { ...existingMeta, ...patchMeta };
         // Legacy/peer metadata remains readable and editable until explicitly replaced.
+        rejectForgedTemporalSupersession(patchMeta);
         assertValidEvidenceMetadata(patchMeta);
+        assertValidCallerTemporalMetadata(patchMeta);
 
         const promote = applyIdeaPromote(merged, now, {
           hadIdeaMarker: isIdeaMarker(existingMeta.idea),
@@ -2290,7 +2305,9 @@ export class TimStore implements MemoryInterface {
     }
 
     const metadata: Record<string, unknown> = { ...(options.metadata ?? {}) };
+    rejectForgedTemporalSupersession(metadata);
     assertValidEvidenceMetadata(metadata);
+    assertValidCallerTemporalMetadata(metadata);
     if (typeof metadata.task === 'object' && metadata.task !== null && !Array.isArray(metadata.task)) {
       const taskObj = migrateTaskHistory(metadata.task as Record<string, unknown>, now);
       if (taskObj.subtype === 'coding' && !taskObj.vcs && options.projectPath) {
@@ -2519,7 +2536,9 @@ export class TimStore implements MemoryInterface {
     entry: Entry,
     filters: Pick<SearchOptions, 'project' | 'type' | 'tag' | 'status' | 'confidenceAbove' | 'visibilityMask'>,
     scopeRootId?: string,
+    asOf?: Date,
   ): boolean {
+    if (asOf && !entryTemporallyEligibleAt(entry, asOf)) return false;
     if (scopeRootId) {
       const label = this.getProjectLabel(entry.id);
       const scopeLabel = this.getProjectLabel(scopeRootId);
@@ -2578,6 +2597,7 @@ export class TimStore implements MemoryInterface {
     options: SearchOptions,
     fetchLimit: number,
     patterns: string[],
+    asOf?: Date,
   ): Promise<Entry[]> {
     const eligible: Entry[] = [];
     const seen = new Set<string>();
@@ -2593,10 +2613,12 @@ export class TimStore implements MemoryInterface {
         ftsQueryMode: options.ftsQueryMode,
         confidenceAbove: options.confidenceAbove,
         visibilityMask: options.visibilityMask,
+        asOfIso: asOf?.toISOString(),
       });
       for (const entry of batch) {
         if (seen.has(entry.id)) continue;
         seen.add(entry.id);
+        if (asOf && !entryTemporallyEligibleAt(entry, asOf)) continue;
         if (!TimStore.matchesSuppressed(patterns, entry)) {
           eligible.push(entry);
           if (eligible.length >= fetchLimit) break;
@@ -2616,6 +2638,7 @@ export class TimStore implements MemoryInterface {
     eligibility: SearchEligibilityFilters,
     fetchLimit: number,
     patterns: string[],
+    asOf?: Date,
   ): Array<{ entry: Entry; similarity: number }> {
     const params: unknown[] = [provider.modelId];
     const scopeSql = buildSearchEligibilitySql(eligibility, params);
@@ -2631,6 +2654,7 @@ export class TimStore implements MemoryInterface {
     const scored: Array<{ entry: Entry; similarity: number }> = [];
     for (const row of rows) {
       const entry = rowToEntry(row);
+      if (asOf && !entryTemporallyEligibleAt(entry, asOf)) continue;
       if (TimStore.matchesSuppressed(patterns, entry)) continue;
       if (!isVectorContentFresh(entry.title, entry.content, row.content_hash)) continue;
       const vec = parseStoredVector(row.vector, provider.dimension);
@@ -2656,6 +2680,7 @@ export class TimStore implements MemoryInterface {
     scopeRootId: string | undefined,
     patterns: string[],
     topK: number,
+    asOf?: Date,
   ): Promise<Entry[]> {
     const resolved = await this.resolveProjectLabel(options.query);
     if (resolved.status !== 'found') return ranked.slice(0, topK);
@@ -2670,7 +2695,7 @@ export class TimStore implements MemoryInterface {
     if (
       proj
       && !TimStore.matchesSuppressed(patterns, proj)
-      && this.entryMatchesSearchFilters(proj, options, scopeRootId)
+      && this.entryMatchesSearchFilters(proj, options, scopeRootId, asOf)
       && !ranked.some(e => e.id === proj.id)
     ) {
       return [proj, ...ranked].slice(0, topK);
@@ -2681,6 +2706,8 @@ export class TimStore implements MemoryInterface {
   async search(options: SearchOptions): Promise<Entry[]> {
     const topK = options.topK ?? 10;
     const searchType = options.searchType ?? 'hybrid';
+    const asOf = resolveSearchAsOf(options.asOf);
+    const asOfIso = asOf.toISOString();
     let scopeRootId: string | undefined;
     if (!TimStore.isUnrestrictedProjectScope(options.project)) {
       const scope = await this.resolveProjectLabel(options.project!);
@@ -2711,6 +2738,7 @@ export class TimStore implements MemoryInterface {
       status: options.status,
       confidenceAbove: options.confidenceAbove,
       visibilityMask: options.visibilityMask,
+      asOfIso,
     };
 
     const configuredModel = resolveConfiguredEmbeddingModelId();
@@ -2724,10 +2752,10 @@ export class TimStore implements MemoryInterface {
     if (searchType === 'fts') {
       semanticInfo.providerState = 'disabled';
       const ftsOnly = this.rankByUsage(
-        await this.fetchLexicalCandidates(options, fetchLimit, patterns),
+        await this.fetchLexicalCandidates(options, fetchLimit, patterns, asOf),
         topK,
       );
-      return await this.prependDirectProjectHit(ftsOnly, options, scopeRootId, patterns, topK);
+      return await this.prependDirectProjectHit(ftsOnly, options, scopeRootId, patterns, topK, asOf);
     }
 
     const provider = await this.resolveEmbeddingProvider();
@@ -2745,14 +2773,14 @@ export class TimStore implements MemoryInterface {
         return [];
       }
       const vectorHits = this.fetchVectorCandidates(
-        queryVector, provider, eligibility, fetchLimit, patterns,
+        queryVector, provider, eligibility, fetchLimit, patterns, asOf,
       );
       const ranked = this.rankVectorOnly(vectorHits, topK);
-      return await this.prependDirectProjectHit(ranked, options, scopeRootId, patterns, topK);
+      return await this.prependDirectProjectHit(ranked, options, scopeRootId, patterns, topK, asOf);
     }
 
     // hybrid — independent lexical + vector candidates, merged before ranking
-    const lexical = await this.fetchLexicalCandidates(options, fetchLimit, patterns);
+    const lexical = await this.fetchLexicalCandidates(options, fetchLimit, patterns, asOf);
     let queryVector: Float32Array | null = null;
     if (provider?.state === 'enabled') {
       queryVector = await this.embedQuery(provider, options.query);
@@ -2763,10 +2791,10 @@ export class TimStore implements MemoryInterface {
         semanticInfo.vectorUnavailable = true;
       }
       const ftsOnly = this.rankByUsage(lexical, topK);
-      return await this.prependDirectProjectHit(ftsOnly, options, scopeRootId, patterns, topK);
+      return await this.prependDirectProjectHit(ftsOnly, options, scopeRootId, patterns, topK, asOf);
     }
     const vectorHits = this.fetchVectorCandidates(
-      queryVector, provider!, eligibility, fetchLimit, patterns,
+      queryVector, provider!, eligibility, fetchLimit, patterns, asOf,
     );
     const ranked = await this.rankByHybrid(
       lexical,
@@ -2775,7 +2803,7 @@ export class TimStore implements MemoryInterface {
       provider!,
       topK,
     );
-    return await this.prependDirectProjectHit(ranked, options, scopeRootId, patterns, topK);
+    return await this.prependDirectProjectHit(ranked, options, scopeRootId, patterns, topK, asOf);
   }
 
   /**
@@ -2868,6 +2896,7 @@ export class TimStore implements MemoryInterface {
       ftsQueryMode?: FtsQueryMode;
       confidenceAbove?: number;
       visibilityMask?: number;
+      asOfIso?: string;
     } = {},
   ): Promise<Entry[]> {
     const sanitized = sanitizeFtsQuery(query, opts.ftsQueryMode ?? 'literal')
@@ -2924,6 +2953,10 @@ export class TimStore implements MemoryInterface {
     if (opts.visibilityMask !== undefined) {
       scopeSql += ` AND (e.visibility & ?) != 0`;
       params.push(opts.visibilityMask);
+    }
+    if (opts.asOfIso) {
+      scopeSql += buildTemporalEligibilitySql(opts.asOfIso, 'e');
+      params.push(...temporalEligibilityParams(opts.asOfIso));
     }
     params.push(limit);
 
@@ -3105,6 +3138,10 @@ export class TimStore implements MemoryInterface {
     sourceId: string, targetId: string, type: EdgeType,
     weight: number = 1.0, metadata: Record<string, unknown> = {}
   ): Promise<Edge> {
+    if (type === 'supersedes') {
+      return this.linkSupersedes(sourceId, targetId, weight, metadata);
+    }
+
     const id = ulid();
     const ts = Date.now();
 
@@ -3133,6 +3170,101 @@ export class TimStore implements MemoryInterface {
     })();
 
     const edge = { id, sourceId, targetId, type, weight, metadata };
+    this.emit('edge:created', {
+      edge,
+      agentId: this.agentId,
+      timestamp: new Date().toISOString(),
+    });
+    return edge;
+  }
+
+  private async linkSupersedes(
+    sourceId: string,
+    targetId: string,
+    weight: number,
+    metadata: Record<string, unknown>,
+  ): Promise<Edge> {
+    const effectiveAt = metadata.effectiveAt;
+    const validationError = validateSupersessionLink({
+      db: this.db,
+      sourceId,
+      targetId,
+      effectiveAt: typeof effectiveAt === 'string' ? effectiveAt : '',
+      getProjectLabel: (id) => this.getProjectLabel(id),
+      readRow: (id) => this.db.prepare('SELECT id, metadata FROM entries WHERE id = ?')
+        .get(id) as { id: string; metadata: string } | undefined,
+    });
+    if (validationError) {
+      throw new Error(validationError);
+    }
+    const effective = effectiveAt as string;
+
+    const id = ulid();
+    const ts = Date.now();
+    const edgeMetadata = { effectiveAt: effective };
+    const edgeRow = {
+      id,
+      source_id: sourceId,
+      target_id: targetId,
+      type: 'supersedes' as const,
+      weight,
+      metadata: JSON.stringify(edgeMetadata),
+      updated_at: new Date(ts).toISOString(),
+    };
+    const edgeKey = `${sourceId}|${targetId}|supersedes`;
+
+    const sourceExisting = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(sourceId) as RowEntry;
+    const targetExisting = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(targetId) as RowEntry;
+    const sourceMeta = JSON.parse(sourceExisting.metadata || '{}') as Record<string, unknown>;
+    const targetMeta = JSON.parse(targetExisting.metadata || '{}') as Record<string, unknown>;
+    const now = new Date(ts).toISOString();
+
+    const sourceUpdated: RowEntry = {
+      ...sourceExisting,
+      metadata: JSON.stringify(buildSupersessionSourcePatch(sourceMeta, effective)),
+      updated_at: now,
+      accessed_at: now,
+      lww_device: this.deviceId,
+    };
+    const targetUpdated: RowEntry = {
+      ...targetExisting,
+      metadata: JSON.stringify(buildSupersessionTargetPatch(targetMeta, sourceId, effective)),
+      updated_at: now,
+      accessed_at: now,
+      lww_device: this.deviceId,
+    };
+
+    this.db.transaction(() => {
+      this.db.prepare(`UPDATE entries SET metadata=?, accessed_at=?, updated_at=?, lww_device=? WHERE id=?`).run(
+        sourceUpdated.metadata, sourceUpdated.accessed_at, sourceUpdated.updated_at,
+        sourceUpdated.lww_device, sourceId,
+      );
+      this.db.prepare(`UPDATE entries SET metadata=?, accessed_at=?, updated_at=?, lww_device=? WHERE id=?`).run(
+        targetUpdated.metadata, targetUpdated.accessed_at, targetUpdated.updated_at,
+        targetUpdated.lww_device, targetId,
+      );
+      this.insertStagingSync(sourceUpdated, ts, sourceUpdated.confidence);
+      this.insertStagingSync(targetUpdated, ts + 1, targetUpdated.confidence);
+      this.db.prepare(`INSERT INTO edges (id, source_id, target_id, type, weight, metadata, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
+        edgeRow.id, edgeRow.source_id, edgeRow.target_id,
+        edgeRow.type, edgeRow.weight, edgeRow.metadata, edgeRow.updated_at,
+      );
+      this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
+        lww_timestamp, lww_device, lww_confidence)
+        VALUES (?, 'edge', 'upsert', ?, ?, ?, ?)`).run(
+        edgeKey, JSON.stringify(edgeRow), ts + 2, this.agentId, 1.0,
+      );
+    })();
+
+    const edge: Edge = {
+      id,
+      sourceId,
+      targetId,
+      type: 'supersedes',
+      weight,
+      metadata: edgeMetadata,
+    };
     this.emit('edge:created', {
       edge,
       agentId: this.agentId,

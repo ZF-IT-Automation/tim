@@ -109,6 +109,18 @@ export {
   type EvidenceSourceStatus,
 } from './evidence-resolve.js';
 export {
+  projectEntryTemporal,
+  type PresentedTemporal,
+  type PresentedTemporalRef,
+} from './temporal-resolve.js';
+export {
+  buildTemporalEligibilitySql,
+  entryTemporallyEligibleAt,
+  resolveSearchAsOf,
+  temporalEligibilityParams,
+  validateSupersessionLink,
+} from './temporal.js';
+export {
   deriveCounters,
   findChildByKind,
   findManagedRoot,
