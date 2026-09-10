@@ -28,7 +28,7 @@ export function resolveConfiguredEmbeddingModelId(): string | null {
 }
 
 export function validateEmbeddingModelId(modelId: string): boolean {
-  return modelId in SUPPORTED_EMBEDDING_MODELS;
+  return Object.prototype.hasOwnProperty.call(SUPPORTED_EMBEDDING_MODELS, modelId);
 }
 
 export function embeddingModelDimension(modelId: string): number | null {
@@ -68,11 +68,25 @@ export function createUnavailableEmbeddingProvider(
 
 let cachedDefault: EmbeddingProvider | null | undefined;
 let cachedDefaultModelId: string | null | undefined;
+let defaultInitPromise: Promise<EmbeddingProvider | null> | null = null;
+let defaultInitModelId: string | null = null;
 
 /** Reset cached default provider (tests). */
 export function resetDefaultEmbeddingProviderCache(): void {
   cachedDefault = undefined;
   cachedDefaultModelId = undefined;
+  defaultInitPromise = null;
+  defaultInitModelId = null;
+}
+
+/** True once default provider init has completed (success or unavailable). */
+export function isDefaultEmbeddingProviderResolved(): boolean {
+  return cachedDefault !== undefined;
+}
+
+/** Peek cached default without triggering initialization (#37 health). */
+export function peekCachedDefaultEmbeddingProvider(): EmbeddingProvider | null | undefined {
+  return cachedDefault;
 }
 
 /**
@@ -91,32 +105,43 @@ export async function getDefaultEmbeddingProvider(
   if (cachedDefault !== undefined && cachedDefaultModelId === modelId) {
     return cachedDefault;
   }
-
-  try {
-    const { EmbeddingModel, FlagEmbedding } = await import('fastembed');
-    const spec = SUPPORTED_EMBEDDING_MODELS[modelId]!;
-    const embedder = await FlagEmbedding.init({ model: EmbeddingModel.AllMiniLML6V2 });
-    const provider: EmbeddingProvider = {
-      modelId,
-      dimension: spec.dimension,
-      state: 'enabled',
-      async embed(texts: string[]): Promise<Float32Array[]> {
-        const gen = embedder.embed(texts, texts.length);
-        const batch = await gen.next();
-        const vectors = batch.value;
-        if (!vectors) return [];
-        return vectors.map(v => new Float32Array(v));
-      },
-    };
-    cachedDefault = provider;
-    cachedDefaultModelId = modelId;
-    return provider;
-  } catch {
-    const unavailable = createUnavailableEmbeddingProvider(modelId);
-    cachedDefault = unavailable;
-    cachedDefaultModelId = modelId;
-    return unavailable;
+  if (defaultInitPromise && defaultInitModelId === modelId) {
+    return defaultInitPromise;
   }
+
+  defaultInitModelId = modelId;
+  defaultInitPromise = (async (): Promise<EmbeddingProvider | null> => {
+    try {
+      const { EmbeddingModel, FlagEmbedding } = await import('fastembed');
+      const spec = SUPPORTED_EMBEDDING_MODELS[modelId]!;
+      const embedder = await FlagEmbedding.init({ model: EmbeddingModel.AllMiniLML6V2 });
+      const provider: EmbeddingProvider = {
+        modelId,
+        dimension: spec.dimension,
+        state: 'enabled',
+        async embed(texts: string[]): Promise<Float32Array[]> {
+          const gen = embedder.embed(texts, texts.length);
+          const batch = await gen.next();
+          const vectors = batch.value;
+          if (!vectors) return [];
+          return vectors.map(v => new Float32Array(v));
+        },
+      };
+      cachedDefault = provider;
+      cachedDefaultModelId = modelId;
+      return provider;
+    } catch {
+      const unavailable = createUnavailableEmbeddingProvider(modelId);
+      cachedDefault = unavailable;
+      cachedDefaultModelId = modelId;
+      return unavailable;
+    } finally {
+      defaultInitPromise = null;
+      defaultInitModelId = null;
+    }
+  })();
+
+  return defaultInitPromise;
 }
 
 export interface SearchSemanticInfo {

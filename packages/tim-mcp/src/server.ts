@@ -81,6 +81,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { buildBoundedSearchResponse, clampSearchRequest } from './search-response.js';
+import { executeTimSearch } from './tim-search-tool.js';
 import { validateTokenBudget, boundRenderedText } from './briefing-budget.js';
 import { formatQueryExtrasBlock, searchTaskBriefingExtras } from './task-aware-selection.js';
 
@@ -2434,31 +2435,15 @@ export async function createMcpServer(
 
         case 'tim_search': {
           const parsed = TimSearchSchema.parse(args);
-          const { query, root, type, tag, status, searchType } = parsed;
+          const { query, root, tag } = parsed;
           if (query === undefined && tag === undefined) {
             return {
               content: [{ type: 'text', text: 'tim_search needs a query, a tag, or both.' }],
               isError: true,
             };
           }
-          const { topK, excerptChars, clamped } =
-            clampSearchRequest(parsed.topK, parsed.excerptChars);
           const usageSid = await usageSessionId();
-          // Two different retrievals behind one tool. With a query it stays what
-          // it was — relevance order, tag as a filter — so existing callers
-          // see no reordering. Without one there is nothing to rank against, and
-          // a topic reads in the order it happened.
-          let results = query === undefined
-            ? await s.searchByTag(tag!, topK, root, { type, status })
-            : await s.search({
-                query,
-                topK,
-                searchType,
-                project: root,
-                type,
-                tag,
-                status,
-              });
+          let { response, results } = await executeTimSearch(s, parsed);
           if (root) {
             const roots = await resolveRoots(s, root);
             if (roots.error) {
@@ -2470,14 +2455,15 @@ export async function createMcpServer(
             results = results.filter(r =>
               roots.labels!.includes(s.getProjectLabel(r.id) ?? ''),
             );
+            const excerptChars = clampSearchRequest(parsed.topK, parsed.excerptChars).excerptChars;
+            response = {
+              ...buildBoundedSearchResponse(results, excerptChars),
+              ...(response.clamped ? { clamped: response.clamped } : {}),
+              ...(s.lastSearchSemantic ? { semantic: s.lastSearchSemantic } : {}),
+            };
           }
-          const response = {
-            ...buildBoundedSearchResponse(results, excerptChars),
-            ...(clamped ? { clamped } : {}),
-            ...(s.lastSearchSemantic ? { semantic: s.lastSearchSemantic } : {}),
-          };
           bestEffortTelemetry('recordRead', () =>
-            s.recordRead(response.results.map(e => e.id), usageSid));
+            s.recordRead((response.results as Entry[]).map(e => e.id), usageSid));
           return {
             content: [{ type: 'text', text: JSON.stringify(response) }],
           };

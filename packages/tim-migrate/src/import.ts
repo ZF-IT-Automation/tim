@@ -4,7 +4,7 @@ import Database from 'better-sqlite3';
 import { ulid } from 'ulid';
 import { mergeImportEvidence } from 'tim-core';
 import type { TimStore } from 'tim-store';
-import { splitTitleBody } from 'tim-store';
+import { splitTitleBody, invalidateEntryVector } from 'tim-store';
 import { detectHmemFormat, inspectHmemFile, parseLabel } from './hmem-format.js';
 
 function stampImportedEvidence(metadata: Record<string, unknown>): Record<string, unknown> {
@@ -290,6 +290,15 @@ function importV2(
       // Idempotency guard: if entry was already imported (same hmemUid), skip unless forced
       const alreadyImported = hmemUidExists(store, e.uid);
       if (alreadyImported && !options.force) {
+        const { title, body } = splitTitleBody(e.level_1);
+        if (contentChanged(store, alreadyImported.id, body) && !options.dryRun) {
+          changedCount++;
+          store.getDb().prepare(
+            'UPDATE entries SET title = ?, content = ?, updated_at = ? WHERE id = ?',
+          ).run(title, body, new Date().toISOString(), alreadyImported.id);
+          invalidateEntryVector(store.getDb(), alreadyImported.id);
+          stageEntryRow(store.getDb(), alreadyImported.id);
+        }
         idMap.set(e.uid, alreadyImported.id);
         skipped++;
         conflicts.push({ label: e.label, action: 'merged', detail: alreadyImported.id });
@@ -317,6 +326,7 @@ function importV2(
               store.getDb().prepare(
                 'UPDATE entries SET title = ?, content = ?, updated_at = ?, metadata = ? WHERE id = ?',
               ).run(title, body, new Date().toISOString(), JSON.stringify(nextMetadata), existingLabel);
+              invalidateEntryVector(store.getDb(), existingLabel);
             } else {
               writeEntryMetadata(store, existingLabel, nextMetadata);
             }
@@ -382,6 +392,14 @@ function importV2(
       // Idempotency guard: if node was already imported (same hmemUid), skip unless forced
       const alreadyImported = hmemUidExists(store, n.uid);
       if (alreadyImported && !options.force) {
+        if (contentChanged(store, alreadyImported.id, n.content) && !options.dryRun) {
+          changedCount++;
+          store.getDb().prepare(
+            'UPDATE entries SET content = ?, updated_at = ? WHERE id = ?',
+          ).run(n.content, new Date().toISOString(), alreadyImported.id);
+          invalidateEntryVector(store.getDb(), alreadyImported.id);
+          stageEntryRow(store.getDb(), alreadyImported.id);
+        }
         idMap.set(n.uid, alreadyImported.id);
         skipped++;
         conflicts.push({ label: n.uid, action: 'merged', detail: alreadyImported.id });

@@ -53,6 +53,8 @@ import {
   createDisabledEmbeddingProvider,
   createUnavailableEmbeddingProvider,
   getDefaultEmbeddingProvider,
+  isDefaultEmbeddingProviderResolved,
+  peekCachedDefaultEmbeddingProvider,
   resolveConfiguredEmbeddingModelId,
   validateEmbeddingModelId,
   embeddingModelDimension,
@@ -61,7 +63,10 @@ import {
   assertValidVector,
   buildSearchEligibilitySql,
   embeddingText,
+  entryVectorNeedsReindex,
   invalidateEntryVector,
+  isVectorContentFresh,
+  parseStoredVector,
   querySemanticIndexHealth,
   vectorContentFingerprint,
   type SemanticIndexHealthReport,
@@ -2558,7 +2563,10 @@ export class TimStore implements MemoryInterface {
     if (provider.state !== 'enabled') return null;
     try {
       const vectors = await provider.embed([query]);
-      return vectors[0] ?? null;
+      const vec = vectors[0];
+      if (!vec) return null;
+      assertValidVector(vec, provider.dimension);
+      return vec;
     } catch {
       return null;
     }
@@ -2569,16 +2577,35 @@ export class TimStore implements MemoryInterface {
     fetchLimit: number,
     patterns: string[],
   ): Promise<Entry[]> {
-    let candidates = await this.searchFts(options.query, fetchLimit, {
-      project: options.project,
-      type: options.type,
-      tag: options.tag,
-      status: options.status,
-      ftsQueryMode: options.ftsQueryMode,
-      confidenceAbove: options.confidenceAbove,
-      visibilityMask: options.visibilityMask,
-    });
-    return candidates.filter(e => !TimStore.matchesSuppressed(patterns, e));
+    const eligible: Entry[] = [];
+    const seen = new Set<string>();
+    let sqlLimit = fetchLimit;
+    const maxSqlLimit = Math.max(fetchLimit * 20, fetchLimit + 1);
+
+    while (eligible.length < fetchLimit && sqlLimit <= maxSqlLimit) {
+      const batch = await this.searchFts(options.query, sqlLimit, {
+        project: options.project,
+        type: options.type,
+        tag: options.tag,
+        status: options.status,
+        ftsQueryMode: options.ftsQueryMode,
+        confidenceAbove: options.confidenceAbove,
+        visibilityMask: options.visibilityMask,
+      });
+      for (const entry of batch) {
+        if (seen.has(entry.id)) continue;
+        seen.add(entry.id);
+        if (!TimStore.matchesSuppressed(patterns, entry)) {
+          eligible.push(entry);
+          if (eligible.length >= fetchLimit) break;
+        }
+      }
+      if (batch.length < sqlLimit) break;
+      if (eligible.length >= fetchLimit) break;
+      sqlLimit = Math.min(sqlLimit * 2, maxSqlLimit);
+    }
+
+    return eligible.slice(0, fetchLimit);
   }
 
   private fetchVectorCandidates(
@@ -2603,36 +2630,15 @@ export class TimStore implements MemoryInterface {
     for (const row of rows) {
       const entry = rowToEntry(row);
       if (TimStore.matchesSuppressed(patterns, entry)) continue;
-      const fingerprint = vectorContentFingerprint(entry.title, entry.content);
-      if (row.content_hash && row.content_hash !== fingerprint) continue;
-      const vec = new Float32Array(
-        row.vector.buffer,
-        row.vector.byteOffset,
-        row.vector.byteLength / 4,
-      );
-      if (vec.length !== provider.dimension) continue;
+      if (!isVectorContentFresh(entry.title, entry.content, row.content_hash)) continue;
+      const vec = parseStoredVector(row.vector, provider.dimension);
+      if (!vec) continue;
       const similarity = cosineSimilarity(queryVector, vec);
       scored.push({ entry, similarity });
     }
     return scored
       .sort((a, b) => b.similarity - a.similarity)
       .slice(0, fetchLimit);
-  }
-
-  private mergeSearchCandidates(lexical: Entry[], vectorHits: Array<{ entry: Entry }>): Entry[] {
-    const seen = new Set<string>();
-    const merged: Entry[] = [];
-    for (const e of lexical) {
-      if (seen.has(e.id)) continue;
-      seen.add(e.id);
-      merged.push(e);
-    }
-    for (const hit of vectorHits) {
-      if (seen.has(hit.entry.id)) continue;
-      seen.add(hit.entry.id);
-      merged.push(hit.entry);
-    }
-    return merged;
   }
 
   private rankVectorOnly(
@@ -2724,6 +2730,7 @@ export class TimStore implements MemoryInterface {
 
     const provider = await this.resolveEmbeddingProvider();
     semanticInfo.providerState = provider?.state ?? 'unavailable';
+    if (provider) semanticInfo.configuredModel = provider.modelId;
 
     if (searchType === 'vector') {
       if (!provider || provider.state !== 'enabled') {
@@ -2750,14 +2757,22 @@ export class TimStore implements MemoryInterface {
     }
     if (!queryVector) {
       semanticInfo.degradedToLexical = true;
+      if (provider?.state === 'enabled') {
+        semanticInfo.vectorUnavailable = true;
+      }
       const ftsOnly = this.rankByUsage(lexical, topK);
       return await this.prependDirectProjectHit(ftsOnly, options, scopeRootId, patterns, topK);
     }
     const vectorHits = this.fetchVectorCandidates(
       queryVector, provider!, eligibility, fetchLimit, patterns,
     );
-    const merged = this.mergeSearchCandidates(lexical, vectorHits);
-    const ranked = await this.rankByHybrid(merged, queryVector, topK);
+    const ranked = await this.rankByHybrid(
+      lexical,
+      vectorHits,
+      queryVector,
+      provider!,
+      topK,
+    );
     return await this.prependDirectProjectHit(ranked, options, scopeRootId, patterns, topK);
   }
 
@@ -2780,17 +2795,19 @@ export class TimStore implements MemoryInterface {
 
   /**
    * Hybrid re-rank combining three signals:
-   *   1. FTS5 position (the raw order)
-   *   2. Cosine similarity (embedding distance to query vector)
+   *   1. FTS5 position (lexical pool only — vector-only hits have no FTS penalty)
+   *   2. Cosine similarity from validated vector candidates
    *   3. Graph/usage/staleness boost (from Plan 8/10)
    */
   private async rankByHybrid(
-    entries: Entry[],
+    lexical: Entry[],
+    vectorHits: Array<{ entry: Entry; similarity: number }>,
     queryVector: Float32Array | null,
+    provider: EmbeddingProvider,
     topK: number,
   ): Promise<Entry[]> {
     if (process.env.TIM_EMBEDDING_DISABLED === '1' || !queryVector) {
-      return this.rankByUsage(entries, topK);
+      return this.rankByUsage(lexical, topK);
     }
 
     const raw = (process.env.TIM_HYBRID_WEIGHTS ?? '1.0,2.0,0.5').split(',');
@@ -2799,43 +2816,35 @@ export class TimStore implements MemoryInterface {
     const wGraph = Number(raw[2]) || 0.5;
 
     const days = staleDays();
-    const counts = this.getReferenceCounts(entries.map(e => e.id));
-
-    if (entries.length === 0) return [];
-
-    const configuredModel = resolveConfiguredEmbeddingModelId() ?? 'all-MiniLM-L6-v2';
-    const vecRows = this.db.prepare(`
-      SELECT entry_id, vector, model FROM entry_vectors
-      WHERE entry_id IN (${entries.map(() => '?').join(', ')})
-        AND model = ?
-    `).all(...entries.map(e => e.id), configuredModel) as Array<{
-      entry_id: string; vector: Buffer; model: string;
-    }>;
-
-    if (vecRows.length === 0) {
-      return this.rankByUsage(entries, topK);
+    const lexicalIds = new Set(lexical.map(e => e.id));
+    const similarityById = new Map(vectorHits.map(h => [h.entry.id, h.similarity]));
+    const candidates: Entry[] = [];
+    const seen = new Set<string>();
+    for (const e of lexical) {
+      if (seen.has(e.id)) continue;
+      seen.add(e.id);
+      candidates.push(e);
     }
-
-    const vecMap = new Map<string, Float32Array>();
-    for (const row of vecRows) {
-      const vec = new Float32Array(row.vector.buffer, row.vector.byteOffset, row.vector.byteLength / 4);
-      if (vec.length !== queryVector.length) continue;
-      vecMap.set(row.entry_id, vec);
+    for (const hit of vectorHits) {
+      if (seen.has(hit.entry.id)) continue;
+      seen.add(hit.entry.id);
+      candidates.push(hit.entry);
     }
+    if (candidates.length === 0) return [];
 
-    const scored = entries.map((e, i) => {
-      let score = i * wFts;
-
-      const vec = vecMap.get(e.id);
-      if (vec) {
-        const similarity = cosineSimilarity(queryVector, vec);
+    const counts = this.getReferenceCounts(candidates.map(e => e.id));
+    const scored = candidates.map((e) => {
+      let score = 0;
+      if (lexicalIds.has(e.id)) {
+        score += lexical.findIndex(x => x.id === e.id) * wFts;
+      }
+      const similarity = similarityById.get(e.id);
+      if (similarity !== undefined) {
         score -= similarity * wEmbed;
       }
-
       const refCount = counts.get(e.id) ?? 0;
       const stale = isStale(e, days) ? 1 : 0;
       score -= (refCount * 0.5 - stale * 0.3) * wGraph;
-
       return { e, score };
     });
 
@@ -3483,26 +3492,41 @@ export class TimStore implements MemoryInterface {
     const configured = model ?? resolveConfiguredEmbeddingModelId() ?? 'all-MiniLM-L6-v2';
     const scopesKinds = [...SCHEMA_KINDS].map(() => '?').join(', ');
     const rows = this.db.prepare(`
-      SELECT e.* FROM entries e
+      SELECT e.*, v.model AS vector_model, v.content_hash FROM entries e
       LEFT JOIN entry_vectors v ON v.entry_id = e.id
-      WHERE (v.entry_id IS NULL OR v.model != ?)
-        AND e.tombstoned_at IS NULL
+      WHERE e.tombstoned_at IS NULL
         AND e.irrelevant = 0
         AND (json_extract(e.metadata, '$.kind') IS NULL
              OR json_extract(e.metadata, '$.kind') NOT IN (${scopesKinds}))
       ORDER BY e.updated_at DESC, e.rowid DESC
-      LIMIT ?
-    `).all(configured, ...SCHEMA_KINDS, count) as RowEntry[];
-    return rows.map(rowToEntry);
+    `).all(...SCHEMA_KINDS) as Array<RowEntry & {
+      vector_model: string | null;
+      content_hash: string | null;
+    }>;
+    const pending: Entry[] = [];
+    for (const row of rows) {
+      const vectorRow = row.vector_model === null
+        ? null
+        : { model: row.vector_model, content_hash: row.content_hash ?? '' };
+      if (!entryVectorNeedsReindex(row.title, row.content, vectorRow, configured)) continue;
+      pending.push(rowToEntry(row));
+      if (pending.length >= count) break;
+    }
+    return pending;
   }
 
-  /** Store an embedding vector for an entry. Upserts — second call replaces. */
+  /**
+   * Store an embedding vector for an entry. Upserts — second call replaces.
+   * When expectedContentHash is set, the write is rejected if entry text changed
+   * since embedding began (#38 CAS).
+   */
   setVectors(
     entryId: string,
     vector: Float32Array,
     model: string,
     expectedDimension?: number,
-  ): void {
+    expectedContentHash?: string,
+  ): boolean {
     const dim = expectedDimension ?? embeddingModelDimension(model);
     if (dim !== null) assertValidVector(vector, dim);
     const row = this.db.prepare(
@@ -3510,6 +3534,9 @@ export class TimStore implements MemoryInterface {
     ).get(entryId) as { title: string; content: string } | undefined;
     if (!row) throw new Error(`Entry not found: ${entryId}`);
     const contentHash = vectorContentFingerprint(row.title, row.content);
+    if (expectedContentHash !== undefined && expectedContentHash !== contentHash) {
+      return false;
+    }
     const blob = Buffer.from(vector.buffer, vector.byteOffset, vector.byteLength);
     this.db.prepare(
       `INSERT INTO entry_vectors (entry_id, model, vector, content_hash)
@@ -3519,21 +3546,25 @@ export class TimStore implements MemoryInterface {
          vector = excluded.vector,
          content_hash = excluded.content_hash`,
     ).run(entryId, model, blob, contentHash);
+    return true;
   }
 
   /** Non-generating semantic index health for coverage diagnostics (#37). */
   getSemanticIndexHealth(): SemanticIndexHealthReport {
-    const configured = resolveConfiguredEmbeddingModelId();
+    const configured = this.injectedEmbeddingProvider?.modelId
+      ?? resolveConfiguredEmbeddingModelId();
     const supported = configured !== null && validateEmbeddingModelId(configured);
     let providerState: SemanticIndexHealthReport['providerState'] = 'unknown';
-    if (configured === null) {
+    if (this.injectedEmbeddingProvider) {
+      providerState = this.injectedEmbeddingProvider.state;
+    } else if (configured === null) {
       providerState = 'disabled';
     } else if (!supported) {
       providerState = 'unavailable';
-    } else if (this.injectedEmbeddingProvider) {
-      providerState = this.injectedEmbeddingProvider.state;
+    } else if (!isDefaultEmbeddingProviderResolved()) {
+      providerState = 'unknown';
     } else {
-      providerState = 'enabled';
+      providerState = peekCachedDefaultEmbeddingProvider()?.state ?? 'unknown';
     }
     return querySemanticIndexHealth(
       this.db,
