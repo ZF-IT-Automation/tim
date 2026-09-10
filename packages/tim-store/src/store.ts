@@ -44,6 +44,7 @@ import {
   applyEntryTombstone,
 } from './sync-methods.js';
 import { parentIsSecret } from './secret.js';
+import { assertValidEvidenceMetadata } from 'tim-core';
 
 /**
  * Tags TIM stamps itself when recording a commit. They describe how an entry got
@@ -2124,6 +2125,7 @@ export class TimStore implements MemoryInterface {
           };
         }
         const merged = { ...existingMeta, ...patchMeta };
+        assertValidEvidenceMetadata(merged);
 
         const promote = applyIdeaPromote(merged, now, {
           hadIdeaMarker: isIdeaMarker(existingMeta.idea),
@@ -2243,6 +2245,7 @@ export class TimStore implements MemoryInterface {
     }
 
     const metadata: Record<string, unknown> = { ...(options.metadata ?? {}) };
+    assertValidEvidenceMetadata(metadata);
     if (typeof metadata.task === 'object' && metadata.task !== null && !Array.isArray(metadata.task)) {
       const taskObj = migrateTaskHistory(metadata.task as Record<string, unknown>, now);
       if (taskObj.subtype === 'coding' && !taskObj.vcs && options.projectPath) {
