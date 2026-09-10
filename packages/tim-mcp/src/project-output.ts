@@ -4,13 +4,12 @@ import type { LoadProjectResult } from 'tim-store';
 import { isTaskMarker, SUMMARY_NODE_TITLE } from 'tim-store';
 import { DEFAULT_BRIEFING_RECENT_SESSIONS } from 'tim-hooks';
 import { resolveEntryTaskStatus } from './task-status.js';
-import { boundRenderedText } from './briefing-budget.js';
 import {
   BRIEFING_PRIORITY,
+  assembleBoundedBriefingText,
   formatQueryExtrasBlock,
   logSectionOmission,
   sectionPriority,
-  selectBriefingBlocks,
   type BriefingBlock,
   LOG_SECTION_NAMES,
 } from './task-aware-selection.js';
@@ -21,6 +20,8 @@ export interface FormatProjectOutputOptions {
   tokenBudget: number;
   query?: string;
   queryExtras?: Entry[];
+  /** Appended before whole-response bounding (e.g. load NEXT hint). */
+  trailingSuffix?: string;
 }
 
 // The schema shape and its traversal live in tim-core — the same definition the
@@ -715,15 +716,12 @@ function formatProjectOutputWithTokenBudget(
     lines: footerLines,
   });
 
-  const { included, omissions } = selectBriefingBlocks(blocks, options.tokenBudget);
-  const outLines: string[] = [];
-  for (const block of included) outLines.push(...block.lines);
-  if (omissions.length > 0) {
-    outLines.push('', `… briefing omissions: ${omissions.join('; ')}`);
-  }
-
-  const bounded = boundRenderedText(outLines.join('\n'), options.tokenBudget);
-  return bounded.text;
+  const { text } = assembleBoundedBriefingText(
+    blocks,
+    options.tokenBudget,
+    options.trailingSuffix ? [options.trailingSuffix] : [],
+  );
+  return text;
 }
 
 export function formatProjectOutput(
