@@ -4,13 +4,31 @@ import type { LoadProjectResult } from 'tim-store';
 import { isTaskMarker, SUMMARY_NODE_TITLE } from 'tim-store';
 import { DEFAULT_BRIEFING_RECENT_SESSIONS } from 'tim-hooks';
 import { resolveEntryTaskStatus } from './task-status.js';
+import { boundRenderedText } from './briefing-budget.js';
+import {
+  BRIEFING_PRIORITY,
+  formatQueryExtrasBlock,
+  logSectionOmission,
+  sectionPriority,
+  selectBriefingBlocks,
+  type BriefingBlock,
+  LOG_SECTION_NAMES,
+} from './task-aware-selection.js';
 
-const FORMAT_SEP = '─'.repeat(40);
+const LOG_SECTION_PREVIEW_MAX = 3;
+
+export interface FormatProjectOutputOptions {
+  tokenBudget: number;
+  query?: string;
+  queryExtras?: Entry[];
+}
 
 // The schema shape and its traversal live in tim-core — the same definition the
 // creation paths materialize from. Re-exported here so existing importers of
 // './project-output.js' keep working.
 export type { ProjectSchema, ProjectSchemaSection } from 'tim-core';
+
+const FORMAT_SEP = '─'.repeat(40);
 
 function truncText(s: string, max: number): string {
   const t = s.replace(/\s+/g, ' ').trim();
@@ -370,7 +388,10 @@ function prepareSectionChildren(children: Entry[], sectionName: string): Prepare
   return { visible: children, collapsedCount: 0, collapsedLabel: '' };
 }
 
-function maxChildrenForSection(sectionName?: string): number {
+function maxChildrenForSection(sectionName?: string, taskAware = false): number {
+  if (sectionName && LOG_SECTION_NAMES.has(sectionName.toLowerCase()) && taskAware) {
+    return LOG_SECTION_PREVIEW_MAX;
+  }
   if (sectionName && PROTECTED_CHILD_SECTIONS.has(sectionName)) {
     return MAX_CHILDREN_PROTECTED_SECTIONS;
   }
@@ -435,12 +456,13 @@ function formatChildrenTree(
   renderMode?: 'load' | 'read',
   sectionName?: string,
   collapsed?: Pick<PreparedSectionChildren, 'collapsedCount' | 'collapsedLabel'>,
+  taskAware = false,
 ): string[] {
   if (children.length === 0 || budget.remaining <= 0) return [];
 
   const lines: string[] = [];
   const indent = ' '.repeat(4 + depth * 2);
-  const maxChildren = maxChildrenForSection(sectionName);
+  const maxChildren = maxChildrenForSection(sectionName, taskAware);
   const maxShow = Math.min(maxChildren, children.length);
   // renderTail → show the LAST maxShow children (still in ascending order)
   const indices = renderTail
@@ -479,7 +501,11 @@ function formatChildrenTree(
 
   const hidden = children.length - shown;
   if (hidden > 0 && budget.remaining > 0) {
-    lines.push(`${indent}… ${hidden} more${renderTail ? ' (older)' : ''}`);
+    if (taskAware && sectionName && LOG_SECTION_NAMES.has(sectionName.toLowerCase())) {
+      lines.push(`${indent}${logSectionOmission(children.length, shown)}`);
+    } else {
+      lines.push(`${indent}… ${hidden} more${renderTail ? ' (older)' : ''}`);
+    }
     budget.remaining -= 1;
   }
 
@@ -502,13 +528,222 @@ function formatSectionLineSuffix(
   return sectionContentBody(section);
 }
 
+function renderSectionBody(
+  section: Entry,
+  name: string,
+  childMap: Map<string, Entry[]>,
+  budgetState: FormatBudget,
+  schema: ProjectSchema | undefined,
+  renderMode: 'load' | 'read' | undefined,
+  seenBodies: Map<string, string>,
+  taskAware: boolean,
+): { header: string; bodyLines: string[]; order: number } | null {
+  const schemaSection = findSchemaSection(schema?.sections, name);
+  const renderDepth = resolveRenderDepth(section, schemaSection?.render_depth, renderMode);
+  if (renderDepth === 0) return null;
+
+  const useTail = resolveRenderTail(section, schemaSection?.render_tail);
+  const rawSubkids = childMap.get(section.id) ?? [];
+  const prepared = prepareSectionChildren(rawSubkids, name);
+  const subkids = prepared.visible;
+  const budgetBefore = budgetState.remaining;
+  const body: string[] = [];
+
+  if (subkids.length > 0 && !shouldRenderChildren(renderDepth)) {
+    body.push(`    ${childCountLabel(subkids.length)}`);
+  } else {
+    const content = sectionContentBody(section);
+    if (content) body.push(`    ${content}`);
+    else if (subkids.length === 0 && prepared.collapsedCount === 0) body.push(`    No entries`);
+    if ((subkids.length > 0 || prepared.collapsedCount > 0) && shouldRenderChildren(renderDepth)) {
+      const nextDepth = maxChildDepth(renderDepth);
+      if (nextDepth > 0) {
+        body.push(...formatChildrenTree(
+          subkids,
+          childMap,
+          0,
+          budgetState,
+          schema,
+          useTail,
+          renderMode,
+          name,
+          prepared,
+          taskAware,
+        ));
+      }
+    }
+  }
+
+  const header = `  ${name}`;
+  const fingerprint = body.join('\n').trim();
+  const dupOf = fingerprint.length >= DEDUP_MIN_CHARS ? seenBodies.get(fingerprint) : undefined;
+  const bodyLines: string[] = [];
+  if (dupOf) {
+    budgetState.remaining = budgetBefore;
+    bodyLines.push(`    (inhaltsgleich mit "${dupOf}" — nicht wiederholt)`);
+  } else {
+    if (fingerprint.length >= DEDUP_MIN_CHARS) seenBodies.set(fingerprint, name);
+    bodyLines.push(...body);
+  }
+
+  const order = Number(section.metadata.order);
+  return {
+    header,
+    bodyLines,
+    order: Number.isFinite(order) ? order : 999999,
+  };
+}
+
+function formatProjectOutputWithTokenBudget(
+  result: LoadProjectResult,
+  budget: number,
+  schema: ProjectSchema | undefined,
+  renderMode: 'load' | 'read' | undefined,
+  recentSessionsCount: number,
+  options: FormatProjectOutputOptions,
+): string {
+  const { project, children, truncated } = result;
+  const label = String(project.metadata.label ?? project.id);
+  const summaryMatch = project.content.match(
+    /## Project Summary\s*\n([\s\S]*?)(?=\n## |\n── |$)/,
+  );
+  const projectSummary = summaryMatch ? summaryMatch[1].trim() : '';
+  const contentForParse = project.content.split(PROJECT_SUMMARY_MARKER)[0].trimEnd();
+  const parsed = parseProjectContent(project.title, contentForParse);
+  const childMap = buildChildMap(children);
+  const entryById = new Map(children.map(c => [c.id, c]));
+  const budgetState: FormatBudget = { remaining: budget };
+  const seenBodies = new Map<string, string>();
+
+  const headerLines: string[] = [
+    FORMAT_SEP,
+    `${label} — ${parsed.title}`,
+    FORMAT_SEP,
+    projectMetaLine(project, parsed),
+  ];
+  const tags = project.tags.map(t => (t.startsWith('#') ? t : `#${t}`)).join(' ');
+  if (tags) headerLines.push(`Tags: ${tags}`);
+  headerLines.push(`Access: ${project.metadata.access_count ?? 0}`);
+  if (parsed.description) headerLines.push('', parsed.description);
+  if (projectSummary) headerLines.push('', '── Project Summary ──', '', projectSummary);
+
+  const blocks: BriefingBlock[] = [{
+    id: 'header',
+    priority: BRIEFING_PRIORITY.header,
+    order: 0,
+    lines: headerLines,
+  }];
+
+  const sections = children
+    .filter(c =>
+      c.parentId === project.id &&
+      !c.tags.includes('#session-summary') &&
+      c.metadata.kind !== 'commits-root' &&
+      c.metadata.kind !== 'sessions-root',
+    )
+    .sort(compareEntryOrder);
+
+  if (sections.length > 0) {
+    blocks.push({
+      id: 'sections-header',
+      priority: BRIEFING_PRIORITY.header,
+      order: 1,
+      lines: ['', `── Sections (${sections.length}) ──`, ''],
+    });
+    for (const section of sections) {
+      const name = entryTitle(section);
+      const rendered = renderSectionBody(
+        section, name, childMap, budgetState, schema, renderMode, seenBodies, true,
+      );
+      if (!rendered) continue;
+      blocks.push({
+        id: `section:${section.id}`,
+        priority: sectionPriority(name, false),
+        order: 10 + rendered.order,
+        lines: [rendered.header, ...rendered.bodyLines],
+      });
+    }
+  }
+
+  const sessions = children
+    .filter(c => c.tags.includes('#session-summary'))
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  if (sessions.length > 0) {
+    const shown = recentSessionsCount > 0 ? recentSessionsCount : RECENT_SESSIONS_COUNT;
+    const recent = sessions.slice(0, shown);
+    const sessionLines: string[] = [
+      '',
+      `── Recent Sessions (${recent.length}/${sessions.length}) ──`,
+      '',
+    ];
+    for (const session of recent) {
+      const { exchanges, summary, date } = parseSessionEntry(
+        session,
+        entryById.get(session.parentId ?? ''),
+      );
+      sessionLines.push(`  ${exchanges} exchanges · ${date}`);
+      for (const line of summary) sessionLines.push(`    ${line}`);
+      if (summary.length === 0) sessionLines.push('    (no summary)');
+    }
+    if (sessions.length > shown) {
+      sessionLines.push(`  … ${sessions.length - shown} older sessions`);
+    }
+    blocks.push({
+      id: 'recent-sessions',
+      priority: BRIEFING_PRIORITY.recentSession,
+      order: 950,
+      lines: sessionLines,
+    });
+  }
+
+  if (options.query && options.queryExtras && options.queryExtras.length > 0) {
+    const extras = formatQueryExtrasBlock(options.queryExtras, options.query);
+    if (extras) blocks.push(extras);
+  }
+
+  const footerLines = [
+    '',
+    FORMAT_SEP,
+    `children: ${children.length} · truncated: ${truncated}`,
+    `Use tim_read("${label}") to drill into any section.`,
+    FORMAT_SEP,
+  ];
+  blocks.push({
+    id: 'footer',
+    priority: BRIEFING_PRIORITY.header,
+    order: 9999,
+    lines: footerLines,
+  });
+
+  const { included, omissions } = selectBriefingBlocks(blocks, options.tokenBudget);
+  const outLines: string[] = [];
+  for (const block of included) outLines.push(...block.lines);
+  if (omissions.length > 0) {
+    outLines.push('', `… briefing omissions: ${omissions.join('; ')}`);
+  }
+
+  const bounded = boundRenderedText(outLines.join('\n'), options.tokenBudget);
+  return bounded.text;
+}
+
 export function formatProjectOutput(
   result: LoadProjectResult,
   budget: number,
   schema?: ProjectSchema,
   renderMode?: 'load' | 'read',
   recentSessionsCount: number = RECENT_SESSIONS_COUNT,
+  options?: FormatProjectOutputOptions,
 ): string {
+  if (options?.tokenBudget != null) {
+    return formatProjectOutputWithTokenBudget(
+      result,
+      budget,
+      schema,
+      renderMode,
+      recentSessionsCount,
+      options,
+    );
+  }
   const { project, children, truncated } = result;
   const label = String(project.metadata.label ?? project.id);
   // Strip the auto-generated Project Summary out before parsing the header,
