@@ -89,18 +89,53 @@ function appendLog(logPath: string, chunk: string | Buffer): void {
   }
 }
 
+/** True when process group `pgid` still has at least one live member. */
+export function isProcessGroupAlive(pgid: number): boolean {
+  try {
+    process.kill(-pgid, 0);
+    return true;
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === 'ESRCH') return false;
+    // EPERM: group exists but we lack signal rights — treat as alive.
+    return true;
+  }
+}
+
+/** Send `signal` to `pgid` only when the group is still live (avoids recycled-PID SIGKILL). */
+export function safeKillProcessGroup(pgid: number, signal: NodeJS.Signals): boolean {
+  if (!isProcessGroupAlive(pgid)) return false;
+  try {
+    process.kill(-pgid, signal);
+    return true;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ESRCH') return false;
+    throw err;
+  }
+}
+
 function killProcessTree(child: ReturnType<typeof spawn>, signal: NodeJS.Signals): void {
   const pid = child.pid;
   if (!pid) return;
+  if (safeKillProcessGroup(pid, signal)) return;
   try {
-    process.kill(-pid, signal);
+    child.kill(signal);
   } catch {
-    try {
-      child.kill(signal);
-    } catch {
-      /* ignore */
-    }
+    /* ignore */
   }
+}
+
+function waitForProcessGroupExit(pgid: number, pollMs = 100): Promise<void> {
+  return new Promise(resolve => {
+    const tick = () => {
+      if (!isProcessGroupAlive(pgid)) {
+        resolve();
+        return;
+      }
+      setTimeout(tick, pollMs);
+    };
+    tick();
+  });
 }
 
 /** Run the supervised summarizer lifecycle (exported for tests). */
@@ -132,26 +167,61 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<number> {
     child.stdout?.on('data', chunk => appendLog(opts.logPath, chunk));
     child.stderr?.on('data', chunk => appendLog(opts.logPath, chunk));
 
+    const pgid = child.pid!;
     let killTimer: ReturnType<typeof setTimeout> | undefined;
+    let childExitCode = 1;
+    let childExited = false;
+
     const timer = setTimeout(() => {
       timedOut = true;
-      killProcessTree(child!, 'SIGTERM');
-      killTimer = setTimeout(() => killProcessTree(child!, 'SIGKILL'), 5_000);
+      safeKillProcessGroup(pgid, 'SIGTERM');
+      killTimer = setTimeout(() => {
+        safeKillProcessGroup(pgid, 'SIGKILL');
+      }, 5_000);
     }, opts.timeoutSec * 1000);
 
     exitCode = await new Promise<number>(resolve => {
+      let settled = false;
+      const settle = (code: number) => {
+        if (settled) return;
+        settled = true;
+        resolve(code);
+      };
+      const maybeSettle = () => {
+        if (childExited && !isProcessGroupAlive(pgid)) {
+          settle(childExitCode);
+        }
+      };
+
       child!.on('error', err => {
         appendLog(
           opts.logPath,
           `[${new Date().toISOString()}] summarizer child error: ${err.message}\n`,
         );
-        resolve(1);
+        childExited = true;
+        childExitCode = 1;
+        maybeSettle();
       });
-      child!.on('exit', code => resolve(code ?? 1));
+      child!.on('exit', code => {
+        childExited = true;
+        childExitCode = code ?? 1;
+        maybeSettle();
+      });
+
+      const poll = () => {
+        if (settled) return;
+        if (childExited && !isProcessGroupAlive(pgid)) {
+          settle(childExitCode);
+          return;
+        }
+        setTimeout(poll, 50);
+      };
+      poll();
     });
 
     clearTimeout(timer);
     if (killTimer !== undefined) clearTimeout(killTimer);
+    await waitForProcessGroupExit(pgid);
     if (timedOut) {
       appendLog(
         opts.logPath,

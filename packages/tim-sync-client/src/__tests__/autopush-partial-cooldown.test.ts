@@ -93,4 +93,33 @@ describe('autoPush partial secret block (#F3)', () => {
     store.close();
     fs.unlinkSync(dbPath);
   });
+
+  it('arms cooldown when every entry is blocked on missing secret credentials', async () => {
+    const dbPath = path.join(os.tmpdir(), `tim-autopush-all-secret-${Date.now()}.db`);
+    const store = new TimStore(dbPath);
+    await store.write('secret-only', { id: 'SEC-ONLY', metadata: { secret: true } });
+
+    const origSync = process.env.TIM_SYNC_PASSPHRASE;
+    const origSecret = process.env.TIM_SECRET_PASSPHRASE;
+    process.env.TIM_SYNC_PASSPHRASE = passphrase;
+    delete process.env.TIM_SECRET_PASSPHRASE;
+    resetSyncCooldowns();
+
+    const first = await autoPush(store);
+    expect(first.ran).toBe(true);
+    expect(first.reason).toBe('blocked-secret');
+    expect(_peekCooldown('push')).toBeGreaterThan(0);
+
+    const second = await autoPush(store);
+    expect(second.ran).toBe(false);
+    expect(second.reason).toBe('cooldown');
+
+    if (origSync === undefined) delete process.env.TIM_SYNC_PASSPHRASE;
+    else process.env.TIM_SYNC_PASSPHRASE = origSync;
+    if (origSecret === undefined) delete process.env.TIM_SECRET_PASSPHRASE;
+    else process.env.TIM_SECRET_PASSPHRASE = origSecret;
+
+    store.close();
+    fs.unlinkSync(dbPath);
+  });
 });
