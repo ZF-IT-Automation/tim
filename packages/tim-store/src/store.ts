@@ -314,7 +314,8 @@ export class TimStore implements MemoryInterface {
       ).get(id) as RowEntry | undefined;
     }
 
-    if (!entry || entry.tombstoned_at) return null;
+    if (!entry) return null;
+    if (entry.tombstoned_at && !options.showIrrelevant) return null;
 
     // Visibility check
     const mask = options.visibilityMask ?? 7; // default: owner+trusted+leased

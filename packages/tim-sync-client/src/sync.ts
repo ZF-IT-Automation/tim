@@ -17,7 +17,8 @@ import {
   saveSyncState,
   type SyncState,
 } from './config.js';
-import { enqueue, flushQueue, loadQueue } from './queue.js';
+import { randomUUID } from 'node:crypto';
+import { enqueue, flushQueue, loadQueue, saveQueue, type QueueItem } from './queue.js';
 import { MissingSecretPassphraseError } from './credentials.js';
 
 export type { SyncState } from './config.js';
@@ -172,11 +173,24 @@ export function decryptSecretPayload(
   return JSON.stringify(decrypted);
 }
 
+function envelopeBlocksWithoutSecretKey(env: TimEnvelope): boolean {
+  if (env.type !== 'entry' || env.deleted) return false;
+  if (isSecretPlaceholderPayload(env.payload)) return true;
+  if (env.is_encrypted) return false;
+  return payloadIsSecret(env.payload);
+}
+
 function transformEnvelopeForPush(
   env: TimEnvelope,
   secretEncrypt?: (data: string) => string,
 ): TimEnvelope {
-  if (!secretEncrypt || env.type !== 'entry' || env.deleted || !payloadIsSecret(env.payload)) {
+  if (
+    !secretEncrypt
+    || env.type !== 'entry'
+    || env.deleted
+    || env.is_encrypted
+    || !payloadIsSecret(env.payload)
+  ) {
     return env;
   }
 
@@ -199,6 +213,78 @@ function transformEnvelopeForPull(
     ...env,
     payload: decryptSecretPayload(env.payload, secretDecrypt),
   };
+}
+
+function rebuildQueueBlobs(
+  envelopes: TimEnvelope[],
+  encryptFn: (data: string) => string,
+  deviceId: string,
+): QueueItem['blobs'] {
+  return envelopes.map((e) => ({
+    proposed_id: e.key,
+    data: encryptFn(JSON.stringify(e)),
+    device_id: deviceId,
+    updated_at: e.lww,
+  }));
+}
+
+function prepareQueueForPush(
+  queue: QueueItem[],
+  deviceId: string,
+  encryptFn: (data: string) => string,
+  secretEncrypt?: (data: string) => string,
+): { ready: QueueItem[]; remaining: QueueItem[]; blockedSecretCount: number } {
+  const ready: QueueItem[] = [];
+  const remaining: QueueItem[] = [];
+  let blockedSecretCount = 0;
+
+  for (const item of queue) {
+    const sendEnvelopes: TimEnvelope[] = [];
+    const blockEnvelopes: TimEnvelope[] = [];
+    let payloadChanged = false;
+
+    for (const env of item.envelopes) {
+      if (!secretEncrypt && envelopeBlocksWithoutSecretKey(env)) {
+        blockEnvelopes.push(env);
+        blockedSecretCount++;
+        continue;
+      }
+
+      const transformed = transformEnvelopeForPush(env, secretEncrypt);
+      if (transformed.payload !== env.payload || transformed.is_encrypted !== env.is_encrypted) {
+        payloadChanged = true;
+      }
+      sendEnvelopes.push(transformed);
+    }
+
+    if (sendEnvelopes.length > 0) {
+      ready.push({
+        ...item,
+        envelopes: sendEnvelopes,
+        blobs: rebuildQueueBlobs(sendEnvelopes, encryptFn, deviceId),
+        idempotency_key: payloadChanged ? randomUUID() : item.idempotency_key,
+      });
+    }
+
+    if (blockEnvelopes.length > 0) {
+      const origBlobByKey = new Map(item.blobs.map((b) => [b.proposed_id, b]));
+      remaining.push({
+        ...item,
+        envelopes: blockEnvelopes,
+        blobs: blockEnvelopes.map((e) => {
+          const orig = origBlobByKey.get(e.key);
+          return orig ?? {
+            proposed_id: e.key,
+            data: JSON.stringify(e),
+            device_id: deviceId,
+            updated_at: e.lww,
+          };
+        }),
+      });
+    }
+  }
+
+  return { ready, remaining, blockedSecretCount };
 }
 
 export async function pushCycle(
@@ -226,6 +312,7 @@ export async function pushCycle(
   });
   const qPath = getQueuePath(state.fileId);
   let queue = loadQueue(qPath);
+  let queueBlockedSecretCount = 0;
 
   if (rows.length > 0) {
     const envelopes = rows
@@ -241,7 +328,12 @@ export async function pushCycle(
     queue = loadQueue(qPath);
   }
 
-  const { ok, sent } = await flushQueue(qPath, queue, async (item) => {
+  const prepared = prepareQueueForPush(queue, deviceId, encryptFn, secretEncrypt);
+  queueBlockedSecretCount = prepared.blockedSecretCount;
+  saveQueue(qPath, []);
+  const readyToSend = [...prepared.ready];
+
+  const { ok, sent } = await flushQueue(qPath, readyToSend, async (item) => {
     await client.push({
       file_id: state.fileId,
       idempotency_key: item.idempotency_key,
@@ -249,6 +341,9 @@ export async function pushCycle(
       blobs: item.blobs,
     });
   });
+
+  const unsentReady = loadQueue(qPath);
+  saveQueue(qPath, [...prepared.remaining, ...unsentReady]);
 
   const keysToAck: Array<{ key: string; lww: number }> = [...placeholderKeys];
   let pushedCount = 0;
@@ -265,11 +360,13 @@ export async function pushCycle(
   state.lastPush = new Date().toISOString();
   saveSyncState(state);
 
-  if (blockedSecretCount > 0) {
-    throw new MissingSecretPassphraseError(blockedSecretCount);
+  const totalBlocked = blockedSecretCount + queueBlockedSecretCount;
+  if (totalBlocked > 0) {
+    throw new MissingSecretPassphraseError(totalBlocked);
   }
 
-  return { pushed: pushedCount, queued: !ok };
+  const queueLeft = prepared.remaining.length + unsentReady.length;
+  return { pushed: pushedCount, queued: !ok || queueLeft > 0 };
 }
 
 export async function pullCycle(
