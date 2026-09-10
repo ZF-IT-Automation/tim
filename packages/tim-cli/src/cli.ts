@@ -1,7 +1,15 @@
 #!/usr/bin/env node
 // TIM CLI — v0.1.0-alpha
 
-import { TimStore, SessionManager, ErrorLogger, resolveProjectBindingLabel, getCurrentVersion, isSchemaMigrationPendingError } from 'tim-store';
+import {
+  TimStore,
+  SessionManager,
+  ErrorLogger,
+  resolveProjectBindingLabel,
+  getCurrentVersion,
+  isSchemaMigrationPendingError,
+  formatMemoryHealthLines,
+} from 'tim-store';
 import { loadConfig, getTimDir, normalizeLegacyTypeTag, type TimConfigFile } from 'tim-core';
 import {
   runCheckpointWithSummarizerSpawn,
@@ -337,6 +345,12 @@ async function cmdDoctor(args: string[] = []) {
       console.log(`schema moved ${args.from} → ${args.to} at ${when}`);
     } catch {
       // Malformed log row — skip; absence of a clean line is fine.
+    }
+  }
+  if (health.memory) {
+    console.log('\nMemory coverage:');
+    for (const line of formatMemoryHealthLines(health.memory)) {
+      console.log(`  ${line}`);
     }
   }
   if (health.issues.length) {
