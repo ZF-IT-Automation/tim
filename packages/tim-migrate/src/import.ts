@@ -2,9 +2,17 @@
 
 import Database from 'better-sqlite3';
 import { ulid } from 'ulid';
+import { mergeImportEvidence } from 'tim-core';
 import type { TimStore } from 'tim-store';
 import { splitTitleBody } from 'tim-store';
 import { detectHmemFormat, inspectHmemFile, parseLabel } from './hmem-format.js';
+
+function stampImportedEvidence(metadata: Record<string, unknown>): Record<string, unknown> {
+  return {
+    ...metadata,
+    evidence: mergeImportEvidence(undefined, metadata.evidence),
+  };
+}
 
 export interface ImportOptions {
   dryRun?: boolean;
@@ -349,7 +357,7 @@ function importV2(
         tags,
         irrelevant: e.irrelevant === 1,
         favorite: e.favorite === 1,
-        metadata: {
+        metadata: stampImportedEvidence({
           // resolveProjectLabel/requireProject/ensureInboxProject match on kind=project
           ...(shouldMarkAsProjectRoot(e.prefix) ? { kind: 'project' } : {}),
           label: e.label,
@@ -358,7 +366,7 @@ function importV2(
           hmemUid: e.uid,
           pinned: e.pinned === 1,
           importedAt: new Date().toISOString(),
-        },
+        }),
       });
       entriesImported++;
     }
@@ -449,10 +457,10 @@ function importV2(
           tags,
           irrelevant: n.irrelevant === 1,
           favorite: false,
-          metadata: {
+          metadata: stampImportedEvidence({
             hmemUid: n.uid,
             importedAt: new Date().toISOString(),
-          },
+          }),
         });
         nodesImported++;
       }
@@ -617,7 +625,7 @@ function importOld(
           ])],
           irrelevant: hmem.irrelevant === 1,
           favorite: hmem.favorite === 1,
-          metadata: {
+          metadata: stampImportedEvidence({
             ...(shouldMarkAsProjectRoot(hmem.prefix) ? { kind: 'project' } : {}),
             label,
             prefix: hmem.prefix,
@@ -625,7 +633,7 @@ function importOld(
             hmemId: hmem.id,
             hmemUid: hmem.id,
             importedAt: new Date().toISOString(),
-          },
+          }),
         });
         entriesImported++;
 
@@ -651,7 +659,7 @@ function importOld(
             tags: [],
             irrelevant: false,
             favorite: false,
-            metadata: { hmemUid: childId, importedAt: new Date().toISOString() },
+            metadata: stampImportedEvidence({ hmemUid: childId, importedAt: new Date().toISOString() }),
           });
           nodesImported++;
           parentId = childId;
@@ -746,10 +754,10 @@ function importOld(
             tags: tagsById.get(n.id) ?? [],
             irrelevant: n.irrelevant === 1,
             favorite: n.favorite === 1,
-            metadata: {
+            metadata: stampImportedEvidence({
               hmemUid: n.id,
               importedAt: new Date().toISOString(),
-            },
+            }),
           });
           nodesImported++;
         }

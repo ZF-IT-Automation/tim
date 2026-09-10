@@ -118,6 +118,7 @@ describe('tim_import', () => {
     // ensureInboxProject match on kind === 'project') — see issue #1
     expect(meta.kind).toBe('project');
     expect(meta.hmemUid).toBe(rootUid);
+    expect(meta.evidence).toEqual({ authority: 'imported', sources: [] });
 
     const otherRoot = store.getDb().prepare(
       "SELECT metadata FROM entries WHERE json_extract(metadata, '$.label') = 'L0001'",
