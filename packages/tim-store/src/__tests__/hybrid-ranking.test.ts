@@ -1,19 +1,21 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { TimStore } from '../store.js';
+import { TimStore, type EmbeddingProvider } from '../store.js';
 
-vi.mock('fastembed', () => ({
-  EmbeddingModel: { AllMiniLML6V2: 'fast-all-MiniLM-L6-v2' },
-  FlagEmbedding: {
-    init: vi.fn(async () => ({
-      embed: vi.fn(async function* (texts: string[]) {
-        yield texts.map(() => makeMockVector([0.5, 0.7, 0.3]));
-      }),
-    })),
-  },
-}));
+const MODEL = 'all-MiniLM-L6-v2';
+const DIM = 384;
+
+function makeMockVector(values: number[]): Float32Array {
+  const arr = new Float32Array(DIM);
+  for (let i = 0; i < values.length; i++) arr[i] = values[i];
+  return arr;
+}
+
+function makeProvider(embedFn: (texts: string[]) => Promise<Float32Array[]>): EmbeddingProvider {
+  return { modelId: MODEL, dimension: DIM, state: 'enabled', embed: embedFn };
+}
 
 describe('hybrid search', () => {
   let dir: string;
@@ -21,7 +23,14 @@ describe('hybrid search', () => {
 
   beforeEach(() => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tim-test-'));
-    store = new TimStore(path.join(dir, 'test.db'));
+    const provider = makeProvider(async (texts) =>
+      texts.map(t => {
+        const lower = t.toLowerCase();
+        if (lower.includes('python')) return makeMockVector([0.5, 0.7, 0.3]);
+        return makeMockVector([0.1, 0.1, 0.2]);
+      }),
+    );
+    store = new TimStore(path.join(dir, 'test.db'), { embeddingProvider: provider });
     delete process.env.TIM_EMBEDDING_DISABLED;
   });
 
@@ -47,10 +56,12 @@ describe('hybrid search', () => {
 
   it('TIM_EMBEDDING_DISABLED=1 falls back to pure rankByUsage', async () => {
     process.env.TIM_EMBEDDING_DISABLED = '1';
-    const a = await store.write('test query match\nContent.', { tags: ['#a', '#b'] });
-    const results = await store.search({ query: 'test query', topK: 5 });
+    const disabledStore = new TimStore(path.join(dir, 'disabled.db'));
+    const a = await disabledStore.write('test query match\nContent.', { tags: ['#a', '#b'] });
+    const results = await disabledStore.search({ query: 'test query', topK: 5 });
     expect(results.length).toBe(1);
     expect(results[0].id).toBe(a.id);
+    disabledStore.close();
   });
 
   it('entries with vectors are boosted over entries without', async () => {
@@ -63,17 +74,11 @@ describe('hybrid search', () => {
       { tags: ['#javascript', '#errors'] },
     );
 
-    store.setVectors(semantic.id, makeMockVector([0.5, 0.7, 0.3]), 'test-model');
-    store.setVectors(exact.id, makeMockVector([0.1, 0.1, 0.2]), 'test-model');
+    store.setVectors(semantic.id, makeMockVector([0.5, 0.7, 0.3]), MODEL, DIM);
+    store.setVectors(exact.id, makeMockVector([0.1, 0.1, 0.2]), MODEL, DIM);
 
     const results = await store.search({ query: 'error handling python', topK: 2 });
     expect(results.length).toBeGreaterThanOrEqual(1);
     expect(results[0].id).toBe(semantic.id);
   });
 });
-
-function makeMockVector(values: number[]): Float32Array {
-  const arr = new Float32Array(384);
-  for (let i = 0; i < values.length; i++) arr[i] = values[i];
-  return arr;
-}

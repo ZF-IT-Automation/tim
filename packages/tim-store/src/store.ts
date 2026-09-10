@@ -47,6 +47,26 @@ import {
 } from './sync-methods.js';
 import { parentIsSecret } from './secret.js';
 import { assertValidEvidenceMetadata } from 'tim-core';
+import {
+  type EmbeddingProvider,
+  type SearchSemanticInfo,
+  createDisabledEmbeddingProvider,
+  createUnavailableEmbeddingProvider,
+  getDefaultEmbeddingProvider,
+  resolveConfiguredEmbeddingModelId,
+  validateEmbeddingModelId,
+  embeddingModelDimension,
+} from './embedding-provider.js';
+import {
+  assertValidVector,
+  buildSearchEligibilitySql,
+  embeddingText,
+  invalidateEntryVector,
+  querySemanticIndexHealth,
+  vectorContentFingerprint,
+  type SemanticIndexHealthReport,
+  type SearchEligibilityFilters,
+} from './vector-index.js';
 
 /**
  * Tags TIM stamps itself when recording a commit. They describe how an entry got
@@ -195,6 +215,8 @@ export interface TimStoreOptions {
    * config.json, which is where the answer normally comes from.
    */
   staging?: boolean;
+  /** Injectable embedding provider for semantic search and tests (#33). */
+  embeddingProvider?: EmbeddingProvider;
 }
 
 export interface CreateProjectOptions {
@@ -314,6 +336,9 @@ export class TimStore implements MemoryInterface {
   private emitter?: Pick<EventBus, 'emit'>;
   private agentId: string;
   private deviceId: string;
+  private readonly injectedEmbeddingProvider?: EmbeddingProvider;
+  /** Populated by the most recent search() call — MCP reads for semantic propagation. */
+  lastSearchSemantic: SearchSemanticInfo | null = null;
   /** Set when this open applied one or more migrations; null if none ran. */
   readonly lastMigration: MigrationRunResult | null;
 
@@ -323,6 +348,7 @@ export class TimStore implements MemoryInterface {
     this.emitter = options.emitter;
     this.agentId = options.agentId ?? 'system';
     this.deviceId = options.deviceId ?? 'local';
+    this.injectedEmbeddingProvider = options.embeddingProvider;
     this.lastMigration = runMigrations(this.db, MIGRATIONS, {
       allowMigrations: options.allowMigrations === true,
     });
@@ -2180,6 +2206,9 @@ export class TimStore implements MemoryInterface {
         updated.accessed_at, updated.updated_at, updated.lww_device, id
       );
       this.insertStagingSync(updated, timestamp, updated.confidence);
+      if (updated.title !== existing.title || updated.content !== existing.content) {
+        invalidateEntryVector(this.db, id);
+      }
     })();
 
     return rowToEntry(updated);
@@ -2481,7 +2510,7 @@ export class TimStore implements MemoryInterface {
 
   private entryMatchesSearchFilters(
     entry: Entry,
-    filters: Pick<SearchOptions, 'project' | 'type' | 'tag' | 'status'>,
+    filters: Pick<SearchOptions, 'project' | 'type' | 'tag' | 'status' | 'confidenceAbove' | 'visibilityMask'>,
     scopeRootId?: string,
   ): boolean {
     if (scopeRootId) {
@@ -2498,7 +2527,147 @@ export class TimStore implements MemoryInterface {
       const st = resolveEntrySearchStatus(entry.metadata);
       if (st !== filters.status) return false;
     }
+    if (filters.confidenceAbove !== undefined && entry.confidence < filters.confidenceAbove) {
+      return false;
+    }
+    if (filters.visibilityMask !== undefined && (entry.visibility & filters.visibilityMask) === 0) {
+      return false;
+    }
     return true;
+  }
+
+  /** Resolve injectable or default embedding provider (#33). */
+  async getEmbeddingProvider(): Promise<EmbeddingProvider | null> {
+    return this.resolveEmbeddingProvider();
+  }
+
+  private async resolveEmbeddingProvider(): Promise<EmbeddingProvider | null> {
+    if (this.injectedEmbeddingProvider) return this.injectedEmbeddingProvider;
+    const configured = resolveConfiguredEmbeddingModelId();
+    if (configured === null) return createDisabledEmbeddingProvider();
+    if (!validateEmbeddingModelId(configured)) {
+      return createUnavailableEmbeddingProvider(configured);
+    }
+    return getDefaultEmbeddingProvider(configured);
+  }
+
+  private async embedQuery(
+    provider: EmbeddingProvider,
+    query: string,
+  ): Promise<Float32Array | null> {
+    if (provider.state !== 'enabled') return null;
+    try {
+      const vectors = await provider.embed([query]);
+      return vectors[0] ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  private async fetchLexicalCandidates(
+    options: SearchOptions,
+    fetchLimit: number,
+    patterns: string[],
+  ): Promise<Entry[]> {
+    let candidates = await this.searchFts(options.query, fetchLimit, {
+      project: options.project,
+      type: options.type,
+      tag: options.tag,
+      status: options.status,
+      ftsQueryMode: options.ftsQueryMode,
+      confidenceAbove: options.confidenceAbove,
+      visibilityMask: options.visibilityMask,
+    });
+    return candidates.filter(e => !TimStore.matchesSuppressed(patterns, e));
+  }
+
+  private fetchVectorCandidates(
+    queryVector: Float32Array,
+    provider: EmbeddingProvider,
+    eligibility: SearchEligibilityFilters,
+    fetchLimit: number,
+    patterns: string[],
+  ): Array<{ entry: Entry; similarity: number }> {
+    const params: unknown[] = [provider.modelId];
+    const scopeSql = buildSearchEligibilitySql(eligibility, params);
+    const rows = this.db.prepare(`
+      SELECT e.*, v.vector, v.content_hash FROM entries e
+      INNER JOIN entry_vectors v ON v.entry_id = e.id
+      WHERE e.irrelevant = 0
+        AND e.tombstoned_at IS NULL
+        AND v.model = ?
+        ${scopeSql}
+    `).all(...params) as Array<RowEntry & { vector: Buffer; content_hash: string }>;
+
+    const scored: Array<{ entry: Entry; similarity: number }> = [];
+    for (const row of rows) {
+      const entry = rowToEntry(row);
+      if (TimStore.matchesSuppressed(patterns, entry)) continue;
+      const fingerprint = vectorContentFingerprint(entry.title, entry.content);
+      if (row.content_hash && row.content_hash !== fingerprint) continue;
+      const vec = new Float32Array(
+        row.vector.buffer,
+        row.vector.byteOffset,
+        row.vector.byteLength / 4,
+      );
+      if (vec.length !== provider.dimension) continue;
+      const similarity = cosineSimilarity(queryVector, vec);
+      scored.push({ entry, similarity });
+    }
+    return scored
+      .sort((a, b) => b.similarity - a.similarity)
+      .slice(0, fetchLimit);
+  }
+
+  private mergeSearchCandidates(lexical: Entry[], vectorHits: Array<{ entry: Entry }>): Entry[] {
+    const seen = new Set<string>();
+    const merged: Entry[] = [];
+    for (const e of lexical) {
+      if (seen.has(e.id)) continue;
+      seen.add(e.id);
+      merged.push(e);
+    }
+    for (const hit of vectorHits) {
+      if (seen.has(hit.entry.id)) continue;
+      seen.add(hit.entry.id);
+      merged.push(hit.entry);
+    }
+    return merged;
+  }
+
+  private rankVectorOnly(
+    vectorHits: Array<{ entry: Entry; similarity: number }>,
+    topK: number,
+  ): Entry[] {
+    return vectorHits.slice(0, topK).map(h => h.entry);
+  }
+
+  private async prependDirectProjectHit(
+    ranked: Entry[],
+    options: SearchOptions,
+    scopeRootId: string | undefined,
+    patterns: string[],
+    topK: number,
+  ): Promise<Entry[]> {
+    const resolved = await this.resolveProjectLabel(options.query);
+    if (resolved.status !== 'found') return ranked.slice(0, topK);
+    const row = this.db.prepare(`
+      SELECT * FROM entries
+      WHERE json_extract(metadata, '$.kind') = 'project'
+        AND json_extract(metadata, '$.label') = ?
+        AND irrelevant = 0
+        AND tombstoned_at IS NULL
+    `).get(resolved.label) as RowEntry | undefined;
+    const proj = row ? rowToEntry(row) : null;
+    if (
+      proj
+      && !TimStore.matchesSuppressed(patterns, proj)
+      && this.entryMatchesSearchFilters(proj, options, scopeRootId)
+      && !ranked.some(e => e.id === proj.id)
+    ) {
+      return [proj, ...ranked].slice(0, topK);
+    }
+    return ranked.slice(0, topK);
   }
 
   async search(options: SearchOptions): Promise<Entry[]> {
@@ -2507,95 +2676,89 @@ export class TimStore implements MemoryInterface {
     let scopeRootId: string | undefined;
     if (!TimStore.isUnrestrictedProjectScope(options.project)) {
       const scope = await this.resolveProjectLabel(options.project!);
-      if (scope.status !== 'found') return [];
+      if (scope.status !== 'found') {
+        this.lastSearchSemantic = {
+          requestedMode: searchType,
+          providerState: 'unknown',
+          configuredModel: resolveConfiguredEmbeddingModelId(),
+        };
+        return [];
+      }
       scopeRootId = (await this.read(scope.label))?.id;
-      if (!scopeRootId) return [];
+      if (!scopeRootId) {
+        this.lastSearchSemantic = {
+          requestedMode: searchType,
+          providerState: 'unknown',
+          configuredModel: resolveConfiguredEmbeddingModelId(),
+        };
+        return [];
+      }
     }
     const patterns = this.loadActiveSuppressPatterns();
     const fetchLimit = topK * 3;
-    let candidates = await this.searchFts(options.query, fetchLimit, {
-      project: options.project,
+    const eligibility: SearchEligibilityFilters = {
+      scopeRootId,
       type: options.type,
       tag: options.tag,
       status: options.status,
-      ftsQueryMode: options.ftsQueryMode,
-    });
-    candidates = candidates.filter(e => !TimStore.matchesSuppressed(patterns, e));
+      confidenceAbove: options.confidenceAbove,
+      visibilityMask: options.visibilityMask,
+    };
+
+    const configuredModel = resolveConfiguredEmbeddingModelId();
+    const semanticInfo: SearchSemanticInfo = {
+      requestedMode: searchType,
+      providerState: 'unknown',
+      configuredModel,
+    };
+    this.lastSearchSemantic = semanticInfo;
 
     if (searchType === 'fts') {
-      const ftsOnly = this.rankByUsage(candidates, topK);
-      const resolved = await this.resolveProjectLabel(options.query);
-      if (resolved.status === 'found') {
-        const row = this.db.prepare(`
-          SELECT * FROM entries
-          WHERE json_extract(metadata, '$.kind') = 'project'
-            AND json_extract(metadata, '$.label') = ?
-            AND irrelevant = 0
-            AND tombstoned_at IS NULL
-        `).get(resolved.label) as RowEntry | undefined;
-        const proj = row ? rowToEntry(row) : null;
-        if (
-          proj
-          && !TimStore.matchesSuppressed(patterns, proj)
-          && this.entryMatchesSearchFilters(proj, options, scopeRootId)
-          && !ftsOnly.some(e => e.id === proj.id)
-        ) {
-          return [proj, ...ftsOnly].slice(0, topK);
-        }
-      }
-      return ftsOnly;
+      semanticInfo.providerState = 'disabled';
+      const ftsOnly = this.rankByUsage(
+        await this.fetchLexicalCandidates(options, fetchLimit, patterns),
+        topK,
+      );
+      return await this.prependDirectProjectHit(ftsOnly, options, scopeRootId, patterns, topK);
     }
 
+    const provider = await this.resolveEmbeddingProvider();
+    semanticInfo.providerState = provider?.state ?? 'unavailable';
+
+    if (searchType === 'vector') {
+      if (!provider || provider.state !== 'enabled') {
+        semanticInfo.vectorUnavailable = true;
+        return [];
+      }
+      const queryVector = await this.embedQuery(provider, options.query);
+      if (!queryVector) {
+        semanticInfo.vectorUnavailable = true;
+        return [];
+      }
+      const vectorHits = this.fetchVectorCandidates(
+        queryVector, provider, eligibility, fetchLimit, patterns,
+      );
+      const ranked = this.rankVectorOnly(vectorHits, topK);
+      return await this.prependDirectProjectHit(ranked, options, scopeRootId, patterns, topK);
+    }
+
+    // hybrid — independent lexical + vector candidates, merged before ranking
+    const lexical = await this.fetchLexicalCandidates(options, fetchLimit, patterns);
     let queryVector: Float32Array | null = null;
-    try {
-      const useVectors = searchType === 'vector' || searchType === 'hybrid';
-      if (useVectors && process.env.TIM_EMBEDDING_DISABLED !== '1' && candidates.length > 0) {
-        const placeholders = candidates.map(() => '?').join(', ');
-        const hasVectors = this.db.prepare(`
-          SELECT 1 FROM entry_vectors
-          WHERE entry_id IN (${placeholders})
-          LIMIT 1
-        `).get(...candidates.map(e => e.id));
-        if (hasVectors) {
-          const { EmbeddingModel, FlagEmbedding } = await import('fastembed');
-          const modelName = process.env.TIM_EMBEDDING_MODEL ?? 'all-MiniLM-L6-v2';
-          const resolved = modelName === 'all-MiniLM-L6-v2' ? EmbeddingModel.AllMiniLML6V2 : EmbeddingModel.AllMiniLML6V2;
-          const embedder = await FlagEmbedding.init({ model: resolved });
-          const batch = await embedder.embed([options.query], 1).next();
-          if (batch.value?.[0]) {
-            queryVector = new Float32Array(batch.value[0]);
-          }
-        }
-      }
-    } catch {
-      // No fastembed — use pure FTS + usage
+    if (provider?.state === 'enabled') {
+      queryVector = await this.embedQuery(provider, options.query);
     }
-
-    const fts = searchType === 'vector' && !queryVector
-      ? []
-      : await this.rankByHybrid(candidates, queryVector, topK);
-    // Labels/aliases live in metadata, not the FTS corpus. Merge a direct project hit.
-    // Broader fix: index metadata.label + aliases in fts_entries (migration + triggers).
-    const resolved = await this.resolveProjectLabel(options.query);
-    if (resolved.status === 'found') {
-      const row = this.db.prepare(`
-        SELECT * FROM entries
-        WHERE json_extract(metadata, '$.kind') = 'project'
-          AND json_extract(metadata, '$.label') = ?
-          AND irrelevant = 0
-          AND tombstoned_at IS NULL
-        `).get(resolved.label) as RowEntry | undefined;
-      const proj = row ? rowToEntry(row) : null;
-      if (
-        proj
-        && !TimStore.matchesSuppressed(patterns, proj)
-        && this.entryMatchesSearchFilters(proj, options, scopeRootId)
-        && !fts.some(e => e.id === proj.id)
-      ) {
-        return [proj, ...fts].slice(0, topK);
-      }
+    if (!queryVector) {
+      semanticInfo.degradedToLexical = true;
+      const ftsOnly = this.rankByUsage(lexical, topK);
+      return await this.prependDirectProjectHit(ftsOnly, options, scopeRootId, patterns, topK);
     }
-    return fts;
+    const vectorHits = this.fetchVectorCandidates(
+      queryVector, provider!, eligibility, fetchLimit, patterns,
+    );
+    const merged = this.mergeSearchCandidates(lexical, vectorHits);
+    const ranked = await this.rankByHybrid(merged, queryVector, topK);
+    return await this.prependDirectProjectHit(ranked, options, scopeRootId, patterns, topK);
   }
 
   /**
@@ -2640,10 +2803,12 @@ export class TimStore implements MemoryInterface {
 
     if (entries.length === 0) return [];
 
+    const configuredModel = resolveConfiguredEmbeddingModelId() ?? 'all-MiniLM-L6-v2';
     const vecRows = this.db.prepare(`
       SELECT entry_id, vector, model FROM entry_vectors
       WHERE entry_id IN (${entries.map(() => '?').join(', ')})
-    `).all(...entries.map(e => e.id)) as Array<{
+        AND model = ?
+    `).all(...entries.map(e => e.id), configuredModel) as Array<{
       entry_id: string; vector: Buffer; model: string;
     }>;
 
@@ -2653,7 +2818,9 @@ export class TimStore implements MemoryInterface {
 
     const vecMap = new Map<string, Float32Array>();
     for (const row of vecRows) {
-      vecMap.set(row.entry_id, new Float32Array(row.vector.buffer, row.vector.byteOffset, row.vector.byteLength / 4));
+      const vec = new Float32Array(row.vector.buffer, row.vector.byteOffset, row.vector.byteLength / 4);
+      if (vec.length !== queryVector.length) continue;
+      vecMap.set(row.entry_id, vec);
     }
 
     const scored = entries.map((e, i) => {
@@ -2688,6 +2855,8 @@ export class TimStore implements MemoryInterface {
       tag?: string;
       status?: string;
       ftsQueryMode?: FtsQueryMode;
+      confidenceAbove?: number;
+      visibilityMask?: number;
     } = {},
   ): Promise<Entry[]> {
     const sanitized = sanitizeFtsQuery(query, opts.ftsQueryMode ?? 'literal')
@@ -2736,6 +2905,14 @@ export class TimStore implements MemoryInterface {
     if (opts.status) {
       scopeSql += ` AND (${entrySearchStatusSql('e.metadata')}) = ?`;
       params.push(opts.status);
+    }
+    if (opts.confidenceAbove !== undefined) {
+      scopeSql += ` AND e.confidence >= ?`;
+      params.push(opts.confidenceAbove);
+    }
+    if (opts.visibilityMask !== undefined) {
+      scopeSql += ` AND (e.visibility & ?) != 0`;
+      params.push(opts.visibilityMask);
     }
     params.push(limit);
 
@@ -3298,34 +3475,72 @@ export class TimStore implements MemoryInterface {
   // ─── Embedding vectors (device-local, never synced) ─────
 
   /**
-   * Entries that need embedding (no vector yet, newest content first).
+   * Entries that need embedding (no vector yet, wrong model, newest content first).
    * Schema kinds (sessions, sections, …) are skipped — they don't need
    * semantic search.
    */
-  async getUnembedded(count: number): Promise<Entry[]> {
+  async getUnembedded(count: number, model?: string): Promise<Entry[]> {
+    const configured = model ?? resolveConfiguredEmbeddingModelId() ?? 'all-MiniLM-L6-v2';
     const scopesKinds = [...SCHEMA_KINDS].map(() => '?').join(', ');
     const rows = this.db.prepare(`
       SELECT e.* FROM entries e
       LEFT JOIN entry_vectors v ON v.entry_id = e.id
-      WHERE v.entry_id IS NULL
+      WHERE (v.entry_id IS NULL OR v.model != ?)
         AND e.tombstoned_at IS NULL
         AND e.irrelevant = 0
         AND (json_extract(e.metadata, '$.kind') IS NULL
              OR json_extract(e.metadata, '$.kind') NOT IN (${scopesKinds}))
       ORDER BY e.updated_at DESC, e.rowid DESC
       LIMIT ?
-    `).all(...SCHEMA_KINDS, count) as RowEntry[];
+    `).all(configured, ...SCHEMA_KINDS, count) as RowEntry[];
     return rows.map(rowToEntry);
   }
 
   /** Store an embedding vector for an entry. Upserts — second call replaces. */
-  setVectors(entryId: string, vector: Float32Array, model: string): void {
+  setVectors(
+    entryId: string,
+    vector: Float32Array,
+    model: string,
+    expectedDimension?: number,
+  ): void {
+    const dim = expectedDimension ?? embeddingModelDimension(model);
+    if (dim !== null) assertValidVector(vector, dim);
+    const row = this.db.prepare(
+      'SELECT title, content FROM entries WHERE id = ?',
+    ).get(entryId) as { title: string; content: string } | undefined;
+    if (!row) throw new Error(`Entry not found: ${entryId}`);
+    const contentHash = vectorContentFingerprint(row.title, row.content);
     const blob = Buffer.from(vector.buffer, vector.byteOffset, vector.byteLength);
     this.db.prepare(
-      `INSERT INTO entry_vectors (entry_id, model, vector)
-       VALUES (?, ?, ?)
-       ON CONFLICT(entry_id) DO UPDATE SET model = excluded.model, vector = excluded.vector`,
-    ).run(entryId, model, blob);
+      `INSERT INTO entry_vectors (entry_id, model, vector, content_hash)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(entry_id) DO UPDATE SET
+         model = excluded.model,
+         vector = excluded.vector,
+         content_hash = excluded.content_hash`,
+    ).run(entryId, model, blob, contentHash);
+  }
+
+  /** Non-generating semantic index health for coverage diagnostics (#37). */
+  getSemanticIndexHealth(): SemanticIndexHealthReport {
+    const configured = resolveConfiguredEmbeddingModelId();
+    const supported = configured !== null && validateEmbeddingModelId(configured);
+    let providerState: SemanticIndexHealthReport['providerState'] = 'unknown';
+    if (configured === null) {
+      providerState = 'disabled';
+    } else if (!supported) {
+      providerState = 'unavailable';
+    } else if (this.injectedEmbeddingProvider) {
+      providerState = this.injectedEmbeddingProvider.state;
+    } else {
+      providerState = 'enabled';
+    }
+    return querySemanticIndexHealth(
+      this.db,
+      configured,
+      providerState,
+      supported,
+    );
   }
 
   // ─── Health ────────────────────────────────────────────

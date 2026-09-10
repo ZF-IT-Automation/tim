@@ -2418,6 +2418,7 @@ export async function createMcpServer(
           const response = {
             ...buildBoundedSearchResponse(results, excerptChars),
             ...(clamped ? { clamped } : {}),
+            ...(s.lastSearchSemantic ? { semantic: s.lastSearchSemantic } : {}),
           };
           bestEffortTelemetry('recordRead', () =>
             s.recordRead(response.results.map(e => e.id), usageSid));
