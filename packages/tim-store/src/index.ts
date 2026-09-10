@@ -19,6 +19,29 @@ export {
   type GetTasksOptions,
   type RuleRecord,
 } from './store.js';
+export {
+  type EmbeddingProvider,
+  type EmbeddingProviderState,
+  type SearchSemanticInfo,
+  SUPPORTED_EMBEDDING_MODELS,
+  createDisabledEmbeddingProvider,
+  createUnavailableEmbeddingProvider,
+  getDefaultEmbeddingProvider,
+  resetDefaultEmbeddingProviderCache,
+  resolveConfiguredEmbeddingModelId,
+  validateEmbeddingModelId,
+  embeddingModelDimension,
+} from './embedding-provider.js';
+export {
+  type SemanticIndexHealthReport,
+  embeddingText,
+  vectorContentFingerprint,
+  assertValidVector,
+  invalidateEntryVector,
+  buildSearchEligibilitySql,
+  querySemanticIndexHealth,
+  isUnrestrictedProjectScope,
+} from './vector-index.js';
 export type { ResolveProjectResult } from 'tim-core';
 export {
   cropDisplayName,

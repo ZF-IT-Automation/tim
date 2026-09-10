@@ -4,7 +4,26 @@
 import fs from 'node:fs';
 import Database from 'better-sqlite3';
 
-export const MIGRATIONS: { version: number; sql: string }[] = [
+export interface Migration {
+  version: number;
+  sql: string;
+  /** Optional idempotent apply hook when plain SQL cannot be safely re-run. */
+  apply?: (db: Database.Database) => void;
+}
+
+function addColumnIfMissing(
+  db: Database.Database,
+  table: string,
+  column: string,
+  alterSql: string,
+): void {
+  const cols = db.prepare(`PRAGMA table_info('${table}')`).all() as Array<{ name: string }>;
+  if (!cols.some(c => c.name === column)) {
+    db.exec(alterSql);
+  }
+}
+
+export const MIGRATIONS: Migration[] = [
   {
     version: 1,
     sql: `
@@ -270,6 +289,18 @@ export const MIGRATIONS: { version: number; sql: string }[] = [
       );
     `,
   },
+  {
+    version: 14,
+    sql: `-- v14: device-local vector content fingerprint (#33)`,
+    apply(db) {
+      addColumnIfMissing(
+        db,
+        'entry_vectors',
+        'content_hash',
+        `ALTER TABLE entry_vectors ADD COLUMN content_hash TEXT NOT NULL DEFAULT ''`,
+      );
+    },
+  },
 ];
 
 export function getCurrentVersion(): number {
@@ -319,7 +350,7 @@ export function isSchemaMigrationPendingError(
 
 export function runMigrations(
   db: Database.Database,
-  migrations: { version: number; sql: string }[] = MIGRATIONS,
+  migrations: Migration[] = MIGRATIONS,
   options: RunMigrationsOptions = {},
 ): MigrationRunResult | null {
     db.pragma('journal_mode = WAL');
@@ -364,7 +395,11 @@ export function runMigrations(
       // or SQL error rolls back both the DDL and the version bump — the DB
       // stays at the previous version and the migration is safely retryable.
       db.transaction(() => {
-        db.exec(migration.sql);
+        if (migration.apply) {
+          migration.apply(db);
+        } else {
+          db.exec(migration.sql);
+        }
         const row = db.prepare('SELECT version FROM _schema_version').get();
         if (row) {
           db.prepare('UPDATE _schema_version SET version = ?').run(migration.version);
