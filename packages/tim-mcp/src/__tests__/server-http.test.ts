@@ -9,6 +9,7 @@ import * as path from 'node:path';
 import * as fs from 'node:fs';
 import { childServerCwd, childServerDbPath, isolateChildServerCwd } from './helpers/child-server-workspace.js';
 import * as http from 'node:http';
+import { once } from 'node:events';
 isolateChildServerCwd();
 
 const SERVER_PATH = path.resolve(__dirname, '..', '..', 'dist', 'server.js');
@@ -20,53 +21,61 @@ let server: ChildProcess;
 function startServer(port: number): Promise<void> {
   return new Promise((resolve, reject) => {
     dbPath = childServerDbPath();
-    server = spawn(
+    const child = spawn(
       process.execPath,
       [SERVER_PATH, '--http', '--port', String(port)],
       {
         cwd: childServerCwd(),
         env: { ...process.env, TIM_DB_PATH: dbPath, HERMES_SKIP_DB_GUARD: '1' },
         stdio: ['pipe', 'pipe', 'pipe'],
-        timeout: 10_000,
       },
     );
+    server = child;
 
     let stderr = '';
-    server.stderr!.on('data', (chunk: Buffer) => {
+    const startupTimer = setTimeout(() => {
+      child.kill('SIGKILL');
+      reject(new Error(`Server start timeout. stderr: ${stderr}`));
+    }, 8_000);
+    child.stderr!.on('data', (chunk: Buffer) => {
       stderr += chunk.toString('utf8');
       if (stderr.includes('TIM MCP server started')) {
+        clearTimeout(startupTimer);
         // Give it a moment to bind fully
         setImmediate(() => resolve());
       }
     });
 
-    server.on('error', reject);
-    server.on('exit', (code) => {
+    child.on('error', (error) => {
+      clearTimeout(startupTimer);
+      reject(error);
+    });
+    child.on('exit', (code, signal) => {
+      clearTimeout(startupTimer);
       if (code !== 0) {
-        reject(new Error(`Server exited with code ${code}: ${stderr}`));
+        reject(new Error(`Server exited with code ${code}, signal ${signal}: ${stderr}`));
       }
     });
-
-    // Timeout safety
-    setTimeout(() => reject(new Error(`Server start timeout. stderr: ${stderr}`)), 8_000);
   });
 }
 
 function stopServer(): Promise<void> {
   return new Promise((resolve) => {
-    if (!server || !server.pid) {
+    const child = server;
+    if (!child || !child.pid || child.exitCode !== null || child.signalCode !== null) {
       cleanupDb();
       resolve();
       return;
     }
-    server.on('exit', () => {
+    const escalationTimer = setTimeout(() => {
+      child.kill('SIGKILL');
+    }, 3_000);
+    child.once('exit', () => {
+      clearTimeout(escalationTimer);
       cleanupDb();
       resolve();
     });
-    server.kill('SIGTERM');
-    setTimeout(() => {
-      if (server?.pid) server.kill('SIGKILL');
-    }, 3_000);
+    child.kill('SIGTERM');
   });
 }
 
@@ -178,6 +187,13 @@ describe('HTTP/SSE transport', () => {
   afterEach(async () => {
     await stopServer();
   });
+
+  it('cleanup settles when the child has already exited', async () => {
+    const exited = once(server, 'exit');
+    server.kill('SIGTERM');
+    await exited;
+    await stopServer();
+  }, 2_000);
 
   it('starts server and responds to GET /sse', async () => {
     const { sessionId } = await openSseSession(baseUrl);
