@@ -37,7 +37,14 @@ describe('MissingSecretPassphraseError', () => {
     const err = new MissingSecretPassphraseError(2);
     expect(err.name).toBe('MissingSecretPassphraseError');
     expect(err.blockedCount).toBe(2);
+    expect(err.pushedCount).toBe(0);
     expect(err.message).toContain('TIM_SECRET_PASSPHRASE');
     expect(err.message).toContain('--secret-passphrase');
+  });
+
+  it('records partial push count when non-secret rows succeeded', () => {
+    const err = new MissingSecretPassphraseError(1, 3);
+    expect(err.pushedCount).toBe(3);
+    expect(err.message).toContain('3 non-secret rows pushed');
   });
 });

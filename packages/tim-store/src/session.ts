@@ -578,7 +578,11 @@ export class SessionManager {
     const hasMore = await (async () => {
       for (const b of exchangeBatches) {
         if (Number(b.metadata.batch_index) <= batchIndex) continue;
-        if (await batchHasUncoveredExchanges(this.store, b, summaryByIndex)) return true;
+        const laterUsers = (await this.store.getChildrenBySeq(b.id)).filter(
+          u => u.metadata.role === 'user',
+        );
+        const laterSummary = summaryByIndex.get(Number(b.metadata.batch_index));
+        if (batchHasUncoveredExchanges(laterUsers, laterSummary)) return true;
       }
       return false;
     })();
