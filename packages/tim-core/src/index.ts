@@ -427,3 +427,19 @@ export {
   type MaintenanceLockHandle,
   type MaintenanceLockMeta,
 } from './maintenance-lock.js';
+export {
+  EVIDENCE_AUTHORITIES,
+  MAX_EVIDENCE_SOURCES,
+  buildAgentDerivedSessionEvidence,
+  evidenceAuthorityRank,
+  isEvidenceAuthority,
+  legacyEvidenceDefaults,
+  mergeImportEvidence,
+  parseEvidenceMetadata,
+  validateEvidenceMetadata,
+  assertValidEvidenceMetadata,
+  type EvidenceAuthority,
+  type EvidenceMetadata,
+  type EvidenceSource,
+  type EvidenceValidationResult,
+} from './evidence.js';

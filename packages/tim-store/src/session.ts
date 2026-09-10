@@ -1,5 +1,5 @@
 import type { Entry } from 'tim-core';
-import { loadConfig } from 'tim-core';
+import { buildAgentDerivedSessionEvidence, loadConfig } from 'tim-core';
 import type { TimStore } from './store.js';
 import { batchHasUncoveredExchanges } from './session-coverage.js';
 import * as fs from 'fs';
@@ -36,6 +36,30 @@ export interface Exchange {
 }
 
 export type Summarizer = (exchanges: Entry[]) => Promise<string>;
+
+function userSeqRange(exchanges: Entry[]): { seqFrom: number; seqTo: number } | null {
+  const seqs = exchanges
+    .filter(e => e.metadata.role === 'user')
+    .map(e => Number(e.metadata.seq))
+    .filter(n => Number.isFinite(n) && n > 0);
+  if (seqs.length === 0) return null;
+  return { seqFrom: Math.min(...seqs), seqTo: Math.max(...seqs) };
+}
+
+function withSummaryEvidence(
+  metadata: Record<string, unknown>,
+  sessionId: string,
+  seqFrom: number,
+  seqTo: number,
+): Record<string, unknown> {
+  if (!Number.isFinite(seqFrom) || !Number.isFinite(seqTo) || seqFrom <= 0 || seqTo <= 0 || seqFrom > seqTo) {
+    return metadata;
+  }
+  return {
+    ...metadata,
+    evidence: buildAgentDerivedSessionEvidence(sessionId, seqFrom, seqTo),
+  };
+}
 
 export interface BatchFullInfo {
   sessionId: string;
@@ -692,7 +716,7 @@ export class SessionManager {
       ];
       this.store.updateSync(existing.id, {
         content: summaryText,
-        metadata: {
+        metadata: withSummaryEvidence({
           ...existing.metadata,
           kind: KIND_BATCH,
           batch_index: batchIndex,
@@ -700,7 +724,7 @@ export class SessionManager {
           seq_to: mergedTo,
           sessionId,
           summarized_at: summarizedAt,
-        },
+        }, sessionId, mergedFrom, mergedTo),
         tags: mergedTags,
       });
       return this.store.readSync(existing.id)!;
@@ -719,14 +743,14 @@ export class SessionManager {
       const node = this.store.writeSync(summaryText, {
         parentId: summaryNode.id,
         title: `Batch ${batchIndex}`,
-        metadata: {
+        metadata: withSummaryEvidence({
           kind: KIND_BATCH,
           batch_index: batchIndex,
           seq_from: range.seqFrom,
           seq_to: range.seqTo,
           sessionId,
           summarized_at: summarizedAt,
-        },
+        }, sessionId, range.seqFrom, range.seqTo),
         tags: [SESSION_SUMMARY_TAG, BATCH_SUMMARY_TAG, ...contentTags],
       });
       this.syncSessionBatchesSummarized(sessionId, summaryNode.id);
@@ -829,11 +853,21 @@ export class SessionManager {
     const text = await fold(batches);
     const { exchangeCount } = await deriveCounters(this.store, sessionId);
     const date = String(summaryNode.metadata.date ?? new Date().toISOString());
+    const exchanges = await this.getSessionExchanges(sessionId);
+    const seqRange = userSeqRange(exchanges);
 
     await this.store.update(summaryNode.id, {
       title: SUMMARY_NODE_TITLE,
       content: text,
-      metadata: { ...summaryNode.metadata, summary: text, exchanges: exchangeCount, date },
+      metadata: {
+        ...summaryNode.metadata,
+        summary: text,
+        exchanges: exchangeCount,
+        date,
+        ...(seqRange
+          ? { evidence: buildAgentDerivedSessionEvidence(sessionId, seqRange.seqFrom, seqRange.seqTo) }
+          : {}),
+      },
     });
     const updated = await this.store.read(summaryNode.id);
     return updated!;
@@ -916,6 +950,7 @@ export class SessionManager {
     const exchanges = await this.getSessionExchanges(sessionId);
     const summarize = opts.summarize ?? DEFAULT_SUMMARIZER;
     const summaryText = await summarize(exchanges);
+    const seqRange = userSeqRange(exchanges);
 
     const summary = await this.store.write(summaryText, {
       parentId: summaryNode.id,
@@ -923,6 +958,9 @@ export class SessionManager {
         kind: 'checkpoint',
         sessionId,
         count: exchanges.length,
+        ...(seqRange
+          ? { evidence: buildAgentDerivedSessionEvidence(sessionId, seqRange.seqFrom, seqRange.seqTo) }
+          : {}),
       },
       tags: [SESSION_SUMMARY_TAG, BATCH_SUMMARY_TAG],
     });

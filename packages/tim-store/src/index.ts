@@ -72,6 +72,11 @@ export {
   type UncoveredExchange,
 } from './session-coverage.js';
 export {
+  resolveEntrySourceStatus,
+  resolveSessionSourceStatus,
+  type EvidenceSourceStatus,
+} from './evidence-resolve.js';
+export {
   deriveCounters,
   findChildByKind,
   findManagedRoot,
