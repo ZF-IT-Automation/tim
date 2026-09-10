@@ -45,9 +45,11 @@ import {
   type Entry,
   assertMaintenanceClear,
   validateEvidenceMetadata,
+  validateCallerTemporalMetadata,
 } from 'tim-core';
 import { annotateTrust } from './trust.js';
 import { projectEntryEvidence } from './evidence-presentation.js';
+import { projectReadTemporal } from './temporal-presentation.js';
 import { captureProvenance } from './provenance.js';
 import { resolveCallerProjectPath } from './project-path.js';
 import { resolveEntryTaskStatus } from './task-status.js';
@@ -235,6 +237,8 @@ const TimSearchSchema = z.object({
     .describe('Exact tag. With a query: a filter on the ranked results. Alone: a tag lookup'),
   status: z.string().optional()
     .describe('Filter by task/bug status (nested task.status, bug.status, or legacy metadata.status)'),
+  asOf: z.string().optional()
+    .describe('Reconstruct search validity at this timezone-qualified ISO timestamp (default: now)'),
   // "at least one of query/tag" is checked in the handler, not with .refine():
   // refine returns a ZodEffects and the tool registry takes a ZodObject.
 }).describe(
@@ -278,7 +282,7 @@ const TimLinkSchema = z.object({
   targetId: z.string(),
   type: z.enum([
     'relates', 'extends', 'contradicts', 'implements',
-    'blocks', 'leases', 'tagged', 'summarizes', 'contradicted_by'
+    'blocks', 'leases', 'tagged', 'summarizes', 'contradicted_by', 'supersedes',
   ]),
   weight: z.number().min(0).max(1).optional().default(1.0),
   metadata: z.record(z.unknown()).optional().default({}),
@@ -1083,6 +1087,11 @@ async function presentReadEntry(
   const { children: _drop, ...withoutChildren } = annotated;
   const base = summarizeEntry(withoutChildren, includeBody) as Record<string, unknown>;
   base.evidence = await projectEntryEvidence(store, annotated.metadata as Record<string, unknown>);
+  base.temporal = await projectReadTemporal(
+    store,
+    annotated.id,
+    annotated.metadata as Record<string, unknown>,
+  );
   if (nested && nested.length > 0) {
     base.children = await Promise.all(
       nested.map(child => presentReadEntry(store, child, includeBody, cwd)),
@@ -1903,6 +1912,14 @@ async function writeEntry(
     writeOpts.metadata = { ...writeOpts.metadata, evidence: evidenceValidation.evidence };
   }
 
+  if (writeOpts.metadata?.temporal !== undefined) {
+    const temporalValidation = validateCallerTemporalMetadata(writeOpts.metadata.temporal);
+    if (!temporalValidation.ok) {
+      return { ok: false, message: `Invalid metadata.temporal: ${temporalValidation.errors.join('; ')}` };
+    }
+    writeOpts.metadata = { ...writeOpts.metadata, temporal: temporalValidation.temporal };
+  }
+
   const tagWarnings = validateTagsDeprecated(writeOpts.tags ?? []);
   const { clean: cleanWriteTags } = stripDeprecatedTags(writeOpts.tags ?? []);
   writeOpts.tags = cleanWriteTags;
@@ -2405,12 +2422,21 @@ export async function createMcpServer(
         case 'tim_write_many': {
           const { entries } = TimWriteManySchema.parse(args);
           for (const [index, opts] of entries.entries()) {
-            if (opts.metadata?.evidence === undefined) continue;
-            const evidenceValidation = validateEvidenceMetadata(opts.metadata.evidence);
-            if (!evidenceValidation.ok) {
-              return errorResult(
-                `Invalid metadata.evidence at entries[${index}]: ${evidenceValidation.errors.join('; ')}`,
-              );
+            if (opts.metadata?.evidence !== undefined) {
+              const evidenceValidation = validateEvidenceMetadata(opts.metadata.evidence);
+              if (!evidenceValidation.ok) {
+                return errorResult(
+                  `Invalid metadata.evidence at entries[${index}]: ${evidenceValidation.errors.join('; ')}`,
+                );
+              }
+            }
+            if (opts.metadata?.temporal !== undefined) {
+              const temporalValidation = validateCallerTemporalMetadata(opts.metadata.temporal);
+              if (!temporalValidation.ok) {
+                return errorResult(
+                  `Invalid metadata.temporal at entries[${index}]: ${temporalValidation.errors.join('; ')}`,
+                );
+              }
             }
           }
           const created: Array<{ id: string; title: string; warnings?: string[] }> = [];
@@ -2609,8 +2635,16 @@ export async function createMcpServer(
 
         case 'tim_link': {
           const { sourceId, targetId, type, weight, metadata } = TimLinkSchema.parse(args);
+          if (type === 'supersedes' && metadata.effectiveAt === undefined) {
+            return errorResult('supersedes link requires metadata.effectiveAt (timezone-qualified ISO 8601)');
+          }
           const usageSid = await usageSessionId();
-          const edge = await s.link(sourceId, targetId, type as EdgeType, weight, metadata);
+          let edge;
+          try {
+            edge = await s.link(sourceId, targetId, type as EdgeType, weight, metadata);
+          } catch (err) {
+            return errorResult(err instanceof Error ? err.message : String(err));
+          }
           const refIds: string[] = [];
           for (const raw of [sourceId, targetId]) {
             const e = await s.read(raw, { includeChildren: false });
@@ -2649,6 +2683,15 @@ export async function createMcpServer(
                 return errorResult(`Invalid metadata.evidence: ${evidenceValidation.errors.join('; ')}`);
               }
               patch.metadata = { ...patch.metadata, evidence: evidenceValidation.evidence };
+            }
+            if ((patch.metadata as Record<string, unknown>).temporal !== undefined) {
+              const temporalValidation = validateCallerTemporalMetadata(
+                (patch.metadata as Record<string, unknown>).temporal,
+              );
+              if (!temporalValidation.ok) {
+                return errorResult(`Invalid metadata.temporal: ${temporalValidation.errors.join('; ')}`);
+              }
+              patch.metadata = { ...patch.metadata, temporal: temporalValidation.temporal };
             }
           }
           const projectPath = callerProjectPath;

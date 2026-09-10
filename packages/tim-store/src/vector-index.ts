@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import type Database from 'better-sqlite3';
 import { SCHEMA_KINDS, entrySearchStatusSql } from 'tim-core';
+import { buildTemporalEligibilitySql, temporalEligibilityParams } from './temporal.js';
 
 /** Text slice embedded by hooks and query encoding (device-local contract). */
 export function embeddingText(title: string, content: string): string {
@@ -88,6 +89,7 @@ export interface SearchEligibilityFilters {
   status?: string;
   confidenceAbove?: number;
   visibilityMask?: number;
+  asOfIso?: string;
 }
 
 /**
@@ -141,6 +143,10 @@ export function buildSearchEligibilitySql(
   if (filters.visibilityMask !== undefined) {
     sql += ` AND (${entryAlias}.visibility & ?) != 0`;
     params.push(filters.visibilityMask);
+  }
+  if (filters.asOfIso) {
+    sql += buildTemporalEligibilitySql(filters.asOfIso, entryAlias);
+    params.push(...temporalEligibilityParams(filters.asOfIso));
   }
   return sql;
 }
