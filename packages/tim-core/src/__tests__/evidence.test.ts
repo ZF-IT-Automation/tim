@@ -4,6 +4,7 @@ import {
   legacyEvidenceDefaults,
   mergeImportEvidence,
   validateEvidenceMetadata,
+  assertValidEvidenceMetadata,
 } from '../evidence.js';
 
 describe('evidence metadata validation', () => {
@@ -38,6 +39,17 @@ describe('evidence metadata validation', () => {
     }));
     const result = validateEvidenceMetadata({ authority: 'imported', sources });
     expect(result.ok).toBe(false);
+  });
+
+  it('rejects unknown keys consistently without mutating the caller', () => {
+    const metadata = { evidence: { authority: 'user_asserted', sources: [], confidence: 0.9 } };
+    const before = structuredClone(metadata);
+    expect(() => assertValidEvidenceMetadata(metadata)).toThrow(/unknown fields/);
+    expect(metadata).toEqual(before);
+    expect(validateEvidenceMetadata({
+      authority: 'user_asserted',
+      sources: [{ kind: 'document', uri: 'https://example.com/spec', note: 'page 7' }],
+    }).ok).toBe(false);
   });
 
   it('legacy defaults are unknown authority with no sources', () => {
