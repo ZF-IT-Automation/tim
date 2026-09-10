@@ -32,21 +32,30 @@ export interface SessionCoverage {
   hasPendingSummarization: boolean;
 }
 
-/** Same partial-batch rule as showUnsummarized: user seq above summary seq_to is uncovered. */
-export async function batchHasUncoveredExchanges(
-  store: TimStore,
-  batchNode: Entry,
-  summaryByIndex: Map<number, Entry>,
-): Promise<boolean> {
-  const batchIdx = Number(batchNode.metadata.batch_index);
-  const summary = summaryByIndex.get(batchIdx);
-  const users = (await store.getChildrenBySeq(batchNode.id)).filter(
-    u => u.metadata.role === 'user',
-  );
-  if (users.length === 0) return false;
-  if (!summary) return true;
-  const maxSeq = Math.max(...users.map(u => Number(u.metadata.seq)));
-  return maxSeq > Number(summary.metadata.seq_to);
+/** User exchanges not covered by a batch summary interval (once per batch). */
+export function uncoveredUserSeqs(users: Entry[], summary?: Entry): number[] {
+  const userSeqs = users
+    .filter(u => u.metadata.role === 'user')
+    .map(u => Number(u.metadata.seq))
+    .filter(n => Number.isFinite(n))
+    .sort((a, b) => a - b);
+  if (userSeqs.length === 0) return [];
+  if (!summary) return userSeqs;
+
+  const seqFrom = Number(summary.metadata.seq_from);
+  const seqTo = Number(summary.metadata.seq_to);
+  if (!Number.isFinite(seqFrom) || !Number.isFinite(seqTo) || seqFrom > seqTo) {
+    return userSeqs;
+  }
+
+  const covered = new Set<number>();
+  for (let s = seqFrom; s <= seqTo; s++) covered.add(s);
+  return userSeqs.filter(seq => !covered.has(seq));
+}
+
+/** Same partial-batch rule as showUnsummarized, reusable for idle sweep and health reporting. */
+export function batchHasUncoveredExchanges(users: Entry[], summary?: Entry): boolean {
+  return uncoveredUserSeqs(users, summary).length > 0;
 }
 
 /**
@@ -103,15 +112,13 @@ export async function deriveSessionCoverage(
       });
     }
 
-    const hasUncovered = await batchHasUncoveredExchanges(store, batchNode, summaryByIndex);
-    if (!hasUncovered) continue;
+    const missingSeqs = uncoveredUserSeqs(users, summary);
+    if (missingSeqs.length === 0) continue;
 
-    const seqFloor = summary ? Number(summary.metadata.seq_to) : 0;
-    for (const u of users) {
-      const seq = Number(u.metadata.seq);
-      if (seq > seqFloor) {
-        uncovered.push({ seq, userId: u.id, batchIndex: batchIdx });
-      }
+    const userBySeq = new Map(users.map(u => [Number(u.metadata.seq), u]));
+    for (const seq of missingSeqs) {
+      const u = userBySeq.get(seq);
+      if (u) uncovered.push({ seq, userId: u.id, batchIndex: batchIdx });
     }
   }
 

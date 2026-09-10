@@ -66,6 +66,7 @@ export {
 export {
   batchHasUncoveredExchanges,
   deriveSessionCoverage,
+  uncoveredUserSeqs,
   type CoveredRange,
   type SessionCoverage,
   type UncoveredExchange,

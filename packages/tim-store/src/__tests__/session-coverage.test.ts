@@ -71,6 +71,52 @@ describe('deriveSessionCoverage', () => {
     expect(coverage.uncovered).toEqual([]);
   });
 
+  it('reports lower-gap exchanges when summary seq_from starts after them', async () => {
+    await sessions.startProjectSession({
+      sessionId: 'gap',
+      projectId: 'P0100',
+      agentName: 'a',
+      cwd: '/',
+      harness: 't',
+      batchSize: 5,
+    });
+    await sessions.logExchange('gap', [
+      { role: 'user', content: 'Q1' },
+      { role: 'agent', content: 'A1' },
+      { role: 'user', content: 'Q2' },
+      { role: 'agent', content: 'A2' },
+      { role: 'user', content: 'Q3' },
+      { role: 'agent', content: 'A3' },
+    ]);
+    await sessions.writeBatchSummary('gap', 1, 'tail only', { seqFrom: 3, seqTo: 3 });
+
+    const coverage = await deriveSessionCoverage(store, 'gap');
+    expect(coverage.uncovered.map(u => u.seq)).toEqual([1, 2]);
+    expect(coverage.hasPendingSummarization).toBe(true);
+  });
+
+  it('treats invalid summary range as fully uncovered', async () => {
+    await sessions.startProjectSession({
+      sessionId: 'invalid',
+      projectId: 'P0100',
+      agentName: 'a',
+      cwd: '/',
+      harness: 't',
+      batchSize: 5,
+    });
+    await sessions.logExchange('invalid', [
+      { role: 'user', content: 'Q1' },
+      { role: 'agent', content: 'A1' },
+      { role: 'user', content: 'Q2' },
+      { role: 'agent', content: 'A2' },
+    ]);
+    await sessions.writeBatchSummary('invalid', 1, 'bad range', { seqFrom: 5, seqTo: 2 });
+
+    const coverage = await deriveSessionCoverage(store, 'invalid');
+    expect(coverage.uncovered.map(u => u.seq)).toEqual([1, 2]);
+    expect(coverage.hasPendingSummarization).toBe(true);
+  });
+
   it('treats missing batch summary as fully uncovered', async () => {
     await sessions.startProjectSession({
       sessionId: 'fresh',

@@ -4,6 +4,7 @@ import {
   applyRemoteEntry,
   applyRemoteEdge,
   getUnackedStaging,
+  isSecret,
   localEntryRecordFromRow,
 } from 'tim-store';
 import { resolveLWW } from 'tim-core';
@@ -71,6 +72,21 @@ function payloadIsSecret(payloadJson: string): boolean {
   try {
     const payload = JSON.parse(payloadJson) as { metadata?: unknown };
     return parsePayloadMetadata(payload.metadata).secret === true;
+  } catch {
+    return false;
+  }
+}
+
+function entryRequiresSecretPassphrase(
+  db: ReturnType<TimStore['getDb']>,
+  payloadJson: string,
+  entryKey: string,
+): boolean {
+  if (payloadIsSecret(payloadJson)) return true;
+  try {
+    const payload = JSON.parse(payloadJson) as { id?: string };
+    const id = payload.id ?? entryKey;
+    return isSecret(db, id);
   } catch {
     return false;
   }
@@ -173,23 +189,30 @@ export function decryptSecretPayload(
   return JSON.stringify(decrypted);
 }
 
-function envelopeBlocksWithoutSecretKey(env: TimEnvelope): boolean {
+function envelopeBlocksWithoutSecretKey(
+  env: TimEnvelope,
+  db: ReturnType<TimStore['getDb']>,
+): boolean {
   if (env.type !== 'entry' || env.deleted) return false;
   if (isSecretPlaceholderPayload(env.payload)) return true;
   if (env.is_encrypted) return false;
-  return payloadIsSecret(env.payload);
+  return entryRequiresSecretPassphrase(db, env.payload, env.key);
 }
 
 function transformEnvelopeForPush(
   env: TimEnvelope,
   secretEncrypt?: (data: string) => string,
+  db?: ReturnType<TimStore['getDb']>,
 ): TimEnvelope {
+  const needsSecret = db
+    ? entryRequiresSecretPassphrase(db, env.payload, env.key)
+    : payloadIsSecret(env.payload);
   if (
     !secretEncrypt
     || env.type !== 'entry'
     || env.deleted
     || env.is_encrypted
-    || !payloadIsSecret(env.payload)
+    || !needsSecret
   ) {
     return env;
   }
@@ -232,6 +255,7 @@ function prepareQueueForPush(
   queue: QueueItem[],
   deviceId: string,
   encryptFn: (data: string) => string,
+  db: ReturnType<TimStore['getDb']>,
   secretEncrypt?: (data: string) => string,
 ): { ready: QueueItem[]; remaining: QueueItem[]; blockedSecretCount: number } {
   const ready: QueueItem[] = [];
@@ -244,13 +268,13 @@ function prepareQueueForPush(
     let payloadChanged = false;
 
     for (const env of item.envelopes) {
-      if (!secretEncrypt && envelopeBlocksWithoutSecretKey(env)) {
+      if (!secretEncrypt && envelopeBlocksWithoutSecretKey(env, db)) {
         blockEnvelopes.push(env);
         blockedSecretCount++;
         continue;
       }
 
-      const transformed = transformEnvelopeForPush(env, secretEncrypt);
+      const transformed = transformEnvelopeForPush(env, secretEncrypt, db);
       if (transformed.payload !== env.payload || transformed.is_encrypted !== env.is_encrypted) {
         payloadChanged = true;
       }
@@ -304,7 +328,7 @@ export async function pushCycle(
       placeholderKeys.push({ key: row.key, lww: row.lww_timestamp });
       return false;
     }
-    if (row.entity_type === 'entry' && !secretEncrypt && payloadIsSecret(row.payload)) {
+    if (row.entity_type === 'entry' && !secretEncrypt && entryRequiresSecretPassphrase(db, row.payload, row.key)) {
       blockedSecretCount++;
       return false;
     }
@@ -317,7 +341,7 @@ export async function pushCycle(
   if (rows.length > 0) {
     const envelopes = rows
       .map(stagingToEnvelope)
-      .map((e) => transformEnvelopeForPush(e, secretEncrypt));
+      .map((e) => transformEnvelopeForPush(e, secretEncrypt, db));
     const blobs = envelopes.map((e) => ({
       proposed_id: e.key,
       data: encryptFn(JSON.stringify(e)),
@@ -328,7 +352,7 @@ export async function pushCycle(
     queue = loadQueue(qPath);
   }
 
-  const prepared = prepareQueueForPush(queue, deviceId, encryptFn, secretEncrypt);
+  const prepared = prepareQueueForPush(queue, deviceId, encryptFn, db, secretEncrypt);
   queueBlockedSecretCount = prepared.blockedSecretCount;
   saveQueue(qPath, []);
   const readyToSend = [...prepared.ready];
@@ -362,7 +386,7 @@ export async function pushCycle(
 
   const totalBlocked = blockedSecretCount + queueBlockedSecretCount;
   if (totalBlocked > 0) {
-    throw new MissingSecretPassphraseError(totalBlocked);
+    throw new MissingSecretPassphraseError(totalBlocked, pushedCount);
   }
 
   const queueLeft = prepared.remaining.length + unsentReady.length;

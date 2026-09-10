@@ -3279,13 +3279,12 @@ export class TimStore implements MemoryInterface {
     const blockers: string[] = [];
     const warnings: string[] = [];
 
-    // Broken links: edges referencing deleted/tombstoned entries
+    // Broken links: edges whose endpoint row is missing (tombstones are retained on purpose).
     const brokenLinks = this.db.prepare(`
       SELECT COUNT(*) as count FROM edges e
       LEFT JOIN entries s ON e.source_id = s.id
       LEFT JOIN entries t ON e.target_id = t.id
-      WHERE s.id IS NULL OR s.tombstoned_at IS NOT NULL
-         OR t.id IS NULL OR t.tombstoned_at IS NOT NULL
+      WHERE s.id IS NULL OR t.id IS NULL
     `).get() as { count: number };
     if (brokenLinks.count > 0) {
       const message = `${brokenLinks.count} broken links`;
@@ -3344,7 +3343,9 @@ export class TimStore implements MemoryInterface {
     }
 
     // Counts
-    const totalEntries = (this.db.prepare('SELECT COUNT(*) as count FROM entries WHERE irrelevant = 0').get() as { count: number }).count;
+    const totalEntries = (this.db.prepare(
+      'SELECT COUNT(*) as count FROM entries WHERE irrelevant = 0 AND tombstoned_at IS NULL',
+    ).get() as { count: number }).count;
     const totalEdges = (this.db.prepare('SELECT COUNT(*) as count FROM edges').get() as { count: number }).count;
 
     // Stale knowledge: non-schema entries not verified/edited within the
@@ -3386,7 +3387,9 @@ export class TimStore implements MemoryInterface {
   }
 
   async stats(): Promise<MemoryStats> {
-    const totalEntries = (this.db.prepare('SELECT COUNT(*) as c FROM entries WHERE irrelevant = 0').get() as { c: number }).c;
+    const totalEntries = (this.db.prepare(
+      'SELECT COUNT(*) as c FROM entries WHERE irrelevant = 0 AND tombstoned_at IS NULL',
+    ).get() as { c: number }).c;
     const totalEdges = (this.db.prepare('SELECT COUNT(*) as c FROM edges').get() as { c: number }).c;
 
     // Depth distribution
