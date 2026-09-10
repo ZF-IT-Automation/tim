@@ -33,8 +33,20 @@ import {
 } from 'tim-store';
 import { formatProjectOutput, type ProjectSchema } from './project-output.js';
 import { collectTopicResume, formatTopicResume } from './topic-resume.js';
-import { loadConfig, resolveActiveSessionId, evaluateLoadGate, stripDeprecatedTags, SCHEMA_KINDS, PROJECT_SCHEMA, type EdgeType, type Entry, assertMaintenanceClear } from 'tim-core';
+import {
+  loadConfig,
+  resolveActiveSessionId,
+  evaluateLoadGate,
+  stripDeprecatedTags,
+  SCHEMA_KINDS,
+  PROJECT_SCHEMA,
+  type EdgeType,
+  type Entry,
+  assertMaintenanceClear,
+  validateEvidenceMetadata,
+} from 'tim-core';
 import { annotateTrust } from './trust.js';
+import { projectEntryEvidence } from './evidence-presentation.js';
 import { captureProvenance } from './provenance.js';
 import { resolveCallerProjectPath } from './project-path.js';
 import { resolveEntryTaskStatus } from './task-status.js';
@@ -989,14 +1001,22 @@ function summarizeEntry(entry: Entry & { summary?: string }, includeBody: boolea
 
 type EntryWithChildren = Entry & { children?: Entry[] };
 
-/** Summary-first read presentation with trust annotations; recurses into children. */
-function presentReadEntry(entry: EntryWithChildren, includeBody: boolean, cwd: string): unknown {
+/** Summary-first read presentation with trust and evidence annotations; recurses into children. */
+async function presentReadEntry(
+  store: TimStore,
+  entry: EntryWithChildren,
+  includeBody: boolean,
+  cwd: string,
+): Promise<unknown> {
   const annotated = annotateTrust(entry, cwd) as EntryWithChildren;
   const nested = annotated.children;
   const { children: _drop, ...withoutChildren } = annotated;
   const base = summarizeEntry(withoutChildren, includeBody) as Record<string, unknown>;
+  base.evidence = await projectEntryEvidence(store, annotated.metadata as Record<string, unknown>);
   if (nested && nested.length > 0) {
-    base.children = nested.map(child => presentReadEntry(child, includeBody, cwd));
+    base.children = await Promise.all(
+      nested.map(child => presentReadEntry(store, child, includeBody, cwd)),
+    );
   }
   return base;
 }
@@ -1805,6 +1825,14 @@ async function writeEntry(
     return { ok: false, message: bugValidation.message };
   }
 
+  if (writeOpts.metadata?.evidence !== undefined) {
+    const evidenceValidation = validateEvidenceMetadata(writeOpts.metadata.evidence);
+    if (!evidenceValidation.ok) {
+      return { ok: false, message: `Invalid metadata.evidence: ${evidenceValidation.errors.join('; ')}` };
+    }
+    writeOpts.metadata = { ...writeOpts.metadata, evidence: evidenceValidation.evidence };
+  }
+
   const tagWarnings = validateTagsDeprecated(writeOpts.tags ?? []);
   const { clean: cleanWriteTags } = stripDeprecatedTags(writeOpts.tags ?? []);
   writeOpts.tags = cleanWriteTags;
@@ -2125,7 +2153,9 @@ export async function createMcpServer(
               s.recordRead(entries.map(e => e.id), usageSid));
             return {
               content: [{ type: 'text', text: formatToolResponse({
-                entries: entries.map(e => presentReadEntry(e, include_body, cwd)),
+                entries: await Promise.all(
+                  entries.map(e => presentReadEntry(s, e, include_body, cwd)),
+                ),
                 missing,
               }) }],
             };
@@ -2192,13 +2222,13 @@ export async function createMcpServer(
             }
             const { children: rawChildren, ...sectionOnly } = rawSection as EntryWithChildren;
             const payload: { section: unknown; children?: unknown[] } = {
-              section: presentReadEntry(sectionOnly as Entry, include_body, cwd),
+              section: await presentReadEntry(s, sectionOnly as Entry, include_body, cwd),
             };
             if (includeChildren) {
               payload.children = depth === 1
                 ? []
-                : (rawChildren ?? []).map(child =>
-                  presentReadEntry(child, include_body, cwd));
+                : await Promise.all((rawChildren ?? []).map(child =>
+                  presentReadEntry(s, child, include_body, cwd)));
             }
             const returnedIds = !includeChildren
               ? [rawSection.id]
@@ -2239,7 +2269,7 @@ export async function createMcpServer(
               s.recordRead([entry.id], usageSid));
             return {
               content: [{ type: 'text', text: formatToolResponse({
-                entry: presentReadEntry(entry, include_body, cwd),
+                entry: await presentReadEntry(s, entry, include_body, cwd),
                 edges,
               }) }],
             };
@@ -2276,7 +2306,7 @@ export async function createMcpServer(
               s.recordRead([entry.id], usageSid));
             return {
               content: [{ type: 'text', text: formatToolResponse({
-                entry: presentReadEntry(entry, include_body, cwd),
+                entry: await presentReadEntry(s, entry, include_body, cwd),
                 edges,
               }) }],
             };
@@ -2304,6 +2334,15 @@ export async function createMcpServer(
 
         case 'tim_write_many': {
           const { entries } = TimWriteManySchema.parse(args);
+          for (const [index, opts] of entries.entries()) {
+            if (opts.metadata?.evidence === undefined) continue;
+            const evidenceValidation = validateEvidenceMetadata(opts.metadata.evidence);
+            if (!evidenceValidation.ok) {
+              return errorResult(
+                `Invalid metadata.evidence at entries[${index}]: ${evidenceValidation.errors.join('; ')}`,
+              );
+            }
+          }
           const created: Array<{ id: string; title: string; warnings?: string[] }> = [];
           const failed: Array<{ index: number; title?: string; error: string }> = [];
 
@@ -2546,6 +2585,15 @@ export async function createMcpServer(
           if (patch.metadata !== undefined) {
             const bugValidation = validateBugStatus(patch.metadata as Record<string, unknown>);
             if (!bugValidation.ok) return errorResult(bugValidation.message);
+            if ((patch.metadata as Record<string, unknown>).evidence !== undefined) {
+              const evidenceValidation = validateEvidenceMetadata(
+                (patch.metadata as Record<string, unknown>).evidence,
+              );
+              if (!evidenceValidation.ok) {
+                return errorResult(`Invalid metadata.evidence: ${evidenceValidation.errors.join('; ')}`);
+              }
+              patch.metadata = { ...patch.metadata, evidence: evidenceValidation.evidence };
+            }
           }
           const projectPath = callerProjectPath;
           if (patch.tags !== undefined) {
