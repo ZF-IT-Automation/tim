@@ -2,6 +2,7 @@ import type { TimStore } from 'tim-store';
 import { loadConfig, getDeviceId } from './config.js';
 import { resolveSecretPassphrase } from './credentials.js';
 import { buildSyncContext, runPush, runPull } from './sync.js';
+import { MissingSecretPassphraseError } from './credentials.js';
 
 const syncCooldowns = new Map<string, number>();
 const COOLDOWN_MS = 30_000;
@@ -27,7 +28,8 @@ export interface AutoPushResult {
   ran: boolean;
   pushed?: number;
   queued?: boolean;
-  reason?: string;
+  /** blocked-secret = all rows blocked; partial-blocked = non-secret rows pushed */
+  reason?: 'no-passphrase' | 'in-flight' | 'cooldown' | 'no-config' | 'error' | 'blocked-secret' | 'partial-blocked';
 }
 
 export async function autoPush(store: TimStore): Promise<AutoPushResult> {
@@ -52,8 +54,15 @@ export async function autoPush(store: TimStore): Promise<AutoPushResult> {
     markSynced('push'); // ONLY arm cooldown on success
     return { ran: true, pushed: result.pushed, queued: result.queued };
   } catch (err) {
+    if (err instanceof MissingSecretPassphraseError) {
+      if (err.pushedCount > 0) {
+        markSynced('push');
+        return { ran: true, pushed: err.pushedCount, reason: 'partial-blocked' };
+      }
+      console.error('[tim-sync] autoPush failed:', err.message);
+      return { ran: true, reason: 'blocked-secret' };
+    }
     console.error('[tim-sync] autoPush failed:', (err as Error).message);
-    // do NOT markSynced — let next call retry immediately (gated by InFlight only)
     return { ran: true, reason: 'error' };
   } finally {
     pushInFlight = false;

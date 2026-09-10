@@ -338,6 +338,17 @@ describe('TimStore', () => {
       const report = await store.health();
       expect(report.brokenLinks).toBe(1);
     });
+
+    it('does not count tombstoned endpoints as broken links or live entries', async () => {
+      const a = await store.write('Live');
+      const b = await store.write('Gone');
+      await store.link(a.id, b.id, 'relates');
+      await store.delete(b.id, true);
+
+      const report = await store.health();
+      expect(report.brokenLinks).toBe(0);
+      expect(report.totalEntries).toBe(1);
+    });
   });
 
   // ─── Stats ────────────────────────────────────────────

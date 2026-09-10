@@ -71,17 +71,18 @@ export function isSummarizerChild(env: NodeJS.ProcessEnv = process.env): boolean
 }
 
 /**
- * @deprecated Shell-based spawn removed — use {@link buildSummarizerSpawnRequest}.
- * Kept for callers that logged the old command string.
+ * @deprecated Shell-based spawn removed — use {@link buildSummarizerSpawnRequest} with
+ * {@link spawnSummarizer} instead.
  */
 export function buildSummarizerCommand(
-  sessionId: string,
-  lockPath: string,
-  logPath: string,
-  timeoutSec: number = DEFAULT_SUMMARIZER_TIMEOUT_SEC,
+  _sessionId: string,
+  _lockPath: string,
+  _logPath: string,
+  _timeoutSec: number = DEFAULT_SUMMARIZER_TIMEOUT_SEC,
 ): string {
-  return JSON.stringify(
-    buildSummarizerSpawnRequest(sessionId, path.dirname(path.dirname(lockPath)), lockPath, logPath, timeoutSec),
+  throw new Error(
+    'buildSummarizerCommand was removed in tim-hooks beta: '
+    + 'use buildSummarizerSpawnRequest() with spawnSummarizer() instead of exec()',
   );
 }
 
@@ -238,7 +239,7 @@ async function patchSessionSweepMetadata(
 /**
  * Walk all sessions and spawn the summarizer for idle ones with pending exchanges.
  * Always passes sessionId explicitly — never resolves by cwd.
- * Scan cost on the live DB (389 sessions): listing 7 ms, deriveCounters 223 ms.
+ * Scan cost scales with session count; deriveSessionCoverage reuses one child fetch per batch.
  */
 export async function sweepIdleSessions(
   store: TimStore,
@@ -375,14 +376,18 @@ export async function sweepIdleSessions(
 export const DEFAULT_PROJECT_SUMMARY_THRESHOLD = 5;
 
 /**
- * @deprecated Shell-based spawn removed — use {@link buildProjectSummarySpawnRequest}.
+ * @deprecated Shell-based spawn removed — use {@link buildProjectSummarySpawnRequest} with
+ * {@link spawnSummarizer} instead.
  */
 export function buildProjectSummaryCommand(
-  label: string,
-  logPath: string,
-  timeoutSec: number = DEFAULT_SUMMARIZER_TIMEOUT_SEC,
+  _label: string,
+  _logPath: string,
+  _timeoutSec: number = DEFAULT_SUMMARIZER_TIMEOUT_SEC,
 ): string {
-  return JSON.stringify(buildProjectSummarySpawnRequest(label, path.dirname(path.dirname(logPath)), logPath, timeoutSec));
+  throw new Error(
+    'buildProjectSummaryCommand was removed in tim-hooks beta: '
+    + 'use buildProjectSummarySpawnRequest() with spawnSummarizer() instead of exec()',
+  );
 }
 
 export type ProjectSummaryReason =

@@ -132,10 +132,11 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<number> {
     child.stdout?.on('data', chunk => appendLog(opts.logPath, chunk));
     child.stderr?.on('data', chunk => appendLog(opts.logPath, chunk));
 
+    let killTimer: ReturnType<typeof setTimeout> | undefined;
     const timer = setTimeout(() => {
       timedOut = true;
       killProcessTree(child!, 'SIGTERM');
-      setTimeout(() => killProcessTree(child!, 'SIGKILL'), 5_000);
+      killTimer = setTimeout(() => killProcessTree(child!, 'SIGKILL'), 5_000);
     }, opts.timeoutSec * 1000);
 
     exitCode = await new Promise<number>(resolve => {
@@ -150,6 +151,7 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<number> {
     });
 
     clearTimeout(timer);
+    if (killTimer !== undefined) clearTimeout(killTimer);
     if (timedOut) {
       appendLog(
         opts.logPath,
