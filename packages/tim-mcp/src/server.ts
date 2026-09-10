@@ -210,7 +210,8 @@ const TimSearchSchema = z.object({
   type: z.string().optional().describe('Filter metadata.type'),
   tag: z.string().optional()
     .describe('Exact tag. With a query: a filter on the ranked results. Alone: a tag lookup'),
-  status: z.string().optional().describe('Filter metadata.status'),
+  status: z.string().optional()
+    .describe('Filter by task/bug status (nested task.status, bug.status, or legacy metadata.status)'),
   // "at least one of query/tag" is checked in the handler, not with .refine():
   // refine returns a ZodEffects and the tool registry takes a ZodObject.
 }).describe(

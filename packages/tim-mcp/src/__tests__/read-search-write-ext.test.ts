@@ -510,6 +510,44 @@ describe('tim_search extended', () => {
     const full = JSON.parse(read.result!.content[0].text);
     expect(Array.from(full.entry.content).length).toBeGreaterThan(500);
   }, 30_000);
+
+  it('root all returns hits from every project via MCP', async () => {
+    await seedScopedEntry('P0550', 'McpAllNeedle first', ['#note', '#test']);
+    await seedScopedEntry('P0551', 'McpAllNeedle second', ['#note', '#test']);
+
+    const resp = await client.callTool('tim_search', {
+      query: 'McpAllNeedle',
+      root: 'all',
+      searchType: 'fts',
+    });
+    const response = JSON.parse(resp.result!.content[0].text);
+    expect(response.results).toHaveLength(2);
+  });
+
+  it('tag-only root all returns hits from every project via MCP', async () => {
+    await seedScopedEntry('P0552', 'McpTagAll first', ['#mcp-all-tag', '#test']);
+    await seedScopedEntry('P0553', 'McpTagAll second', ['#mcp-all-tag', '#test']);
+
+    const resp = await client.callTool('tim_search', { tag: '#mcp-all-tag', root: 'all' });
+    const response = JSON.parse(resp.result!.content[0].text);
+    expect(response.results).toHaveLength(2);
+  });
+
+  it('project-label prepend respects type filter via MCP', async () => {
+    await client.callTool('tim_create_project', {
+      label: 'P0554',
+      content: 'Prepend filter project',
+      memoryOnly: true,
+    });
+
+    const resp = await client.callTool('tim_search', {
+      query: 'P0554',
+      type: 'decision',
+      searchType: 'fts',
+    });
+    const response = JSON.parse(resp.result!.content[0].text);
+    expect(response.results).toHaveLength(0);
+  });
 });
 
 describe('tim_write where shorthand', () => {

@@ -44,6 +44,28 @@ All notable changes to TIM are documented in this file.
 
 ### Fixed
 
+- **Search status filter** — `tim_search` `status` now uses search-specific resolution
+  (`resolveEntrySearchStatus`), not task-list display defaults. Plain notes without
+  task/bug metadata no longer match `status:'todo'`; bug vocabulary (`fixed`,
+  `documented`, `open`, …) is preserved for filtering. SQL and JS agree; filtering
+  stays before candidate limits.
+- **`tim_search` `root: 'all'`** — cross-project search no longer resolves `'all'` as a
+  project name. `root: 'all'` and `root: ''` search every project; tag-only lookup shares
+  the same rule.
+- **Project-label prepend** — direct project hits from a label query now pass every
+  supplied filter (scope, type, tag, status) before merging ahead of ranked results.
+- **Uppercase AND queries** — unquoted uppercase `AND` in user FTS queries again means
+  intersection (`foo AND bar`); lowercase `and`/`or` stay literal. OR/NOT/NEAR are not
+  promoted to boolean operators in literal mode; use `or-terms` mode for generated prompt
+  OR-chains.
+
+### Changed
+
+- **`tim_search` default `searchType`** — the MCP schema declares `'fts'` as the default
+  and the handler now forwards it. Before #32 the handler ignored `searchType`, so store
+  search defaulted to `'hybrid'`. This was an implementation/schema mismatch; MCP callers
+  now get FTS-only ranking unless they pass `searchType: 'hybrid'` or `'vector'` explicitly.
+
 - **Sync push secret boundary** — push and auto-push now treat inherited secret ancestry the same as
   `metadata.secret` on the row itself (`isSecret` walks parents). Retroactive marking of a parent as
   secret blocks future pushes of existing children, but cannot retract content already synced under the

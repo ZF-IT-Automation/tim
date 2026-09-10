@@ -41,10 +41,12 @@ describe('sanitizeFtsQuery (quoting strategy)', () => {
     expect(sanitizeFtsQuery('task:true')).toBe('"task" "true"');
   });
 
-  it('treats operator words as literal terms (quoted)', () => {
-    expect(sanitizeFtsQuery('foo AND bar')).toBe('"foo" "AND" "bar"');
+  it('promotes uppercase AND to FTS intersection; lowercase or stays literal', () => {
+    expect(sanitizeFtsQuery('foo AND bar')).toBe('"foo" AND "bar"');
     expect(sanitizeFtsQuery('or')).toBe('"or"');
     expect(sanitizeFtsQuery('notes or tasks')).toBe('"notes" "or" "tasks"');
+    expect(sanitizeFtsQuery('foo OR bar')).toBe('"foo" "OR" "bar"');
+    expect(sanitizeFtsQuery('foo NOT bar')).toBe('"foo" "NOT" "bar"');
   });
 
   it('preserves double-quoted phrases as a single FTS term', () => {
@@ -132,10 +134,22 @@ describe('searchFts resilience (quoting strategy)', () => {
     expect(results[0].title).toBe('Task management notes');
   });
 
-  it('treats explicit AND as a literal token in user queries', async () => {
+  it('uppercase AND intersects tokens in user queries', async () => {
+    await store.write('Task management notes\nA list of tasks for the project.', {
+      tags: ['#task', '#note'],
+    });
     const results = await store.searchFts('task AND management', 10);
-    expect(Array.isArray(results)).toBe(true);
-    expect(results).toHaveLength(0);
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0].title).toBe('Task management notes');
+  });
+
+  it('AndNeedle AND bravo finds intersection (reviewer F3 repro)', async () => {
+    await store.write('AndNeedle alpha bravo\nContent with both tokens.', {
+      tags: ['#note'],
+    });
+    const results = await store.searchFts('AndNeedle AND bravo', 10);
+    expect(results).toHaveLength(1);
+    expect(results[0].title).toBe('AndNeedle alpha bravo');
   });
 
   it('returns empty array for pure-operator / empty input (not crash)', async () => {
