@@ -711,7 +711,7 @@ function formatProjectOutputWithTokenBudget(
   ];
   blocks.push({
     id: 'footer',
-    priority: BRIEFING_PRIORITY.header,
+    priority: BRIEFING_PRIORITY.general,
     order: 9999,
     lines: footerLines,
   });
