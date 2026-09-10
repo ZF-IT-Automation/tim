@@ -31,7 +31,7 @@ import {
   type TaskRecord,
   isCodingNeedsReview,
 } from 'tim-store';
-import { formatProjectOutput, type ProjectSchema } from './project-output.js';
+import { formatProjectOutput, type ProjectSchema, type FormatProjectOutputOptions } from './project-output.js';
 import { collectTopicResume, formatTopicResume } from './topic-resume.js';
 import {
   loadConfig,
@@ -81,6 +81,8 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { buildBoundedSearchResponse, clampSearchRequest } from './search-response.js';
+import { validateTokenBudget, boundRenderedText } from './briefing-budget.js';
+import { formatQueryExtrasBlock, searchTaskBriefingExtras } from './task-aware-selection.js';
 
 /**
  * Format a tool response payload to JSON.
@@ -433,7 +435,13 @@ const TimPreviewBriefingSchema = z.object({
   sessionId: z.string().optional()
     .describe('Session the delta is computed against; defaults to the project\'s most recent'),
   maxTokens: z.number().int().min(0).max(4000).optional()
-    .describe('Budget for the injected briefing; defaults to the configured value'),
+    .describe('[deprecated alias] Use tokenBudget instead'),
+  tokenBudget: z.number().int().min(1).max(4000).optional()
+    .describe('Token budget for the rendered preview response; defaults to briefing.maxTokens from config'),
+  query: z.string().optional()
+    .describe('Optional task query — adds project-scoped context extras without changing binding'),
+  ftsQueryMode: z.enum(['literal', 'or-terms']).optional().default('literal')
+    .describe('How to sanitize query for FTS when selecting task extras'),
   origin: z.enum(['marker', 'session']).optional()
     .describe('Directive flavour: "marker" (.tim-project) or "session" (TIM session metadata)'),
   cwd: z.string().optional().describe('Directory named in the directive text'),
@@ -550,6 +558,12 @@ const TimLoadProjectSchema = z.object({
     .describe('How many child levels to load (1-5)'),
   budget: z.number().min(1).max(1000).optional().default(200)
     .describe('Max child entries to return'),
+  tokenBudget: z.number().int().min(1).max(4000).optional()
+    .describe('Token budget for the rendered project brief; defaults to briefing.maxTokens from config'),
+  query: z.string().optional()
+    .describe('Optional task query — adds project-scoped context extras inside the brief'),
+  ftsQueryMode: z.enum(['literal', 'or-terms']).optional().default('literal')
+    .describe('How to sanitize query for FTS when selecting task extras'),
   sections: z.array(z.string()).nullable().optional().default(null)
     .describe('Optional section IDs/labels to filter direct children'),
   sessionId: z.string().optional().describe(
@@ -566,6 +580,12 @@ const TimReadProjectSchema = z.object({
     .describe('How many child levels to load (1-5)'),
   budget: z.number().min(1).max(1000).optional().default(200)
     .describe('Max child entries to return'),
+  tokenBudget: z.number().int().min(1).max(4000).optional()
+    .describe('Token budget for the rendered project brief; defaults to briefing.maxTokens from config'),
+  query: z.string().optional()
+    .describe('Optional task query — adds project-scoped context extras inside the brief'),
+  ftsQueryMode: z.enum(['literal', 'or-terms']).optional().default('literal')
+    .describe('How to sanitize query for FTS when selecting task extras'),
   sections: z.array(z.string()).nullable().optional().default(null)
     .describe('Optional section IDs/labels to filter direct children'),
 });
@@ -979,6 +999,42 @@ function loadProjectSchema(): ProjectSchema | undefined {
   // collapsed to 1. It is now a compiled constant in tim-core, so it is always
   // present and always identical to the one the creation paths materialize from.
   return PROJECT_SCHEMA;
+}
+
+async function resolveBriefingQueryExtras(
+  store: TimStore,
+  projectLabel: string,
+  query: string | undefined,
+  ftsQueryMode: 'literal' | 'or-terms',
+): Promise<Entry[]> {
+  if (!query?.trim()) return [];
+  return searchTaskBriefingExtras(store, projectLabel, query, ftsQueryMode);
+}
+
+function resolveBriefingTokenBudget(
+  tokenBudget: unknown,
+  legacyMaxTokens: unknown,
+): { ok: true; value: number } | { ok: false; message: string } {
+  const defaultBudget = getBriefingMaxTokens(loadConfig());
+  const explicit = tokenBudget ?? legacyMaxTokens;
+  return validateTokenBudget(explicit, defaultBudget);
+}
+
+function buildFormatProjectOptions(
+  tokenBudget: number,
+  query: string | undefined,
+  queryExtras: Entry[],
+): FormatProjectOutputOptions {
+  return {
+    tokenBudget,
+    ...(query ? { query } : {}),
+    ...(queryExtras.length > 0 ? { queryExtras } : {}),
+  };
+}
+
+/** Entry budget must cover large Log sections plus reserved later sections. */
+function effectiveLoadBudget(entryBudget: number): number {
+  return Math.max(entryBudget, 350);
 }
 
 function truncText(s: string, max: number): string {
@@ -3141,16 +3197,47 @@ export async function createMcpServer(
         }
 
         case 'tim_preview_briefing': {
-          const { project, sessionId, maxTokens, origin, cwd } =
-            TimPreviewBriefingSchema.parse(args);
+          const {
+            project,
+            sessionId,
+            maxTokens,
+            tokenBudget: tokenBudgetArg,
+            query,
+            ftsQueryMode,
+            origin,
+            cwd,
+          } = TimPreviewBriefingSchema.parse(args);
+          const budgetCheck = resolveBriefingTokenBudget(tokenBudgetArg, maxTokens);
+          if (!budgetCheck.ok) return errorResult(budgetCheck.message);
+
+          const resolved = await s.resolveProjectLabel(project);
+          if (resolved.status !== 'found') {
+            return errorResult(
+              resolved.status === 'ambiguous'
+                ? `'${project}' is ambiguous`
+                : `Project not found: ${project}`,
+            );
+          }
+
           const preview = await previewSessionStart(s, {
-            projectId: project,
-            maxTokens: maxTokens ?? getBriefingMaxTokens(loadConfig()),
+            projectId: resolved.label,
+            maxTokens: budgetCheck.value,
             ...(sessionId ? { sessionId } : {}),
             ...(origin ? { origin } : {}),
             ...(cwd ? { cwd } : {}),
           });
-          const text = [
+
+          const queryExtras = await resolveBriefingQueryExtras(
+            s,
+            resolved.label,
+            query,
+            ftsQueryMode,
+          );
+          const extrasBlock = query && queryExtras.length > 0
+            ? formatQueryExtrasBlock(queryExtras, query)
+            : null;
+
+          const parts = [
             `project: ${preview.projectLabel} (${preview.binding})`,
             `session used for delta/cadence: ${preview.sessionId ?? '(none — project has no sessions)'}`,
             '',
@@ -3159,8 +3246,13 @@ export async function createMcpServer(
             '',
             '── briefing (what tim_session_start returns) ──',
             preview.briefing ?? '(none)',
-          ].join('\n');
-          return { content: [{ type: 'text', text }] };
+          ];
+          if (extrasBlock) {
+            parts.push('', extrasBlock.lines.join('\n'));
+          }
+
+          const bounded = boundRenderedText(parts.join('\n'), budgetCheck.value);
+          return { content: [{ type: 'text', text: bounded.text }] };
         }
 
         case 'tim_session_resume': {
@@ -3399,8 +3491,20 @@ export async function createMcpServer(
         }
 
         case 'tim_load_project': {
-          const { label, depth, budget, sections, sessionId: sessionIdArg, bind } =
-            TimLoadProjectSchema.parse(args);
+          const {
+            label,
+            depth,
+            budget,
+            tokenBudget: tokenBudgetArg,
+            query,
+            ftsQueryMode,
+            sections,
+            sessionId: sessionIdArg,
+            bind,
+          } = TimLoadProjectSchema.parse(args);
+          const budgetCheck = resolveBriefingTokenBudget(tokenBudgetArg, undefined);
+          if (!budgetCheck.ok) return errorResult(budgetCheck.message);
+
           const resolved = await s.resolveProjectLabel(label);
           if (resolved.status === 'ambiguous') {
             return errorResult(
@@ -3437,10 +3541,26 @@ export async function createMcpServer(
             }
           }
 
-          const result = await s.loadProject(projectLabel, { depth, budget, sections });
+          const result = await s.loadProject(projectLabel, {
+            depth,
+            budget: effectiveLoadBudget(budget),
+            sections,
+          });
           if (!result) {
             return errorResult(`Project not found: ${label}`);
           }
+
+          const queryExtras = await resolveBriefingQueryExtras(
+            s,
+            projectLabel,
+            query,
+            ftsQueryMode,
+          );
+          const formatOptions = buildFormatProjectOptions(
+            budgetCheck.value,
+            query,
+            queryExtras,
+          );
 
           if (bind && sessionId) {
             try {
@@ -3474,6 +3594,7 @@ export async function createMcpServer(
             loadProjectSchema(),
             bind ? 'load' : 'read',
             getBriefingRecentSessions(loadConfig()),
+            formatOptions,
           );
           // Response-driven guidance: weak models follow response text more
           // reliably than system prompts — spell out the standard next step.
@@ -3491,7 +3612,18 @@ export async function createMcpServer(
         }
 
         case 'tim_read_project': {
-          const { label, depth, budget, sections } = TimReadProjectSchema.parse(args);
+          const {
+            label,
+            depth,
+            budget,
+            tokenBudget: tokenBudgetArg,
+            query,
+            ftsQueryMode,
+            sections,
+          } = TimReadProjectSchema.parse(args);
+          const budgetCheck = resolveBriefingTokenBudget(tokenBudgetArg, undefined);
+          if (!budgetCheck.ok) return errorResult(budgetCheck.message);
+
           const resolved = await s.resolveProjectLabel(label);
           if (resolved.status === 'ambiguous') {
             return errorResult(
@@ -3503,10 +3635,26 @@ export async function createMcpServer(
             return errorResult(`Project not found: ${label}`);
           }
 
-          const result = await s.loadProject(resolved.label, { depth, budget, sections });
+          const result = await s.loadProject(resolved.label, {
+            depth,
+            budget: effectiveLoadBudget(budget),
+            sections,
+          });
           if (!result) {
             return errorResult(`Project not found: ${label}`);
           }
+
+          const queryExtras = await resolveBriefingQueryExtras(
+            s,
+            resolved.label,
+            query,
+            ftsQueryMode,
+          );
+          const formatOptions = buildFormatProjectOptions(
+            budgetCheck.value,
+            query,
+            queryExtras,
+          );
 
           const formatted = formatProjectOutput(
             result,
@@ -3514,6 +3662,7 @@ export async function createMcpServer(
             loadProjectSchema(),
             'read',
             getBriefingRecentSessions(loadConfig()),
+            formatOptions,
           );
           return {
             content: [{
