@@ -1,4 +1,4 @@
-import type { Entry } from 'tim-core';
+import { resolveEntrySearchStatus, type Entry } from 'tim-core';
 import type { LoadProjectResult, TimStore } from 'tim-store';
 import { LOG_SECTION_NAMES } from './task-aware-selection.js';
 
@@ -28,6 +28,25 @@ function compareSectionOrder(a: Entry, b: Entry): number {
   return a.createdAt.localeCompare(b.createdAt);
 }
 
+function compareBriefingEntries(a: Entry, b: Entry): number {
+  const importance = (entry: Entry): number => {
+    if (entry.metadata.kind === 'session-summary-root') return -10;
+    if (entry.metadata.kind === 'exchanges-root') return 10;
+    const status = resolveEntrySearchStatus(entry.metadata);
+    if (status && ['done', 'cancelled', 'closed', 'fixed', 'resolved'].includes(status)) return 5;
+    const task = entry.metadata.task;
+    if (task && typeof task === 'object') {
+      const priority = (task as Record<string, unknown>).priority;
+      return priority === 'high' ? -3 : priority === 'medium' ? -2 : -1;
+    }
+    return 0;
+  };
+  if (a.metadata.kind === 'session' && b.metadata.kind === 'session') {
+    return b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id);
+  }
+  return importance(a) - importance(b) || compareSectionOrder(a, b);
+}
+
 /**
  * Load a project for briefing render with reserved sections fetched before Log
  * volume can consume the entry budget. Preserves the caller's explicit budget.
@@ -46,7 +65,7 @@ export async function loadProjectForBriefing(
   const project = await store.read(resolved.label);
   if (!project) return null;
 
-  const topLevel = (await store.getChildren(project.id))
+  const topLevel = (await store.getChildren(project.id, { enforceSuppression: true }))
     .filter(c => c.metadata.kind !== COMMITS_KIND)
     .sort((a, b) => {
       const pd = sectionLoadPriority(a) - sectionLoadPriority(b);
@@ -62,24 +81,36 @@ export async function loadProjectForBriefing(
   let truncated = false;
   let remaining = options.budget;
 
-  for (const section of topLevel) {
+  for (const [index, section] of topLevel.entries()) {
     if (remaining <= 0) {
       truncated = true;
       break;
     }
-    const batch = await store.loadProject(label, {
-      depth: options.depth,
-      budget: remaining,
-      sections: [section.title],
-    });
-    if (!batch) continue;
-    for (const child of batch.children) {
+    // Reserve a share for every remaining protected section. A huge Sessions or
+    // Rules section must not consume the entire budget before open work is read.
+    const protectedRemaining = topLevel.slice(index).filter(entry => sectionLoadPriority(entry) < 50).length;
+    const quota = sectionLoadPriority(section) < 50
+      ? Math.max(1, Math.floor(remaining / Math.max(1, protectedRemaining))) : remaining;
+    const queue = [{ entry: section, depth: 1 }];
+    let taken = 0;
+    while (queue.length && taken < quota) {
+      const next = queue.shift()!;
+      const child = next.entry;
       if (!seen.has(child.id)) {
         seen.add(child.id);
         children.push(child);
+        taken++;
+      }
+      if (next.depth < options.depth) {
+        const descendants = (await store.getChildren(child.id, { enforceSuppression: true }))
+          .sort(compareBriefingEntries);
+        // Session summary children are needed before the next older session.
+        const pending = descendants.map(entry => ({ entry, depth: next.depth + 1 }));
+        if (child.metadata.kind === 'session') queue.unshift(...pending);
+        else queue.push(...pending);
       }
     }
-    truncated = truncated || batch.truncated;
+    truncated = truncated || queue.length > 0;
     remaining = Math.max(0, options.budget - children.length);
   }
 

@@ -76,13 +76,14 @@ export function selectBriefingBlocks(
   const included: BriefingBlock[] = [];
   for (const block of sorted) {
     const text = block.lines.join('\n');
-    if (tryChargeTokens(ledger, text)) {
+    const separator = included.length ? '\n' : '';
+    if (tryChargeTokens(ledger, separator + text)) {
       included.push(block);
       continue;
     }
     // Partial inclusion for tiny budgets: keep first line if it fits.
     const firstLine = block.lines[0];
-    if (firstLine && tryChargeTokens(ledger, firstLine)) {
+    if (firstLine && tryChargeTokens(ledger, separator + firstLine)) {
       included.push({ ...block, lines: [firstLine] });
       if (block.lines.length > 1) {
         omissions.push(`${block.id}: ${block.lines.length - 1} lines omitted (token budget)`);

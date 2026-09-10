@@ -7,6 +7,7 @@ import * as fs from 'node:fs';
 import { TimStore } from 'tim-store';
 import { formatProjectOutput } from '../project-output.js';
 import { estimateTextTokens } from '../briefing-budget.js';
+import { loadProjectForBriefing } from '../briefing-load.js';
 import { childServerCwd, childServerDbPath, isolateChildServerCwd } from './helpers/child-server-workspace.js';
 
 const SERVER_PATH = path.resolve(__dirname, '..', '..', 'dist', 'server.js');
@@ -184,7 +185,7 @@ describe('task-aware briefing MCP contract', () => {
     const resp = await client.callTool('tim_load_project', {
       label: 'P3400',
       bind: false,
-      tokenBudget: 400,
+      tokenBudget: 1600,
       budget: 250,
     });
     expect(resp.result?.isError).toBeFalsy();
@@ -211,7 +212,7 @@ describe('task-aware briefing MCP contract', () => {
     const resp = await client.callTool('tim_load_project', {
       label: 'P3403',
       bind: false,
-      tokenBudget: 400,
+      tokenBudget: 1600,
       budget: 200,
     });
     expect(resp.result?.isError).toBeFalsy();
@@ -274,7 +275,7 @@ describe('task-aware briefing MCP contract', () => {
     const resp = await client.callTool('tim_load_project', {
       label: 'P3400',
       bind: false,
-      tokenBudget: 800,
+      tokenBudget: 3200,
       query: 'UniqueAlphaNeedleToken',
     });
     const text = resp.result!.content[0].text;
@@ -315,12 +316,12 @@ describe('task-aware briefing MCP contract', () => {
     const load = await client.callTool('tim_load_project', {
       label: 'P3400',
       bind: false,
-      tokenBudget: 500,
+      tokenBudget: 2000,
       query: 'UniqueAlphaNeedleToken',
     });
     const preview = await client.callTool('tim_preview_briefing', {
       project: 'P3400',
-      tokenBudget: 500,
+      tokenBudget: 2000,
       query: 'UniqueAlphaNeedleToken',
     });
     const loadText = load.result!.content[0].text;
@@ -368,6 +369,28 @@ describe('formatProjectOutput task-aware unit seam', () => {
   afterEach(() => {
     store.close();
     if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath);
+  });
+
+  it('reserves rules and urgent work even when the protected Sessions section is huge', async () => {
+    const project = (await store.read('P3402'))!;
+    const sessionsRoot = (await store.getChildren(project.id))
+      .find(entry => entry.metadata.kind === 'sessions-root')!;
+    for (let i = 0; i < 220; i++) {
+      const session = await store.write(`Additional session ${i}`, {
+        parentId: sessionsRoot.id, metadata: { kind: 'session' },
+      });
+      await store.write('Latest work summary', {
+        parentId: session.id,
+        metadata: { kind: 'session-summary-root', summary: 'Current handoff' },
+        tags: ['#session-summary'],
+      });
+    }
+    const result = (await loadProjectForBriefing(store, 'P3402', { depth: 4, budget: 40 }))!;
+    expect(result.children.length).toBeLessThanOrEqual(40);
+    const output = formatProjectOutput(result, 40, undefined, 'read', 3, { tokenBudget: 9000 });
+    expect(output).toContain('Always use MCP');
+    expect(output).toContain('Urgent briefing fix');
+    expect(output).toContain('Current handoff');
   });
 
   it('respects suppression for query extras', async () => {
