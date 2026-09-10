@@ -5,4 +5,5 @@ export type { HttpServerHandle } from './server.js';
 export { TOOL_DEFS, toolInputSchema } from './server.js';
 export type { ToolInputSchema } from './server.js';
 export { formatProjectOutput } from './project-output.js';
-export type { ProjectSchema, ProjectSchemaSection } from './project-output.js';
+export type { ProjectSchema, ProjectSchemaSection, FormatProjectOutputOptions } from './project-output.js';
+export { validateTokenBudget, estimateTextTokens, boundRenderedText, MAX_TOKEN_BUDGET_PARAM } from './briefing-budget.js';
