@@ -19,7 +19,7 @@ import {
   type SyncState,
 } from './config.js';
 import { randomUUID } from 'node:crypto';
-import { enqueue, flushQueue, loadQueue, saveQueue, type QueueItem } from './queue.js';
+import { enqueue, loadQueue, saveQueue, type QueueItem } from './queue.js';
 import { MissingSecretPassphraseError } from './credentials.js';
 
 export type { SyncState } from './config.js';
@@ -238,17 +238,23 @@ function transformEnvelopeForPull(
   };
 }
 
-function rebuildQueueBlobs(
-  envelopes: TimEnvelope[],
+function blobForEnvelope(
+  env: TimEnvelope,
+  item: QueueItem,
   encryptFn: (data: string) => string,
   deviceId: string,
-): QueueItem['blobs'] {
-  return envelopes.map((e) => ({
-    proposed_id: e.key,
-    data: encryptFn(JSON.stringify(e)),
+  reuseUnchanged: boolean,
+): QueueItem['blobs'][number] {
+  const orig = item.blobs.find((b) => b.proposed_id === env.key);
+  // Legacy queue rows may store plaintext envelope JSON; only reuse blobs already
+  // prepared for network (outer ciphertext differs from the envelope JSON).
+  if (reuseUnchanged && orig && orig.data !== JSON.stringify(env)) return orig;
+  return {
+    proposed_id: env.key,
+    data: encryptFn(JSON.stringify(env)),
     device_id: deviceId,
-    updated_at: e.lww,
-  }));
+    updated_at: env.lww,
+  };
 }
 
 function prepareQueueForPush(
@@ -281,12 +287,18 @@ function prepareQueueForPush(
       sendEnvelopes.push(transformed);
     }
 
+    const membershipChanged =
+      sendEnvelopes.length !== item.envelopes.length
+      || blockEnvelopes.length > 0;
+    const needsFreshKey = payloadChanged || membershipChanged;
+    const reuseBlobs = !payloadChanged && !membershipChanged;
+
     if (sendEnvelopes.length > 0) {
       ready.push({
         ...item,
         envelopes: sendEnvelopes,
-        blobs: rebuildQueueBlobs(sendEnvelopes, encryptFn, deviceId),
-        idempotency_key: payloadChanged ? randomUUID() : item.idempotency_key,
+        blobs: sendEnvelopes.map((e) => blobForEnvelope(e, item, encryptFn, deviceId, reuseBlobs)),
+        idempotency_key: needsFreshKey ? randomUUID() : item.idempotency_key,
       });
     }
 
@@ -304,6 +316,7 @@ function prepareQueueForPush(
             updated_at: e.lww,
           };
         }),
+        idempotency_key: membershipChanged ? randomUUID() : item.idempotency_key,
       });
     }
   }
@@ -354,20 +367,33 @@ export async function pushCycle(
 
   const prepared = prepareQueueForPush(queue, deviceId, encryptFn, db, secretEncrypt);
   queueBlockedSecretCount = prepared.blockedSecretCount;
-  saveQueue(qPath, []);
+  const blockedRemaining = [...prepared.remaining];
   const readyToSend = [...prepared.ready];
+  saveQueue(qPath, [...blockedRemaining, ...readyToSend]);
 
-  const { ok, sent } = await flushQueue(qPath, readyToSend, async (item) => {
-    await client.push({
-      file_id: state.fileId,
-      idempotency_key: item.idempotency_key,
-      client_schema_major: 1,
-      blobs: item.blobs,
-    });
-  });
+  const sent: QueueItem[] = [];
+  let ok = true;
+  while (readyToSend.length > 0) {
+    const item = readyToSend[0];
+    try {
+      await client.push({
+        file_id: state.fileId,
+        idempotency_key: item.idempotency_key,
+        client_schema_major: 1,
+        blobs: item.blobs,
+      });
+      sent.push(item);
+      readyToSend.shift();
+      saveQueue(qPath, [...blockedRemaining, ...readyToSend]);
+    } catch {
+      item.attempts += 1;
+      saveQueue(qPath, [...blockedRemaining, ...readyToSend]);
+      ok = false;
+      break;
+    }
+  }
 
-  const unsentReady = loadQueue(qPath);
-  saveQueue(qPath, [...prepared.remaining, ...unsentReady]);
+  const unsentReady = readyToSend;
 
   const keysToAck: Array<{ key: string; lww: number }> = [...placeholderKeys];
   let pushedCount = 0;
@@ -389,7 +415,7 @@ export async function pushCycle(
     throw new MissingSecretPassphraseError(totalBlocked, pushedCount);
   }
 
-  const queueLeft = prepared.remaining.length + unsentReady.length;
+  const queueLeft = blockedRemaining.length + unsentReady.length;
   return { pushed: pushedCount, queued: !ok || queueLeft > 0 };
 }
 
