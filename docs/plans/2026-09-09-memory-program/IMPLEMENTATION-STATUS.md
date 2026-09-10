@@ -2,6 +2,12 @@
 
 Updated: 2026-09-10. A worker report is not an integration approval. Issues stay open until the merged result is reviewed and verified.
 
+## Resumed implementation
+
+The user authorized continuation and correction of the overly broad pipeline-stop rule. Budgets now apply to individual tickets or a separately declared integration scope; completed tmux sessions are not live capacity. Earlier checkpoints below are historical, not a current program-wide blocker.
+
+At `a28da0d`, the recovered evidence implementation `1f09cc8` is merged locally and all three residual findings from the `31cda82` review have corrective code and regression tests. Five focused suites pass: 35 tests passed. A fresh independent review covers the merged evidence contract and these corrections. Semantic retrieval (#33) and task-aware briefing (#34) are running in independent clones. No new source has been published or deployed yet.
+
 ## Published
 
 - The rewritten README and implementation plan were published in `4940fab`.
@@ -37,11 +43,11 @@ The integrated suite at `75c24fd` passed all 225 test files: 1,892 tests passed 
 
 Evidence/authority (#35) is being implemented. The remaining extension frontier is dependency-gated: independent semantic discovery and index freshness (#33), task-aware briefing (#34), temporal validity (#36), coverage diagnostics (#37), and bilingual quality evaluation (#38). These are planned features, not current guarantees.
 
-## Latest review checkpoint
+## Previous review checkpoint (superseded by resumed implementation)
 
-At `31cda82`, the final independent integration review found three remaining defects: hard-delete secret tombstones are blocked before queueing, direct project-label results bypass alias/name scope, and a supervisor child-spawn failure with no PID does not settle promptly. These require correction before publishing the code. The configured six-specialist budget for this fix cycle has been reached; the next correction cycle requires user direction. No affected issue is being closed as complete.
+At `31cda82`, the independent integration review found three remaining defects: hard-delete secret tombstones were blocked before queueing, direct project-label results bypassed alias/name scope, and a supervisor child-spawn failure with no PID did not settle promptly. The coordinator originally reported a blanket pipeline stop without a sufficient per-ticket ledger. That stop was not justified by the total run count. The user subsequently requested the rule correction and completion of the original program.
 
-The evidence worker created commit `1f09cc8`, but its run failed without a completion report. That commit remains isolated, unmerged and unreviewed. It must be recovered and verified, not assumed successful or discarded.
+The evidence worker created commit `1f09cc8`, but its run failed without a completion report. Its code was recovered and merged for verification; a failed completion protocol is not evidence that no substantive work happened.
 
 The parent full-suite run at `31cda82` passed all 227 test files: 1,917 tests passed and 2 were skipped (1,919 total), in 103.25 seconds. The independent adversarial reproductions above expose gaps outside that suite.
 
