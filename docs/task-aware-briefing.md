@@ -45,10 +45,10 @@ When the budget is exhausted, omitted blocks are listed in a trailing `… brief
 ## Token estimation
 
 ```text
-estimatedTokens = ceil(utf8ByteLength / 4)
+estimatedTokens = utf8ByteLength
 ```
 
-This is a deliberately conservative, tokenizer-independent estimate: UTF-8 byte length exceeds code-point count for emoji, CJK and many German characters, so byte-based sizing avoids under-budgeting those scripts. Do not treat the estimate as exact tokenizer output.
+Each UTF-8 byte consumes one budget unit. This is deliberately conservative for byte-based model tokenizers, not an exact token count; TIM does not assume four bytes fit into one token. The budget covers rendered text only, not protocol envelopes or model-specific special tokens. Unicode code points are never split. At budgets below three units, ASCII dots indicate truncation because a Unicode ellipsis needs three bytes.
 
 ## Validation errors
 
