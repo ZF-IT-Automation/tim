@@ -154,6 +154,82 @@ export function isDeprecatedTag(tag: string): boolean {
 
 export type HealthSeverity = 'OK' | 'WARN' | 'BLOCKER';
 
+/** Non-generating semantic index snapshot for memory health (#37). */
+export type EmbeddingProviderHealthState = 'enabled' | 'disabled' | 'unavailable' | 'unknown';
+
+export interface SemanticIndexHealthSnapshot {
+  providerState: EmbeddingProviderHealthState;
+  configuredModel: string | null;
+  supportedModel: boolean;
+  vectorCount: number;
+  unembeddedCount: number;
+  staleVectorCount: number;
+  wrongModelCount: number;
+}
+
+export interface MemoryCoverageSeqRange {
+  sessionId: string;
+  batchIndex: number;
+  seqFrom: number;
+  seqTo: number;
+}
+
+export interface MemoryCoverageLatestBatchSummary {
+  sessionId: string;
+  batchIndex: number;
+  summaryId: string;
+  summarizedAt: string | null;
+  seqFrom: number | null;
+  seqTo: number | null;
+  /** False when legacy seq_from/seq_to are missing, nonnumeric or reversed. */
+  rangeKnown: boolean;
+}
+
+export interface MemoryCoverageLatestRollup {
+  sessionId: string;
+  summaryRootId: string;
+  updatedAt: string;
+  hasRollupText: boolean;
+}
+
+export type MemoryCoverageWorkState =
+  | 'no_sessions'
+  | 'no_exchanges'
+  | 'fully_covered'
+  | 'pending'
+  | 'unknown';
+
+export interface MemorySummaryCoverageReport {
+  workState: MemoryCoverageWorkState;
+  observedExchangeCount: number;
+  coveredExchangeCount: number;
+  pendingExchangeCount: number;
+  sessionsWithPending: number;
+  pendingRanges: MemoryCoverageSeqRange[];
+  coveredRanges: MemoryCoverageSeqRange[];
+  latestBatchSummary: MemoryCoverageLatestBatchSummary | null;
+  latestRollup: MemoryCoverageLatestRollup | null;
+}
+
+export type MemorySyncTelemetryState =
+  | 'not_configured'
+  | 'configured_no_state'
+  | 'available';
+
+export interface MemorySyncTelemetryReport {
+  telemetryState: MemorySyncTelemetryState;
+  lastPush: string | null;
+  lastPull: string | null;
+  unackedStaging: number;
+}
+
+export interface MemoryHealthReport {
+  summaryCoverage: MemorySummaryCoverageReport;
+  semanticIndex: SemanticIndexHealthSnapshot;
+  sync: MemorySyncTelemetryReport;
+  guidance: string[];
+}
+
 export interface HealthReport {
   status: HealthSeverity;
   blockers: string[];
@@ -165,6 +241,8 @@ export interface HealthReport {
   totalEdges: number;
   staleEntries: number;
   issues: string[];
+  /** Additive memory coverage, embedding backlog and sync telemetry (#37). */
+  memory?: MemoryHealthReport;
 }
 
 export function stripDeprecatedTags(tags: string[]): { clean: string[]; removed: string[] } {

@@ -28,6 +28,7 @@ import {
   isProjectLabelConflictError,
   nextLabelAfterProjectLabelConflict,
   resolveCurrentSession,
+  formatMemoryHealthLines,
   type TaskRecord,
   isCodingNeedsReview,
 } from 'tim-store';
@@ -757,7 +758,8 @@ export const TOOL_DEFS: Array<{
   },
   {
     name: 'tim_health',
-    description: 'Run health diagnostics: broken links, orphans, FTS integrity, counts.',
+    description:
+      'Run health diagnostics: broken links, orphans, FTS integrity, counts, memory coverage and embedding backlog.',
     schema: TimHealthSchema,
   },
   {
@@ -3110,6 +3112,7 @@ export async function createMcpServer(
             `FTS5: ${report.ftsIntegrity ? 'OK' : 'BROKEN'}`,
             report.blockers.length ? `BLOCKERS: ${report.blockers.join('; ')}` : null,
             report.warnings.length ? `WARNINGS: ${report.warnings.join('; ')}` : null,
+            ...(report.memory ? formatMemoryHealthLines(report.memory) : []),
             `Agents registered: ${agents.length}`,
             `Errors (24h): ${errorStats.totalErrors} | Rate: ${errorStats.errorRate}/h`,
             errorStats.alerts.length > 0 ? `⚠ Alerts: ${errorStats.alerts.join('; ')}` : null,
