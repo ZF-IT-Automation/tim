@@ -4,8 +4,7 @@ import { normalizeHookScripts } from 'tim-core';
 import type { TimStore } from 'tim-store';
 import {
   embeddingText,
-  resolveConfiguredEmbeddingModelId,
-  validateEmbeddingModelId,
+  vectorContentFingerprint,
 } from 'tim-store';
 
 export interface HookEnv {
@@ -132,22 +131,18 @@ export async function embedUnembeddedEntries(
   if (process.env.TIM_EMBEDDING_DISABLED === '1') return 0;
 
   const batchSize = opts.batchSize ?? (Number(process.env.TIM_EMBEDDING_BATCH_SIZE) || 32);
-  const modelId = opts.model ?? resolveConfiguredEmbeddingModelId() ?? 'all-MiniLM-L6-v2';
-  if (!validateEmbeddingModelId(modelId)) return 0;
 
   let entries;
-  try {
-    entries = await store.getUnembedded(batchSize, modelId);
-  } catch {
-    return 0;
-  }
-
-  if (entries.length === 0) return 0;
-
   try {
     const provider = await store.getEmbeddingProvider();
     if (!provider || provider.state !== 'enabled') return 0;
 
+    entries = await store.getUnembedded(batchSize, provider.modelId);
+    if (entries.length === 0) return 0;
+
+    const fingerprints = entries.map(e =>
+      vectorContentFingerprint(e.title, e.content),
+    );
     const texts = entries.map(e => embeddingText(e.title, e.content));
     const vectors = await provider.embed(texts);
     if (vectors.length === 0) return 0;
@@ -155,8 +150,14 @@ export async function embedUnembeddedEntries(
     let embedded = 0;
     for (let i = 0; i < entries.length; i++) {
       try {
-        store.setVectors(entries[i].id, vectors[i], modelId, provider.dimension);
-        embedded++;
+        const stored = store.setVectors(
+          entries[i].id,
+          vectors[i],
+          provider.modelId,
+          provider.dimension,
+          fingerprints[i],
+        );
+        if (stored) embedded++;
       } catch {
         // individual entry failure — continue with next
       }
