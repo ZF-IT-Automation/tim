@@ -18,6 +18,7 @@ Each substantive run is assigned once to a stable ticket or integration scope. T
 | #33 semantic retrieval | 20260911T084329Z-yo1n | implementer | Third substantive implementation: per-call semantics, hybrid ranking, provider identity, deterministic tests and index-corpus documentation; review F1/F5/F6/F8. |
 | #34 task-aware briefing | 20260911T084329Z-sljj | implementer | Third substantive implementation: useful bounded previews, spacer-aware partial blocks, reserved footer/NEXT and legacy compatibility; review F2/F3/F4/F7. |
 | INTEGRATION-20260911-memory-extensions | 20260911T084525Z-k84t | reviewer | Second fresh merged review, frozen `3f35376`, focusing on #36/#37 and shared coverage/search boundaries; charged once. |
+| #38 bilingual quality benchmark | 20260911T085338Z-os1c | implementer | First substantive implementation at locally tested dependency seams `42fffcf`. Independent review still gates program publication; no claim that dependency tickets are closed. |
 
 ## Collected results
 
