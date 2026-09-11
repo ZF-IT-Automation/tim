@@ -6,6 +6,12 @@ All notable changes to TIM are documented in this file.
 
 ### Added
 
+- **Declared evidence and authority** — typed entry, session-sequence, Git and document sources; visibility-aware read projection; validation of caller patches without preventing unrelated edits to legacy metadata. Authority labels describe declarations, not authentication.
+- **Temporal decisions** — half-open validity intervals, atomic same-project `supersedes` links, contradiction references and current/historical `asOf` retrieval. Timestamps are validated and compared as instants; historical body revisions are not reconstructed.
+- **Task-aware project context** — scoped query extras, protected section selection and explicit conservative UTF-8-byte budgets for rendered MCP briefings.
+- **Memory health** — observed flat/batched session coverage, pending/unknown work, embedding-index backlog and validated local sync telemetry shared across store, MCP and CLI diagnostics. Computing these diagnostics neither starts models nor contacts sync servers.
+- **Independent semantic retrieval** — scoped vector candidates and hybrid union, injectable embedding providers, fingerprint-based freshness and compare-and-set background indexing. `searchWithSemantics()` returns entries and diagnostics together safely under concurrent requests; `lastSearchSemantic` is deprecated for concurrent consumers. MCP search retains its FTS default.
+
 - **Topic recall** — past work is retrieved by topic instead of injected by recency.
   - The summarizer prompt now carries the tags the project has actually reused, frequency-ordered, with the instruction to reuse a fitting one verbatim before inventing a new one (`TimStore.projectTagVocabulary`, `UnsummarizedBatch.vocabulary`). A failed lookup leaves the prompt unchanged.
   - `aggregateSessionTags` uses a batch-count dependent bar — every content tag up to two batches, twice-seen from three on — so short sessions stop losing their topics.
