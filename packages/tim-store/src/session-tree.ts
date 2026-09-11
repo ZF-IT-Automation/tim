@@ -93,6 +93,9 @@ export async function deriveCounters(
       if (isLast && users.length === 0) continue;
       exchangeCount += users.length;
     }
+  } else {
+    exchangeCount = (await store.getChildren(sessionId, { metadataKind: KIND_EXCHANGE }))
+      .filter(u => u.metadata.role === 'user').length;
   }
 
   let batchesSummarized = 0;
@@ -124,6 +127,9 @@ export function deriveCountersSync(
       if (isLast && users.length === 0) continue;
       exchangeCount += users.length;
     }
+  } else {
+    exchangeCount = store.getChildByKindSync(sessionId, KIND_EXCHANGE)
+      .filter(u => u.metadata.role === 'user').length;
   }
 
   let batchesSummarized = 0;

@@ -116,14 +116,20 @@ describe('computeMemoryHealth', () => {
     expect(memory.guidance.some(g => g.includes('invalid or missing seq range'))).toBe(true);
   });
 
-  it('reports embedding backlog after indexed entry edit', async () => {
+  it('reports embedding backlog after indexed entry edit without double-counting', async () => {
     const entry = await store.write('Indexed\nBody.', { tags: ['#note'] });
     store.setVectors(entry.id, unitVector(384, 0.85), CUSTOM_MODEL, 384);
     await store.update(entry.id, { content: 'Edited\nBody.' });
 
     const memory = await computeMemoryHealth(store);
-    expect(memory.semanticIndex.unembeddedCount).toBeGreaterThanOrEqual(1);
-    expect(memory.guidance.some(g => g.includes('need (re)indexing'))).toBe(true);
+    const backlog = memory.semanticIndex.unembeddedCount;
+    expect(backlog).toBeGreaterThanOrEqual(1);
+    const indexingLine = memory.guidance.find(g => g.includes('need (re)indexing'));
+    expect(indexingLine).toBeDefined();
+    expect(indexingLine).toMatch(new RegExp(`^${backlog} eligible`));
+    if (memory.semanticIndex.staleVectorCount > 0) {
+      expect(indexingLine).toContain(`stale=${memory.semanticIndex.staleVectorCount}`);
+    }
   });
 
   it('reports disabled embeddings without claiming vector success', async () => {
@@ -153,17 +159,228 @@ describe('computeMemoryHealth', () => {
   it('reads sync telemetry states from local files without network', async () => {
     const timDir = path.join(home, '.tim');
     fs.mkdirSync(timDir, { recursive: true });
-    fs.writeFileSync(path.join(timDir, 'sync.json'), JSON.stringify({ serverUrl: 'http://localhost' }));
+    const syncConfig = {
+      serverUrl: 'http://localhost',
+      userId: 'u',
+      token: 't',
+      salt: 's',
+      fileId: 'file-abc',
+    };
+    fs.writeFileSync(path.join(timDir, 'sync.json'), JSON.stringify(syncConfig));
     let memory = await computeMemoryHealth(store);
     expect(memory.sync.telemetryState).toBe('configured_no_state');
 
     fs.writeFileSync(
       path.join(timDir, 'sync-state.json'),
-      JSON.stringify({ lastPush: '2026-01-01T00:00:00.000Z', lastPull: null }),
+      JSON.stringify({
+        fileId: 'file-abc',
+        lastPush: '2026-01-01T00:00:00.000Z',
+        lastPull: null,
+        cursor: null,
+      }),
     );
     memory = await computeMemoryHealth(store);
     expect(memory.sync.telemetryState).toBe('available');
     expect(memory.sync.lastPush).toBe('2026-01-01T00:00:00.000Z');
+    expect(memory.guidance.some(g => g.includes('historical local evidence'))).toBe(true);
+  });
+
+  it('marks malformed sync telemetry and rejects non-ISO timestamps', async () => {
+    const timDir = path.join(home, '.tim');
+    fs.mkdirSync(timDir, { recursive: true });
+    fs.writeFileSync(path.join(timDir, 'sync.json'), '{not json');
+    let memory = await computeMemoryHealth(store);
+    expect(memory.sync.telemetryState).toBe('malformed');
+
+    fs.writeFileSync(path.join(timDir, 'sync.json'), JSON.stringify({
+      serverUrl: 'http://localhost',
+      userId: 'u',
+      token: 't',
+      salt: 's',
+      fileId: 'file-abc',
+    }));
+    fs.writeFileSync(path.join(timDir, 'sync-state.json'), JSON.stringify({
+      fileId: 'file-abc',
+      lastPush: { bogus: true },
+      lastPull: null,
+      cursor: null,
+    }));
+    memory = await computeMemoryHealth(store);
+    expect(memory.sync.telemetryState).toBe('malformed');
+    expect(memory.sync.lastPush).toBeNull();
+  });
+
+  it('ignores sync state when fileId mismatches configured sync.json', async () => {
+    const timDir = path.join(home, '.tim');
+    fs.mkdirSync(timDir, { recursive: true });
+    fs.writeFileSync(path.join(timDir, 'sync.json'), JSON.stringify({
+      serverUrl: 'http://localhost',
+      userId: 'u',
+      token: 't',
+      salt: 's',
+      fileId: 'configured-id',
+    }));
+    fs.writeFileSync(path.join(timDir, 'sync-state.json'), JSON.stringify({
+      fileId: 'stale-id',
+      lastPush: '2026-01-01T00:00:00.000Z',
+      lastPull: null,
+      cursor: null,
+    }));
+    const memory = await computeMemoryHealth(store);
+    expect(memory.sync.telemetryState).toBe('mismatched_file');
+    expect(memory.sync.lastPush).toBeNull();
+  });
+
+  it('reports flat unbound session exchanges via sessionStart/sessionLog', async () => {
+    await sessions.sessionStart({ sessionId: 'flat', agentName: 'a', cwd: '/', harness: 't' });
+    await sessions.sessionLog('flat', [
+      { role: 'user', content: 'Q1' },
+      { role: 'agent', content: 'A1' },
+      { role: 'user', content: 'Q2' },
+      { role: 'agent', content: 'A2' },
+    ]);
+
+    const memory = await computeMemoryHealth(store);
+    expect(memory.summaryCoverage.observedExchangeCount).toBe(2);
+    expect(memory.summaryCoverage.workState).toBe('pending');
+    expect(memory.summaryCoverage.pendingExchangeCount).toBe(2);
+  });
+
+  it('reports partial flat session after checkpoint evidence', async () => {
+    await sessions.sessionStart({ sessionId: 'flat-partial', agentName: 'a', cwd: '/', harness: 't' });
+    await sessions.sessionLog('flat-partial', [
+      { role: 'user', content: 'Q1' },
+      { role: 'agent', content: 'A1' },
+    ]);
+    await sessions.checkpoint('flat-partial', {
+      summarize: async () => 'Checkpoint body',
+      runDecay: false,
+    });
+    await sessions.sessionLog('flat-partial', [
+      { role: 'user', content: 'Q2' },
+      { role: 'agent', content: 'A2' },
+    ]);
+
+    const memory = await computeMemoryHealth(store);
+    expect(memory.summaryCoverage.observedExchangeCount).toBe(2);
+    expect(memory.summaryCoverage.pendingExchangeCount).toBe(1);
+    expect(memory.summaryCoverage.pendingRanges).toEqual([
+      expect.objectContaining({ sessionId: 'flat-partial', seqFrom: 3, seqTo: 3 }),
+    ]);
+    expect(memory.summaryCoverage.workState).toBe('pending');
+  });
+
+  it('selects globally latest successful batch summary across >200 roots', async () => {
+    for (let i = 0; i < 205; i++) {
+      const sessionId = `old-${i}`;
+      await sessions.startProjectSession({
+        sessionId,
+        projectId: 'P3700',
+        agentName: 'a',
+        cwd: '/',
+        harness: 't',
+        batchSize: 5,
+      });
+      await sessions.logExchange(sessionId, [
+        { role: 'user', content: `Q${i}` },
+        { role: 'agent', content: `A${i}` },
+      ]);
+      await sessions.writeBatchSummary(sessionId, 1, `summary ${i}`, { seqFrom: 1, seqTo: 1 });
+    }
+
+    const winner = 'winner-session';
+    await sessions.startProjectSession({
+      sessionId: winner,
+      projectId: 'P3700',
+      agentName: 'a',
+      cwd: '/',
+      harness: 't',
+      batchSize: 5,
+    });
+    await sessions.logExchange(winner, [
+      { role: 'user', content: 'latest Q' },
+      { role: 'agent', content: 'latest A' },
+    ]);
+    const batch = await sessions.writeBatchSummary(winner, 1, 'latest winning summary', {
+      seqFrom: 1,
+      seqTo: 1,
+    });
+    await store.update(batch.id, {
+      metadata: { ...batch.metadata, summarized_at: '2099-06-01T00:00:00.000Z' },
+    });
+
+    const memory = await computeMemoryHealth(store);
+    expect(memory.summaryCoverage.latestBatchSummary?.sessionId).toBe(winner);
+    expect(memory.summaryCoverage.latestBatchSummary?.summarizedAt).toBe('2099-06-01T00:00:00.000Z');
+  });
+
+  it('does not treat empty batch summary content as successful latest', async () => {
+    await sessions.startProjectSession({
+      sessionId: 'empty-batch',
+      projectId: 'P3700',
+      agentName: 'a',
+      cwd: '/',
+      harness: 't',
+      batchSize: 5,
+    });
+    await sessions.logExchange('empty-batch', [
+      { role: 'user', content: 'Q1' },
+      { role: 'agent', content: 'A1' },
+    ]);
+    const summaryNode = (await store.getChildByKind('empty-batch', 'session-summary-root'))[0]
+      ?? (await store.getChildren('empty-batch')).find(c => c.metadata.kind === 'session-summary-root');
+    await store.write('', {
+      parentId: summaryNode!.id,
+      metadata: {
+        kind: 'batch-summary',
+        batch_index: 1,
+        seq_from: 1,
+        seq_to: 1,
+        sessionId: 'empty-batch',
+        summarized_at: '2099-01-01T00:00:00.000Z',
+      },
+      tags: ['#session-summary', '#batch-summary'],
+    });
+
+    await sessions.startProjectSession({
+      sessionId: 'real-batch',
+      projectId: 'P3700',
+      agentName: 'a',
+      cwd: '/',
+      harness: 't',
+      batchSize: 5,
+    });
+    await sessions.logExchange('real-batch', [
+      { role: 'user', content: 'Q1' },
+      { role: 'agent', content: 'A1' },
+    ]);
+    await sessions.writeBatchSummary('real-batch', 1, 'real summary', { seqFrom: 1, seqTo: 1 });
+
+    const memory = await computeMemoryHealth(store);
+    expect(memory.summaryCoverage.latestBatchSummary?.sessionId).toBe('real-batch');
+  });
+
+  it('exposes range truncation counts when pending exceeds sample cap', async () => {
+    for (let i = 0; i < 55; i++) {
+      const sessionId = `pending-${i}`;
+      await sessions.startProjectSession({
+        sessionId,
+        projectId: 'P3700',
+        agentName: 'a',
+        cwd: '/',
+        harness: 't',
+        batchSize: 5,
+      });
+      await sessions.logExchange(sessionId, [
+        { role: 'user', content: `Q${i}` },
+        { role: 'agent', content: `A${i}` },
+      ]);
+    }
+
+    const memory = await computeMemoryHealth(store);
+    expect(memory.summaryCoverage.pendingRangeCount).toBeGreaterThan(50);
+    expect(memory.summaryCoverage.pendingRanges.length).toBe(50);
+    expect(memory.summaryCoverage.pendingRangesTruncated).toBe(true);
   });
 
   it('health() includes memory and does not initialize default embedding provider', async () => {
