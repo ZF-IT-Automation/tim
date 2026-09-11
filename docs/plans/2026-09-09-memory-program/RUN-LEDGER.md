@@ -13,8 +13,19 @@ Each substantive run is assigned once to a stable ticket or integration scope. T
 | #36 temporal validity | 20260910T220440Z-x4km | implementer | First implementation invocation; consumes locally tested evidence and retrieval contracts. |
 | #37 memory health | 20260910T220441Z-v6x8 | implementer | First implementation invocation; consumes locally tested coverage and non-generating index-health contracts. |
 | INTEGRATION-20260911-memory-extensions | 20260910T220747Z-oo7e | reviewer | First review of merged #33/#34 and #35 correction delta at `83a3613`; charged once to this shared extension integration scope. |
+| #36 temporal validity | 20260910T221103Z-iern | implementer | Second substantive implementation; completed `d23a391`, integrated and followed by parent validation fix `3f35376`. |
+| #37 memory health | 20260910T220945Z-nnvh | implementer | Second substantive implementation; completed `50f0a57`, integrated. |
+| #33 semantic retrieval | 20260911T084329Z-yo1n | implementer | Third substantive implementation: per-call semantics, hybrid ranking, provider identity, deterministic tests and index-corpus documentation; review F1/F5/F6/F8. |
+| #34 task-aware briefing | 20260911T084329Z-sljj | implementer | Third substantive implementation: useful bounded previews, spacer-aware partial blocks, reserved footer/NEXT and legacy compatibility; review F2/F3/F4/F7. |
+| INTEGRATION-20260911-memory-extensions | 20260911T084525Z-k84t | reviewer | Second fresh merged review, frozen `3f35376`, focusing on #36/#37 and shared coverage/search boundaries; charged once. |
 
 ## Collected results
+
+- At `3f35376`, parent isolated build and seven targeted suites pass **59/59 tests**, including actual CLI/MCP temporal and health paths. This is not a full-suite result.
+- `oo7e` completed the first extension integration review: eight reproducible/documentation findings, assigned to #33/#34 corrections above. Evidence correction checks produced no further finding. The last full suite on `83a3613` had **1,984 passed, two failed, two skipped**; hybrid usage ranking and network-dependent MCP metadata tests are included in #33 correction scope. Temporal worker's later full run also failed the known usage test; it is not accepted as a flake.
+- `iern` and `nnvh` completion reports were recovered after their Codex transport watchers hit host quota. Their external workers completed; no duplicate implementations were launched. Parent found and corrected missing timezone-offset capture and combined-interval validation before the second independent review.
+- User explicitly reported reset usage and instructed the same host to continue. A fresh probe returned `pty-lock-contention`, so cached quota output is not treated as a newly verified usage reading. No provider/account configuration was changed. Long host/user waits are excluded from execution budgets.
+- TIM MCP transport is currently closed. Run outcomes remain durable here and in mailboxes; memory task updates are pending reconnection rather than being reported as saved. CLI checkpoint succeeded before this continuation.
 
 - `arb5` completed one review round. It accepted the three residual fixes in `a28da0d` and found three evidence defects, corrected in `5194c9f` with focused regression tests.
 - First #34 implementation `19d140f` and correction `5a17d78` are integrated. Parent corrections `8bfa7d4` and `83a3613` enforce actual UTF-8 sizing and reserved shares across protected sections. The focused briefing suites pass 19 tests at `83a3613`; independent review is running.
