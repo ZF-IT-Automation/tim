@@ -3346,7 +3346,7 @@ export class TimStore implements MemoryInterface {
       );
     });
 
-    runLink();
+    runLink.immediate();
 
     const edge: Edge = {
       id,
@@ -3399,6 +3399,10 @@ export class TimStore implements MemoryInterface {
       } : undefined;
 
       const runUndo = this.db.transaction(() => {
+        const lockedEdge = this.db.prepare('SELECT * FROM edges WHERE id = ?').get(edgeId) as RowEdge | undefined;
+        if (!lockedEdge || JSON.stringify(lockedEdge) !== JSON.stringify(row)) {
+          throw new Error('supersedes undo: edge changed; retry against the current edge');
+        }
         const sourceExisting = this.db.prepare('SELECT * FROM entries WHERE id = ?')
           .get(row.source_id) as RowEntry | undefined;
         const targetExisting = this.db.prepare('SELECT * FROM entries WHERE id = ?')
@@ -3408,8 +3412,9 @@ export class TimStore implements MemoryInterface {
         }
 
         const otherSupersedes = (this.db.prepare(
-          `SELECT COUNT(*) AS c FROM edges WHERE target_id = ? AND type = 'supersedes' AND id != ?`,
-        ).get(row.target_id, edgeId) as { c: number }).c;
+          `SELECT COUNT(*) AS c FROM edges WHERE type = 'supersedes' AND id != ?
+           AND (target_id IN (?, ?) OR source_id IN (?, ?))`,
+        ).get(edgeId, row.target_id, row.source_id, row.target_id, row.source_id) as { c: number }).c;
 
         const undoError = validateSupersessionUnlink({
           edgeId,
@@ -3467,7 +3472,7 @@ export class TimStore implements MemoryInterface {
         );
       });
 
-      runUndo();
+      runUndo.immediate();
     } else {
       this.db.transaction(() => {
         this.db.prepare('DELETE FROM edges WHERE id = ?').run(edgeId);

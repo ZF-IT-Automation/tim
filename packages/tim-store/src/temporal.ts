@@ -26,7 +26,7 @@ export function registerTemporalSqlFunctions(db: Database.Database): void {
 }
 
 export function resolveSearchAsOf(asOf?: string): Date {
-  if (!asOf) return new Date();
+  if (asOf === undefined) return new Date();
   const parsed = validateIsoTimestamp(asOf);
   if (!parsed.ok) {
     throw new Error(`Invalid asOf: ${parsed.reason}`);
@@ -286,7 +286,17 @@ export function validateSupersessionUnlink(input: SupersessionUnlinkInput): stri
   } = input;
 
   if (otherSupersedesOnTarget > 0) {
-    return 'supersedes undo: target has other active supersession edges';
+    return 'supersedes undo: dependent supersession edges must be resolved first';
+  }
+
+  if (snapshots) {
+    for (const snapshot of [snapshots.priorSource, snapshots.priorTarget]) {
+      const validated = validateCallerTemporalMetadata(snapshot);
+      if (!validated.ok) return `supersedes undo: invalid prior validity snapshot (${validated.errors.join('; ')})`;
+    }
+    if (targetValidity !== undefined) {
+      return 'supersedes undo: targetValidity is only supported for legacy edges without snapshots';
+    }
   }
 
   const normalizedEffective = validateIsoTimestamp(effectiveAt);
@@ -312,20 +322,21 @@ export function validateSupersessionUnlink(input: SupersessionUnlinkInput): stri
     return 'supersedes undo: target supersededAt no longer matches this edge effectiveAt';
   }
 
-  const introducedSourceValidFrom = !snapshots?.priorSource.validFrom;
+  const introducedSourceValidFrom = snapshots !== undefined && !snapshots.priorSource.validFrom;
   if (
     introducedSourceValidFrom
-    && sourceTemporal?.validFrom
-    && sourceTemporal.validFrom !== normalizedEffective.normalized
+    && sourceTemporal?.validFrom !== normalizedEffective.normalized
   ) {
     return 'supersedes undo: source validFrom was changed after this supersession';
   }
 
+  if (snapshots && targetTemporal.validFrom !== snapshots.priorTarget.validFrom) {
+    return 'supersedes undo: target validFrom was changed after this supersession';
+  }
+
   const expectedTargetUntil = normalizedEffective.normalized;
   if (
-    targetTemporal.validUntil
-    && targetTemporal.validUntil !== expectedTargetUntil
-    && snapshots?.priorTarget.validUntil !== targetTemporal.validUntil
+    targetTemporal.validUntil !== expectedTargetUntil
   ) {
     return 'supersedes undo: target validUntil was changed after this supersession';
   }
@@ -375,7 +386,7 @@ export function buildSupersessionUndoSourcePatch(
 ): Record<string, unknown> {
   const existingTemporal = parseTemporalMetadata(existingMetadata.temporal) ?? {};
   const normalizedEffective = normalizeSupersessionTimestamp(effectiveAt);
-  const introducedValidFrom = !snapshots?.priorSource.validFrom
+  const introducedValidFrom = snapshots !== undefined && !snapshots.priorSource.validFrom
     && existingTemporal.validFrom === normalizedEffective;
 
   if (!introducedValidFrom) {

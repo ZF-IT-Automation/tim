@@ -308,13 +308,14 @@ export async function runBenchmark(options: RunOptions = {}): Promise<BenchmarkR
   }
 
   const fixture = await buildFixtureStore(dataset, provider, { realEmbeddings });
-  const memoryHealth = await computeMemoryHealth(fixture.store);
+  let memoryHealth: Awaited<ReturnType<typeof computeMemoryHealth>>;
   const allGoldLabels = [...fixture.goldToEntryId.keys()];
 
   const modes: BenchmarkMode[] = ['no-memory', 'fixed-handoff', 'tim'];
   const questionReports: BenchmarkReport['questions'] = [];
 
   try {
+    memoryHealth = await computeMemoryHealth(fixture.store);
     for (const question of dataset.questions) {
       let timContext = '';
       let timOrderedEvidence: string[] = [];

@@ -180,6 +180,49 @@ describe('review-fix temporal/search/recovery', () => {
     expect((await store.getEdges(a.id, 'outgoing')).filter(e => e.id === edge.id)).toHaveLength(0);
   });
 
+  it('rejects explicit empty asOf', async () => {
+    await expect(store.searchByTag('#decision', 10, undefined, { asOf: '' }))
+      .rejects.toThrow(/Invalid asOf/);
+  });
+
+  it('preserves source validity when undoing a legacy edge with unknown history', async () => {
+    const target = await writeDecision('Old', 'Body');
+    const source = await writeDecision('New', 'Body');
+    const edge = await store.link(source.id, target.id, 'supersedes', 1, {
+      effectiveAt: '2020-01-01T00:00:00Z',
+    });
+    store.getDb().prepare("UPDATE edges SET metadata = json_remove(metadata, '$.priorTarget', '$.priorSource') WHERE id = ?").run(edge.id);
+    const before = (await store.read(source.id))!.metadata;
+    await store.unlink(edge.id, { targetValidity: {} });
+    expect((await store.read(source.id))!.metadata).toEqual(before);
+  });
+
+  it.each(['validFrom', 'validUntil', 'snapshot', 'dependent'])('rejects conflicting %s undo without writes', async (conflict) => {
+    const target = await writeDecision('Old', 'Body');
+    const source = await writeDecision('New', 'Body');
+    const edge = await store.link(source.id, target.id, 'supersedes', 1, {
+      effectiveAt: '2020-01-01T00:00:00Z',
+    });
+    if (conflict === 'snapshot') {
+      store.getDb().prepare("UPDATE edges SET metadata = json_set(metadata, '$.priorTarget.validUntil', 'yesterday') WHERE id = ?").run(edge.id);
+    } else if (conflict === 'dependent') {
+      const newer = await writeDecision('Newest', 'Body');
+      await store.link(newer.id, source.id, 'supersedes', 1, { effectiveAt: '2021-01-01T00:00:00Z' });
+    } else {
+      const value = conflict === 'validFrom' ? '2019-01-01T00:00:00.000Z' : '2020-02-01T00:00:00.000Z';
+      store.getDb().prepare('UPDATE entries SET metadata = json_set(metadata, ?, ?) WHERE id = ?')
+        .run(`$.temporal.${conflict}`, value, target.id);
+    }
+    const snapshot = () => ({
+      entries: store.getDb().prepare('SELECT * FROM entries ORDER BY id').all(),
+      edges: store.getDb().prepare('SELECT * FROM edges ORDER BY id').all(),
+      staging: store.getDb().prepare('SELECT * FROM staging').all(),
+    });
+    const before = snapshot();
+    await expect(store.unlink(edge.id)).rejects.toThrow(/supersedes undo/);
+    expect(snapshot()).toEqual(before);
+  });
+
   it('rejects duplicate supersedes edges for the same pair', async () => {
     const oldDecision = await writeDecision('Old', 'Body');
     const newDecision = await writeDecision('New', 'Body');
