@@ -83,7 +83,7 @@ describe('memory quality benchmark (#38)', () => {
         expect(r.metrics).toHaveProperty('precision');
         expect(r.metrics).toHaveProperty('recall');
         expect(r.provider.mode).toBe('synthetic');
-        expect(r.contextBytes).toBeLessThanOrEqual(report.contextBudget + 200);
+        expect(r.contextBytes).toBeLessThanOrEqual(report.contextBudget);
       }
       expect(q.results['fixed-handoff'].evidence.expected).toEqual(
         q.results.tim.evidence.expected,
@@ -143,7 +143,7 @@ describe('memory quality benchmark (#38)', () => {
     snapshotEnv('TIM_EMBEDDING_REAL_MODEL');
     snapshotEnv('TIM_EMBEDDING_DISABLED');
     process.env.TIM_EMBEDDING_REAL_MODEL = '1';
-      delete process.env.TIM_EMBEDDING_DISABLED;
+    delete process.env.TIM_EMBEDDING_DISABLED;
 
     const embeddedTexts: string[] = [];
     const factory = async (): Promise<EmbeddingProvider> => ({
@@ -269,12 +269,15 @@ describe('memory quality benchmark (#38)', () => {
     const out = path.join(os.tmpdir(), `tim-quality-report-${Date.now()}.json`);
     outputs.push(out);
     snapshotEnv('TIM_EMBEDDING_DISABLED');
-    const result = spawnSync('node', [CLI_PATH, '--output', out], {
-      encoding: 'utf8',
-      env: { ...process.env, TIM_EMBEDDING_DISABLED: '1' },
-    });
-
-    if (moved) fs.renameSync(srcBackup, srcDataset);
+    let result: ReturnType<typeof spawnSync>;
+    try {
+      result = spawnSync(process.execPath, [CLI_PATH, '--output', out], {
+        encoding: 'utf8',
+        env: { ...process.env, TIM_EMBEDDING_DISABLED: '1' },
+      });
+    } finally {
+      if (moved) fs.renameSync(srcBackup, srcDataset);
+    }
 
     expect(result.status).toBe(0);
     expect(fs.existsSync(out)).toBe(true);
@@ -286,7 +289,7 @@ describe('memory quality benchmark (#38)', () => {
   it('CLI real opt-in reports honest no-network unavailable skip', () => {
     const out = path.join(os.tmpdir(), `tim-quality-real-skip-${Date.now()}.json`);
     outputs.push(out);
-    const result = spawnSync('node', [CLI_PATH, '--real-provider', '--output', out], {
+    const result = spawnSync(process.execPath, [CLI_PATH, '--real-provider', '--output', out], {
       encoding: 'utf8',
       env: {
         ...process.env,
