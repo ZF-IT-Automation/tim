@@ -67,7 +67,9 @@ const health = store.getSemanticIndexHealth();
 | `unknown` | Default provider not yet initialized (or never attempted) |
 | `enabled` | Injected provider enabled, or cached default init succeeded |
 
-This accessor performs SQL counts only — it never loads a model. Absence of vectors is not reported as success when the provider is enabled.
+This accessor never loads a model, but freshness checks read eligible entry text and hash it in JavaScript. Time and transient memory therefore grow with the indexed corpus; it is not a constant-cost SQL counter. Absence of vectors is not reported as success when the provider is enabled.
+
+Per-call search diagnostics use `providerState: not_used` for FTS-only retrieval. This means the embedding provider was not consulted, not that it is disabled. Index-health diagnostics report the separately observed provider availability.
 
 ## Benchmark hook (#38 additive interface)
 

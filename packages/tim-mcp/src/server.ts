@@ -289,6 +289,7 @@ const TimLinkSchema = z.object({
 });
 
 const TimUnlinkSchema = z.object({
+  discardUnmanaged: z.boolean().optional().describe('Explicitly delete an imported supersedes edge only when the target has no managed temporal state. Entry metadata is not changed.'),
   edgeId: z.string().describe('Edge id returned by tim_link or tim_trace'),
   targetValidity: z.object({
     validFrom: z.string().optional(),
@@ -2692,9 +2693,9 @@ export async function createMcpServer(
         }
 
         case 'tim_unlink': {
-          const { edgeId, targetValidity } = TimUnlinkSchema.parse(args);
+          const { edgeId, targetValidity, discardUnmanaged } = TimUnlinkSchema.parse(args);
           try {
-            await s.unlink(edgeId, { targetValidity });
+            await s.unlink(edgeId, { targetValidity, discardUnmanaged });
           } catch (err) {
             return errorResult(err instanceof Error ? err.message : String(err));
           }

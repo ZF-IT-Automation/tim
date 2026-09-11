@@ -2807,7 +2807,7 @@ export class TimStore implements MemoryInterface {
     };
 
     if (searchType === 'fts') {
-      semanticInfo.providerState = 'disabled';
+      semanticInfo.providerState = 'not_used';
       const ftsOnly = this.rankByUsage(
         await this.fetchLexicalCandidates(options, fetchLimit, patterns, asOf),
         topK,
@@ -3366,7 +3366,7 @@ export class TimStore implements MemoryInterface {
 
   async unlink(
     edgeId: string,
-    options: { targetValidity?: SupersessionValiditySnapshot } = {},
+    options: { targetValidity?: SupersessionValiditySnapshot; discardUnmanaged?: boolean } = {},
   ): Promise<void> {
     const row = this.db.prepare('SELECT * FROM edges WHERE id = ?').get(edgeId) as RowEdge | undefined;
     if (!row) return;
@@ -3383,7 +3383,9 @@ export class TimStore implements MemoryInterface {
     };
 
     if (row.type === 'supersedes') {
-      const edgeMeta = row.metadata ? JSON.parse(row.metadata) as Record<string, unknown> : {};
+      const parsedEdgeMeta: unknown = row.metadata ? JSON.parse(row.metadata) : {};
+      const edgeMeta = parsedEdgeMeta && typeof parsedEdgeMeta === 'object' && !Array.isArray(parsedEdgeMeta)
+        ? parsedEdgeMeta as Record<string, unknown> : {};
       const effectiveAt = typeof edgeMeta.effectiveAt === 'string' ? edgeMeta.effectiveAt : '';
       const hasSnapshots = (
         edgeMeta.priorTarget != null
@@ -3407,6 +3409,24 @@ export class TimStore implements MemoryInterface {
           .get(row.source_id) as RowEntry | undefined;
         const targetExisting = this.db.prepare('SELECT * FROM entries WHERE id = ?')
           .get(row.target_id) as RowEntry | undefined;
+        if (options.discardUnmanaged) {
+          if (options.targetValidity !== undefined) {
+            throw new Error('supersedes discard: targetValidity cannot be combined with discardUnmanaged');
+          }
+          const targetMeta = targetExisting ? JSON.parse(targetExisting.metadata || '{}') : {};
+          const temporal = targetMeta?.temporal;
+          if (temporal && typeof temporal === 'object'
+            && (temporal.supersededAt !== undefined || temporal.supersededBy !== undefined)) {
+            throw new Error('supersedes discard: target has managed temporal state; use guarded undo');
+          }
+          this.db.prepare('DELETE FROM edges WHERE id = ?').run(edgeId);
+          this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
+            lww_timestamp, lww_device, lww_confidence)
+            VALUES (?, 'edge', 'delete', ?, ?, ?, ?)`).run(
+            edgeKey, JSON.stringify(edgeRow), ts, this.agentId, 1.0,
+          );
+          return;
+        }
         if (!sourceExisting || !targetExisting) {
           throw new Error('supersedes undo: source or target entry not found');
         }

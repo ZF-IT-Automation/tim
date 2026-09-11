@@ -52,7 +52,7 @@ describe('review-fix F1/F5 semantics', () => {
 
     expect(slowResult.semantic.requestedMode).toBe('vector');
     expect(fast.semantic.requestedMode).toBe('fts');
-    expect(fast.semantic.providerState).toBe('disabled');
+    expect(fast.semantic.providerState).toBe('not_used');
   });
 
   it('F5: hybrid keeps exact lexical match ahead of weak vector-only noise', async () => {

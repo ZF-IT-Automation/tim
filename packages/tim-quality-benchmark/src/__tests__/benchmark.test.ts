@@ -116,6 +116,30 @@ describe('memory quality benchmark (#38)', () => {
     expect(briefing.results.tim.evidence.found).toEqual(
       expect.arrayContaining(['gold:rule-tests', 'gold:task-auth']),
     );
+    expect(briefing.results.tim.evidence.irrelevant.some(label => label.startsWith('retrieved:log-'))).toBe(true);
+    expect(briefing.results.tim.evidence.irrelevant).toContain('gold:motor-transport');
+    expect(briefing.results.tim.provider).toMatchObject({ modelId: null, state: 'not_used', searchType: 'fts' });
+    for (const question of report.questions) {
+      for (const mode of ['no-memory', 'fixed-handoff'] as const) {
+        expect(question.results[mode].provider).toEqual({ mode: 'synthetic', modelId: null, state: 'not_used' });
+      }
+    }
+    const partial = report.questions.find(q => q.id === 'q-de-briefing-session')!;
+    expect(partial.results.tim.evidence.found).toContain('gold:session-partial');
+    expect(partial.results.tim.evidence.irrelevant).not.toContain('gold:session-partial');
+  });
+
+  it('loses expected recall for an unrelated query against a larger indexed distractor pool', async () => {
+    const dataset = loadDataset();
+    const question = dataset.questions.find(q => q.id === 'q-en-synonym')!;
+    const positive = await runBenchmark({ datasetOverride: { ...dataset, questions: [question] } });
+    const negative = await runBenchmark({ datasetOverride: {
+      ...dataset,
+      questions: [{ ...question, text: 'zzzz quantum basketweaving flibbertigibbet' }],
+    } });
+    expect(positive.questions[0].results.tim.metrics.recall).toBe(1);
+    expect(negative.questions[0].results.tim.metrics.recall).toBe(0);
+    expect(negative.questions[0].results.tim.evidence.missing).toContain('gold:motor-transport');
   });
 
   it('reports explicit skip when real provider requested but unavailable (no synthetic run)', async () => {

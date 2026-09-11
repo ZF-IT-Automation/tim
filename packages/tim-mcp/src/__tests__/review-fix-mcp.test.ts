@@ -45,6 +45,6 @@ describe('review-fix F1 MCP semantic metadata', () => {
 
     expect((slowResult.semantic as { requestedMode: string }).requestedMode).toBe('vector');
     expect((fast.semantic as { requestedMode: string }).requestedMode).toBe('fts');
-    expect((fast.semantic as { providerState: string }).providerState).toBe('disabled');
+    expect((fast.semantic as { providerState: string }).providerState).toBe('not_used');
   });
 });

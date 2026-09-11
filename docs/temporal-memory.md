@@ -55,6 +55,12 @@ invalid snapshots, or other supersession edges involving either endpoint cause
 undo to fail without writes; resolve dependent history explicitly first.
 Normal non-supersedes edges unlink as before (edge row only).
 
+For a malformed imported edge with no matching managed state, use
+`tim_unlink({"edgeId":"<edge-id>","discardUnmanaged":true})`. This explicit repair
+deletes only the edge and stages its deletion; it never changes entry validity.
+It refuses targets carrying managed supersession fields and cannot be combined
+with `targetValidity`. Ordinary undo remains fail-closed for invalid edge metadata.
+
 ## Read projection
 
 `tim_read` always returns the stored body and evidence. It adds a `temporal`
