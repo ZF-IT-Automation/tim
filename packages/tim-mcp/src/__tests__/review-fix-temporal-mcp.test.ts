@@ -134,4 +134,23 @@ describe('review-fix tim_unlink MCP contract', () => {
     });
     expect(nullTemporal.result?.isError).toBe(true);
   });
+
+  it('exposes explicit unmanaged-edge repair without bypassing managed-state guards', async () => {
+    const targetId = await writeDecision('Imported target', 'Still current');
+    const sourceId = await writeDecision('Imported source', 'Unmanaged relationship');
+    store.getDb().prepare(`INSERT INTO edges (id, source_id, target_id, type, weight, metadata, updated_at)
+      VALUES ('imported-unmanaged', ?, ?, 'supersedes', 1, '{}', ?)`).run(sourceId, targetId, new Date().toISOString());
+    const before = (await store.read(targetId))!.metadata;
+    const rejected = await client.callTool('tim_unlink', { edgeId: 'imported-unmanaged' });
+    expect(rejected.result?.isError).toBe(true);
+    const repaired = await client.callTool('tim_unlink', { edgeId: 'imported-unmanaged', discardUnmanaged: true });
+    expect(repaired.result?.isError).toBeFalsy();
+    expect((await store.read(targetId))!.metadata).toEqual(before);
+    expect(await store.getEdges(sourceId)).toHaveLength(0);
+
+    const managed = await store.link(sourceId, targetId, 'supersedes', 1, { effectiveAt: '2020-01-01T00:00:00Z' });
+    const guarded = await client.callTool('tim_unlink', { edgeId: managed.id, discardUnmanaged: true });
+    expect(guarded.result?.isError).toBe(true);
+    expect((await store.getEdges(sourceId)).map(edge => edge.id)).toContain(managed.id);
+  });
 });
