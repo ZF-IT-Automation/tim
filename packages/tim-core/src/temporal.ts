@@ -129,8 +129,11 @@ function validateOptionalIsoField(
 
 /** Structural validator for caller-supplied temporal fields (validFrom/validUntil only). */
 export function validateCallerTemporalMetadata(value: unknown): TemporalValidationResult {
-  if (value === undefined || value === null) {
+  if (value === undefined) {
     return { ok: true, temporal: {} };
+  }
+  if (value === null) {
+    return { ok: false, errors: ['temporal: null is not allowed; omit the field or pass an object'] };
   }
   if (typeof value !== 'object' || Array.isArray(value)) {
     return { ok: false, errors: ['temporal: must be an object'] };

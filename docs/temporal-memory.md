@@ -41,6 +41,15 @@ Semantics at `effectiveAt`:
 
 - The target is marked superseded (`supersededAt`, `supersededBy`, `validUntil`).
 - The source gains `validFrom` when not already set.
+- The edge stores `priorTarget` / `priorSource` validity snapshots for safe undo.
+
+## Undoing a mistaken supersession
+
+Use `tim_unlink` on the `supersedes` edge. When the edge carries stored snapshots,
+managed temporal fields on the target and source are restored atomically if they
+still match the values introduced by that edge. Older edges without snapshots
+require an explicit `targetValidity` patch (`{}` restores an unbounded target).
+Normal non-supersedes edges unlink as before (edge row only).
 
 ## Read projection
 
@@ -70,8 +79,10 @@ Explicit `contradicts` / `contradicted_by` edges are preserved. Reads expose
 unresolved contradiction references; TIM does not pick a winning fact.
 
 - Timestamps are normalized to canonical UTC on write; search eligibility compares
-  instants by epoch milliseconds (including peer/import rows with mixed `Z`,
-  fractional seconds, or explicit offsets).
+  instants by epoch milliseconds. Peer/import rows with unusable temporal fields
+  are treated as legacy current records (matching read projection), not silently
+  dropped from search.
+- Tag-only `tim_search` applies the same current/`asOf` eligibility before limits.
 - Impossible calendar dates, invalid clock times, unsupported sub-millisecond
   precision, and forged supersession metadata are rejected.
 - Supersession cycle detection traverses the full reachable graph up to a safety
