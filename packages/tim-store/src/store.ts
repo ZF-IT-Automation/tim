@@ -49,13 +49,19 @@ import { parentIsSecret } from './secret.js';
 import {
   assertValidEvidenceMetadata,
   assertValidCallerTemporalMetadata,
+  mergeCallerTemporalMetadata,
+  parseTemporalMetadata,
   rejectForgedTemporalSupersession,
+  rejectTemporalManagedFieldClearing,
+  validateCallerTemporalMetadata,
+  validateIsoTimestamp,
 } from 'tim-core';
 import {
   buildSupersessionSourcePatch,
   buildSupersessionTargetPatch,
   buildTemporalEligibilitySql,
   entryTemporallyEligibleAt,
+  registerTemporalSqlFunctions,
   resolveSearchAsOf,
   temporalEligibilityParams,
   validateSupersessionLink,
@@ -372,6 +378,7 @@ export class TimStore implements MemoryInterface {
       allowMigrations: options.allowMigrations === true,
     });
     createTriggers(this.db);
+    registerTemporalSqlFunctions(this.db);
     // The outbox is drained by acking a successful push, so on a machine that
     // never pushes it is a leak: every write leaves a full copy of the entry
     // behind and nothing ever collects it. Measured on 2026-08-12, one day of
@@ -2178,11 +2185,22 @@ export class TimStore implements MemoryInterface {
             ...(patchMeta.idea as Record<string, unknown>),
           };
         }
+        if (patchMeta.temporal !== undefined) {
+          rejectTemporalManagedFieldClearing(existingMeta, patchMeta);
+          rejectForgedTemporalSupersession(patchMeta);
+          const existingTemporal = parseTemporalMetadata(existingMeta.temporal) ?? {};
+          const patchValidation = validateCallerTemporalMetadata(patchMeta.temporal);
+          if (!patchValidation.ok) {
+            throw new Error(`Invalid metadata.temporal: ${patchValidation.errors.join('; ')}`);
+          }
+          patchMeta.temporal = mergeCallerTemporalMetadata(existingTemporal, patchValidation.temporal);
+        } else {
+          rejectForgedTemporalSupersession(patchMeta);
+          assertValidCallerTemporalMetadata(patchMeta);
+        }
         const merged = { ...existingMeta, ...patchMeta };
         // Legacy/peer metadata remains readable and editable until explicitly replaced.
-        rejectForgedTemporalSupersession(patchMeta);
         assertValidEvidenceMetadata(patchMeta);
-        assertValidCallerTemporalMetadata(patchMeta);
 
         const promote = applyIdeaPromote(merged, now, {
           hadIdeaMarker: isIdeaMarker(existingMeta.idea),
@@ -2308,6 +2326,12 @@ export class TimStore implements MemoryInterface {
     rejectForgedTemporalSupersession(metadata);
     assertValidEvidenceMetadata(metadata);
     assertValidCallerTemporalMetadata(metadata);
+    if (metadata.temporal !== undefined) {
+      const validated = validateCallerTemporalMetadata(metadata.temporal);
+      if (validated.ok) {
+        metadata.temporal = validated.temporal;
+      }
+    }
     if (typeof metadata.task === 'object' && metadata.task !== null && !Array.isArray(metadata.task)) {
       const taskObj = migrateTaskHistory(metadata.task as Record<string, unknown>, now);
       if (taskObj.subtype === 'coding' && !taskObj.vcs && options.projectPath) {
@@ -2613,7 +2637,7 @@ export class TimStore implements MemoryInterface {
         ftsQueryMode: options.ftsQueryMode,
         confidenceAbove: options.confidenceAbove,
         visibilityMask: options.visibilityMask,
-        asOfIso: asOf?.toISOString(),
+        asOfEpochMs: asOf?.getTime(),
       });
       for (const entry of batch) {
         if (seen.has(entry.id)) continue;
@@ -2707,7 +2731,7 @@ export class TimStore implements MemoryInterface {
     const topK = options.topK ?? 10;
     const searchType = options.searchType ?? 'hybrid';
     const asOf = resolveSearchAsOf(options.asOf);
-    const asOfIso = asOf.toISOString();
+    const asOfEpochMs = asOf.getTime();
     let scopeRootId: string | undefined;
     if (!TimStore.isUnrestrictedProjectScope(options.project)) {
       const scope = await this.resolveProjectLabel(options.project!);
@@ -2738,7 +2762,7 @@ export class TimStore implements MemoryInterface {
       status: options.status,
       confidenceAbove: options.confidenceAbove,
       visibilityMask: options.visibilityMask,
-      asOfIso,
+      asOfEpochMs,
     };
 
     const configuredModel = resolveConfiguredEmbeddingModelId();
@@ -2896,7 +2920,7 @@ export class TimStore implements MemoryInterface {
       ftsQueryMode?: FtsQueryMode;
       confidenceAbove?: number;
       visibilityMask?: number;
-      asOfIso?: string;
+      asOfEpochMs?: number;
     } = {},
   ): Promise<Entry[]> {
     const sanitized = sanitizeFtsQuery(query, opts.ftsQueryMode ?? 'literal')
@@ -2954,9 +2978,9 @@ export class TimStore implements MemoryInterface {
       scopeSql += ` AND (e.visibility & ?) != 0`;
       params.push(opts.visibilityMask);
     }
-    if (opts.asOfIso) {
-      scopeSql += buildTemporalEligibilitySql(opts.asOfIso, 'e');
-      params.push(...temporalEligibilityParams(opts.asOfIso));
+    if (opts.asOfEpochMs !== undefined) {
+      scopeSql += buildTemporalEligibilitySql(opts.asOfEpochMs, 'e');
+      params.push(...temporalEligibilityParams(opts.asOfEpochMs));
     }
     params.push(limit);
 
@@ -3197,7 +3221,11 @@ export class TimStore implements MemoryInterface {
     if (validationError) {
       throw new Error(validationError);
     }
-    const effective = effectiveAt as string;
+    const normalizedEffective = validateIsoTimestamp(typeof effectiveAt === 'string' ? effectiveAt : '');
+    if (!normalizedEffective.ok) {
+      throw new Error(`effectiveAt: ${normalizedEffective.reason}`);
+    }
+    const effective = normalizedEffective.normalized;
 
     const id = ulid();
     const ts = Date.now();

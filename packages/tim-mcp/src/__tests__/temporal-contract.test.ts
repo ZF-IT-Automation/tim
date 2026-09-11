@@ -83,7 +83,7 @@ describe('temporal memory contract (#36)', () => {
       include_body: true,
     })).result!.content![0].text);
     expect(oldRead.entry.temporal.state).toBe('superseded');
-    expect(oldRead.entry.temporal.superseded_at).toBe(effectiveAt);
+    expect(oldRead.entry.temporal.superseded_at).toBe('2026-03-15T12:00:00.000Z');
     expect(oldRead.entry.content).toContain('HTTP/1.1');
     expect(oldRead.entry.evidence.authority).toBe('user_asserted');
 
@@ -263,5 +263,56 @@ describe('temporal memory contract (#36)', () => {
     expect(bulk.result?.isError).toBe(true);
     const staging = await store.getStaging();
     expect(staging.some(r => r.payload.includes('Bypass'))).toBe(false);
+  });
+
+  it('preserves superseded_by through read/update round-trip', async () => {
+    const oldId = await writeDecision('Round trip', 'Original');
+    const newId = await writeDecision('Round trip v2', 'Updated');
+    await client.callTool('tim_link', {
+      sourceId: newId,
+      targetId: oldId,
+      type: 'supersedes',
+      metadata: { effectiveAt },
+    });
+
+    const updated = await client.callTool('tim_update', {
+      id: oldId,
+      content: 'Round trip\nEdited body',
+      metadata: { task: { status: 'done' } },
+    });
+    expect(updated.result?.isError).toBeFalsy();
+
+    const read = JSON.parse((await client.callTool('tim_read', {
+      id: oldId,
+      include_body: true,
+    })).result!.content![0].text);
+    expect(read.entry.temporal.superseded_by?.entryId).toBe(newId);
+    expect(read.entry.content).toContain('Edited body');
+  });
+
+  it('leaves accessed_at and updated_at unchanged when supersession fails', async () => {
+    const source = await writeDecision('Atomic source', 'Src');
+    const target = await writeDecision('Atomic target', 'Tgt');
+    const sourceBefore = await store.read(source);
+    const targetBefore = await store.read(target);
+    const edgesBefore = store.getDb().prepare('SELECT * FROM edges').all();
+    const stagingBefore = (await store.getStaging()).length;
+
+    const bad = await client.callTool('tim_link', {
+      sourceId: source,
+      targetId: target,
+      type: 'supersedes',
+      metadata: { effectiveAt: '2026-02-31T00:00:00Z' },
+    });
+    expect(bad.result?.isError).toBe(true);
+
+    const sourceAfter = await store.read(source);
+    const targetAfter = await store.read(target);
+    expect(sourceAfter?.accessedAt).toBe(sourceBefore?.accessedAt);
+    expect(sourceAfter?.updatedAt).toBe(sourceBefore?.updatedAt);
+    expect(targetAfter?.accessedAt).toBe(targetBefore?.accessedAt);
+    expect(targetAfter?.updatedAt).toBe(targetBefore?.updatedAt);
+    expect(store.getDb().prepare('SELECT * FROM edges').all()).toEqual(edgesBefore);
+    expect((await store.getStaging()).length).toBe(stagingBefore);
   });
 });
