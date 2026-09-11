@@ -24,7 +24,8 @@
     { "path": "packages/tim-mcp" },
     { "path": "packages/tim-summarizer" },
     { "path": "packages/tim-skills" },
-    { "path": "packages/tim-cli" }
+    { "path": "packages/tim-cli" },
+    { "path": "packages/tim-quality-benchmark" }
   ],
   "exclude": ["packages/**/src/**/__tests__/**"],
   "files": []

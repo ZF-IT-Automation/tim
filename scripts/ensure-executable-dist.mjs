@@ -7,6 +7,7 @@ if (process.platform !== 'win32') {
     'packages/tim-summarizer/dist/summarize.js',
     'packages/tim-hooks/dist/summarizer-supervisor.js',
     'packages/tim-sync-server/dist/cli.js',
+    'packages/tim-quality-benchmark/dist/cli.js',
   ];
 
   await Promise.all(executableEntrypoints.map((file) => chmod(file, 0o755)));

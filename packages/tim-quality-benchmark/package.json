@@ -1,0 +1,25 @@
+{
+  "name": "tim-quality-benchmark",
+  "version": "0.1.0-beta.1",
+  "description": "Repeatable bilingual memory quality benchmark scenarios (#38)",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "tim-quality-benchmark": "dist/cli.js"
+  },
+  "files": [
+    "dist/**/*",
+    "!dist/**/__tests__/**"
+  ],
+  "scripts": {
+    "build": "tsc && node scripts/copy-dataset.mjs && node ../../scripts/ensure-executable-dist.mjs",
+    "pretest": "npm --prefix ../.. run build",
+    "test": "vitest run --root ../.. packages/tim-quality-benchmark/src/__tests__"
+  },
+  "dependencies": {
+    "tim-core": "0.1.0-beta.1",
+    "tim-mcp": "0.1.0-beta.1",
+    "tim-store": "0.1.0-beta.1"
+  }
+}
