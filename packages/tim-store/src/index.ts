@@ -120,6 +120,9 @@ export {
   resolveSearchAsOf,
   temporalEligibilityParams,
   validateSupersessionLink,
+  validateSupersessionUnlink,
+  captureSupersessionSnapshots,
+  type SupersessionValiditySnapshot,
 } from './temporal.js';
 export {
   deriveCounters,

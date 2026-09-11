@@ -124,7 +124,7 @@ export async function collectTopicResume(
   // which is what a two-word topic actually means.
   const words = topic.replace(/^#/, '').replace(/[-_]+/g, ' ');
   const [tagged, matched] = await Promise.all([
-    store.searchByTag(needle, MAX_TAG_HITS, projectLabel),
+    store.searchByTag(needle, MAX_TAG_HITS, projectLabel, { skipTemporalEligibility: true }),
     store.searchFts(words, MAX_FTS_HITS, {
       project: projectLabel,
       excludeKinds: FLOODING_KINDS,
