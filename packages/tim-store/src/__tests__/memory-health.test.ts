@@ -116,6 +116,18 @@ describe('computeMemoryHealth', () => {
     expect(memory.guidance.some(g => g.includes('invalid or missing seq range'))).toBe(true);
   });
 
+  it('does not call a failed-worker fallback the latest successful summary', async () => {
+    await sessions.startProjectSession({
+      sessionId: 'failed-worker', projectId: 'P3700', agentName: 'a', cwd: '/', harness: 't', batchSize: 5,
+    });
+    await sessions.logExchange('failed-worker', [{ role: 'user', content: 'Q1' }]);
+    await sessions.writeBatchSummary('failed-worker', 1,
+      '[ALL SUMMARIZER CLIs FAILED — main agent please resummarize batch 1]\nQ: Q1',
+      { seqFrom: 1, seqTo: 1 });
+    const memory = await computeMemoryHealth(store);
+    expect(memory.summaryCoverage.latestBatchSummary).toBeNull();
+  });
+
   it('reports embedding backlog after indexed entry edit without double-counting', async () => {
     const entry = await store.write('Indexed\nBody.', { tags: ['#note'] });
     store.setVectors(entry.id, unitVector(384, 0.85), CUSTOM_MODEL, 384);

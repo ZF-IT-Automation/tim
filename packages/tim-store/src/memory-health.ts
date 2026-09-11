@@ -10,7 +10,7 @@ import type {
   MemorySyncTelemetryReport,
   MemorySyncTelemetryState,
 } from 'tim-core';
-import { getTimDir } from 'tim-core';
+import { getTimDir, isTimezoneQualifiedIso } from 'tim-core';
 import type { Entry } from 'tim-core';
 import type { TimStore } from './store.js';
 import { getUnackedStaging } from './sync-methods.js';
@@ -33,8 +33,7 @@ interface SyncFileState {
 
 function isValidIsoTimestamp(value: unknown): value is string {
   if (typeof value !== 'string' || value.length === 0) return false;
-  const ms = Date.parse(value);
-  return Number.isFinite(ms);
+  return isTimezoneQualifiedIso(value);
 }
 
 function parseSyncTimestamp(value: unknown): string | null {
@@ -178,8 +177,13 @@ function isValidSummaryRange(seqFrom: number, seqTo: number): boolean {
 
 function isSuccessfulBatchSummary(entry: Entry): boolean {
   if (entry.metadata.kind !== KIND_BATCH) return false;
-  const content = (entry.content ?? '').trim();
-  return content.length > 0;
+  return isSuccessfulSummaryText(entry.content);
+}
+
+function isSuccessfulSummaryText(value: unknown): boolean {
+  return typeof value === 'string' && value.trim().length > 0
+    && !value.includes('TIM_SUMMARIZER_FALLBACK_NEEDED')
+    && !value.includes('[ALL SUMMARIZER CLIs FAILED');
 }
 
 function batchSummaryTimestamp(entry: Entry): string {
@@ -193,7 +197,9 @@ function resolveOwningSessionId(store: TimStore, entry: Entry): string | null {
     return entry.metadata.sessionId;
   }
   let parentId = entry.parentId;
-  while (parentId) {
+  const seen = new Set<string>();
+  while (parentId && !seen.has(parentId)) {
+    seen.add(parentId);
     const parent = store.readSync(parentId);
     if (!parent) break;
     if (parent.metadata.kind === KIND_SESSION) {
@@ -247,7 +253,7 @@ async function findLatestSuccessfulRollup(store: TimStore): Promise<Entry | null
     const entry = await store.read(row.id, { showIrrelevant: true, includeChildren: false });
     if (!entry) continue;
     const rollup = entry.metadata.summary;
-    if (typeof rollup === 'string' && rollup.trim().length > 0) candidates.push(entry);
+    if (isSuccessfulSummaryText(rollup)) candidates.push(entry);
   }
 
   candidates.sort((a, b) => (b.updatedAt || b.createdAt).localeCompare(a.updatedAt || a.createdAt));
