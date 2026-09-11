@@ -66,11 +66,14 @@ Connect through supported host setup for Claude Code, Codex, Cursor or Hermes, o
 | `tim-sync-server` | Optional sync service. |
 | `tim-migrate` | Import/export and migration workflows. |
 | `tim-skills` | Packaged host guidance. |
+| `tim-quality-benchmark` | Development-only bilingual fixture evaluation using the store and MCP presentation paths. |
 
 ## Verification and current improvement program
 
 Tests, build checks and type checking are useful evidence, not proof of summary quality, disaster recovery or deployment safety. Run verification in an isolated checkout: `npm test`, `npm run lint`, and `npm run test:build-pipeline`. Installation and the build-pipeline test clean generated output; do not run them against a live installation.
 
 The [September 2026 improvement program](plans/2026-09-09-memory-program/README.md) tracks correctness fixes, evidence sources and authority, temporal validity, task-aware briefing, coverage diagnostics and bilingual retrieval evaluation. Features in that plan are not implied to be shipped by their inclusion here. A synthetic retrieval benchmark measures retrieval behavior, not real-world agent task success.
+
+Run `npm run benchmark:memory-quality` after building an isolated checkout. The [benchmark contract](memory-quality-benchmark.md) describes the shared context budget, observed evidence scoring, synthetic provider and optional real-provider mode. Known dependency advisories remain a separate [upgrade follow-up](https://github.com/Bumblebiber/tim/issues/40).
 
 For migration, follow the [hmem runbook](hmem-to-tim-migration.md). For safe operational commands, consult the [CLI reference](tim-cli-reference.md). Historical design documents and old test counts are not a current capability contract.

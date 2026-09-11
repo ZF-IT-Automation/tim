@@ -103,11 +103,12 @@ TIM creates the project structure and a `.tim-project` marker. For an existing n
 | **Associative recall** | `tim_remember` expands vague queries and uses a configured CLI chain to rerank candidates. |
 | **Relationships** | Tags and explicit graph edges such as `implements`, `blocks` and `contradicts`. |
 | **Memory trust** | Verification, staleness, declared evidence authority and entry/session/Git/document source references. These are inspectable signals, not proof of truth. |
-| **Changing decisions** | Half-open validity intervals, explicit `supersedes` links, historical `asOf` search and visible contradiction references. |
+| **Changing decisions** | Half-open validity intervals, explicit `supersedes` links, guarded undo, historical `asOf` search and visible contradiction references. |
 | **Negative memory** | `tim_guard` searches recorded errors and learnings before an action. |
 | **Curation** | Duplicate/decay candidates, suppression, organization and reversible soft deletion. |
 | **Visibility** | CLI diagnostics, observed session coverage, embedding backlog, local sync telemetry, error statistics and a local browser-based viewer. |
 | **Portability** | hmem import/export, SQLite snapshots and optional encrypted device sync. |
+| **Repeatable evaluation** | Bilingual fixtures compare no-memory, fixed-handoff and TIM under one context budget, with explicit evidence misses and irrelevant results. |
 
 The useful unit is often a decision with its reason, not a transcript fragment. Record durable knowledge explicitly; automatic summaries complement it.
 
@@ -162,6 +163,8 @@ tim_load_project({"label":"P0001","bind":false,"query":"cache migration","tokenB
 ```
 
 `user_asserted` records the caller's declaration; it does not authenticate the user or verify the claim. `asOf` filters recorded validity intervals, not a versioned snapshot of every past body edit. `tokenBudget` uses a conservative UTF-8-byte estimate, not a model-specific tokenizer. See [evidence](docs/memory-evidence.md), [temporal memory](docs/temporal-memory.md) and [briefing](docs/task-aware-briefing.md) for contracts and limits.
+
+Linked the wrong replacement? `tim_unlink({"edgeId":"<supersedes-edge-id>"})` restores recorded validity when the edge's snapshots and current state agree. It refuses conflicting edits and dependent supersession edges; older edges require an explicit target-validity choice. Historical bodies remain stored.
 
 ## How memory flows
 
@@ -222,7 +225,7 @@ Know the boundaries:
 - Summaries and evidence labels are inspectable records, not automatic fact verification. Contradictions are shown, not silently adjudicated.
 - Health distinguishes observed work, pending work and unknown states. Local sync timestamps do not establish current server reachability.
 - Known dependency advisories, including an archive-parser issue in the existing embedding dependency chain, remain tracked separately in [#40](https://github.com/Bumblebiber/tim/issues/40). See the [audit and upgrade contract](docs/reviews/2026-09-11-dependency-audit.md) before treating this beta as security-cleared.
-- The bilingual quality benchmark is still pending integration. Synthetic fixtures can verify retrieval mechanics; they cannot establish real-model understanding or agent task success.
+- The [bilingual quality benchmark](docs/memory-quality-benchmark.md) runs against temporary fixture databases. Synthetic vectors verify retrieval mechanics; they do not establish real-model understanding, agent task success or superiority over other memory products. Real-model checks are opt-in and report an explicit skip when unavailable.
 
 Follow the [implementation plan](docs/plans/2026-09-09-memory-program/README.md) and [GitHub Issues](https://github.com/Bumblebiber/tim/issues). Hosted sharing and broader project-management automation are not prerequisites for local use.
 
@@ -235,9 +238,12 @@ npm ci
 npm run lint
 npm test
 npm run test:build-pipeline
+npm run benchmark:memory-quality
 ```
 
 `lint` runs TypeScript checks. Tests cover packages and integration entry points; they do not establish a universal recall-quality advantage over other products.
+
+The benchmark compares the same expected evidence under a 4096-byte budget for all three modes. Its JSON report includes recall, precision, missing/irrelevant evidence, context size, local latency and fixture health. See the [benchmark guide](docs/memory-quality-benchmark.md) for reproducible commands and measurement limits.
 
 **If your running installation points into this checkout:** `npm ci`, `npm install` and `prepare` run a clean build; `test:build-pipeline` deliberately removes `dist/`. Use an isolated checkout for these operations. `npm test` runs an incremental build through `pretest`, so it still changes installed artifacts. Test existing output without rebuilding using `npx vitest run`; check completeness with `node scripts/check-build-output.mjs`.
 
