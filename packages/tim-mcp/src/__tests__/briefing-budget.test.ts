@@ -5,6 +5,8 @@ import {
   boundRenderedText,
   clampBriefingDefaultBudget,
   MAX_TOKEN_BUDGET,
+  BRIEFING_TRUNCATION_MARKER,
+  byteBudgetToHookMaxTokens,
 } from '../briefing-budget.js';
 import { selectBriefingBlocks, type BriefingBlock } from '../task-aware-selection.js';
 
@@ -53,6 +55,17 @@ describe('briefing-budget', () => {
     expect(bounded.text.length).toBeLessThan(text.length);
   });
 
+  it('appends the documented truncation marker for normal budgets', () => {
+    const bounded = boundRenderedText('x'.repeat(200), 50);
+    expect(bounded.truncated).toBe(true);
+    expect(bounded.text).toContain(BRIEFING_TRUNCATION_MARKER);
+  });
+
+  it('converts MCP byte budgets to hook maxTokens units', () => {
+    expect(byteBudgetToHookMaxTokens(9000)).toBe(2250);
+    expect(byteBudgetToHookMaxTokens(0)).toBe(0);
+  });
+
   it('reports the actual bounded size for every tiny Unicode budget', () => {
     for (let budget = 1; budget <= 32; budget++) {
       const bounded = boundRenderedText('🙂中über'.repeat(20), budget);
@@ -76,5 +89,22 @@ describe('selectBriefingBlocks partial inclusion', () => {
     expect(included[0]!.lines).toEqual(['Hi']);
     expect(ledger.used).toBeLessThanOrEqual(2);
     expect(included[0]!.lines.join('\n')).not.toContain('second line');
+  });
+
+  it('retains first non-empty heading after leading blank spacers', () => {
+    const blocks: BriefingBlock[] = [
+      { id: 'header', priority: 0, order: 0, lines: ['H'.repeat(50)] },
+      {
+        id: 'big',
+        priority: 3,
+        order: 10,
+        lines: ['', '── important ──', 'X'.repeat(500)],
+      },
+    ];
+    const { included, omissions } = selectBriefingBlocks(blocks, 100);
+    expect(included.map(b => b.id)).toEqual(['header', 'big']);
+    expect(included[1]!.lines).toContain('── important ──');
+    expect(omissions.some(o => o.includes('big'))).toBe(true);
+    expect(included[1]!.lines.join('\n')).not.toContain('X'.repeat(500));
   });
 });

@@ -8,11 +8,11 @@ Both tools accept the same optional parameters:
 
 | Parameter | Type | Default | Notes |
 |-----------|------|---------|-------|
-| `tokenBudget` | integer 1–64000 | `briefing.maxTokens` from config (9000 when unset/invalid) | Bounds the **rendered MCP text** |
+| `tokenBudget` | integer 1–64000 | none (legacy callers unbounded) | Bounds the **rendered MCP text** when passed explicitly, or when `query` is set (falls back to `briefing.maxTokens`, 9000 when unset/invalid) |
 | `query` | string | none | Adds project-scoped task context extras |
 | `ftsQueryMode` | `literal` \| `or-terms` | `literal` | Passed through to scoped FTS for `query` |
 
-Legacy callers that omit `query` keep the previous brief shape (no `── Task context ──` block). `tim_preview_briefing` still accepts deprecated `maxTokens` as an alias for `tokenBudget` (including historical `maxTokens: 0` to omit directive briefing content).
+Legacy callers that omit both `query` and `tokenBudget` keep the previous unbounded brief shape (no `── Task context ──` block, no render clamp). `tim_preview_briefing` always bounds against the configured default when `tokenBudget` is omitted. It still accepts deprecated `maxTokens` as an alias for `tokenBudget` (including historical `maxTokens: 0` to omit directive briefing content).
 
 ### `tim_load_project` / `tim_read_project`
 
@@ -31,7 +31,7 @@ Legacy callers that omit `query` keep the previous brief shape (no `── Task 
 Rendered output is assembled as priority-ordered blocks, then packed into `tokenBudget`:
 
 1. **Header** — project label, meta, description, project summary
-2. **Active rules** — Rules section and `#rule` / `metadata.type=rule` entries
+2. **Active rules** — sections whose title is `Rules` / `Agent Rules`, or whose title contains `rule` (case-insensitive). Rule entries outside those section titles follow general section priority.
 3. **Urgent open tasks** — Tasks section (open tasks sorted by status/priority/order)
 4. **Recent session / handoff** — Recent Sessions block (newest summaries)
 5. **General sections** — Decisions, Ideas, Bugs, etc.
@@ -40,7 +40,7 @@ Rendered output is assembled as priority-ordered blocks, then packed into `token
 
 Reserved tiers (1–4) are allocated before Log volume can consume the budget. Entry loading also fetches reserved sections before Log so a huge early Log tree cannot starve later rules, tasks, or sessions under normal defaults.
 
-When the budget is exhausted, omitted blocks are listed in a trailing `… briefing omissions:` line. A final safety clamp may append `… [briefing truncated to token budget]`.
+When the budget is exhausted, omitted blocks are listed in a trailing `… briefing omissions:` line. A final safety clamp appends `… [briefing truncated to token budget]` when the assembled text still exceeds the limit (compact `…` at impossibly tiny budgets).
 
 ## Token estimation
 

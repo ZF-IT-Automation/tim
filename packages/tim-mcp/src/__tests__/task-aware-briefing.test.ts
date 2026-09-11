@@ -354,6 +354,101 @@ describe('task-aware briefing MCP contract', () => {
     expect(text).toMatch(/truncated|omitted|…/);
     expect(estimateTextTokens(text)).toBeLessThanOrEqual(8);
   });
+
+  it('keeps legacy unbounded output including drill-down footer when tokenBudget omitted', async () => {
+    client.kill();
+    await new Promise(r => setTimeout(r, 150));
+    const legacyDb = path.join(path.dirname(childServerDbPath()), `legacy-wide-${Date.now()}.db`);
+    if (fs.existsSync(legacyDb)) fs.unlinkSync(legacyDb);
+    store = new TimStore(legacyDb);
+    const project = await store.createProject('P3499', { content: 'Legacy wide fixture', memoryOnly: true });
+    for (let s = 0; s < 20; s++) {
+      const section = await store.write(`Section ${s}`, {
+        parentId: project.id,
+        metadata: { kind: 'section', label: `Section ${s}`, order: s },
+      });
+      for (let e = 0; e < 10; e++) {
+        await store.write(`Entry ${s}-${e} with a realistic ninety character title padding text`, {
+          parentId: section.id,
+          content: `body-${s}-${e}`,
+        });
+      }
+    }
+    store.close();
+    dbPath = legacyDb;
+    client = new McpClient(dbPath);
+    await client.init();
+
+    const resp = await client.callTool('tim_load_project', {
+      label: 'P3499',
+      bind: false,
+      depth: 3,
+      budget: 200,
+    });
+    const text = resp.result!.content[0].text;
+    expect(Buffer.byteLength(text, 'utf8')).toBeGreaterThan(9000);
+    expect(text).toContain('Use tim_read');
+  });
+
+  it('reserves footer and NEXT hint under explicit token budgets', async () => {
+    const resp = await client.callTool('tim_load_project', {
+      label: 'P3400',
+      bind: true,
+      tokenBudget: 9000,
+      budget: 200,
+    });
+    const text = resp.result!.content[0].text;
+    expect(text).toContain('Use tim_read');
+    expect(text).toContain('NEXT:');
+    expect(estimateTextTokens(text)).toBeLessThanOrEqual(9000);
+  });
+
+  it('includes directive preview body under default byte budget with long session rollup', async () => {
+    client.kill();
+    await new Promise(r => setTimeout(r, 150));
+    const previewDb = path.join(path.dirname(childServerDbPath()), `preview-directive-${Date.now()}.db`);
+    if (fs.existsSync(previewDb)) fs.unlinkSync(previewDb);
+    store = new TimStore(previewDb);
+    const project = await store.createProject('P9004', { content: 'Preview directive fixture', memoryOnly: true });
+    const sessionsRoot = await store.write('Sessions', {
+      parentId: project.id,
+      metadata: { kind: 'sessions-root', order: 1, render_depth: 0 },
+      tags: ['#sessions'],
+    });
+    const session = await store.write('Preview session', {
+      parentId: sessionsRoot.id,
+      metadata: { kind: 'session', sessionId: 'sess-preview-1', exchange_count: 5 },
+      tags: ['#session'],
+    });
+    await store.write('Summary', {
+      parentId: session.id,
+      metadata: {
+        kind: 'session-summary-root',
+        exchanges: 5,
+        summary: 'A'.repeat(11169),
+      },
+      tags: ['#session-summary'],
+    });
+    store.close();
+    dbPath = previewDb;
+    client = new McpClient(dbPath);
+    await client.init();
+
+    const resp = await client.callTool('tim_preview_briefing', { project: 'P9004' });
+    const text = resp.result!.content[0].text;
+    expect(text).toContain('── directive (what a start hook emits) ──');
+    expect(text).not.toMatch(/preview-directive: omitted \(token budget\)/);
+    expect(estimateTextTokens(text)).toBeLessThanOrEqual(9000);
+  });
+
+  it('preserves maxTokens:0 legacy directive suppression on preview', async () => {
+    const resp = await client.callTool('tim_preview_briefing', {
+      project: 'P3400',
+      maxTokens: 0,
+    });
+    const text = resp.result!.content[0].text;
+    expect(text).not.toContain('── directive (what a start hook emits) ──');
+  });
 });
 
 describe('formatProjectOutput task-aware unit seam', () => {
