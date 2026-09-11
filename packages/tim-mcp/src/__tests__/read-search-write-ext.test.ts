@@ -23,13 +23,13 @@ class McpClient {
   private buffer = '';
   private ready = false;
 
-  constructor(dbPath: string) {
+  constructor(dbPath: string, extraEnv: Record<string, string> = {}) {
     if (!fs.existsSync(SERVER_PATH)) {
       throw new Error(`Server dist not found: ${SERVER_PATH}. Run "npm run build" first.`);
     }
     this.proc = spawn('node', [SERVER_PATH], {
       cwd: childServerCwd(),
-      env: { ...process.env, TIM_DB_PATH: dbPath },
+      env: { ...process.env, TIM_DB_PATH: dbPath, ...extraEnv },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     this.proc.stdout!.on('data', (chunk) => this.onData(chunk.toString('utf8')));
@@ -348,9 +348,28 @@ describe('tim_search extended', () => {
   });
 
   it('propagates semantic retrieval metadata from store.search', async () => {
-    await seedScopedEntry('P0528', 'SemanticMetaNeedle alpha', ['#note', '#test']);
+    const disabledClient = new McpClient(dbPath, { TIM_EMBEDDING_DISABLED: '1' });
+    await disabledClient.init();
+    const proj = await disabledClient.callTool('tim_create_project', {
+      label: 'P0528',
+      content: 'P0528 Proj',
+      memoryOnly: true,
+    });
+    const project = JSON.parse(proj.result!.content[0].text);
+    const section = await disabledClient.callTool('tim_write', {
+      content: 'Notes',
+      parentId: project.id,
+      metadata: { kind: 'section' },
+      tags: ['#section', '#schema'],
+    });
+    const sec = JSON.parse(section.result!.content[0].text);
+    await disabledClient.callTool('tim_write', {
+      content: 'SemanticMetaNeedle alpha',
+      parentId: sec.id,
+      tags: ['#note', '#test'],
+    });
 
-    const resp = await client.callTool('tim_search', {
+    const resp = await disabledClient.callTool('tim_search', {
       query: 'SemanticMetaNeedle',
       searchType: 'hybrid',
       root: 'P0528',
@@ -358,7 +377,9 @@ describe('tim_search extended', () => {
     const response = JSON.parse(resp.result!.content[0].text);
     expect(response.semantic).toBeDefined();
     expect(response.semantic.requestedMode).toBe('hybrid');
-    expect(response.semantic.configuredModel).toBeTruthy();
+    expect(response.semantic.providerState).toBe('disabled');
+    expect(response.semantic.degradedToLexical).toBe(true);
+    disabledClient.kill();
   });
 
   it('scoped MCP search finds in-project match despite foreign dominance', async () => {

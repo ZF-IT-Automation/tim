@@ -362,7 +362,11 @@ export class TimStore implements MemoryInterface {
   private agentId: string;
   private deviceId: string;
   private readonly injectedEmbeddingProvider?: EmbeddingProvider;
-  /** Populated by the most recent search() call — MCP reads for semantic propagation. */
+  /**
+   * Populated by the most recent search() call.
+   * @deprecated Prefer searchWithSemantics() — this field is shared mutable state and
+   *   can be overwritten by concurrent searches on the same store instance.
+   */
   lastSearchSemantic: SearchSemanticInfo | null = null;
   /** Set when this open applied one or more migrations; null if none ran. */
   readonly lastMigration: MigrationRunResult | null;
@@ -2736,6 +2740,19 @@ export class TimStore implements MemoryInterface {
   }
 
   async search(options: SearchOptions): Promise<Entry[]> {
+    const { entries, semantic } = await this.searchWithSemantics(options);
+    this.lastSearchSemantic = semantic;
+    return entries;
+  }
+
+  /**
+   * Search with per-call semantic metadata — safe for concurrent use on one store.
+   * search() remains for MemoryInterface compatibility and updates lastSearchSemantic.
+   */
+  async searchWithSemantics(options: SearchOptions): Promise<{
+    entries: Entry[];
+    semantic: SearchSemanticInfo;
+  }> {
     const topK = options.topK ?? 10;
     const searchType = options.searchType ?? 'hybrid';
     const asOf = resolveSearchAsOf(options.asOf);
@@ -2744,21 +2761,25 @@ export class TimStore implements MemoryInterface {
     if (!TimStore.isUnrestrictedProjectScope(options.project)) {
       const scope = await this.resolveProjectLabel(options.project!);
       if (scope.status !== 'found') {
-        this.lastSearchSemantic = {
-          requestedMode: searchType,
-          providerState: 'unknown',
-          configuredModel: resolveConfiguredEmbeddingModelId(),
+        return {
+          entries: [],
+          semantic: {
+            requestedMode: searchType,
+            providerState: 'unknown',
+            configuredModel: resolveConfiguredEmbeddingModelId(),
+          },
         };
-        return [];
       }
       scopeRootId = (await this.read(scope.label))?.id;
       if (!scopeRootId) {
-        this.lastSearchSemantic = {
-          requestedMode: searchType,
-          providerState: 'unknown',
-          configuredModel: resolveConfiguredEmbeddingModelId(),
+        return {
+          entries: [],
+          semantic: {
+            requestedMode: searchType,
+            providerState: 'unknown',
+            configuredModel: resolveConfiguredEmbeddingModelId(),
+          },
         };
-        return [];
       }
     }
     const patterns = this.loadActiveSuppressPatterns();
@@ -2779,7 +2800,6 @@ export class TimStore implements MemoryInterface {
       providerState: 'unknown',
       configuredModel,
     };
-    this.lastSearchSemantic = semanticInfo;
 
     if (searchType === 'fts') {
       semanticInfo.providerState = 'disabled';
@@ -2787,7 +2807,10 @@ export class TimStore implements MemoryInterface {
         await this.fetchLexicalCandidates(options, fetchLimit, patterns, asOf),
         topK,
       );
-      return await this.prependDirectProjectHit(ftsOnly, options, scopeRootId, patterns, topK, asOf);
+      const entries = await this.prependDirectProjectHit(
+        ftsOnly, options, scopeRootId, patterns, topK, asOf,
+      );
+      return { entries, semantic: semanticInfo };
     }
 
     const provider = await this.resolveEmbeddingProvider();
@@ -2797,18 +2820,21 @@ export class TimStore implements MemoryInterface {
     if (searchType === 'vector') {
       if (!provider || provider.state !== 'enabled') {
         semanticInfo.vectorUnavailable = true;
-        return [];
+        return { entries: [], semantic: semanticInfo };
       }
       const queryVector = await this.embedQuery(provider, options.query);
       if (!queryVector) {
         semanticInfo.vectorUnavailable = true;
-        return [];
+        return { entries: [], semantic: semanticInfo };
       }
       const vectorHits = this.fetchVectorCandidates(
         queryVector, provider, eligibility, fetchLimit, patterns, asOf,
       );
       const ranked = this.rankVectorOnly(vectorHits, topK);
-      return await this.prependDirectProjectHit(ranked, options, scopeRootId, patterns, topK, asOf);
+      const entries = await this.prependDirectProjectHit(
+        ranked, options, scopeRootId, patterns, topK, asOf,
+      );
+      return { entries, semantic: semanticInfo };
     }
 
     // hybrid — independent lexical + vector candidates, merged before ranking
@@ -2823,7 +2849,10 @@ export class TimStore implements MemoryInterface {
         semanticInfo.vectorUnavailable = true;
       }
       const ftsOnly = this.rankByUsage(lexical, topK);
-      return await this.prependDirectProjectHit(ftsOnly, options, scopeRootId, patterns, topK, asOf);
+      const entries = await this.prependDirectProjectHit(
+        ftsOnly, options, scopeRootId, patterns, topK, asOf,
+      );
+      return { entries, semantic: semanticInfo };
     }
     const vectorHits = this.fetchVectorCandidates(
       queryVector, provider!, eligibility, fetchLimit, patterns, asOf,
@@ -2835,7 +2864,10 @@ export class TimStore implements MemoryInterface {
       provider!,
       topK,
     );
-    return await this.prependDirectProjectHit(ranked, options, scopeRootId, patterns, topK, asOf);
+    const entries = await this.prependDirectProjectHit(
+      ranked, options, scopeRootId, patterns, topK, asOf,
+    );
+    return { entries, semantic: semanticInfo };
   }
 
   /**
@@ -2857,7 +2889,7 @@ export class TimStore implements MemoryInterface {
 
   /**
    * Hybrid re-rank combining three signals:
-   *   1. FTS5 position (lexical pool only — vector-only hits have no FTS penalty)
+   *   1. FTS5 position (lexical pool; vector-only hits penalized at pool tail)
    *   2. Cosine similarity from validated vector candidates
    *   3. Graph/usage/staleness boost (from Plan 8/10)
    */
@@ -2878,6 +2910,7 @@ export class TimStore implements MemoryInterface {
     const wGraph = Number(raw[2]) || 0.5;
 
     const days = staleDays();
+    const lexicalPoolSize = lexical.length;
     const lexicalIds = new Set(lexical.map(e => e.id));
     const similarityById = new Map(vectorHits.map(h => [h.entry.id, h.similarity]));
     const candidates: Entry[] = [];
@@ -2899,6 +2932,10 @@ export class TimStore implements MemoryInterface {
       let score = 0;
       if (lexicalIds.has(e.id)) {
         score += lexical.findIndex(x => x.id === e.id) * wFts;
+      } else {
+        // Vector-only: penalize as if ranked at the end of the lexical pool so
+        // weak semantic noise cannot outrank a strong lexical match with no vector yet.
+        score += lexicalPoolSize * wFts;
       }
       const similarity = similarityById.get(e.id);
       if (similarity !== undefined) {
