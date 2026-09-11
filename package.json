@@ -13,13 +13,15 @@
     "packages/tim-migrate",
     "packages/tim-hooks",
     "packages/tim-summarizer",
-    "packages/tim-skills"
+    "packages/tim-skills",
+    "packages/tim-quality-benchmark"
   ],
   "scripts": {
     "prepare": "npm run clean && npm run build",
-    "build": "tsc -b && node scripts/ensure-executable-dist.mjs",
+    "build": "tsc -b && node packages/tim-quality-benchmark/scripts/copy-dataset.mjs && node scripts/ensure-executable-dist.mjs",
     "pretest": "npm run build",
     "test": "vitest run",
+    "benchmark:memory-quality": "node packages/tim-quality-benchmark/dist/cli.js",
     "test:build-pipeline": "npm run clean && node scripts/check-clean-output.mjs && npm run build && node scripts/check-build-output.mjs",
     "lint": "tsc -b --noEmit",
     "clean": "rm -rf packages/*/dist packages/*/tsconfig.tsbuildinfo"

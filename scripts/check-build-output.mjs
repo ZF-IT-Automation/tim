@@ -16,6 +16,7 @@ const executableEntrypoints = [
   'packages/tim-summarizer/dist/summarize.js',
   'packages/tim-hooks/dist/summarizer-supervisor.js',
   'packages/tim-sync-server/dist/cli.js',
+  'packages/tim-quality-benchmark/dist/cli.js',
 ];
 
 /**
