@@ -32,6 +32,8 @@ TIM keeps that working knowledge in a SQLite database you control. Connect agent
 - **Projects are first-class.** Explicit binding, structured sections, tasks, bugs and decisions keep different bodies of work organized.
 - **Summaries with an escape hatch.** Batch summaries and rollups compress history, while recorded exchanges remain available for inspection and re-summarization.
 - **Remember what went wrong.** Negative-memory lookup surfaces known failures. Verification, staleness and Git provenance help assess how current an entry is.
+- **Keep the reason and its source.** Attach declared evidence to decisions, inspect available source references, and explicitly replace old decisions without deleting their recorded bodies.
+- **Spend context on the work ahead.** Task-aware briefings prioritize rules, open tasks and recent sessions; explicit budgets bound the returned text.
 - **Inspect and recover.** Browse the tree, inspect health, export data, take SQLite snapshots and restore backups. Memory should be understandable and recoverable.
 
 Local storage does not mean every optional operation stays local: the configured summarizer and associative-recall CLI chain may call model providers. Optional sync sends encrypted records to your configured server. Choose these components according to your privacy and cost requirements.
@@ -96,13 +98,15 @@ TIM creates the project structure and a `.tim-project` marker. For an existing n
 | **Open work** | Tasks, priorities, bugs, ideas, status history and commit links. |
 | **Session history** | Recorded exchanges, batch summaries, rollups, handoff and resume workflows. |
 | **Topic recall** | Recover related session summaries and work items without opening every old chat. |
-| **Search** | SQLite FTS5, tag lookup and optional embedding-assisted retrieval; see beta limitations below. |
+| **Search** | Scoped SQLite FTS5, tag lookup and optional independent vector/hybrid retrieval with index-freshness checks and explicit provider diagnostics. |
+| **Task-aware briefing** | Project-scoped query context, protected rules/tasks/session selection and explicit conservative text budgets. |
 | **Associative recall** | `tim_remember` expands vague queries and uses a configured CLI chain to rerank candidates. |
 | **Relationships** | Tags and explicit graph edges such as `implements`, `blocks` and `contradicts`. |
-| **Memory trust** | Verification timestamps, stale-entry annotations and Git provenance where caller context supports it. |
+| **Memory trust** | Verification, staleness, declared evidence authority and entry/session/Git/document source references. These are inspectable signals, not proof of truth. |
+| **Changing decisions** | Half-open validity intervals, explicit `supersedes` links, historical `asOf` search and visible contradiction references. |
 | **Negative memory** | `tim_guard` searches recorded errors and learnings before an action. |
 | **Curation** | Duplicate/decay candidates, suppression, organization and reversible soft deletion. |
-| **Visibility** | CLI diagnostics, health/error statistics and a local browser-based viewer. |
+| **Visibility** | CLI diagnostics, observed session coverage, embedding backlog, local sync telemetry, error statistics and a local browser-based viewer. |
 | **Portability** | hmem import/export, SQLite snapshots and optional encrypted device sync. |
 
 The useful unit is often a decision with its reason, not a transcript fragment. Record durable knowledge explicitly; automatic summaries complement it.
@@ -129,6 +133,35 @@ tim_guard({"action":"migrate the database","project":"P0001"})
 ```
 
 No `tim_guard` matches means no matching recorded warning was found. It is not authorization or proof that an action is safe.
+
+### Follow a decision through time
+
+Declare where a decision came from, then replace it explicitly when the project changes:
+
+```text
+tim_write({
+  "where":"P0001/Decisions",
+  "title":"Keep the cache device-local",
+  "content":"The team chose not to replicate derived cache entries.",
+  "metadata":{
+    "type":"decision",
+    "evidence":{"authority":"user_asserted","sources":[]},
+    "temporal":{"validFrom":"2026-09-01T00:00:00Z"}
+  }
+})
+
+tim_link({
+  "sourceId":"<replacement-entry-id>",
+  "targetId":"<old-entry-id>",
+  "type":"supersedes",
+  "metadata":{"effectiveAt":"2026-09-11T00:00:00Z"}
+})
+
+tim_search({"query":"cache","root":"P0001","asOf":"2026-09-05T00:00:00Z"})
+tim_load_project({"label":"P0001","bind":false,"query":"cache migration","tokenBudget":6000})
+```
+
+`user_asserted` records the caller's declaration; it does not authenticate the user or verify the claim. `asOf` filters recorded validity intervals, not a versioned snapshot of every past body edit. `tokenBudget` uses a conservative UTF-8-byte estimate, not a model-specific tokenizer. See [evidence](docs/memory-evidence.md), [temporal memory](docs/temporal-memory.md) and [briefing](docs/task-aware-briefing.md) for contracts and limits.
 
 ## How memory flows
 
@@ -181,15 +214,14 @@ Moving from hmem? Follow the [migration runbook](docs/hmem-to-tim-migration.md),
 
 Local project/store/MCP/CLI workflows are implemented and covered by automated tests. Public beta still means **check the behavior you depend on**. Capture varies by host; summary usefulness depends on the configured model chain.
 
-Current review work covers [sync deletion ordering](https://github.com/Bumblebiber/tim/issues/27), [the extra secret boundary](https://github.com/Bumblebiber/tim/issues/28), [summarizer execution](https://github.com/Bumblebiber/tim/issues/29), partial-session coverage, consistent reads and scoped retrieval. Optional embedding retrieval needs work on independent semantic candidates and index freshness; do not assume complete semantic recall.
+The current source includes the September correctness fixes and extensions: replicated deletion ordering, the extra secret boundary, supervised summarizer execution, partial-session coverage, consistent reads, scoped semantic retrieval, evidence, temporal validity, task-aware briefing and memory-health diagnostics. Integration acceptance and publication status are tracked separately in the [verification status](docs/plans/2026-09-09-memory-program/IMPLEMENTATION-STATUS.md); source availability alone is not release approval.
 
-Planned improvements extend the core:
+Know the boundaries:
 
-- Verifiable evidence sources and explicit memory authority.
-- Temporal validity, superseded decisions and historical recall.
-- Task-aware briefings with predictable context budgets.
-- End-to-end coverage and backlog diagnostics.
-- Repeatable bilingual quality benchmarks with honest baselines.
+- FTS remains the default MCP search mode. Optional local embeddings need an available model and a populated, fresh index; no complete semantic-recall guarantee follows from the feature.
+- Summaries and evidence labels are inspectable records, not automatic fact verification. Contradictions are shown, not silently adjudicated.
+- Health distinguishes observed work, pending work and unknown states. Local sync timestamps do not establish current server reachability.
+- The bilingual quality benchmark is still pending integration. Synthetic fixtures can verify retrieval mechanics; they cannot establish real-model understanding or agent task success.
 
 Follow the [implementation plan](docs/plans/2026-09-09-memory-program/README.md) and [GitHub Issues](https://github.com/Bumblebiber/tim/issues). Hosted sharing and broader project-management automation are not prerequisites for local use.
 
