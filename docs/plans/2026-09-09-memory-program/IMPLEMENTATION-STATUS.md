@@ -1,6 +1,29 @@
 # Implementation status
 
-Updated: 2026-09-10. A worker report is not an integration approval. Issues stay open until the merged result is reviewed and verified.
+Updated: 2026-09-11. A worker report is not an integration approval. Issues stay open until the merged result is reviewed, verified and published.
+
+## Current checkpoint — overrides historical progress below
+
+The source through `3f35376` integrates #27–#37 locally. The original README/plan publication remains `4940fab`; source changes are not yet published or deployed. #38 benchmark is prepared but not implemented. #39 final documentation alignment remains open.
+
+| Scope | Current evidence | Remaining acceptance work |
+|---|---|---|
+| #27–#32 correctness and safety | Core fixes and follow-up hardening are integrated. Independent review accepted the final three residual fixes in `a28da0d`. | Final whole-program regression checks and publication. |
+| #33 semantic retrieval | Independent vector candidates, provider injection and fingerprint/CAS index freshness are implemented. Review identified concurrent diagnostic-state leakage and biased hybrid ranking. | Third implementation run `20260911T084329Z-yo1n`, then merged verification. |
+| #34 task-aware briefing | Protected section shares, task-aware selection and conservative UTF-8 budgeting are implemented. Review identified preview omission, spacer-block fallback and legacy/footer compatibility defects. | Third implementation run `20260911T084329Z-sljj`, then merged verification. |
+| #35 evidence and authority | Typed declared sources, visibility-aware projection and legacy metadata compatibility are implemented. First extension review found no further issue in the correction delta. | Final integrated regression checks and publication; authority remains a declaration, not authentication. |
+| #36 temporal memory | Half-open validity, explicit supersession, historical search, epoch comparison and strict merged-interval validation are integrated. | Independent merged review `20260911T084525Z-k84t`. |
+| #37 memory health | Flat/batched observed coverage, unknown states, index backlog and validated local sync telemetry are integrated. | Same independent merged review; no live-sync/production-health claim. |
+| #38 quality evaluation | Bilingual synthetic fixture and baseline contract is prepared. | Implement after dependency acceptance, then independently review and verify. |
+| #39 documentation | README and plan are published; focused new feature docs exist locally. | Align public overview with final verified behavior and publish. |
+
+Parent verification at `3f35376`: isolated build succeeded; seven temporal/coverage/health suites passed **59/59 tests**, including actual CLI and MCP paths. Last completed parent full run at `83a3613`: **1,984 passed, two failed, two skipped**. Both failures are in the assigned semantic correction scope. A new full run is underway; focused green tests do not replace it.
+
+The [run ledger](RUN-LEDGER.md) records stable per-ticket attempts and separately charged integration reviews. User/host quota pauses and terminal-worker idle time are not execution. The user explicitly directed continuation in this host after reporting reset usage. No roster settings were changed. TIM MCP transport is currently unavailable; pending memory updates are not claimed as completed.
+
+## Historical checkpoints
+
+The sections below preserve the sequence of earlier findings. They do not describe current outstanding defects unless repeated in the table above.
 
 ## Resumed implementation
 
