@@ -20,7 +20,7 @@ export const CALLER_TEMPORAL_FIELDS = ['validFrom', 'validUntil'] as const;
 export const SYSTEM_TEMPORAL_FIELDS = ['supersededAt', 'supersededBy'] as const;
 
 const ISO_WITH_TZ_RE =
-  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.(\d+))?(?:Z|[+-]\d{2}:\d{2})$/;
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.(\d+))?(Z|[+-]\d{2}:\d{2})$/;
 
 const MAX_FRACTION_DIGITS = 3;
 
@@ -33,7 +33,8 @@ export type IsoValidationResult =
   | { ok: false; reason: string };
 
 function isRealCalendarDate(year: number, month: number, day: number): boolean {
-  const probe = new Date(Date.UTC(year, month - 1, day));
+  const probe = new Date(0);
+  probe.setUTCFullYear(year, month - 1, day);
   return (
     probe.getUTCFullYear() === year
     && probe.getUTCMonth() === month - 1

@@ -60,6 +60,13 @@ describe('temporal metadata validation', () => {
     expect(isoTimestampToEpochMs(z)).toBe(isoTimestampToEpochMs(offset));
     expect(normalizeIsoTimestamp(offset)).toBe('2026-03-15T12:00:00.000Z');
   });
+
+  it('validates offset bounds independently of Date.parse and preserves early ISO years', () => {
+    expect(isTimezoneQualifiedIso('2026-01-01T00:00:00+14:01')).toBe(false);
+    expect(isTimezoneQualifiedIso('2026-01-01T00:00:00-15:00')).toBe(false);
+    expect(isTimezoneQualifiedIso('2026-01-01T00:00:00+14:00')).toBe(true);
+    expect(normalizeIsoTimestamp('0099-01-01T00:00:00Z')).toBe('0099-01-01T00:00:00.000Z');
+  });
 });
 
 describe('parseTemporalMetadata', () => {

@@ -2193,7 +2193,15 @@ export class TimStore implements MemoryInterface {
           if (!patchValidation.ok) {
             throw new Error(`Invalid metadata.temporal: ${patchValidation.errors.join('; ')}`);
           }
-          patchMeta.temporal = mergeCallerTemporalMetadata(existingTemporal, patchValidation.temporal);
+          const mergedTemporal = mergeCallerTemporalMetadata(existingTemporal, patchValidation.temporal);
+          const mergedValidation = validateCallerTemporalMetadata({
+            ...(mergedTemporal.validFrom !== undefined ? { validFrom: mergedTemporal.validFrom } : {}),
+            ...(mergedTemporal.validUntil !== undefined ? { validUntil: mergedTemporal.validUntil } : {}),
+          });
+          if (!mergedValidation.ok) {
+            throw new Error(`Invalid metadata.temporal: ${mergedValidation.errors.join('; ')}`);
+          }
+          patchMeta.temporal = mergedTemporal;
         } else {
           rejectForgedTemporalSupersession(patchMeta);
           assertValidCallerTemporalMetadata(patchMeta);
