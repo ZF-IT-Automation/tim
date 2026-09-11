@@ -22,6 +22,7 @@ Each substantive run is assigned once to a stable ticket or integration scope. T
 
 ## Collected results
 
+- Parent full-suite run at `2e9aad9` passed **243/243 files; 2,054 tests passed, two skipped**, in92.73seconds on Node24.14. Previous semantic failures are resolved. Fresh Node22 install and clean-build checks are being verified separately.
 - `yo1n` failed its completion protocol but committed `3c7e3ed`; recovered and merged without another worker invocation. Parent `24ad366` corrects the still-missing enabled-provider/no-index fallback and adds the actual regression. Nine focused search/MCP/temporal suites pass **77/77 tests**. The unavailable-provider-only test was insufficient and was not accepted as proof of this case.
 - `sljj` completed `483d2c9`; parent `2e9aad9` adds exact separator accounting before protected response tails. Two briefing suites pass **27/27 tests**, including all budgets 1–400 bytes with Unicode and the protected NEXT hint.
 - Parent whole-suite run at `3f35376` completed with **2,037 passed, two failed, two skipped** across 241 files; the two known semantic failures were subsequently corrected above. A new full run at `2e9aad9` is pending.
