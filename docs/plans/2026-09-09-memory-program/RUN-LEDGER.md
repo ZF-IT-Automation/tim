@@ -21,6 +21,9 @@ Each substantive run is assigned once to a stable ticket or integration scope. T
 
 ## Collected results
 
+- `yo1n` failed its completion protocol but committed `3c7e3ed`; recovered and merged without another worker invocation. Parent `24ad366` corrects the still-missing enabled-provider/no-index fallback and adds the actual regression. Nine focused search/MCP/temporal suites pass **77/77 tests**. The unavailable-provider-only test was insufficient and was not accepted as proof of this case.
+- `sljj` completed `483d2c9`; parent `2e9aad9` adds exact separator accounting before protected response tails. Two briefing suites pass **27/27 tests**, including all budgets 1–400 bytes with Unicode and the protected NEXT hint.
+- Parent whole-suite run at `3f35376` completed with **2,037 passed, two failed, two skipped** across 241 files; the two known semantic failures were subsequently corrected above. A new full run at `2e9aad9` is pending.
 - At `3f35376`, parent isolated build and seven targeted suites pass **59/59 tests**, including actual CLI/MCP temporal and health paths. This is not a full-suite result.
 - `oo7e` completed the first extension integration review: eight reproducible/documentation findings, assigned to #33/#34 corrections above. Evidence correction checks produced no further finding. The last full suite on `83a3613` had **1,984 passed, two failed, two skipped**; hybrid usage ranking and network-dependent MCP metadata tests are included in #33 correction scope. Temporal worker's later full run also failed the known usage test; it is not accepted as a flake.
 - `iern` and `nnvh` completion reports were recovered after their Codex transport watchers hit host quota. Their external workers completed; no duplicate implementations were launched. Parent found and corrected missing timezone-offset capture and combined-interval validation before the second independent review.
