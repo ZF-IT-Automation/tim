@@ -84,7 +84,8 @@ function tryPartialBlockInclusion(
   const outLines = [...prefixLines];
   const restText = block.lines.slice(firstIdx + 1).join('\n');
   let truncated = false;
-  if (restText && ledger.remaining > 0) {
+  if (restText && ledger.remaining > 1) {
+    tryChargeTokens(ledger, '\n');
     const partial = chargePartialTokens(ledger, restText);
     truncated = partial.truncated;
     if (partial.text) outLines.push(...partial.text.split('\n'));
@@ -148,7 +149,7 @@ function mergeBlockSelections(
     omissions: [...a.omissions, ...b.omissions],
     ledger: {
       limit: a.ledger.limit,
-      used: a.ledger.used + b.ledger.used,
+      used: a.ledger.used + b.ledger.used + (a.included.length && b.included.length ? 1 : 0),
       remaining: b.ledger.remaining,
     },
   };
@@ -186,7 +187,7 @@ function selectContentBriefingBlocks(
     reservedUsed = reservedResult.ledger.used;
   }
 
-  const generalBudget = Math.max(0, tokenBudget - reservedUsed);
+  const generalBudget = Math.max(0, tokenBudget - reservedUsed - (reservedResult.included.length ? 1 : 0));
   const generalResult = selectBriefingBlocks(general, generalBudget);
   return mergeBlockSelections(reservedResult, generalResult);
 }
@@ -234,20 +235,21 @@ export function assembleBoundedBriefingText(
     };
   }
 
-  const omissionsReserve = Math.min(80, Math.max(0, tokenBudget - tailCost));
-  const contentBudget = Math.max(0, tokenBudget - tailCost - omissionsReserve);
+  // Reserve the newline between content and the protected tail as well as the tail itself.
+  const contentLimit = Math.max(0, tokenBudget - tailCost - 1);
+  const omissionsReserve = Math.min(80, contentLimit);
+  const contentBudget = Math.max(0, contentLimit - omissionsReserve);
 
   const { included, omissions } = selectContentBriefingBlocks(contentBlocks, contentBudget);
   const contentLines: string[] = [];
   for (const block of included) contentLines.push(...block.lines);
   const omissionsLine = formatOmissionsLine(
     omissions,
-    Math.max(0, tokenBudget - tailCost - estimateTextTokens(contentLines.join('\n'))),
+    Math.max(0, contentLimit - estimateTextTokens(contentLines.join('\n')) - 2),
   );
   if (omissionsLine) contentLines.push('', omissionsLine);
 
   const contentJoined = contentLines.join('\n');
-  const contentLimit = Math.max(0, tokenBudget - tailCost);
   const contentEstimate = estimateTextTokens(contentJoined);
   const contentBounded = contentEstimate > contentLimit
     ? boundRenderedText(contentJoined, contentLimit)

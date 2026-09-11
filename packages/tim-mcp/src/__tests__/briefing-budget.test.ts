@@ -8,7 +8,7 @@ import {
   BRIEFING_TRUNCATION_MARKER,
   byteBudgetToHookMaxTokens,
 } from '../briefing-budget.js';
-import { selectBriefingBlocks, type BriefingBlock } from '../task-aware-selection.js';
+import { assembleBoundedBriefingText, selectBriefingBlocks, type BriefingBlock } from '../task-aware-selection.js';
 
 describe('briefing-budget', () => {
   it('estimates tokens from UTF-8 bytes conservatively', () => {
@@ -77,6 +77,23 @@ describe('briefing-budget', () => {
 });
 
 describe('selectBriefingBlocks partial inclusion', () => {
+  it('charges body separators and keeps protected tails inside every explicit budget', () => {
+    const blocks: BriefingBlock[] = [
+      { id: 'header', priority: 0, order: 0, lines: ['Header', '🙂'.repeat(100)] },
+      { id: 'rules', priority: 1, order: 1, lines: ['', 'Rules', 'über'.repeat(100)] },
+      { id: 'footer', priority: 4, order: 2, lines: ['', 'Use tim_read'] },
+    ];
+    for (let budget = 1; budget <= 400; budget++) {
+      const selection = selectBriefingBlocks(blocks, budget);
+      const selectedText = selection.included.flatMap(block => block.lines).join('\n');
+      expect(Buffer.byteLength(selectedText), `selection budget=${budget}`).toBe(selection.ledger.used);
+      expect(selection.ledger.used).toBeLessThanOrEqual(budget);
+      const assembled = assembleBoundedBriefingText(blocks, budget, ['NEXT: inspect tasks']);
+      expect(Buffer.byteLength(assembled.text), `assembly budget=${budget}`).toBeLessThanOrEqual(budget);
+      expect(assembled.text).not.toContain('\uFFFD');
+      if (budget >= 100) expect(assembled.text).toContain('NEXT: inspect tasks');
+    }
+  });
   it('returns trimmed block text matching charged budget', () => {
     const blocks: BriefingBlock[] = [{
       id: 'multi',
