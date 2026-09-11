@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { TimStore } from '../store.js';
+import { TimStore, createDisabledEmbeddingProvider } from '../index.js';
 
 describe('usage-weighted search ranking', () => {
   let dir: string;
@@ -10,7 +10,9 @@ describe('usage-weighted search ranking', () => {
 
   beforeEach(() => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tim-test-'));
-    store = new TimStore(path.join(dir, 'test.db'));
+    store = new TimStore(path.join(dir, 'test.db'), {
+      embeddingProvider: createDisabledEmbeddingProvider(),
+    });
     delete process.env.TIM_USAGE_RANKING;
   });
 

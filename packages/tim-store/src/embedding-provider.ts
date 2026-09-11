@@ -114,7 +114,18 @@ export async function getDefaultEmbeddingProvider(
     try {
       const { EmbeddingModel, FlagEmbedding } = await import('fastembed');
       const spec = SUPPORTED_EMBEDDING_MODELS[modelId]!;
-      const embedder = await FlagEmbedding.init({ model: EmbeddingModel.AllMiniLML6V2 });
+      const fastembedModel = Object.values(EmbeddingModel).find(v => v === spec.fastembedEnum);
+      if (!fastembedModel) {
+        return createUnavailableEmbeddingProvider(modelId);
+      }
+      type StandardModel = typeof EmbeddingModel.AllMiniLML6V2;
+      const embedder = await FlagEmbedding.init({ model: fastembedModel as StandardModel });
+      const probeGen = embedder.embed([''], 1);
+      const probeBatch = await probeGen.next();
+      const probeVec = probeBatch.value?.[0];
+      if (!probeVec || probeVec.length !== spec.dimension) {
+        return createUnavailableEmbeddingProvider(modelId);
+      }
       const provider: EmbeddingProvider = {
         modelId,
         dimension: spec.dimension,
@@ -124,7 +135,13 @@ export async function getDefaultEmbeddingProvider(
           const batch = await gen.next();
           const vectors = batch.value;
           if (!vectors) return [];
-          return vectors.map(v => new Float32Array(v));
+          return vectors.map(v => {
+            const arr = new Float32Array(v);
+            if (arr.length !== spec.dimension) {
+              throw new Error(`embedding dimension mismatch: expected ${spec.dimension}, got ${arr.length}`);
+            }
+            return arr;
+          });
         },
       };
       cachedDefault = provider;
@@ -152,4 +169,9 @@ export interface SearchSemanticInfo {
   degradedToLexical?: boolean;
   /** Vector mode with no provider — empty results, not semantic success. */
   vectorUnavailable?: boolean;
+}
+
+export interface SearchWithSemanticsResult {
+  entries: import('tim-core').Entry[];
+  semantic: SearchSemanticInfo;
 }

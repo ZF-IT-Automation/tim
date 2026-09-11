@@ -2482,7 +2482,7 @@ export async function createMcpServer(
             };
           }
           const usageSid = await usageSessionId();
-          let { response, results } = await executeTimSearch(s, parsed);
+          let { response, results, semantic } = await executeTimSearch(s, parsed);
           if (root) {
             const roots = await resolveRoots(s, root);
             if (roots.error) {
@@ -2498,7 +2498,7 @@ export async function createMcpServer(
             response = {
               ...buildBoundedSearchResponse(results, excerptChars),
               ...(response.clamped ? { clamped: response.clamped } : {}),
-              ...(s.lastSearchSemantic ? { semantic: s.lastSearchSemantic } : {}),
+              ...(semantic ? { semantic } : {}),
             };
           }
           bestEffortTelemetry('recordRead', () =>
