@@ -288,6 +288,17 @@ const TimLinkSchema = z.object({
   metadata: z.record(z.unknown()).optional().default({}),
 });
 
+const TimUnlinkSchema = z.object({
+  edgeId: z.string().describe('Edge id returned by tim_link or tim_trace'),
+  targetValidity: z.object({
+    validFrom: z.string().optional(),
+    validUntil: z.string().optional(),
+  }).optional().describe(
+    'Required for older supersedes edges without a stored prior-target snapshot. ' +
+    'Pass {} to restore an unbounded target validity interval.',
+  ),
+});
+
 const TimTraceSchema = z.object({
   startId: z.string(),
   edgeType: z.string().optional(),
@@ -720,6 +731,13 @@ export const TOOL_DEFS: Array<{
     name: 'tim_link',
     description: 'Create an edge (relationship) between two entries.',
     schema: TimLinkSchema,
+  },
+  {
+    name: 'tim_unlink',
+    description:
+      'Remove an edge. For supersedes edges, also restores managed temporal state when safe. ' +
+      'Older edges without a stored prior-target snapshot require targetValidity.',
+    schema: TimUnlinkSchema,
   },
   {
     name: 'tim_trace',
@@ -2019,7 +2037,7 @@ async function writeEntry(
 
 
 const WRITE_TOOLS = new Set([
-  'tim_write', 'tim_write_many', 'tim_update', 'tim_verify', 'tim_delete', 'tim_delete_batch', 'tim_link',
+  'tim_write', 'tim_write_many', 'tim_update', 'tim_verify', 'tim_delete', 'tim_delete_batch', 'tim_link', 'tim_unlink',
   'tim_session_start', 'tim_session_resume', 'tim_session_log', 'tim_checkpoint', 'tim_write_batch_summary',
   'tim_rollup_session_summary',
   'tim_record_commit',
@@ -2670,6 +2688,18 @@ export async function createMcpServer(
           }
           return {
             content: [{ type: 'text', text: formatToolResponse(edge) }],
+          };
+        }
+
+        case 'tim_unlink': {
+          const { edgeId, targetValidity } = TimUnlinkSchema.parse(args);
+          try {
+            await s.unlink(edgeId, { targetValidity });
+          } catch (err) {
+            return errorResult(err instanceof Error ? err.message : String(err));
+          }
+          return {
+            content: [{ type: 'text', text: formatToolResponse({ ok: true, edgeId }) }],
           };
         }
 
