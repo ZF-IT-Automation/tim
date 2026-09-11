@@ -6,6 +6,8 @@ All notable changes to TIM are documented in this file.
 
 ### Added
 
+- **Memory quality evaluation** — bilingual, agent-authored fixtures compare no-memory, fixed-handoff and TIM against the same expected evidence and 4096-byte context budget. Reports expose misses, irrelevant evidence, costs and limitations; synthetic default runs do not claim real-model or agent-task quality. The optional real-provider path reports an explicit skip when unavailable.
+- **Supersession recovery** — `tim_unlink` restores saved validity atomically and refuses conflicting edits or dependent supersession edges. Legacy edges require an explicit target-validity choice and preserve unknown source history.
 - **Declared evidence and authority** — typed entry, session-sequence, Git and document sources; visibility-aware read projection; validation of caller patches without preventing unrelated edits to legacy metadata. Authority labels describe declarations, not authentication.
 - **Temporal decisions** — half-open validity intervals, atomic same-project `supersedes` links, contradiction references and current/historical `asOf` retrieval. Timestamps are validated and compared as instants; historical body revisions are not reconstructed.
 - **Task-aware project context** — scoped query extras, protected section selection and explicit conservative UTF-8-byte budgets for rendered MCP briefings.

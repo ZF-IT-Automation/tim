@@ -70,7 +70,7 @@ Labels use the `gold:<slug>` prefix in fixture JSON and handoff text. Entry bodi
 Per question and mode:
 
 - `evidence`: `expected`, `found`, `missing`, `irrelevant` (only evidence retained within the context budget)
-- `metrics`: `precision`, `recall`, `meanFirstRank`, `ranks` (null when denominator zero; non-gold retained hits count in precision denominator)
+- `metrics`: `precision`, `recall`, `meanFirstRank`, `ranks` (null when denominator zero; non-gold retained search hits and marked briefing noise count in the precision denominator). These are fixture evidence-unit metrics, not a classification of every word of boilerplate.
 - `contextBytes`, `estimatedTokens` (UTF-8 byte heuristic), `latencyMs` (local wall-clock)
 - `provider`: mode (`synthetic` \| `real`), model id, state, search metadata
 
@@ -80,6 +80,7 @@ Run-level:
 - `baselineObservations`: computed from output (no fabricated improvements)
 - `notMeasured`: `agent_task_success`, `maintenance_savings`, `universal_superiority`
 - `memoryHealth`: snapshot from fixture store
+- Sync telemetry is read from the temporary fixture directory, not the user's TIM configuration.
 - `limitations`: explicit scope boundaries
 
 ## Interpretation
