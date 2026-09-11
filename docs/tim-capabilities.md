@@ -15,13 +15,14 @@ SQLite is the local system of record. MCP exposes agent-facing tools. The CLI pr
 | Project knowledge | Project roots, structured sections, explicit binding, labels and aliases; rules, decisions and codebase notes. | Structure helps organization; it does not verify the truth of a note. |
 | Work tracking | Tasks, nested status/priority metadata, bugs, ideas, ordering and commit links. | This is memory around work, not a replacement for a team's issue tracker. |
 | Sessions | Exchange logging, batch summaries, rollups, checkpoints, handoff, session resume and topic recall. | Automatic capture depends on host hooks. Summarizer availability and quality depend on the configured chain. |
-| Briefing | Project loading, section/depth controls, summary-first reads and briefing preview. | Budget and priority behavior are being strengthened in [#34](https://github.com/Bumblebiber/tim/issues/34). |
-| Retrieval | SQLite FTS5, scoped search (`root`, `type`, `tag`, `status` before limits), tags, optional embedding-assisted ranking (`searchType: 'hybrid'`/`'vector'`) and associative recall through a CLI model chain. `tim_search` defaults to `searchType: 'fts'` (FTS-only ranking). | Semantic candidate expansion and vector freshness are tracked in [#33](https://github.com/Bumblebiber/tim/issues/33). User FTS queries: uppercase `AND` = intersection; lowercase `and`/`or` = literal. Generated prompt recall uses `or-terms` mode. |
+| Briefing | Project loading, section/depth controls, summary-first reads, task-scoped query context, protected section shares and explicitly bounded preview/load text. | UTF-8 byte budgets are conservative estimates, not exact model token counts. See [briefing contracts](task-aware-briefing.md) for default/legacy behavior and tiny-budget limits. |
+| Retrieval | SQLite FTS5, scoped search (`root`, `type`, `tag`, `status` before limits), independent vector/hybrid candidate pools, fingerprint-based index freshness and associative recall through a CLI model chain. `tim_search` defaults to `searchType: 'fts'`. | Vector retrieval needs a supported available provider and fresh index. Structural kinds are excluded from vectors; see [semantic retrieval](semantic-retrieval.md). User FTS queries: uppercase `AND` = intersection; lowercase `and`/`or` = literal. Generated prompt recall uses `or-terms` mode. |
 | Relationships | Explicit edges and tracing, including relationships between decisions, tasks and commits. | An edge records an assertion, not proof of causality. |
-| Trust signals | Verification timestamps, staleness annotations and best-effort Git provenance. | Missing warnings do not prove that a memory is current. Git provenance is context, not source evidence or access control. |
+| Trust signals | Verification timestamps, staleness, best-effort Git provenance and typed declared entry/session/Git/document evidence. | [Evidence authority](memory-evidence.md) is a caller declaration, not authentication or fact verification. Source availability is not proof of truth. |
+| Temporal decisions | Explicit validity intervals, same-project supersession, current/historical search and visible contradiction references. | [Temporal memory](temporal-memory.md) filters recorded intervals; it does not reconstruct every past body revision or resolve contradictory claims automatically. |
 | Negative memory | Guard lookup for recorded failures/learnings, suppression and reversible irrelevant flags. | A clear guard result means no matching recorded warning, not permission to proceed. |
 | Curation | Duplicate discovery, structural inspection, import audit, moves, tags and bulk operations. | Preview and back up before material restructuring. |
-| Operations | Doctor, health and error statistics, local viewer, SQLite snapshots and restore. | Verify recovery on an isolated copy. Temporary snapshot storage is not durable backup. |
+| Operations | Doctor, observed summary coverage, unknown/pending states, embedding backlog, local sync telemetry, error statistics, viewer, snapshots and restore. | [Memory health](memory-health.md) does not initialize models or contact sync servers. Database-opening migrations are a separate boundary. Verify recovery on an isolated copy; temporary snapshot storage is not durable backup. |
 | Portability | hmem import/export and optional encrypted device sync. | Export policy and encryption are separate concerns; inspect secret-marked subtrees before sharing. |
 
 ## Storage and privacy
@@ -35,7 +36,7 @@ Optional operations have different data flows:
 - Sync sends encrypted envelopes to the configured service. The ordinary sync key and the additional secret passphrase represent distinct boundaries.
 - Usage feedback is device-local ranking telemetry; it is not evidence that users on another device found an entry useful.
 
-Secret-boundary enforcement and delete ordering are under active verification in [#28](https://github.com/Bumblebiber/tim/issues/28) and [#27](https://github.com/Bumblebiber/tim/issues/27). Do not infer production readiness from the existence of an encryption feature.
+Secret-boundary enforcement and replicated delete ordering include reviewed corrections in [#28](https://github.com/Bumblebiber/tim/issues/28) and [#27](https://github.com/Bumblebiber/tim/issues/27). Final integration/publication status is tracked in the [implementation status](plans/2026-09-09-memory-program/IMPLEMENTATION-STATUS.md). Do not infer production readiness from the existence of an encryption feature.
 
 ## Public surfaces
 
