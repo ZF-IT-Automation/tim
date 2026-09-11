@@ -315,7 +315,7 @@ export async function runBenchmark(options: RunOptions = {}): Promise<BenchmarkR
   const questionReports: BenchmarkReport['questions'] = [];
 
   try {
-    memoryHealth = await computeMemoryHealth(fixture.store);
+    memoryHealth = await computeMemoryHealth(fixture.store, { telemetryDir: fixture.tmpDir });
     for (const question of dataset.questions) {
       let timContext = '';
       let timOrderedEvidence: string[] = [];

@@ -71,6 +71,10 @@ describe('memory quality benchmark (#38)', () => {
     ]);
     expect(report.notMeasured).toContain('agent_task_success');
     expect(report.memoryHealth).toBeDefined();
+    expect(report.memoryHealth).toMatchObject({
+      summaryCoverage: { observedExchangeCount: 3, coveredExchangeCount: 2, pendingExchangeCount: 1 },
+      sync: { telemetryState: 'not_configured' },
+    });
     expect(report.baselineObservations.length).toBeGreaterThan(0);
 
     for (const q of report.questions) {
@@ -217,6 +221,15 @@ describe('memory quality benchmark (#38)', () => {
     expect(metrics.precision).toBe(0.5);
     const outcome = computeEvidenceOutcome(['gold:motor-transport'], ordered);
     expect(outcome.irrelevant).toContain(`${NON_GOLD_MARKER_PREFIX}entry-b`);
+  });
+
+  it('retains unknown and non-gold briefing markers in observed order', () => {
+    const found = extractGoldFromContextInOrder(
+      '[retrieved:log-1] [gold:session-partial] [gold:task-auth]',
+      ['gold:task-auth'],
+    );
+    expect(found).toEqual(['retrieved:log-1', 'gold:session-partial', 'gold:task-auth']);
+    expect(computeRetrievalMetrics(['gold:task-auth'], found).precision).toBe(1 / 3);
   });
 
   it('drops gold evidence truncated by context budget', () => {

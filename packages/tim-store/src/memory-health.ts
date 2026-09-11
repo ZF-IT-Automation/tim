@@ -13,7 +13,6 @@ import type {
 import { getTimDir, isTimezoneQualifiedIso } from 'tim-core';
 import type { Entry } from 'tim-core';
 import type { TimStore } from './store.js';
-import { getUnackedStaging } from './sync-methods.js';
 import { deriveSessionCoverage } from './session-coverage.js';
 import { KIND_BATCH, KIND_SESSION, KIND_SUMMARY_ROOT } from './session-tree.js';
 import type { SemanticIndexHealthReport } from './vector-index.js';
@@ -41,9 +40,9 @@ function parseSyncTimestamp(value: unknown): string | null {
   return isValidIsoTimestamp(value) ? value : null;
 }
 
-function readSyncTelemetry(unackedStaging: number): MemorySyncTelemetryReport {
-  const syncConfigPath = path.join(getTimDir(), 'sync.json');
-  const syncStatePath = path.join(getTimDir(), 'sync-state.json');
+function readSyncTelemetry(unackedStaging: number, telemetryDir: string): MemorySyncTelemetryReport {
+  const syncConfigPath = path.join(telemetryDir, 'sync.json');
+  const syncStatePath = path.join(telemetryDir, 'sync-state.json');
   if (!fs.existsSync(syncConfigPath)) {
     return {
       telemetryState: 'not_configured',
@@ -497,9 +496,13 @@ async function computeSummaryCoverage(store: TimStore): Promise<MemorySummaryCov
 }
 
 /** Shared read-only memory diagnostics for health/doctor (#37). */
-export async function computeMemoryHealth(store: TimStore): Promise<MemoryHealthReport> {
-  const unackedStaging = getUnackedStaging(store.getDb()).length;
-  const sync = readSyncTelemetry(unackedStaging);
+export async function computeMemoryHealth(
+  store: TimStore,
+  options: { telemetryDir?: string } = {},
+): Promise<MemoryHealthReport> {
+  const unackedStaging = (store.getDb().prepare('SELECT COUNT(*) AS count FROM staging WHERE acked = 0')
+    .get() as { count: number }).count;
+  const sync = readSyncTelemetry(unackedStaging, options.telemetryDir ?? getTimDir());
   const summaryCoverage = await computeSummaryCoverage(store);
   const semanticIndex = store.getSemanticIndexHealth();
   const guidance = buildGuidance(summaryCoverage, semanticIndex, sync);
