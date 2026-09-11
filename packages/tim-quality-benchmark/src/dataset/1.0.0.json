@@ -1,0 +1,142 @@
+{
+  "schemaVersion": "1.0.0",
+  "datasetId": "memory-quality-v1",
+  "provenance": "Human-authored synthetic gold labels for local benchmark only. Evidence IDs are fixture conventions, not production entry IDs.",
+  "projectLabel": "P3800",
+  "adversarialProjectLabel": "P3801",
+  "contextBudget": 4096,
+  "fixedHandoff": {
+    "text": "# P3800 handoff (fixture, fixed before queries)\n\n## Session summary\nWorked on deployment policy and auth rollout.\n\n## Active rules\n- Always run tests before merge.\n\n## Urgent tasks\n- Ship auth middleware fix (high priority)\n\n## Decisions\n- Current deployment policy: blue-green only after staging sign-off. (gold:decision-current)\n\n## Notes\n- Kraftfahrzeug maintenance window is Tuesday 02:00 UTC. (gold:motor-transport)\n",
+    "containsGold": ["gold:decision-current", "gold:motor-transport"]
+  },
+  "entries": [
+    {
+      "goldLabel": "gold:motor-transport",
+      "title": "Kraftfahrzeug Wartungsfenster",
+      "body": "Interne Verbrennung und Fleet-Checkliste. Kein englisches Automobil-Vokabular.",
+      "section": "Ideas",
+      "tags": ["#transport", "#fleet"],
+      "vectorHint": "motor"
+    },
+    {
+      "goldLabel": "gold:adversarial-b-noise",
+      "title": "Automobile marketing copy",
+      "body": "Unrelated sedan brochure text for adversarial similar project.",
+      "section": "Ideas",
+      "tags": ["#noise"],
+      "project": "P3801",
+      "vectorHint": "noise"
+    },
+    {
+      "goldLabel": "gold:decision-v1",
+      "title": "Deployment policy v1",
+      "body": "Rolling deploy allowed without staging gate.",
+      "section": "Decisions",
+      "tags": ["#decision"],
+      "vectorHint": "decision",
+      "temporal": { "validFrom": "2025-01-01T00:00:00Z", "validUntil": "2026-06-01T00:00:00Z" }
+    },
+    {
+      "goldLabel": "gold:decision-current",
+      "title": "Deployment policy v2",
+      "body": "Blue-green only after staging sign-off.",
+      "section": "Decisions",
+      "tags": ["#decision"],
+      "vectorHint": "decision",
+      "temporal": { "validFrom": "2026-03-01T00:00:00Z" },
+      "supersedesGold": "gold:decision-v1"
+    },
+    {
+      "goldLabel": "gold:session-partial",
+      "title": "Partial session checkpoint",
+      "body": "Covered exchanges 1-2; tail still pending summarization.",
+      "section": "Sessions",
+      "tags": ["#session-summary"]
+    },
+    {
+      "goldLabel": "gold:rule-tests",
+      "title": "Always run tests before merge",
+      "body": "Agent rule for CI hygiene.",
+      "section": "Rules",
+      "tags": ["#rule"],
+      "vectorHint": "rule"
+    },
+    {
+      "goldLabel": "gold:task-auth",
+      "title": "Ship auth middleware fix",
+      "body": "Urgent open task for OAuth callback regression.",
+      "section": "Tasks",
+      "tags": ["#task"],
+      "vectorHint": "auth"
+    }
+  ],
+  "questions": [
+    {
+      "id": "q-en-synonym",
+      "lang": "en",
+      "text": "What do we know about automobiles?",
+      "path": "search",
+      "searchType": "vector",
+      "expectedGold": ["gold:motor-transport"],
+      "irrelevantGold": ["gold:adversarial-b-noise"],
+      "handoffContainsGold": ["gold:motor-transport"]
+    },
+    {
+      "id": "q-de-synonym",
+      "lang": "de",
+      "text": "Was wissen wir über Kraftfahrzeuge?",
+      "path": "search",
+      "searchType": "hybrid",
+      "expectedGold": ["gold:motor-transport"],
+      "irrelevantGold": ["gold:adversarial-b-noise"],
+      "handoffContainsGold": ["gold:motor-transport"]
+    },
+    {
+      "id": "q-en-adversarial-scope",
+      "lang": "en",
+      "text": "automobile marketing",
+      "path": "search",
+      "searchType": "hybrid",
+      "expectedGold": [],
+      "irrelevantGold": ["gold:adversarial-b-noise"],
+      "handoffContainsGold": []
+    },
+    {
+      "id": "q-en-decision-current",
+      "lang": "en",
+      "text": "What is the current deployment policy?",
+      "path": "search",
+      "searchType": "hybrid",
+      "expectedGold": ["gold:decision-current"],
+      "irrelevantGold": ["gold:decision-v1"],
+      "handoffContainsGold": ["gold:decision-current"]
+    },
+    {
+      "id": "q-en-decision-before",
+      "lang": "en",
+      "text": "What was the deployment policy in February 2026?",
+      "path": "search",
+      "searchType": "hybrid",
+      "expectedGold": ["gold:decision-v1"],
+      "irrelevantGold": ["gold:decision-current"],
+      "temporalAsOf": "2026-02-15T12:00:00Z",
+      "handoffContainsGold": []
+    },
+    {
+      "id": "q-en-briefing-rules",
+      "lang": "en",
+      "text": "merge policy tests",
+      "path": "briefing",
+      "expectedGold": ["gold:rule-tests", "gold:task-auth"],
+      "handoffContainsGold": ["gold:rule-tests", "gold:task-auth"]
+    },
+    {
+      "id": "q-de-briefing-session",
+      "lang": "de",
+      "text": "auth middleware",
+      "path": "briefing",
+      "expectedGold": ["gold:task-auth"],
+      "handoffContainsGold": ["gold:task-auth"]
+    }
+  ]
+}
