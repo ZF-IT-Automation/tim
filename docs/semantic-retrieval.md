@@ -10,7 +10,7 @@ Device-local vector search complements lexical FTS. Vectors are never synced; ea
 | `vector` | Scoped vector candidates only. Empty results when the provider is disabled or unavailable — not reported as semantic success. |
 | `hybrid` | Independent lexical + vector candidate pools, merged and deduplicated before ranking. Degrades deterministically to lexical-only when embedding is unavailable. |
 
-MCP `tim_search` propagates the store's `lastSearchSemantic` metadata on each response under `semantic`.
+MCP `tim_search` propagates per-call semantic metadata on each response under `semantic`, sourced from `searchWithSemantics()` (not shared store state). `store.lastSearchSemantic` remains as a deprecated alias updated only by `search()`.
 
 ## Configuration
 
@@ -71,13 +71,33 @@ This accessor performs SQL counts only — it never loads a model. Absence of ve
 
 ## Benchmark hook (#38 additive interface)
 
-Quality evaluation should call `store.search()` with `searchType: 'vector' | 'hybrid'` and read `store.lastSearchSemantic` for degradation flags. Use golden queries with injected vectors in CI; optional real-model smoke:
+Quality evaluation should call `store.searchWithSemantics()` with `searchType: 'vector' | 'hybrid'` and read the returned `semantic` object for degradation flags. Use golden queries with injected vectors in CI; optional real-model smoke:
 
 ```bash
 TIM_EMBEDDING_REAL_MODEL=1 npm test -- packages/tim-hooks/src/__tests__/embedding-hook.test.ts -t "real local model"
 ```
 
 Real-model smoke verifies ONNX initialization only. Mocked or injected vectors remain the deterministic contract for regression tests.
+
+## Index corpus: vector pool vs lexical pool
+
+Hybrid search merges two **independent** candidate pools before ranking. They do **not** cover the same entries:
+
+| Pool | Eligibility |
+|---|---|
+| **Vector** | User content entries only. Always excludes `SCHEMA_KINDS` structural rows (`project`, `section`, `session`, `session-summary-root`, `batch-summary`, `exchange`, `commit`, etc.) via `buildSearchEligibilitySql`. Background embedding (`getUnembedded`) uses the same exclusion — schema kinds are never embedded. |
+| **Lexical (FTS)** | All non-tombstoned entries unless the caller passes `excludeKinds` to `searchFts`. Default `search()` / MCP `tim_search` FTS paths pass **no** kind exclusion, so `session-summary-root` and `batch-summary` entries are discoverable lexically but never appear in the vector pool. |
+
+This is intentional: `tim_resume_topic` and the `remember` chain rely on lexical access to session/batch summaries; those structural kinds are not semantically indexed. Hybrid therefore means "merge lexical hits (including summaries) with vector hits (user content only)" — not "same corpus, two scorers."
+
+## Per-call metadata API
+
+```typescript
+const { entries, semantic } = await store.searchWithSemantics({ query, searchType: 'hybrid' });
+// semantic: { requestedMode, providerState, configuredModel, degradedToLexical?, vectorUnavailable? }
+```
+
+Use this for concurrent searches, benchmarks, and MCP paths. `search()` still returns `Entry[]` and updates `lastSearchSemantic` for backward compatibility.
 
 ## Limits
 

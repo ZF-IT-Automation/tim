@@ -1,4 +1,4 @@
-import type { TimStore } from 'tim-store';
+import type { TimStore, SearchSemanticInfo } from 'tim-store';
 import type { Entry } from 'tim-core';
 import { buildBoundedSearchResponse, clampSearchRequest } from './search-response.js';
 
@@ -17,6 +17,7 @@ export interface TimSearchToolArgs {
 export interface TimSearchToolResult {
   response: Record<string, unknown>;
   results: Entry[];
+  semantic: SearchSemanticInfo | null;
 }
 
 /**
@@ -30,24 +31,31 @@ export async function executeTimSearch(
   const { topK, excerptChars, clamped } =
     clampSearchRequest(parsed.topK ?? 10, parsed.excerptChars ?? 500);
 
-  let results = query === undefined
-    ? await store.searchByTag(tag!, topK, root, { type, status })
-    : await store.search({
-        query,
-        topK,
-        searchType,
-        project: root,
-        type,
-        tag,
-        status,
-        asOf: parsed.asOf,
-      });
+  let results: Entry[];
+  let semantic: SearchSemanticInfo | null = null;
+
+  if (query === undefined) {
+    results = await store.searchByTag(tag!, topK, root, { type, status });
+  } else {
+    const searchResult = await store.searchWithSemantics({
+      query,
+      topK,
+      searchType,
+      project: root,
+      type,
+      tag,
+      status,
+      asOf: parsed.asOf,
+    });
+    results = searchResult.entries;
+    semantic = searchResult.semantic;
+  }
 
   const response = {
     ...buildBoundedSearchResponse(results, excerptChars),
     ...(clamped ? { clamped } : {}),
-    ...(store.lastSearchSemantic ? { semantic: store.lastSearchSemantic } : {}),
+    ...(semantic ? { semantic } : {}),
   };
 
-  return { response, results };
+  return { response, results, semantic };
 }
