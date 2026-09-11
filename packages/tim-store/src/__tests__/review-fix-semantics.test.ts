@@ -91,14 +91,14 @@ describe('review-fix F1/F5 semantics', () => {
     expect(hybrid[0]?.id).toBe(exact.id);
   });
 
-  it('hybrid without vectors uses rankByUsage (deterministic, no provider)', async () => {
-    const disabledProvider: EmbeddingProvider = {
+  it.each(['disabled', 'enabled'] as const)('hybrid without vectors preserves usage ranking with %s provider', async (state) => {
+    const provider: EmbeddingProvider = {
       modelId: MODEL,
       dimension: DIM,
-      state: 'disabled',
-      embed: async () => { throw new Error('disabled'); },
+      state,
+      embed: async () => [vec([1, 0, 0])],
     };
-    store = new TimStore(path.join(dir, 'usage.db'), { embeddingProvider: disabledProvider });
+    store = new TimStore(path.join(dir, 'usage.db'), { embeddingProvider: provider });
     const strongFts = await store.write(
       'Deployment checklist deployment steps\nDeployment deployment deployment.',
       { tags: ['#deploy', '#ops'] },
@@ -118,6 +118,7 @@ describe('review-fix F1/F5 semantics', () => {
       searchType: 'hybrid',
     });
     expect(semantic.degradedToLexical).toBe(true);
+    expect(semantic.providerState).toBe(state);
     const ids = entries.map(e => e.id);
     expect(ids.indexOf(weakFts.id)).toBeLessThan(ids.indexOf(strongFts.id));
   });

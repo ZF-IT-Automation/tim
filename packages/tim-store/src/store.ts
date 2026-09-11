@@ -2857,6 +2857,7 @@ export class TimStore implements MemoryInterface {
     const vectorHits = this.fetchVectorCandidates(
       queryVector, provider!, eligibility, fetchLimit, patterns, asOf,
     );
+    if (vectorHits.length === 0) semanticInfo.degradedToLexical = true;
     const ranked = await this.rankByHybrid(
       lexical,
       vectorHits,
@@ -2900,7 +2901,7 @@ export class TimStore implements MemoryInterface {
     provider: EmbeddingProvider,
     topK: number,
   ): Promise<Entry[]> {
-    if (process.env.TIM_EMBEDDING_DISABLED === '1' || !queryVector) {
+    if (process.env.TIM_EMBEDDING_DISABLED === '1' || !queryVector || vectorHits.length === 0) {
       return this.rankByUsage(lexical, topK);
     }
 
