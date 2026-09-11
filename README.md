@@ -221,6 +221,7 @@ Know the boundaries:
 - FTS remains the default MCP search mode. Optional local embeddings need an available model and a populated, fresh index; no complete semantic-recall guarantee follows from the feature.
 - Summaries and evidence labels are inspectable records, not automatic fact verification. Contradictions are shown, not silently adjudicated.
 - Health distinguishes observed work, pending work and unknown states. Local sync timestamps do not establish current server reachability.
+- Known dependency advisories, including an archive-parser issue in the existing embedding dependency chain, remain tracked separately in [#40](https://github.com/Bumblebiber/tim/issues/40). See the [audit and upgrade contract](docs/reviews/2026-09-11-dependency-audit.md) before treating this beta as security-cleared.
 - The bilingual quality benchmark is still pending integration. Synthetic fixtures can verify retrieval mechanics; they cannot establish real-model understanding or agent task success.
 
 Follow the [implementation plan](docs/plans/2026-09-09-memory-program/README.md) and [GitHub Issues](https://github.com/Bumblebiber/tim/issues). Hosted sharing and broader project-management automation are not prerequisites for local use.
