@@ -69,10 +69,14 @@ that instant. Boundary behavior follows the half-open interval rules above.
 Explicit `contradicts` / `contradicted_by` edges are preserved. Reads expose
 unresolved contradiction references; TIM does not pick a winning fact.
 
-## Limitations
-
-- Supersession chains are bounded to depth 32 for cycle detection.
-- Temporal SQL filters use lexicographic ISO comparison — normalize offsets when
-  mixing `Z` and explicit offsets in one project.
+- Timestamps are normalized to canonical UTC on write; search eligibility compares
+  instants by epoch milliseconds (including peer/import rows with mixed `Z`,
+  fractional seconds, or explicit offsets).
+- Impossible calendar dates, invalid clock times, unsupported sub-millisecond
+  precision, and forged supersession metadata are rejected.
+- Supersession cycle detection traverses the full reachable graph up to a safety
+  limit (`10_000` nodes), then fails closed with an explicit error.
+- Partial `metadata.temporal` patches preserve system-managed supersession fields;
+  empty patches cannot revive superseded entries.
 - `asOf` applies to search eligibility, not to automatic rewriting of entry
   bodies on read.
