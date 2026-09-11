@@ -37,8 +37,6 @@ export interface DatasetQuestion {
   irrelevantGold?: string[];
   /** ISO timestamp for temporal search eligibility (#36). */
   temporalAsOf?: string;
-  /** Gold labels expected in fixed handoff for this question (subset of expectedGold). */
-  handoffContainsGold?: string[];
 }
 
 export interface DatasetFixture {

@@ -1,6 +1,7 @@
 import { performance } from 'node:perf_hooks';
 import {
   computeMemoryHealth,
+  getDefaultEmbeddingProvider,
   resetDefaultEmbeddingProviderCache,
   type EmbeddingProvider,
   type TimStore,
@@ -14,17 +15,20 @@ import {
 } from './fixture-store.js';
 import { renderTimBriefing } from './briefing.js';
 import {
+  applyContextByteBudget,
+  assembleBoundedContext,
   computeBaselineObservations,
   computeEvidenceOutcome,
   computeRetrievalMetrics,
-  extractGoldFromContext,
+  extractGoldFromContextInOrder,
   macroAverage,
-  mapEntryIdsToGold,
+  mapEntriesToOrderedEvidence,
 } from './metrics.js';
 import { createSyntheticEmbeddingProvider, SYNTHETIC_MODEL_ID } from './synthetic-provider.js';
 import type {
   BenchmarkMode,
   BenchmarkReport,
+  DatasetFixture,
   DatasetQuestion,
   ModeSummary,
   ProviderMode,
@@ -36,6 +40,10 @@ import { DATASET_VERSION, REPORT_VERSION } from './types.js';
 export interface RunOptions {
   providerMode?: ProviderMode;
   outputPath?: string;
+  /** Injectable provider factory for tests (real mode). */
+  providerFactory?: () => Promise<EmbeddingProvider | null>;
+  /** Override dataset fixture (altered-fixture negative controls). */
+  datasetOverride?: DatasetFixture;
 }
 
 function recallFromMetrics(metrics: { recall: number | null }, expectedCount: number): number | null {
@@ -48,9 +56,10 @@ async function runSearchPath(
   fixture: FixtureStore,
   question: DatasetQuestion,
   projectLabel: string,
+  byteBudget: number,
 ): Promise<{
   context: string;
-  orderedGold: string[];
+  orderedEvidence: string[];
   semantic: QuestionModeResult['provider'];
   latencyMs: number;
 }> {
@@ -64,11 +73,24 @@ async function runSearchPath(
     ...(question.temporalAsOf ? { asOf: question.temporalAsOf } : {}),
   });
   const latencyMs = performance.now() - start;
-  const orderedGold = mapEntryIdsToGold(entries.map(e => e.id), fixture.entryIdToGold);
-  const context = entries.map(e => `${e.title}\n${e.content}`).join('\n---\n');
+  const parts = entries.map(e => `${e.title}\n${e.content}`);
+  const context = assembleBoundedContext(parts, byteBudget);
+  const includedIds: string[] = [];
+  let assembled = '';
+  for (const entry of entries) {
+    const part = `${entry.title}\n${entry.content}`;
+    const candidate = assembled ? `${assembled}\n---\n${part}` : part;
+    if (Buffer.byteLength(candidate, 'utf8') <= byteBudget) {
+      assembled = candidate;
+      includedIds.push(entry.id);
+    } else {
+      break;
+    }
+  }
+  const orderedEvidence = mapEntriesToOrderedEvidence(includedIds, fixture.entryIdToGold);
   return {
-    context,
-    orderedGold,
+    context: applyContextByteBudget(context, byteBudget),
+    orderedEvidence,
     semantic: {
       mode: 'synthetic',
       modelId: semantic.configuredModel,
@@ -88,18 +110,19 @@ async function runBriefingPath(
   tokenBudget: number,
 ): Promise<{
   context: string;
-  orderedGold: string[];
+  orderedEvidence: string[];
   semantic: QuestionModeResult['provider'];
   latencyMs: number;
 }> {
   const start = performance.now();
-  const context = await renderTimBriefing(store, fixture.projectLabel, question.text, tokenBudget);
+  const rawContext = await renderTimBriefing(store, fixture.projectLabel, question.text, tokenBudget);
   const latencyMs = performance.now() - start;
+  const context = applyContextByteBudget(rawContext, tokenBudget);
   const allGold = [...fixture.goldToEntryId.keys()];
-  const orderedGold = extractGoldFromContext(context, allGold);
+  const orderedEvidence = extractGoldFromContextInOrder(context, allGold);
   return {
     context,
-    orderedGold,
+    orderedEvidence,
     semantic: {
       mode: 'synthetic',
       modelId: SYNTHETIC_MODEL_ID,
@@ -114,50 +137,52 @@ function buildModeResult(
   mode: BenchmarkMode,
   question: DatasetQuestion,
   context: string,
-  orderedGold: string[],
+  orderedEvidence: string[],
   provider: QuestionModeResult['provider'],
   latencyMs: number,
   providerMode: ProviderMode,
+  fixedHandoffText: string,
+  allGoldLabels: string[],
+  byteBudget: number,
 ): QuestionModeResult {
-  const contextBytes = Buffer.byteLength(context, 'utf8');
-  const estimatedTokens = estimateTextTokens(context);
+  const expected = question.expectedGold;
+  let boundedContext = context;
+  let foundEvidence = orderedEvidence;
 
-  let expected = question.expectedGold;
-  let foundGold = orderedGold;
   if (mode === 'no-memory') {
-    context = '';
-    foundGold = [];
+    boundedContext = '';
+    foundEvidence = [];
   } else if (mode === 'fixed-handoff') {
-    const dataset = loadDataset();
-    context = dataset.fixedHandoff.text;
-    foundGold = question.handoffContainsGold ?? [];
-    expected = question.handoffContainsGold ?? [];
+    boundedContext = applyContextByteBudget(fixedHandoffText, byteBudget);
+    foundEvidence = extractGoldFromContextInOrder(boundedContext, allGoldLabels);
+  } else {
+    boundedContext = applyContextByteBudget(context, byteBudget);
+    if (question.path === 'briefing') {
+      foundEvidence = extractGoldFromContextInOrder(boundedContext, allGoldLabels);
+    }
   }
 
   const evidence = computeEvidenceOutcome(
     expected,
-    foundGold,
+    foundEvidence,
     question.irrelevantGold ?? [],
   );
-  const metrics = computeRetrievalMetrics(expected, foundGold);
+  const metrics = computeRetrievalMetrics(expected, foundEvidence);
 
   return {
     mode,
     path: question.path,
     evidence,
     metrics,
-    contextBytes: mode === 'no-memory' ? 0 : Buffer.byteLength(context, 'utf8'),
-    estimatedTokens: mode === 'no-memory' ? 0 : estimateTextTokens(context),
+    contextBytes: mode === 'no-memory' ? 0 : Buffer.byteLength(boundedContext, 'utf8'),
+    estimatedTokens: mode === 'no-memory' ? 0 : estimateTextTokens(boundedContext),
     latencyMs,
     provider: { ...provider, mode: providerMode },
-    contextPreview: context.slice(0, 200),
+    contextPreview: boundedContext.slice(0, 200),
   };
 }
 
-function summarizeMode(
-  mode: BenchmarkMode,
-  results: QuestionModeResult[],
-): ModeSummary {
+function summarizeMode(mode: BenchmarkMode, results: QuestionModeResult[]): ModeSummary {
   const precisions = results.map(r => r.metrics.precision);
   const recalls = results.map(r => r.metrics.recall);
   return {
@@ -175,10 +200,9 @@ function summarizeMode(
   };
 }
 
-async function resolveRealProvider(): Promise<{
-  provider: EmbeddingProvider | null;
-  skipped?: SkippedCheck;
-}> {
+async function resolveRealProvider(
+  factory?: () => Promise<EmbeddingProvider | null>,
+): Promise<{ provider: EmbeddingProvider | null; skipped?: SkippedCheck }> {
   if (process.env.TIM_EMBEDDING_REAL_MODEL !== '1') {
     return {
       provider: null,
@@ -188,52 +212,104 @@ async function resolveRealProvider(): Promise<{
       },
     };
   }
-  resetDefaultEmbeddingProviderCache();
-  delete process.env.TIM_EMBEDDING_DISABLED;
-  const { TimStore: Store } = await import('tim-store');
-  const probeDir = await import('node:os').then(os => os.tmpdir());
-  const probePath = `${probeDir}/tim-quality-real-probe-${Date.now()}.db`;
-  const probe = new Store(probePath);
-  try {
-    const health = probe.getSemanticIndexHealth();
-    if (health.providerState !== 'enabled') {
+  if (process.env.TIM_EMBEDDING_DISABLED === '1') {
+    return {
+      provider: null,
+      skipped: {
+        id: 'real-provider',
+        reason: 'TIM_EMBEDDING_DISABLED=1; real embedding path explicitly opted out.',
+      },
+    };
+  }
+
+  if (factory) {
+    const provider = await factory();
+    if (!provider || provider.state !== 'enabled') {
       return {
         provider: null,
         skipped: {
           id: 'real-provider',
-          reason: `Real provider unavailable: state=${health.providerState}`,
+          reason: `Real provider unavailable: state=${provider?.state ?? 'null'}`,
         },
       };
     }
-    return { provider: null };
-  } finally {
-    probe.close();
-    await import('node:fs').then(fs => {
-      try { fs.unlinkSync(probePath); } catch { /* ignore */ }
-    });
+    return { provider };
   }
+
+  resetDefaultEmbeddingProviderCache();
+  const provider = await getDefaultEmbeddingProvider();
+  if (!provider || provider.state !== 'enabled') {
+    return {
+      provider: null,
+      skipped: {
+        id: 'real-provider',
+        reason: `Real provider unavailable: state=${provider?.state ?? 'null'}`,
+      },
+    };
+  }
+  return { provider };
+}
+
+function buildSkippedReport(
+  dataset: DatasetFixture,
+  skipped: SkippedCheck,
+  providerMode: ProviderMode,
+): BenchmarkReport {
+  return {
+    reportVersion: REPORT_VERSION,
+    datasetVersion: DATASET_VERSION,
+    datasetId: dataset.datasetId,
+    generatedAt: new Date().toISOString(),
+    provider: {
+      mode: providerMode,
+      modelId: null,
+      state: 'skipped',
+      skipped,
+    },
+    contextBudget: dataset.contextBudget,
+    fixtureProvenance: dataset.provenance,
+    modeSummaries: [],
+    questions: [],
+    baselineObservations: [`Real provider run skipped: ${skipped.reason}`],
+    notMeasured: [
+      'agent_task_success',
+      'maintenance_savings',
+      'universal_superiority',
+    ],
+    limitations: [
+      'Real local model mode was requested but not executed; no synthetic results are presented as real.',
+      'Re-run with TIM_EMBEDDING_REAL_MODEL=1 and an enabled default provider.',
+    ],
+  };
 }
 
 export async function runBenchmark(options: RunOptions = {}): Promise<BenchmarkReport> {
   const providerMode: ProviderMode = options.providerMode ?? 'synthetic';
-  const dataset = loadDataset();
+  const dataset = options.datasetOverride ?? loadDataset();
   let skipped: SkippedCheck | undefined;
   let provider: EmbeddingProvider;
+  let realEmbeddings = false;
 
   if (providerMode === 'real') {
-    const real = await resolveRealProvider();
+    const real = await resolveRealProvider(options.providerFactory);
     if (real.skipped) {
       skipped = real.skipped;
-      provider = createSyntheticEmbeddingProvider();
-    } else {
-      provider = createSyntheticEmbeddingProvider();
+      const report = buildSkippedReport(dataset, skipped, providerMode);
+      if (options.outputPath) {
+        const fs = await import('node:fs');
+        fs.writeFileSync(options.outputPath, JSON.stringify(report, null, 2), 'utf8');
+      }
+      return report;
     }
+    provider = real.provider!;
+    realEmbeddings = true;
   } else {
     provider = createSyntheticEmbeddingProvider();
   }
 
-  const fixture = await buildFixtureStore(dataset, provider);
+  const fixture = await buildFixtureStore(dataset, provider, { realEmbeddings });
   const memoryHealth = await computeMemoryHealth(fixture.store);
+  const allGoldLabels = [...fixture.goldToEntryId.keys()];
 
   const modes: BenchmarkMode[] = ['no-memory', 'fixed-handoff', 'tim'];
   const questionReports: BenchmarkReport['questions'] = [];
@@ -241,19 +317,25 @@ export async function runBenchmark(options: RunOptions = {}): Promise<BenchmarkR
   try {
     for (const question of dataset.questions) {
       let timContext = '';
-      let timOrderedGold: string[] = [];
+      let timOrderedEvidence: string[] = [];
       let timProvider: QuestionModeResult['provider'] = {
         mode: providerMode,
-        modelId: SYNTHETIC_MODEL_ID,
-        state: 'enabled',
+        modelId: realEmbeddings ? provider.modelId : SYNTHETIC_MODEL_ID,
+        state: provider.state,
       };
       let timLatency = 0;
 
       if (question.path === 'search') {
-        const run = await runSearchPath(fixture.store, fixture, question, dataset.projectLabel);
+        const run = await runSearchPath(
+          fixture.store,
+          fixture,
+          question,
+          dataset.projectLabel,
+          dataset.contextBudget,
+        );
         timContext = run.context;
-        timOrderedGold = run.orderedGold;
-        timProvider = { ...run.semantic, mode: providerMode };
+        timOrderedEvidence = run.orderedEvidence;
+        timProvider = { ...run.semantic, mode: providerMode, modelId: provider.modelId };
         timLatency = run.latencyMs;
       } else {
         const run = await runBriefingPath(
@@ -263,30 +345,47 @@ export async function runBenchmark(options: RunOptions = {}): Promise<BenchmarkR
           dataset.contextBudget,
         );
         timContext = run.context;
-        timOrderedGold = run.orderedGold;
-        timProvider = { ...run.semantic, mode: providerMode };
+        timOrderedEvidence = run.orderedEvidence;
+        timProvider = { ...run.semantic, mode: providerMode, modelId: provider.modelId };
         timLatency = run.latencyMs;
       }
 
       const results: Record<BenchmarkMode, QuestionModeResult> = {
-        'no-memory': buildModeResult('no-memory', question, '', [], timProvider, 0, providerMode),
+        'no-memory': buildModeResult(
+          'no-memory',
+          question,
+          '',
+          [],
+          timProvider,
+          0,
+          providerMode,
+          dataset.fixedHandoff.text,
+          allGoldLabels,
+          dataset.contextBudget,
+        ),
         'fixed-handoff': buildModeResult(
           'fixed-handoff',
           question,
           dataset.fixedHandoff.text,
-          question.handoffContainsGold ?? [],
+          [],
           timProvider,
           0,
           providerMode,
+          dataset.fixedHandoff.text,
+          allGoldLabels,
+          dataset.contextBudget,
         ),
         tim: buildModeResult(
           'tim',
           question,
           timContext,
-          timOrderedGold,
+          timOrderedEvidence,
           timProvider,
           timLatency,
           providerMode,
+          dataset.fixedHandoff.text,
+          allGoldLabels,
+          dataset.contextBudget,
         ),
       };
 
@@ -327,7 +426,7 @@ export async function runBenchmark(options: RunOptions = {}): Promise<BenchmarkR
     generatedAt: new Date().toISOString(),
     provider: {
       mode: providerMode,
-      modelId: providerMode === 'synthetic' ? SYNTHETIC_MODEL_ID : null,
+      modelId: realEmbeddings ? provider.modelId : SYNTHETIC_MODEL_ID,
       state: provider.state,
       ...(skipped ? { skipped } : {}),
     },
@@ -346,8 +445,9 @@ export async function runBenchmark(options: RunOptions = {}): Promise<BenchmarkR
       'Synthetic provider tests retrieval plumbing only, not real-model semantic understanding.',
       'Token counts use conservative UTF-8 byte heuristic, not a model tokenizer.',
       'Latency is local wall-clock and nondeterministic; not a stable regression threshold.',
-      'Gold labels are human-authored synthetic fixture conventions.',
-      'Real local model mode requires TIM_EMBEDDING_REAL_MODEL=1 and an enabled provider.',
+      'Gold labels are agent-authored synthetic fixture conventions.',
+      'Real local model mode requires TIM_EMBEDDING_REAL_MODEL=1, no TIM_EMBEDDING_DISABLED, and an enabled provider.',
+      `All modes score evidence retained within the ${dataset.contextBudget}-byte context budget.`,
     ],
   };
 

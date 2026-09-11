@@ -1,6 +1,6 @@
 # Memory quality benchmark (#38)
 
-Repeatable bilingual scenarios compare **no-memory**, **fixed-handoff**, and **TIM** retrieval using production store/MCP paths against temporary fixture databases. Gold labels are human-authored synthetic fixture conventions — not production entry IDs.
+Repeatable bilingual scenarios compare **no-memory**, **fixed-handoff**, and **TIM** retrieval using production store/MCP paths against temporary fixture databases. Gold labels are agent-authored synthetic fixture conventions — not production entry IDs.
 
 ## Commands
 
@@ -33,25 +33,25 @@ TIM_EMBEDDING_REAL_MODEL=1 npm run benchmark:memory-quality -- --real-provider
 | Field | Value |
 |-------|-------|
 | Report schema | `1.0.0` (`reportVersion`) |
-| Dataset schema | `1.0.0` (`datasetVersion`, file `packages/tim-quality-benchmark/src/dataset/1.0.0.json`) |
+| Dataset schema | `1.0.0` (`datasetVersion`, shipped at `packages/tim-quality-benchmark/dist/dataset/1.0.0.json`) |
 | Dataset id | `memory-quality-v1` |
-| Context budget | 4096 UTF-8 bytes (conservative token heuristic) |
+| Context budget | 4096 UTF-8 bytes applied to **all modes** (search, handoff, briefing) |
 
 ### Fixture scenarios
 
 - **Synonyms (DE/EN):** zero lexical overlap via injected vectors (`vectorHint: motor` vs query *automobile* / *Kraftfahrzeug*).
 - **Adversarial similar project:** `P3801` confuser entries must not appear in `P3800`-scoped search.
 - **Temporal correction:** superseded deployment policy with `asOf` before/after questions.
-- **Partial session:** `SessionManager` batch summary covering seq 1–2 with pending tail exchanges.
+- **Partial session:** `SessionManager` batch summary covering seq 1–2 with pending tail exchanges (no duplicate Sessions roots or fake session-summary-root entries).
 - **Noisy history:** 120 log filler entries before reserved briefing tiers.
 
 ### Gold label conventions
 
-Labels use the `gold:<slug>` prefix in fixture JSON and handoff text. Entry bodies include `[gold:…]` markers for briefing evaluation. Provenance is declared in the dataset `provenance` field.
+Labels use the `gold:<slug>` prefix in fixture JSON and handoff text. Entry bodies include `[gold:…]` bracket markers for briefing evaluation. Provenance is declared in the dataset `provenance` field as agent-authored synthetic.
 
 ### Fixed handoff baseline
 
-`fixedHandoff.text` is authored once before query selection. Per-question `handoffContainsGold` declares which labels the handoff is expected to surface — not generated from each question's gold answer.
+`fixedHandoff.text` is authored once before query selection. All modes use the same `question.expectedGold`; fixed-handoff observed evidence is derived from the static handoff text (after the shared context budget), never from per-question declared shortcuts.
 
 ## Production API paths exercised
 
@@ -61,6 +61,7 @@ Labels use the `gold:<slug>` prefix in fixture JSON and handoff text. Entry bodi
 | Task briefing | `loadProjectForBriefing` + `searchTaskBriefingExtras` + `formatProjectOutput` |
 | Memory health | `computeMemoryHealth(store)` (read-only, no model load) |
 | Temporal | `asOf` on search for historical eligibility |
+| Real embeddings | `getDefaultEmbeddingProvider()` when `TIM_EMBEDDING_REAL_MODEL=1` and not `TIM_EMBEDDING_DISABLED` |
 
 `store.lastSearchSemantic` is **not** used.
 
@@ -68,8 +69,8 @@ Labels use the `gold:<slug>` prefix in fixture JSON and handoff text. Entry bodi
 
 Per question and mode:
 
-- `evidence`: `expected`, `found`, `missing`, `irrelevant`
-- `metrics`: `precision`, `recall`, `meanFirstRank`, `ranks` (null when denominator zero)
+- `evidence`: `expected`, `found`, `missing`, `irrelevant` (only evidence retained within the context budget)
+- `metrics`: `precision`, `recall`, `meanFirstRank`, `ranks` (null when denominator zero; non-gold retained hits count in precision denominator)
 - `contextBytes`, `estimatedTokens` (UTF-8 byte heuristic), `latencyMs` (local wall-clock)
 - `provider`: mode (`synthetic` \| `real`), model id, state, search metadata
 
@@ -84,18 +85,18 @@ Run-level:
 ## Interpretation
 
 - **Synthetic default** tests retrieval plumbing only — not real-model semantic quality.
-- **Real provider mode** is opt-in; when disabled or unavailable the report records `provider.skipped` with reason. Synthetic/FTS fallback is never labeled as real semantic success.
+- **Real provider mode** is opt-in (`TIM_EMBEDDING_REAL_MODEL=1`, no `TIM_EMBEDDING_DISABLED`). When disabled, unavailable, or not requested, the report records `provider.skipped` with reason and **does not** run a synthetic benchmark labeled as real.
 - **Latency** is nondeterministic and not a stable regression threshold.
 - **Agent task success** and maintenance savings are not measured without running agents.
 
 ## Provider / data flow
 
 ```
-dataset JSON → buildFixtureStore (TimStore + SessionManager)
-            → modes:
+dataset JSON (dist/dataset/) → buildFixtureStore (TimStore + SessionManager)
+            → modes (same expectedGold, same 4096-byte budget):
                 no-memory: empty context
-                fixed-handoff: static handoff text
-                tim: searchWithSemantics OR briefing path
-            → map entry IDs / context markers → gold labels
+                fixed-handoff: static handoff text → extract markers
+                tim: searchWithSemantics OR briefing path → bounded context
+            → map entry IDs / context markers → gold labels (+ non-gold noise markers)
             → metrics + JSON report
 ```

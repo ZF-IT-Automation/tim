@@ -18,7 +18,7 @@
   ],
   "scripts": {
     "prepare": "npm run clean && npm run build",
-    "build": "tsc -b && node scripts/ensure-executable-dist.mjs",
+    "build": "tsc -b && node packages/tim-quality-benchmark/scripts/copy-dataset.mjs && node scripts/ensure-executable-dist.mjs",
     "pretest": "npm run build",
     "test": "vitest run",
     "benchmark:memory-quality": "node packages/tim-quality-benchmark/dist/cli.js",

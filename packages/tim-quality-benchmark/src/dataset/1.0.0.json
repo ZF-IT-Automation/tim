@@ -1,13 +1,13 @@
 {
   "schemaVersion": "1.0.0",
   "datasetId": "memory-quality-v1",
-  "provenance": "Human-authored synthetic gold labels for local benchmark only. Evidence IDs are fixture conventions, not production entry IDs.",
+  "provenance": "Agent-authored synthetic gold labels for local benchmark only. Evidence IDs are fixture conventions, not production entry IDs.",
   "projectLabel": "P3800",
   "adversarialProjectLabel": "P3801",
   "contextBudget": 4096,
   "fixedHandoff": {
-    "text": "# P3800 handoff (fixture, fixed before queries)\n\n## Session summary\nWorked on deployment policy and auth rollout.\n\n## Active rules\n- Always run tests before merge.\n\n## Urgent tasks\n- Ship auth middleware fix (high priority)\n\n## Decisions\n- Current deployment policy: blue-green only after staging sign-off. (gold:decision-current)\n\n## Notes\n- Kraftfahrzeug maintenance window is Tuesday 02:00 UTC. (gold:motor-transport)\n",
-    "containsGold": ["gold:decision-current", "gold:motor-transport"]
+    "text": "# P3800 handoff (fixture, fixed before queries)\n\n## Session summary\nWorked on deployment policy and auth rollout.\n\n## Active rules\n- Always run tests before merge. (gold:rule-tests)\n\n## Urgent tasks\n- Ship auth middleware fix (high priority) (gold:task-auth)\n\n## Decisions\n- Current deployment policy: blue-green only after staging sign-off. (gold:decision-current)\n\n## Notes\n- Kraftfahrzeug maintenance window is Tuesday 02:00 UTC. (gold:motor-transport)\n",
+    "containsGold": ["gold:decision-current", "gold:motor-transport", "gold:rule-tests", "gold:task-auth"]
   },
   "entries": [
     {
@@ -47,15 +47,8 @@
       "supersedesGold": "gold:decision-v1"
     },
     {
-      "goldLabel": "gold:session-partial",
-      "title": "Partial session checkpoint",
-      "body": "Covered exchanges 1-2; tail still pending summarization.",
-      "section": "Sessions",
-      "tags": ["#session-summary"]
-    },
-    {
       "goldLabel": "gold:rule-tests",
-      "title": "Always run tests before merge",
+      "title": "Always run tests before merge (gold:rule-tests)",
       "body": "Agent rule for CI hygiene.",
       "section": "Rules",
       "tags": ["#rule"],
@@ -78,8 +71,7 @@
       "path": "search",
       "searchType": "vector",
       "expectedGold": ["gold:motor-transport"],
-      "irrelevantGold": ["gold:adversarial-b-noise"],
-      "handoffContainsGold": ["gold:motor-transport"]
+      "irrelevantGold": ["gold:adversarial-b-noise"]
     },
     {
       "id": "q-de-synonym",
@@ -88,8 +80,7 @@
       "path": "search",
       "searchType": "hybrid",
       "expectedGold": ["gold:motor-transport"],
-      "irrelevantGold": ["gold:adversarial-b-noise"],
-      "handoffContainsGold": ["gold:motor-transport"]
+      "irrelevantGold": ["gold:adversarial-b-noise"]
     },
     {
       "id": "q-en-adversarial-scope",
@@ -98,8 +89,7 @@
       "path": "search",
       "searchType": "hybrid",
       "expectedGold": [],
-      "irrelevantGold": ["gold:adversarial-b-noise"],
-      "handoffContainsGold": []
+      "irrelevantGold": ["gold:adversarial-b-noise"]
     },
     {
       "id": "q-en-decision-current",
@@ -108,8 +98,7 @@
       "path": "search",
       "searchType": "hybrid",
       "expectedGold": ["gold:decision-current"],
-      "irrelevantGold": ["gold:decision-v1"],
-      "handoffContainsGold": ["gold:decision-current"]
+      "irrelevantGold": ["gold:decision-v1"]
     },
     {
       "id": "q-en-decision-before",
@@ -119,24 +108,21 @@
       "searchType": "hybrid",
       "expectedGold": ["gold:decision-v1"],
       "irrelevantGold": ["gold:decision-current"],
-      "temporalAsOf": "2026-02-15T12:00:00Z",
-      "handoffContainsGold": []
+      "temporalAsOf": "2026-02-15T12:00:00Z"
     },
     {
       "id": "q-en-briefing-rules",
       "lang": "en",
-      "text": "merge policy tests",
+      "text": "run tests before merge auth",
       "path": "briefing",
-      "expectedGold": ["gold:rule-tests", "gold:task-auth"],
-      "handoffContainsGold": ["gold:rule-tests", "gold:task-auth"]
+      "expectedGold": ["gold:rule-tests", "gold:task-auth"]
     },
     {
       "id": "q-de-briefing-session",
       "lang": "de",
       "text": "auth middleware",
       "path": "briefing",
-      "expectedGold": ["gold:task-auth"],
-      "handoffContainsGold": ["gold:task-auth"]
+      "expectedGold": ["gold:task-auth"]
     }
   ]
 }
