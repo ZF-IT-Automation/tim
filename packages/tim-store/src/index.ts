@@ -23,6 +23,7 @@ export {
   type EmbeddingProvider,
   type EmbeddingProviderState,
   type SearchSemanticInfo,
+  type SearchWithSemanticsResult,
   SUPPORTED_EMBEDDING_MODELS,
   createDisabledEmbeddingProvider,
   createUnavailableEmbeddingProvider,
