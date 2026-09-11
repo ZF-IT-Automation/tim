@@ -13,7 +13,7 @@
     "!dist/**/__tests__/**"
   ],
   "scripts": {
-    "build": "tsc && node ../../scripts/ensure-executable-dist.mjs",
+    "build": "tsc && node scripts/copy-dataset.mjs && node ../../scripts/ensure-executable-dist.mjs",
     "pretest": "npm --prefix ../.. run build",
     "test": "vitest run --root ../.. packages/tim-quality-benchmark/src/__tests__"
   },
