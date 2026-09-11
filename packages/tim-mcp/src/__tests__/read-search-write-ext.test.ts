@@ -348,7 +348,9 @@ describe('tim_search extended', () => {
   });
 
   it('propagates semantic retrieval metadata from store.search', async () => {
+    client.kill();
     const disabledClient = new McpClient(dbPath, { TIM_EMBEDDING_DISABLED: '1' });
+    client = disabledClient; // The suite cleanup also runs when initialization or an assertion fails.
     await disabledClient.init();
     const proj = await disabledClient.callTool('tim_create_project', {
       label: 'P0528',
