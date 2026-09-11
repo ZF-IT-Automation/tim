@@ -1,6 +1,6 @@
 # Implementation status
 
-Updated: 2026-09-11. Source implementation is integrated locally. Final independent review and GitHub publication are still gates; this page does not claim deployment or a release.
+Updated: 2026-09-11. The original #27–#39 implementation program is integrated and verified. Source publication is not production deployment or a release. The [verification report](../../reviews/2026-09-11-program-verification.md) distinguishes independent review from coordinator correction checks.
 
 ## Implemented scope
 
@@ -15,21 +15,23 @@ Updated: 2026-09-11. Source implementation is integrated locally. Final independ
 | #38 | A standalone bilingual fixture benchmark with shared evidence expectations and a 4096-byte context budget, synthetic CI mode, optional real-provider execution or explicit skip, and packaged dataset assets. |
 | #39 | Rewritten README, dated primary-source comparisons, concrete workflows, feature references, benchmark instructions, and explicit beta/security limitations. |
 
-The initial README and plans were published in `4940fab`. The current source and later documentation are not yet published. All original program issues remain open until final acceptance and publication.
+The initial README and plans were published in `4940fab`. The completed source, feature references and verification report accompany this closeout. GitHub issue state records the publication/closure outcome; the separately discovered dependency-upgrade work remains open in #40.
 
 ## Verification
 
-Current implementation baseline: `7ecd457`; subsequent `3047d2f` changes documentation only.
+Final implementation and regression baseline: `41cbb4e`. Subsequent closeout commits change documentation only.
 
-- Fresh Node.js 22.23.2 installation, TypeScript checking and full test suite passed: **246 test files, 2,085 tests passed, two skipped**, in 176.91 seconds.
-- Node.js 24.14 TypeScript checking and clean build passed: **180 modules** complete with executable entrypoints. The full suite passed **246 test files, 2,085 tests and two skips**, in 165.23 seconds.
-- Targeted temporal/MCP/benchmark checks passed 43 tests; the later isolated-telemetry and health check passed 31 tests.
+- Node.js 22.23.2 build, TypeScript checking and full test suite passed: **246 test files, 2,089 tests passed, two skipped**, in 124.64 seconds. A fresh installation had already passed before the final source-only corrections.
+- Node.js 24.14 TypeScript checking and clean build passed: **180 modules** complete with executable entrypoints. The final full suite passed **246 test files, 2,089 tests and two skips**, in 134.16 seconds.
+- Targeted temporal/MCP/benchmark checks passed 43 tests, the isolated-telemetry and health check passed 31 tests, and the final review-correction check passed 49 tests before the additional actual-MCP repair regression joined the whole suite.
 - Benchmark CLI executed from built output. Package dry-run contains `dist/dataset/1.0.0.json` and the executable CLI.
-- Local Markdown-link checks across seven public feature documents found no missing targets.
-- Two extension integration reviews completed; their findings have corrective code and regression coverage. Third independent review `20260911T135834Z-5e24` examines the merged source without plans or worker reports.
+- Local Markdown-link checks across eight public feature/status documents found no missing targets.
+- Three extension integration reviews completed. The final review `20260911T135834Z-5e24` found seven issues; coordinator corrections in `80ce5f9` and `41cbb4e` passed targeted and whole-suite verification. This is not a claim of a clean fourth independent review.
 - The two existing skipped tests cover associative-recall chain timeout and database-lock handling; these scenarios are not claimed as passing.
 
-The synthetic fixture run found seven of seven expected evidence units for TIM and six for fixed handoff; it also returned irrelevant evidence. These are agent-authored fixture mechanics, not real-model quality or agent-task success. No real model was downloaded for verification.
+The corrected synthetic fixture run found eight of eight expected references for TIM and six for fixed handoff; TIM also returned 60 irrelevant references versus 22 for handoff. These are agent-authored fixture mechanics, not real-model quality or agent-task success. Final checks used synthetic vectors and an explicit real-provider opt-out; a cached real-model run by the independent reviewer concerned the earlier fixture only.
+
+Reproduce from an isolated checkout: `npm ci`, `npm run build`, `npm run lint`, `npm test -- --maxWorkers=2`, `npm run test:build-pipeline`, and `npm run benchmark:memory-quality`.
 
 ## Remaining risk and operational boundary
 
