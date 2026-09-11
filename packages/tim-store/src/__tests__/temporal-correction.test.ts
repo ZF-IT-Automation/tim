@@ -56,6 +56,22 @@ describe('temporal correction (#36 second pass)', () => {
     return store.getDb().prepare('SELECT * FROM staging').all();
   }
 
+  it('validates the combined interval when a patch contains only one boundary', async () => {
+    const entry = await writeDecision('Bounded policy', 'Body', {
+      temporal: { validFrom: '2026-01-01T00:00:00Z', validUntil: '2026-06-01T00:00:00Z' },
+    });
+    const before = snapshotEntry(entry.id);
+    const staging = snapshotStaging();
+    await expect(store.update(entry.id, {
+      metadata: { temporal: { validFrom: '2026-07-01T00:00:00Z' } },
+    })).rejects.toThrow(/strictly before/);
+    await expect(store.update(entry.id, {
+      metadata: { temporal: { validUntil: '2025-12-01T00:00:00Z' } },
+    })).rejects.toThrow(/strictly before/);
+    expect(snapshotEntry(entry.id)).toEqual(before);
+    expect(snapshotStaging()).toEqual(staging);
+  });
+
   it('detects supersession cycles beyond the old 32-node cap', async () => {
     const ids: string[] = [];
     for (let i = 0; i < 35; i++) {
