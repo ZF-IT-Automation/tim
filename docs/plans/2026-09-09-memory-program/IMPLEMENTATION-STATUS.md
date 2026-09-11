@@ -17,7 +17,7 @@ The source through `3f35376` integrates #27–#37 locally. The original README/p
 | #38 quality evaluation | Bilingual synthetic fixture and baseline contract is prepared. | Implement after dependency acceptance, then independently review and verify. |
 | #39 documentation | README and plan are published; focused new feature docs exist locally. | Align public overview with final verified behavior and publish. |
 
-Parent verification at `3f35376`: isolated build succeeded; seven temporal/coverage/health suites passed **59/59 tests**, including actual CLI and MCP paths. Last completed parent full run at `83a3613`: **1,984 passed, two failed, two skipped**. Both failures are in the assigned semantic correction scope. A new full run is underway; focused green tests do not replace it.
+Parent verification at `2e9aad9`: **243/243 test files passed; 2,054 tests passed and two were skipped**, in92.73seconds under Node24.14. The prior two full-suite failures are resolved. Earlier focused checks passed59 temporal/health,77 search/MCP and27 briefing tests. A fresh Node22 installation and final independent review/benchmark acceptance remain separate gates; a green suite does not erase review findings.
 
 The [run ledger](RUN-LEDGER.md) records stable per-ticket attempts and separately charged integration reviews. User/host quota pauses and terminal-worker idle time are not execution. The user explicitly directed continuation in this host after reporting reset usage. No roster settings were changed. TIM MCP transport is currently unavailable; pending memory updates are not claimed as completed.
 
