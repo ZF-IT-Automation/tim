@@ -43,11 +43,11 @@ TIM_EMBEDDING_REAL_MODEL=1 npm run benchmark:memory-quality -- --real-provider
 - **Adversarial similar project:** `P3801` confuser entries must not appear in `P3800`-scoped search.
 - **Temporal correction:** superseded deployment policy with `asOf` before/after questions.
 - **Partial session:** `SessionManager` batch summary covering seq 1–2 with pending tail exchanges (no duplicate Sessions roots or fake session-summary-root entries).
-- **Noisy history:** 120 log filler entries before reserved briefing tiers.
+- **Noisy history:** 120 indexed in-project distractors, exceeding the ten retained search hits, plus the long Log section before reserved briefing tiers. An unrelated-query negative control must lose the expected synonym evidence instead of retaining the entire corpus.
 
 ### Gold label conventions
 
-Labels use the `gold:<slug>` prefix in fixture JSON and handoff text. Entry bodies include `[gold:…]` bracket markers for briefing evaluation. Provenance is declared in the dataset `provenance` field as agent-authored synthetic.
+Labels use the `gold:<slug>` prefix in fixture JSON and handoff text. Entry titles carry `[gold:…]` or `[retrieved:…]` markers so title-only briefing rows count alongside search hits. Scoring measures retained references to fixture evidence units, not whether a model can reconstruct an entire fact from its title. Provenance is declared in the dataset `provenance` field as agent-authored synthetic.
 
 ### Fixed handoff baseline
 
@@ -72,7 +72,7 @@ Per question and mode:
 - `evidence`: `expected`, `found`, `missing`, `irrelevant` (only evidence retained within the context budget)
 - `metrics`: `precision`, `recall`, `meanFirstRank`, `ranks` (null when denominator zero; non-gold retained search hits and marked briefing noise count in the precision denominator). These are fixture evidence-unit metrics, not a classification of every word of boilerplate.
 - `contextBytes`, `estimatedTokens` (UTF-8 byte heuristic), `latencyMs` (local wall-clock)
-- `provider`: mode (`synthetic` \| `real`), model id, state, search metadata
+- `provider`: run mode (`synthetic` \| `real`), consulted model id, state, search metadata. No-memory, fixed-handoff and FTS-only briefing rows report `modelId: null`, `state: not_used`; they do not inherit vector-search diagnostics.
 
 Run-level:
 

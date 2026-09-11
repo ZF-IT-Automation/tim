@@ -185,6 +185,27 @@ describe('review-fix temporal/search/recovery', () => {
       .rejects.toThrow(/Invalid asOf/);
   });
 
+  it('explicitly discards an unmanaged imported edge without changing entry metadata', async () => {
+    const target = await writeDecision('Old', 'Body');
+    const source = await writeDecision('New', 'Body');
+    const db = store.getDb();
+    db.prepare(`INSERT INTO edges (id, source_id, target_id, type, weight, metadata, updated_at)
+      VALUES ('imported-edge', ?, ?, 'supersedes', 1, '{}', ?)`).run(source.id, target.id, new Date().toISOString());
+    const before = db.prepare('SELECT * FROM entries ORDER BY id').all();
+    await expect(store.unlink('imported-edge')).rejects.toThrow(/effectiveAt/);
+    await store.unlink('imported-edge', { discardUnmanaged: true });
+    expect(db.prepare('SELECT * FROM entries ORDER BY id').all()).toEqual(before);
+    expect(db.prepare("SELECT id FROM edges WHERE id = 'imported-edge'").get()).toBeUndefined();
+  });
+
+  it('refuses discarding a real supersession with managed state', async () => {
+    const target = await writeDecision('Old', 'Body');
+    const source = await writeDecision('New', 'Body');
+    const edge = await store.link(source.id, target.id, 'supersedes', 1, { effectiveAt: '2020-01-01T00:00:00Z' });
+    await expect(store.unlink(edge.id, { discardUnmanaged: true })).rejects.toThrow(/managed temporal state/);
+    expect((await store.getEdges(source.id)).map(e => e.id)).toContain(edge.id);
+  });
+
   it('preserves source validity when undoing a legacy edge with unknown history', async () => {
     const target = await writeDecision('Old', 'Body');
     const source = await writeDecision('New', 'Body');

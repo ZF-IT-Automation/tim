@@ -93,7 +93,7 @@ async function runSearchPath(
     orderedEvidence,
     semantic: {
       mode: 'synthetic',
-      modelId: semantic.configuredModel,
+      modelId: searchType === 'fts' ? null : semantic.configuredModel,
       state: semantic.providerState,
       searchType,
       degradedToLexical: semantic.degradedToLexical,
@@ -125,8 +125,8 @@ async function runBriefingPath(
     orderedEvidence,
     semantic: {
       mode: 'synthetic',
-      modelId: SYNTHETIC_MODEL_ID,
-      state: 'enabled',
+      modelId: null,
+      state: 'not_used',
       searchType: 'fts',
     },
     latencyMs,
@@ -336,7 +336,7 @@ export async function runBenchmark(options: RunOptions = {}): Promise<BenchmarkR
         );
         timContext = run.context;
         timOrderedEvidence = run.orderedEvidence;
-        timProvider = { ...run.semantic, mode: providerMode, modelId: provider.modelId };
+        timProvider = { ...run.semantic, mode: providerMode };
         timLatency = run.latencyMs;
       } else {
         const run = await runBriefingPath(
@@ -347,9 +347,15 @@ export async function runBenchmark(options: RunOptions = {}): Promise<BenchmarkR
         );
         timContext = run.context;
         timOrderedEvidence = run.orderedEvidence;
-        timProvider = { ...run.semantic, mode: providerMode, modelId: provider.modelId };
+        timProvider = { ...run.semantic, mode: providerMode };
         timLatency = run.latencyMs;
       }
+
+      const baselineProvider: QuestionModeResult['provider'] = {
+        mode: providerMode,
+        modelId: null,
+        state: 'not_used',
+      };
 
       const results: Record<BenchmarkMode, QuestionModeResult> = {
         'no-memory': buildModeResult(
@@ -357,7 +363,7 @@ export async function runBenchmark(options: RunOptions = {}): Promise<BenchmarkR
           question,
           '',
           [],
-          timProvider,
+          baselineProvider,
           0,
           providerMode,
           dataset.fixedHandoff.text,
@@ -369,7 +375,7 @@ export async function runBenchmark(options: RunOptions = {}): Promise<BenchmarkR
           question,
           dataset.fixedHandoff.text,
           [],
-          timProvider,
+          baselineProvider,
           0,
           providerMode,
           dataset.fixedHandoff.text,

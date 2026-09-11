@@ -163,7 +163,7 @@ export async function getDefaultEmbeddingProvider(
 
 export interface SearchSemanticInfo {
   requestedMode: 'fts' | 'vector' | 'hybrid';
-  providerState: EmbeddingProviderState;
+  providerState: EmbeddingProviderState | 'not_used';
   configuredModel: string | null;
   /** Hybrid/vector path fell back to lexical-only retrieval. */
   degradedToLexical?: boolean;

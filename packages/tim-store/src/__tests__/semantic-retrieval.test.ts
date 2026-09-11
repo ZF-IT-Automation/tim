@@ -248,7 +248,7 @@ describe('semantic retrieval (#33)', () => {
 
     await store.search({ query: 'FTS only', searchType: 'fts' });
     expect(embedSpy).not.toHaveBeenCalled();
-    expect(store.lastSearchSemantic?.providerState).toBe('disabled');
+    expect(store.lastSearchSemantic?.providerState).toBe('not_used');
   });
 
   it('embeddingText uses title and content slice used by indexing', () => {

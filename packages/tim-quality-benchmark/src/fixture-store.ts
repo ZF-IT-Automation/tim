@@ -34,18 +34,28 @@ async function writeSection(
   return section.id;
 }
 
-async function seedNoisyLog(store: TimStore, projectId: string): Promise<void> {
+async function seedNoisyLog(
+  store: TimStore,
+  projectId: string,
+  provider: EmbeddingProvider,
+  realEmbeddings: boolean,
+): Promise<void> {
   const log = await store.write('Log', {
     parentId: projectId,
     metadata: { kind: 'section', label: 'Log', order: 1 },
     tags: ['#section', '#schema'],
   });
+  const entryTexts = new Map<string, string>();
   for (let i = 0; i < 120; i++) {
-    await store.write(`Log filler ${i}\nnoise-entry-${i} unrelated chatter [retrieved:log-${i}]`, {
+    const text = `Log filler ${i} [retrieved:log-${i}]\nnoise-entry-${i} unrelated chatter`;
+    const entry = await store.write(text, {
       parentId: log.id,
       tags: ['#log'],
     });
+    if (realEmbeddings) entryTexts.set(entry.id, text);
+    else store.setVectors(entry.id, vectorForHint('default'), SYNTHETIC_MODEL_ID, SYNTHETIC_DIMENSION);
   }
+  if (realEmbeddings) await embedEntriesForReal(store, entryTexts, provider);
 }
 
 async function seedPartialSession(
@@ -90,7 +100,7 @@ async function writeFixtureEntry(
   const projectKey = entry.project ?? fixture.projectLabel;
   const projectId = projectIds[projectKey];
   const sectionId = sectionIds[`${projectKey}:${entry.section}`];
-  const written = await store.write(`${entry.title}\n${entry.body} [${entry.goldLabel}]`, {
+  const written = await store.write(`${entry.title} [${entry.goldLabel}]\n${entry.body}`, {
     parentId: sectionId,
     tags: entry.tags ?? ['#note'],
     metadata: {
@@ -189,7 +199,7 @@ export async function buildFixtureStore(
       }
     }
 
-    await seedNoisyLog(store, mainProject.id);
+    await seedNoisyLog(store, mainProject.id, provider, options.realEmbeddings ?? false);
     await seedPartialSession(store, fixture.projectLabel);
 
     const pendingLinks: Array<{ fromGold: string; toGold: string }> = [];
@@ -204,7 +214,7 @@ export async function buildFixtureStore(
       );
       goldToEntryId.set(entry.goldLabel, entryId);
       entryIdToGold.set(entryId, entry.goldLabel);
-      entryTexts.set(entryId, `${entry.title}\n${entry.body} [${entry.goldLabel}]`);
+      entryTexts.set(entryId, `${entry.title} [${entry.goldLabel}]\n${entry.body}`);
       if (entry.supersedesGold) {
         pendingLinks.push({ fromGold: entry.goldLabel, toGold: entry.supersedesGold });
       }

@@ -96,6 +96,7 @@ They do not upgrade to `BLOCKER` on their own.
 
 ## Limits
 
+- Semantic freshness checks materialize eligible entry text and hash it in JavaScript. Diagnostic time and transient memory grow with corpus size; read-only does not mean constant cost.
 - Range samples capped at 50 per pending/covered list; totals and truncation flags are always reported.
 - Latest batch summary / rollup selection is global (not limited to the newest 200 summary roots by `created_at`).
 - No secret or suppressed entry titles/bodies in output.
