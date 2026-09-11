@@ -8,6 +8,7 @@ import {
   parseIsoTimestamp,
   parseTemporalMetadata,
   temporalEligibilityAt,
+  validateCallerTemporalMetadata,
   validateIsoTimestamp,
   validateSupersessionEffectiveAt,
 } from 'tim-core';
@@ -33,21 +34,27 @@ export function resolveSearchAsOf(asOf?: string): Date {
   return new Date(parsed.epochMs);
 }
 
-/** SQL fragment for half-open temporal eligibility at `asOf` (epoch-ms compare). */
+/**
+ * SQL fragment for half-open temporal eligibility at `asOf` (epoch-ms compare).
+ * Uses path-based json_extract so non-object temporal values never raise; unusable
+ * timestamp fields are ignored (fail open), matching parseTemporalMetadata in JS.
+ */
 export function buildTemporalEligibilitySql(
   asOfEpochMs: number,
   entryAlias = 'e',
 ): string {
-  const col = `json_extract(${entryAlias}.metadata, '$.temporal')`;
+  const fieldPath = (field: string) =>
+    `json_extract(${entryAlias}.metadata, '$.temporal.${field}')`;
+  const fieldEpoch = (field: string) => `tim_iso_to_epoch_ms(${fieldPath(field)})`;
+  const boundOk = (field: string, op: '<=' | '>') => `(
+    ${fieldPath(field)} IS NULL
+    OR ${fieldEpoch(field)} IS NULL
+    OR ${fieldEpoch(field)} ${op} ?
+  )`;
   return ` AND (
-    json_extract(${col}, '$.validFrom') IS NULL
-    OR tim_iso_to_epoch_ms(json_extract(${col}, '$.validFrom')) <= ?
-  ) AND (
-    json_extract(${col}, '$.validUntil') IS NULL
-    OR tim_iso_to_epoch_ms(json_extract(${col}, '$.validUntil')) > ?
-  ) AND (
-    json_extract(${col}, '$.supersededAt') IS NULL
-    OR tim_iso_to_epoch_ms(json_extract(${col}, '$.supersededAt')) > ?
+    ${boundOk('validFrom', '<=')}
+    AND ${boundOk('validUntil', '>')}
+    AND ${boundOk('supersededAt', '>')}
   )`;
 }
 
@@ -224,4 +231,167 @@ function normalizeSupersessionTimestamp(value: string): string {
     throw new Error(`effectiveAt: ${validated.reason}`);
   }
   return validated.normalized;
+}
+
+/** Caller validity snapshot stored on supersedes edges for undo. */
+export interface SupersessionValiditySnapshot {
+  validFrom?: string;
+  validUntil?: string;
+}
+
+export interface SupersessionEdgeSnapshots {
+  priorTarget: SupersessionValiditySnapshot;
+  priorSource: SupersessionValiditySnapshot;
+}
+
+export function captureSupersessionSnapshots(
+  sourceMeta: Record<string, unknown>,
+  targetMeta: Record<string, unknown>,
+): SupersessionEdgeSnapshots {
+  const sourceTemporal = parseTemporalMetadata(sourceMeta.temporal);
+  const targetTemporal = parseTemporalMetadata(targetMeta.temporal);
+  return {
+    priorTarget: {
+      ...(targetTemporal?.validFrom !== undefined ? { validFrom: targetTemporal.validFrom } : {}),
+      ...(targetTemporal?.validUntil !== undefined ? { validUntil: targetTemporal.validUntil } : {}),
+    },
+    priorSource: {
+      ...(sourceTemporal?.validFrom !== undefined ? { validFrom: sourceTemporal.validFrom } : {}),
+    },
+  };
+}
+
+export interface SupersessionUnlinkInput {
+  edgeId: string;
+  sourceId: string;
+  targetId: string;
+  effectiveAt: string;
+  snapshots?: SupersessionEdgeSnapshots;
+  targetValidity?: SupersessionValiditySnapshot;
+  sourceRow: RowEntry;
+  targetRow: RowEntry;
+  otherSupersedesOnTarget: number;
+}
+
+export function validateSupersessionUnlink(input: SupersessionUnlinkInput): string | null {
+  const {
+    sourceId,
+    targetId,
+    effectiveAt,
+    snapshots,
+    targetValidity,
+    sourceRow,
+    targetRow,
+    otherSupersedesOnTarget,
+  } = input;
+
+  if (otherSupersedesOnTarget > 0) {
+    return 'supersedes undo: target has other active supersession edges';
+  }
+
+  const normalizedEffective = validateIsoTimestamp(effectiveAt);
+  if (!normalizedEffective.ok) {
+    return `supersedes undo: invalid edge effectiveAt (${normalizedEffective.reason})`;
+  }
+
+  const targetMeta = JSON.parse(targetRow.metadata) as Record<string, unknown>;
+  const sourceMeta = JSON.parse(sourceRow.metadata) as Record<string, unknown>;
+  const targetTemporal = parseTemporalMetadata(targetMeta.temporal);
+  const sourceTemporal = parseTemporalMetadata(sourceMeta.temporal);
+
+  if (!targetTemporal?.supersededAt || !targetTemporal.supersededBy) {
+    return 'supersedes undo: target is not superseded';
+  }
+  if (targetTemporal.supersededBy !== sourceId) {
+    return 'supersedes undo: target supersededBy does not match this edge source';
+  }
+
+  const targetSupersededAt = parseIsoTimestamp(targetTemporal.supersededAt);
+  const edgeEffective = parseIsoTimestamp(normalizedEffective.normalized);
+  if (!targetSupersededAt || !edgeEffective || targetSupersededAt.getTime() !== edgeEffective.getTime()) {
+    return 'supersedes undo: target supersededAt no longer matches this edge effectiveAt';
+  }
+
+  const introducedSourceValidFrom = !snapshots?.priorSource.validFrom;
+  if (
+    introducedSourceValidFrom
+    && sourceTemporal?.validFrom
+    && sourceTemporal.validFrom !== normalizedEffective.normalized
+  ) {
+    return 'supersedes undo: source validFrom was changed after this supersession';
+  }
+
+  const expectedTargetUntil = normalizedEffective.normalized;
+  if (
+    targetTemporal.validUntil
+    && targetTemporal.validUntil !== expectedTargetUntil
+    && snapshots?.priorTarget.validUntil !== targetTemporal.validUntil
+  ) {
+    return 'supersedes undo: target validUntil was changed after this supersession';
+  }
+
+  if (!snapshots && targetValidity === undefined) {
+    return 'supersedes undo: edge lacks prior validity snapshot; pass targetValidity explicitly';
+  }
+
+  if (targetValidity !== undefined) {
+    const validated = validateCallerTemporalMetadata(targetValidity);
+    if (!validated.ok) {
+      return `supersedes undo: ${validated.errors.join('; ')}`;
+    }
+  }
+
+  return null;
+}
+
+export function buildSupersessionUndoTargetPatch(
+  existingMetadata: Record<string, unknown>,
+  effectiveAt: string,
+  snapshots?: SupersessionEdgeSnapshots,
+  explicitTargetValidity?: SupersessionValiditySnapshot,
+): Record<string, unknown> {
+  const existingTemporal = parseTemporalMetadata(existingMetadata.temporal) ?? {};
+  const restored: TemporalMetadata = { ...existingTemporal };
+  delete restored.supersededAt;
+  delete restored.supersededBy;
+
+  const prior = snapshots?.priorTarget ?? explicitTargetValidity ?? {};
+  if (prior.validFrom !== undefined) restored.validFrom = prior.validFrom;
+  else delete restored.validFrom;
+  if (prior.validUntil !== undefined) restored.validUntil = prior.validUntil;
+  else delete restored.validUntil;
+
+  const temporal = Object.keys(restored).length > 0 ? restored : undefined;
+  const next = { ...existingMetadata };
+  if (temporal) next.temporal = temporal;
+  else delete next.temporal;
+  return next;
+}
+
+export function buildSupersessionUndoSourcePatch(
+  existingMetadata: Record<string, unknown>,
+  effectiveAt: string,
+  snapshots?: SupersessionEdgeSnapshots,
+): Record<string, unknown> {
+  const existingTemporal = parseTemporalMetadata(existingMetadata.temporal) ?? {};
+  const normalizedEffective = normalizeSupersessionTimestamp(effectiveAt);
+  const introducedValidFrom = !snapshots?.priorSource.validFrom
+    && existingTemporal.validFrom === normalizedEffective;
+
+  if (!introducedValidFrom) {
+    return existingMetadata;
+  }
+
+  const restored: TemporalMetadata = { ...existingTemporal };
+  if (snapshots?.priorSource.validFrom !== undefined) {
+    restored.validFrom = snapshots.priorSource.validFrom;
+  } else {
+    delete restored.validFrom;
+  }
+
+  const temporal = Object.keys(restored).length > 0 ? restored : undefined;
+  const next = { ...existingMetadata };
+  if (temporal) next.temporal = temporal;
+  else delete next.temporal;
+  return next;
 }

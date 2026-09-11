@@ -39,6 +39,11 @@ describe('temporal metadata validation', () => {
     expect(result.ok).toBe(false);
   });
 
+  it('rejects explicit temporal null', () => {
+    const result = validateCallerTemporalMetadata(null);
+    expect(result.ok).toBe(false);
+  });
+
   it('rejects timestamps without timezone', () => {
     expect(isTimezoneQualifiedIso('2026-01-01T00:00:00')).toBe(false);
     const result = validateCallerTemporalMetadata({ validFrom: '2026-01-01T00:00:00' });

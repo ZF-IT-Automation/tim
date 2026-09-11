@@ -1,5 +1,6 @@
 import type { TimStore, SearchSemanticInfo } from 'tim-store';
 import type { Entry } from 'tim-core';
+import { resolveSearchAsOf } from 'tim-store';
 import { buildBoundedSearchResponse, clampSearchRequest } from './search-response.js';
 
 export interface TimSearchToolArgs {
@@ -35,7 +36,10 @@ export async function executeTimSearch(
   let semantic: SearchSemanticInfo | null = null;
 
   if (query === undefined) {
-    results = await store.searchByTag(tag!, topK, root, { type, status });
+    if (parsed.asOf !== undefined) {
+      resolveSearchAsOf(parsed.asOf);
+    }
+    results = await store.searchByTag(tag!, topK, root, { type, status, asOf: parsed.asOf });
   } else {
     const searchResult = await store.searchWithSemantics({
       query,

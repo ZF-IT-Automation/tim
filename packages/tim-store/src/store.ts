@@ -59,12 +59,17 @@ import {
 import {
   buildSupersessionSourcePatch,
   buildSupersessionTargetPatch,
+  buildSupersessionUndoSourcePatch,
+  buildSupersessionUndoTargetPatch,
   buildTemporalEligibilitySql,
+  captureSupersessionSnapshots,
   entryTemporallyEligibleAt,
   registerTemporalSqlFunctions,
   resolveSearchAsOf,
+  type SupersessionValiditySnapshot,
   temporalEligibilityParams,
   validateSupersessionLink,
+  validateSupersessionUnlink,
 } from './temporal.js';
 import {
   type EmbeddingProvider,
@@ -3255,18 +3260,6 @@ export class TimStore implements MemoryInterface {
     metadata: Record<string, unknown>,
   ): Promise<Edge> {
     const effectiveAt = metadata.effectiveAt;
-    const validationError = validateSupersessionLink({
-      db: this.db,
-      sourceId,
-      targetId,
-      effectiveAt: typeof effectiveAt === 'string' ? effectiveAt : '',
-      getProjectLabel: (id) => this.getProjectLabel(id),
-      readRow: (id) => this.db.prepare('SELECT id, metadata FROM entries WHERE id = ?')
-        .get(id) as { id: string; metadata: string } | undefined,
-    });
-    if (validationError) {
-      throw new Error(validationError);
-    }
     const normalizedEffective = validateIsoTimestamp(typeof effectiveAt === 'string' ? effectiveAt : '');
     if (!normalizedEffective.ok) {
       throw new Error(`effectiveAt: ${normalizedEffective.reason}`);
@@ -3275,40 +3268,62 @@ export class TimStore implements MemoryInterface {
 
     const id = ulid();
     const ts = Date.now();
-    const edgeMetadata = { effectiveAt: effective };
-    const edgeRow = {
-      id,
-      source_id: sourceId,
-      target_id: targetId,
-      type: 'supersedes' as const,
-      weight,
-      metadata: JSON.stringify(edgeMetadata),
-      updated_at: new Date(ts).toISOString(),
-    };
     const edgeKey = `${sourceId}|${targetId}|supersedes`;
+    let edgeMetadata: Record<string, unknown> = { effectiveAt: effective };
 
-    const sourceExisting = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(sourceId) as RowEntry;
-    const targetExisting = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(targetId) as RowEntry;
-    const sourceMeta = JSON.parse(sourceExisting.metadata || '{}') as Record<string, unknown>;
-    const targetMeta = JSON.parse(targetExisting.metadata || '{}') as Record<string, unknown>;
-    const now = new Date(ts).toISOString();
+    const runLink = this.db.transaction(() => {
+      const duplicate = this.db.prepare(
+        `SELECT id FROM edges WHERE source_id = ? AND target_id = ? AND type = 'supersedes'`,
+      ).get(sourceId, targetId) as { id: string } | undefined;
+      if (duplicate) {
+        throw new Error('supersedes: an edge for this source/target pair already exists');
+      }
 
-    const sourceUpdated: RowEntry = {
-      ...sourceExisting,
-      metadata: JSON.stringify(buildSupersessionSourcePatch(sourceMeta, effective)),
-      updated_at: now,
-      accessed_at: now,
-      lww_device: this.deviceId,
-    };
-    const targetUpdated: RowEntry = {
-      ...targetExisting,
-      metadata: JSON.stringify(buildSupersessionTargetPatch(targetMeta, sourceId, effective)),
-      updated_at: now,
-      accessed_at: now,
-      lww_device: this.deviceId,
-    };
+      const validationError = validateSupersessionLink({
+        db: this.db,
+        sourceId,
+        targetId,
+        effectiveAt: effective,
+        getProjectLabel: (id) => this.getProjectLabel(id),
+        readRow: (entryId) => this.db.prepare('SELECT id, metadata FROM entries WHERE id = ?')
+          .get(entryId) as { id: string; metadata: string } | undefined,
+      });
+      if (validationError) {
+        throw new Error(validationError);
+      }
 
-    this.db.transaction(() => {
+      const sourceExisting = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(sourceId) as RowEntry;
+      const targetExisting = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(targetId) as RowEntry;
+      const sourceMeta = JSON.parse(sourceExisting.metadata || '{}') as Record<string, unknown>;
+      const targetMeta = JSON.parse(targetExisting.metadata || '{}') as Record<string, unknown>;
+      const snapshots = captureSupersessionSnapshots(sourceMeta, targetMeta);
+      edgeMetadata = { effectiveAt: effective, ...snapshots };
+      const now = new Date(ts).toISOString();
+
+      const sourceUpdated: RowEntry = {
+        ...sourceExisting,
+        metadata: JSON.stringify(buildSupersessionSourcePatch(sourceMeta, effective)),
+        updated_at: now,
+        accessed_at: now,
+        lww_device: this.deviceId,
+      };
+      const targetUpdated: RowEntry = {
+        ...targetExisting,
+        metadata: JSON.stringify(buildSupersessionTargetPatch(targetMeta, sourceId, effective)),
+        updated_at: now,
+        accessed_at: now,
+        lww_device: this.deviceId,
+      };
+      const edgeRow = {
+        id,
+        source_id: sourceId,
+        target_id: targetId,
+        type: 'supersedes' as const,
+        weight,
+        metadata: JSON.stringify(edgeMetadata),
+        updated_at: now,
+      };
+
       this.db.prepare(`UPDATE entries SET metadata=?, accessed_at=?, updated_at=?, lww_device=? WHERE id=?`).run(
         sourceUpdated.metadata, sourceUpdated.accessed_at, sourceUpdated.updated_at,
         sourceUpdated.lww_device, sourceId,
@@ -3329,7 +3344,9 @@ export class TimStore implements MemoryInterface {
         VALUES (?, 'edge', 'upsert', ?, ?, ?, ?)`).run(
         edgeKey, JSON.stringify(edgeRow), ts + 2, this.agentId, 1.0,
       );
-    })();
+    });
+
+    runLink();
 
     const edge: Edge = {
       id,
@@ -3347,7 +3364,10 @@ export class TimStore implements MemoryInterface {
     return edge;
   }
 
-  async unlink(edgeId: string): Promise<void> {
+  async unlink(
+    edgeId: string,
+    options: { targetValidity?: SupersessionValiditySnapshot } = {},
+  ): Promise<void> {
     const row = this.db.prepare('SELECT * FROM edges WHERE id = ?').get(edgeId) as RowEdge | undefined;
     if (!row) return;
 
@@ -3361,14 +3381,103 @@ export class TimStore implements MemoryInterface {
       weight: row.weight,
       metadata: row.metadata,
     };
-    this.db.transaction(() => {
-      this.db.prepare('DELETE FROM edges WHERE id = ?').run(edgeId);
-      this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
-        lww_timestamp, lww_device, lww_confidence)
-        VALUES (?, 'edge', 'delete', ?, ?, ?, ?)`).run(
-        edgeKey, JSON.stringify(edgeRow), ts, this.agentId, 1.0,
+
+    if (row.type === 'supersedes') {
+      const edgeMeta = row.metadata ? JSON.parse(row.metadata) as Record<string, unknown> : {};
+      const effectiveAt = typeof edgeMeta.effectiveAt === 'string' ? edgeMeta.effectiveAt : '';
+      const hasSnapshots = (
+        edgeMeta.priorTarget != null
+        && edgeMeta.priorSource != null
+        && typeof edgeMeta.priorTarget === 'object'
+        && typeof edgeMeta.priorSource === 'object'
+        && !Array.isArray(edgeMeta.priorTarget)
+        && !Array.isArray(edgeMeta.priorSource)
       );
-    })();
+      const snapshots = hasSnapshots ? {
+        priorTarget: edgeMeta.priorTarget as SupersessionValiditySnapshot,
+        priorSource: edgeMeta.priorSource as SupersessionValiditySnapshot,
+      } : undefined;
+
+      const runUndo = this.db.transaction(() => {
+        const sourceExisting = this.db.prepare('SELECT * FROM entries WHERE id = ?')
+          .get(row.source_id) as RowEntry | undefined;
+        const targetExisting = this.db.prepare('SELECT * FROM entries WHERE id = ?')
+          .get(row.target_id) as RowEntry | undefined;
+        if (!sourceExisting || !targetExisting) {
+          throw new Error('supersedes undo: source or target entry not found');
+        }
+
+        const otherSupersedes = (this.db.prepare(
+          `SELECT COUNT(*) AS c FROM edges WHERE target_id = ? AND type = 'supersedes' AND id != ?`,
+        ).get(row.target_id, edgeId) as { c: number }).c;
+
+        const undoError = validateSupersessionUnlink({
+          edgeId,
+          sourceId: row.source_id,
+          targetId: row.target_id,
+          effectiveAt,
+          snapshots,
+          targetValidity: options.targetValidity,
+          sourceRow: sourceExisting,
+          targetRow: targetExisting,
+          otherSupersedesOnTarget: otherSupersedes,
+        });
+        if (undoError) {
+          throw new Error(undoError);
+        }
+
+        const sourceMeta = JSON.parse(sourceExisting.metadata || '{}') as Record<string, unknown>;
+        const targetMeta = JSON.parse(targetExisting.metadata || '{}') as Record<string, unknown>;
+        const now = new Date(ts).toISOString();
+        const sourceUpdated: RowEntry = {
+          ...sourceExisting,
+          metadata: JSON.stringify(buildSupersessionUndoSourcePatch(sourceMeta, effectiveAt, snapshots)),
+          updated_at: now,
+          accessed_at: now,
+          lww_device: this.deviceId,
+        };
+        const targetUpdated: RowEntry = {
+          ...targetExisting,
+          metadata: JSON.stringify(buildSupersessionUndoTargetPatch(
+            targetMeta,
+            effectiveAt,
+            snapshots,
+            options.targetValidity,
+          )),
+          updated_at: now,
+          accessed_at: now,
+          lww_device: this.deviceId,
+        };
+
+        this.db.prepare(`UPDATE entries SET metadata=?, accessed_at=?, updated_at=?, lww_device=? WHERE id=?`).run(
+          sourceUpdated.metadata, sourceUpdated.accessed_at, sourceUpdated.updated_at,
+          sourceUpdated.lww_device, row.source_id,
+        );
+        this.db.prepare(`UPDATE entries SET metadata=?, accessed_at=?, updated_at=?, lww_device=? WHERE id=?`).run(
+          targetUpdated.metadata, targetUpdated.accessed_at, targetUpdated.updated_at,
+          targetUpdated.lww_device, row.target_id,
+        );
+        this.insertStagingSync(sourceUpdated, ts, sourceUpdated.confidence);
+        this.insertStagingSync(targetUpdated, ts + 1, targetUpdated.confidence);
+        this.db.prepare('DELETE FROM edges WHERE id = ?').run(edgeId);
+        this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
+          lww_timestamp, lww_device, lww_confidence)
+          VALUES (?, 'edge', 'delete', ?, ?, ?, ?)`).run(
+          edgeKey, JSON.stringify(edgeRow), ts + 2, this.agentId, 1.0,
+        );
+      });
+
+      runUndo();
+    } else {
+      this.db.transaction(() => {
+        this.db.prepare('DELETE FROM edges WHERE id = ?').run(edgeId);
+        this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
+          lww_timestamp, lww_device, lww_confidence)
+          VALUES (?, 'edge', 'delete', ?, ?, ?, ?)`).run(
+          edgeKey, JSON.stringify(edgeRow), ts, this.agentId, 1.0,
+        );
+      })();
+    }
 
     const edge: Edge = {
       id: row.id,
@@ -3990,9 +4099,16 @@ export class TimStore implements MemoryInterface {
     tag: string,
     topK = 10,
     project?: string,
-    filters: Pick<SearchOptions, 'type' | 'status'> = {},
+    filters: Pick<SearchOptions, 'type' | 'status' | 'asOf'> & {
+      /** When true, skip temporal eligibility (e.g. topic-resume historical scan). */
+      skipTemporalEligibility?: boolean;
+    } = {},
   ): Promise<Entry[]> {
     const needle = tag.startsWith('#') ? tag : `#${tag}`;
+    const asOf = filters.skipTemporalEligibility
+      ? undefined
+      : resolveSearchAsOf(filters.asOf);
+    const asOfEpochMs = asOf?.getTime();
 
     let scopeSql = '';
     const params: unknown[] = [`%"${needle}"%`];
@@ -4024,6 +4140,12 @@ export class TimStore implements MemoryInterface {
       params.push(filters.type);
     }
 
+    let temporalSql = '';
+    if (asOfEpochMs !== undefined) {
+      temporalSql = buildTemporalEligibilitySql(asOfEpochMs, 'entries');
+      params.push(...temporalEligibilityParams(asOfEpochMs));
+    }
+
     const rows = this.db.prepare(`
       SELECT * FROM entries
       WHERE tags LIKE ?
@@ -4031,6 +4153,7 @@ export class TimStore implements MemoryInterface {
         AND tombstoned_at IS NULL
         ${scopeSql}
         ${statusSql}
+        ${temporalSql}
       ORDER BY created_at ASC, rowid ASC
     `).all(...params) as RowEntry[];
 
