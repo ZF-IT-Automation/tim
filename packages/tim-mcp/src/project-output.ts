@@ -17,7 +17,8 @@ import {
 const LOG_SECTION_PREVIEW_MAX = 3;
 
 export interface FormatProjectOutputOptions {
-  tokenBudget: number;
+  /** When set, apply MCP render bounding; omit for legacy unbounded callers. */
+  tokenBudget?: number;
   query?: string;
   queryExtras?: Entry[];
   /** Appended before whole-response bounding (e.g. load NEXT hint). */
@@ -718,7 +719,7 @@ function formatProjectOutputWithTokenBudget(
 
   const { text } = assembleBoundedBriefingText(
     blocks,
-    options.tokenBudget,
+    options.tokenBudget ?? 0,
     options.trailingSuffix ? [options.trailingSuffix] : [],
   );
   return text;
@@ -876,6 +877,10 @@ export function formatProjectOutput(
   lines.push(`children: ${children.length} · truncated: ${truncated}`);
   lines.push(`Use tim_read("${label}") to drill into any section.`);
   lines.push(FORMAT_SEP);
+
+  if (options?.trailingSuffix) {
+    lines.push(options.trailingSuffix);
+  }
 
   return lines.join('\n');
 }

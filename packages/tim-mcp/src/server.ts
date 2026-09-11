@@ -85,7 +85,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { buildBoundedSearchResponse, clampSearchRequest } from './search-response.js';
 import { executeTimSearch } from './tim-search-tool.js';
-import { validateTokenBudget, clampBriefingDefaultBudget, MAX_TOKEN_BUDGET } from './briefing-budget.js';
+import { validateTokenBudget, clampBriefingDefaultBudget, MAX_TOKEN_BUDGET, byteBudgetToHookMaxTokens } from './briefing-budget.js';
 import { loadProjectForBriefing } from './briefing-load.js';
 import {
   assembleBoundedBriefingText,
@@ -1025,34 +1025,48 @@ async function resolveBriefingQueryExtras(
   return searchTaskBriefingExtras(store, projectLabel, query, ftsQueryMode);
 }
 
+type BriefingBudgetResolution =
+  | { ok: true; value: number; applyBounds: boolean }
+  | { ok: false; message: string };
+
 function resolveBriefingTokenBudget(
   tokenBudget: unknown,
   legacyMaxTokens: unknown,
-): { ok: true; value: number } | { ok: false; message: string } {
+  options: { preview?: boolean; hasQuery?: boolean } = {},
+): BriefingBudgetResolution {
   const configDefault = clampBriefingDefaultBudget(getBriefingMaxTokens(loadConfig()));
   // Deprecated maxTokens=0: historical no-directive-briefing behavior for preview.
   if ((tokenBudget === undefined || tokenBudget === null) && legacyMaxTokens === 0) {
-    return { ok: true, value: 0 };
+    return { ok: true, value: 0, applyBounds: true };
   }
   const explicit = tokenBudget ?? legacyMaxTokens;
   if (explicit === undefined || explicit === null) {
-    return { ok: true, value: configDefault };
+    // Preview always bounds against config default; load/read only when query is task-aware.
+    if (options.preview || options.hasQuery) {
+      return { ok: true, value: configDefault, applyBounds: true };
+    }
+    return { ok: true, value: configDefault, applyBounds: false };
   }
-  return validateTokenBudget(explicit, configDefault);
+  const validated = validateTokenBudget(explicit, configDefault);
+  if (!validated.ok) return validated;
+  return { ok: true, value: validated.value, applyBounds: true };
 }
 
 function buildFormatProjectOptions(
-  tokenBudget: number,
+  budget: Extract<BriefingBudgetResolution, { ok: true }>,
   query: string | undefined,
   queryExtras: Entry[],
   trailingSuffix?: string,
-): FormatProjectOutputOptions {
-  return {
-    tokenBudget,
+): FormatProjectOutputOptions | undefined {
+  const shared = {
     ...(query ? { query } : {}),
     ...(queryExtras.length > 0 ? { queryExtras } : {}),
     ...(trailingSuffix ? { trailingSuffix } : {}),
   };
+  if (!budget.applyBounds) {
+    return Object.keys(shared).length > 0 ? shared : undefined;
+  }
+  return { tokenBudget: budget.value, ...shared };
 }
 
 function truncText(s: string, max: number): string {
@@ -3251,7 +3265,7 @@ export async function createMcpServer(
             origin,
             cwd,
           } = TimPreviewBriefingSchema.parse(args);
-          const budgetCheck = resolveBriefingTokenBudget(tokenBudgetArg, maxTokens);
+          const budgetCheck = resolveBriefingTokenBudget(tokenBudgetArg, maxTokens, { preview: true });
           if (!budgetCheck.ok) return errorResult(budgetCheck.message);
 
           const resolved = await s.resolveProjectLabel(project);
@@ -3265,7 +3279,7 @@ export async function createMcpServer(
 
           const preview = await previewSessionStart(s, {
             projectId: resolved.label,
-            maxTokens: budgetCheck.value,
+            maxTokens: byteBudgetToHookMaxTokens(budgetCheck.value),
             ...(sessionId ? { sessionId } : {}),
             ...(origin ? { origin } : {}),
             ...(cwd ? { cwd } : {}),
@@ -3561,7 +3575,9 @@ export async function createMcpServer(
             sessionId: sessionIdArg,
             bind,
           } = TimLoadProjectSchema.parse(args);
-          const budgetCheck = resolveBriefingTokenBudget(tokenBudgetArg, undefined);
+          const budgetCheck = resolveBriefingTokenBudget(tokenBudgetArg, undefined, {
+            hasQuery: Boolean(query?.trim()),
+          });
           if (!budgetCheck.ok) return errorResult(budgetCheck.message);
 
           const resolved = await s.resolveProjectLabel(label);
@@ -3621,7 +3637,7 @@ export async function createMcpServer(
               `(Ideas, Decisions, Errors, Log) — never rely on chat history alone.`
             : '';
           const formatOptions = buildFormatProjectOptions(
-            budgetCheck.value,
+            budgetCheck,
             query,
             queryExtras,
             nextHint || undefined,
@@ -3679,7 +3695,9 @@ export async function createMcpServer(
             ftsQueryMode,
             sections,
           } = TimReadProjectSchema.parse(args);
-          const budgetCheck = resolveBriefingTokenBudget(tokenBudgetArg, undefined);
+          const budgetCheck = resolveBriefingTokenBudget(tokenBudgetArg, undefined, {
+            hasQuery: Boolean(query?.trim()),
+          });
           if (!budgetCheck.ok) return errorResult(budgetCheck.message);
 
           const resolved = await s.resolveProjectLabel(label);
@@ -3709,7 +3727,7 @@ export async function createMcpServer(
             ftsQueryMode,
           );
           const formatOptions = buildFormatProjectOptions(
-            budgetCheck.value,
+            budgetCheck,
             query,
             queryExtras,
           );

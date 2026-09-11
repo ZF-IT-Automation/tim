@@ -1,6 +1,12 @@
 /** Shared maximum for explicit tokenBudget parameters and clamped config defaults. */
 export const MAX_TOKEN_BUDGET = 64000;
 
+/** Appended when a final safety clamp trims assembled briefing text. */
+export const BRIEFING_TRUNCATION_MARKER = '… [briefing truncated to token budget]';
+
+/** Hooks approximate tokens as CHARS_PER_TOKEN visible characters — reconcile with byte budget. */
+export const HOOK_CHARS_PER_TOKEN = 4;
+
 /** @deprecated Use MAX_TOKEN_BUDGET — kept for existing importers. */
 export const MAX_TOKEN_BUDGET_PARAM = MAX_TOKEN_BUDGET;
 
@@ -20,6 +26,18 @@ export function estimateTextTokens(text: string): number {
   if (!text) return 0;
   const bytes = Buffer.byteLength(text, 'utf8');
   return bytes;
+}
+
+/** Convert MCP UTF-8 byte budget to hook maxTokens (char-budget units). */
+export function byteBudgetToHookMaxTokens(byteBudget: number): number {
+  if (byteBudget <= 0) return 0;
+  return Math.max(1, Math.floor(byteBudget / HOOK_CHARS_PER_TOKEN));
+}
+
+function truncationMarkerForBudget(limit: number): string {
+  const fullCost = estimateTextTokens(BRIEFING_TRUNCATION_MARKER);
+  if (limit >= fullCost) return BRIEFING_TRUNCATION_MARKER;
+  return limit >= 3 ? '…' : '.'.repeat(Math.max(0, limit));
 }
 
 /** Clamp configured briefing.maxTokens to a safe finite default. */
@@ -117,7 +135,7 @@ export function boundRenderedText(text: string, tokenBudget: number): {
   }
 
   const limit = Math.max(0, Math.floor(tokenBudget));
-  const ellipsis = limit >= 3 ? '…' : '.'.repeat(limit);
+  const ellipsis = truncationMarkerForBudget(limit);
   const ellipsisCost = estimateTextTokens(ellipsis);
   const contentBudget = Math.max(0, limit - ellipsisCost);
   const clipped = clipToTokenBudget(text, contentBudget);
