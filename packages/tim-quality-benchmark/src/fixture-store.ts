@@ -41,7 +41,7 @@ async function seedNoisyLog(store: TimStore, projectId: string): Promise<void> {
     tags: ['#section', '#schema'],
   });
   for (let i = 0; i < 120; i++) {
-    await store.write(`Log filler ${i}\nnoise-entry-${i} unrelated chatter`, {
+    await store.write(`Log filler ${i}\nnoise-entry-${i} unrelated chatter [retrieved:log-${i}]`, {
       parentId: log.id,
       tags: ['#log'],
     });

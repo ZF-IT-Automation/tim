@@ -34,16 +34,13 @@ export function extractGoldFromContextInOrder(
   context: string,
   goldLabels: string[],
 ): string[] {
-  const goldSet = new Set(goldLabels);
   const matches: Array<{ pos: number; label: string }> = [];
 
-  const bracketRe = /\[((?:gold:[a-z0-9-]+))\]/g;
+  const bracketRe = /\[((?:gold|retrieved):[a-z0-9-]+)\]/g;
   let bracketMatch: RegExpExecArray | null;
   while ((bracketMatch = bracketRe.exec(context)) !== null) {
     const label = bracketMatch[1];
-    if (goldSet.has(label)) {
-      matches.push({ pos: bracketMatch.index, label });
-    }
+    matches.push({ pos: bracketMatch.index, label });
   }
 
   const sortedByLength = [...goldLabels].sort((a, b) => b.length - a.length);

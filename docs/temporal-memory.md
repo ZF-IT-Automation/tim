@@ -49,6 +49,10 @@ Use `tim_unlink` on the `supersedes` edge. When the edge carries stored snapshot
 managed temporal fields on the target and source are restored atomically if they
 still match the values introduced by that edge. Older edges without snapshots
 require an explicit `targetValidity` patch (`{}` restores an unbounded target).
+Legacy recovery preserves source validity because its original value is unknown.
+An explicit patch is rejected when a snapshot is available. Conflicting edits,
+invalid snapshots, or other supersession edges involving either endpoint cause
+undo to fail without writes; resolve dependent history explicitly first.
 Normal non-supersedes edges unlink as before (edge row only).
 
 ## Read projection
