@@ -132,6 +132,16 @@ describe('computeMemoryHealth', () => {
     }
   });
 
+  it('uses the same non-additive backlog count in health warnings and guidance', async () => {
+    const entry = await store.write('Wrong model vector\nBody.', { tags: ['#note'] });
+    store.setVectors(entry.id, unitVector(), 'old-model', 384);
+    const health = await store.health();
+    const count = health.memory!.semanticIndex.unembeddedCount;
+    expect(health.memory!.semanticIndex.wrongModelCount).toBeGreaterThan(0);
+    expect(health.warnings).toContain(`${count} entry vector(s) need (re)indexing`);
+    expect(health.memory!.guidance.some(line => line.startsWith(`${count} eligible entry vector(s)`))).toBe(true);
+  });
+
   it('reports disabled embeddings without claiming vector success', async () => {
     store.close();
     process.env.TIM_EMBEDDING_DISABLED = '1';

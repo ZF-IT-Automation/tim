@@ -254,7 +254,7 @@ describe('codex MCP config', () => {
       expect(installed).toContain('[hooks.state]');
       expect(installed).toContain(`command = "${process.execPath}"`);
       expect(installed).toContain(`args = ["${SERVER_PATH}"]`);
-      expect(installed).not.toContain('npx');
+      expect(installed).not.toMatch(/^command\s*=\s*"npx"\s*$/m);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

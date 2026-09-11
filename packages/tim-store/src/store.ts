@@ -3890,8 +3890,7 @@ export class TimStore implements MemoryInterface {
       issues.push(message);
     }
     if (semanticIndex.providerState === 'enabled') {
-      const backlog =
-        semanticIndex.unembeddedCount + semanticIndex.staleVectorCount + semanticIndex.wrongModelCount;
+      const backlog = semanticIndex.unembeddedCount;
       if (backlog > 0) {
         const message = `${backlog} entry vector(s) need (re)indexing`;
         warnings.push(message);
