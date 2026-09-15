@@ -1,13 +1,10 @@
 #!/bin/bash
 # Controlled TIM error_log compaction after a write-storm (2026-09-03).
 #
-# Order is mandatory:
-#   1. stop every tim-mcp writer (HTTP + stdio)
-#   2. rebuild error_log to the newest 10_000 rows (no mass DELETE)
-#   3. VACUUM (opt-in via CLI --vacuum)
-#   4. start the HTTP daemon again
-#
-# Guaranteed restart: trap ensures tim-mcp-start runs even on failure.
+# Unattended maintenance must never stop MCP servers: a host-owned stdio
+# connection cannot be restored by starting an HTTP daemon. Defer while any
+# MCP server is alive. The CLI checks writers again under its maintenance lock
+# before rebuilding error_log to the newest 10_000 rows and optionally VACUUMing.
 #
 # Runs unattended from cron. Registered as (see docs/cron.md):
 #   41 4 * * * /home/bbbee/.hermes/scripts/tim-compact-error-log.sh >> /home/bbbee/.hermes/cron-outputs/tim-compact-error-log.log 2>&1
@@ -37,31 +34,11 @@ if [[ -z "${ROOT}" ]]; then
   fi
 fi
 
-STOP="${HOME}/.hermes/scripts/tim-mcp-stop.sh"
-if [[ ! -x "${STOP}" ]]; then
-  STOP="${ROOT}/scripts/tim-mcp-stop.sh"
-fi
-START="${HOME}/.hermes/scripts/tim-mcp-start.sh"
 CLI="${ROOT}/packages/tim-cli/dist/cli.js"
 NODE_BIN="${TIM_NODE:-$(command -v node || true)}"
 TIMEOUT_SEC="${TIM_COMPACT_TIMEOUT_SEC:-900}"
 KEEP_BACKUPS="${TIM_COMPACT_KEEP_BACKUPS:-2}"
-STARTED=0
-
-restart_mcp() {
-  if [[ "${STARTED}" -eq 1 ]]; then
-    return 0
-  fi
-  if [[ -x "${START}" ]]; then
-    log "starting MCP"
-    "${START}" || true
-    STARTED=1
-  else
-    fail "no start script at ${START} — start MCP manually"
-  fi
-}
-
-# Only one compaction at a time: cron must never stack two MCP stop/start pairs.
+# Only one compaction at a time.
 LOCK_FILE="${TIM_COMPACT_LOCK:-/tmp/tim-compact-error-log.lock}"
 exec 9>"${LOCK_FILE}"
 if ! flock -n 9; then
@@ -74,21 +51,24 @@ if [[ -z "${NODE_BIN}" ]]; then
   exit 1
 fi
 
-if [[ ! -x "${STOP}" ]]; then
-  fail "missing stop script ${STOP} — refusing to compact with writers alive"
-  exit 1
-fi
-
 if [[ ! -f "${CLI}" ]]; then
   fail "missing ${CLI} — run npm run build (or set TIM_ROOT)"
   exit 1
 fi
 
-# Nothing below here may leave the MCP server stopped.
-trap restart_mcp EXIT
-
-log "stopping MCP"
-"${STOP}"
+# A cheap, conservative preflight avoids interrupting an active session.
+# Never infer "no writers" from a failed process scan. The CLI's stricter
+# /proc-based writer check remains authoritative if a process starts meanwhile.
+pgrep_rc=0
+pids=$(pgrep -f 'tim-mcp.*dist/server\.js') || pgrep_rc=$?
+if [[ "${pgrep_rc}" -eq 0 ]]; then
+  log "SKIP: MCP processes are still running (PIDs: ${pids//$'\n'/ }); retry at the next scheduled run"
+  exit 0
+fi
+if [[ "${pgrep_rc}" -ne 1 ]]; then
+  fail "pgrep failed (rc=${pgrep_rc}) — refusing to compact without writer discovery"
+  exit 1
+fi
 
 VACUUM_ARGS=()
 if [[ "${TIM_COMPACT_VACUUM:-1}" != "0" ]]; then
@@ -120,6 +100,4 @@ if [[ "${#BACKUPS[@]}" -gt "${KEEP_BACKUPS}" ]]; then
   done
 fi
 
-restart_mcp
-trap - EXIT
 log "done"
