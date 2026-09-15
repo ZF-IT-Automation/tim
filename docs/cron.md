@@ -38,7 +38,20 @@ Only the third line is new (review Finding 3). The other jobs
 `85c793d` removed that — correctly, a mass `DELETE` on the write path is what
 produced the 69 GB WAL — and replaced it with the explicit
 `tim compact-error-log`. Nothing scheduled that replacement, so `error_log` is
-unbounded again. The daily 04:41 entry is the backstop.
+unbounded again. The daily 04:41 entry is the backstop. It only runs when no TIM MCP process is
+alive; otherwise it logs `SKIP` with the process IDs and retries at the next
+scheduled run. A process-discovery error fails closed. The CLI repeats writer
+verification under its maintenance lock before touching the database.
+
+Unattended compaction never stops or starts MCP servers. The old stop/start
+wrapper killed host-owned stdio children every night. Starting an HTTP daemon
+cannot restore those existing Claude Code, Cursor, or Codex pipes.
+
+On a machine with continuously running MCP servers, compaction will remain
+deferred. Arrange an explicit maintenance window, close the host sessions (and
+stop any HTTP daemon), then run `tim compact-error-log --vacuum`. Start the
+hosts again afterward. `scripts/tim-mcp-stop.sh` remains an explicit, disruptive
+operator tool for maintenance such as restores; cron does not call it.
 
 ### Environment cron does not give you
 
