@@ -580,22 +580,46 @@ export async function generateSummary(batch: UnsummarizedBatch, onError?: ErrorL
   return (await generateSummaryDetailed(batch, onError)).text;
 }
 
-const SUBSTANCE_VERDICT_PROMPT =
-  'You classify whether an existing session summary describes substantive project work.\n' +
-  'Reply with exactly one line: SUBSTANCE: none | low | real\n' +
-  'none = no project work or decisions; low = minor housekeeping; real = work, findings or decisions.\n\n' +
-  'Summary:\n';
+export interface SubstanceProjectContext {
+  title: string;
+  overview: string;
+}
+
+/** First lines of project content for substance verdict context. */
+export function projectOverviewLines(content: string, maxLines = 8): string {
+  return content.split('\n').slice(0, maxLines).join('\n').trim();
+}
+
+export function buildSubstanceVerdictPrompt(
+  summaryText: string,
+  project?: SubstanceProjectContext,
+): string {
+  const projectBlock = project
+    ? `Project: ${project.title}\n\n${project.overview}\n\n`
+    : '';
+  return (
+    'You classify whether an existing session summary describes substantive work ON THE PROJECT above.\n' +
+    'Reply with exactly one line: SUBSTANCE: none | low | real\n' +
+    'none = no work, finding or decision about THIS project (monitoring or observing other agents/sessions, status pings, version or tool updates, greetings, aborted starts, work on another project)\n' +
+    'low = minor housekeeping directly about this project\n' +
+    'real = code, investigation, findings or decisions about this project\n\n' +
+    projectBlock +
+    'Summary:\n' +
+    summaryText.trim().slice(0, 4000)
+  );
+}
 
 /** Ask the configured summarizer chain for a SUBSTANCE verdict only (no summary rewrite). */
 export async function generateSubstanceVerdict(
   summaryText: string,
   onError?: ErrorLogFn,
+  project?: SubstanceProjectContext,
 ): Promise<SessionSubstance | undefined> {
   const config = loadConfig();
   const chain = config.summarizer?.chain;
   if (!chain || chain.length === 0) return undefined;
 
-  const prompt = `${SUBSTANCE_VERDICT_PROMPT}${summaryText.trim().slice(0, 4000)}`;
+  const prompt = buildSubstanceVerdictPrompt(summaryText, project);
   const timeoutSec = config.summarizer?.timeout_sec ?? 600;
 
   for (const entry of chain) {
