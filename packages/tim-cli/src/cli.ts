@@ -18,7 +18,6 @@ import {
   runSessionStart,
   findMarker,
   findMarkerOptionsFromEnv,
-  getBriefingMaxTokens,
   getDirectiveHookMaxTokens,
   buildLoadDirective,
   buildSessionDirective,
