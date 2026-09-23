@@ -496,8 +496,6 @@ export interface DirectiveBriefing {
   previousSessionSummary?: string;
   /** Raw turns of the previous session that no batch summary covers, oldest first. */
   recentExchanges?: string[];
-  /** When the newest session was trivial and a substantive one was shown instead. */
-  trivialSessionNote?: string;
   /** Date label for a handoff from a different session than the one shown above. */
   latestHandoffLabel?: string;
   latestHandoffNote?: string;
@@ -525,9 +523,6 @@ function briefingBlock(briefing?: DirectiveBriefing): string[] {
       : `── Previous session${label ? ` (${label})` : ''}, not yet summarized ──`;
     out.push('', heading, ...recent);
   }
-
-  const trivial = briefing.trivialSessionNote?.trim();
-  if (trivial) out.push('', trivial);
 
   const handoffLabel = briefing.latestHandoffLabel?.trim();
   const handoffNote = briefing.latestHandoffNote?.trim();

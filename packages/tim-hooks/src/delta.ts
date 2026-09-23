@@ -1,5 +1,12 @@
 import type { Entry } from 'tim-core';
-import type { TimStore } from 'tim-store';
+import {
+  findChildByKind,
+  isSubstantiveSession,
+  KIND_SESSION,
+  KIND_SUMMARY_ROOT,
+  sessionHasHandoffNote,
+  type TimStore,
+} from 'tim-store';
 
 const DEFAULT_TIMEOUT_MS = 500;
 const MAX_LINES = 5;
@@ -46,13 +53,29 @@ function isExcludedKindOrTag(entry: { title: string; metadata: Record<string, un
   return false;
 }
 
-async function isUnderSessionsOrCommitsRoot(store: TimStore, entry: Entry): Promise<boolean> {
+async function isUnderCommitsRoot(store: TimStore, entry: Entry): Promise<boolean> {
   let parentId = entry.parentId;
   while (parentId) {
     const parent = await store.read(parentId, { includeChildren: false });
     if (!parent) break;
     const kind = String(parent.metadata.kind ?? '');
-    if (kind === 'sessions-root' || kind === 'commits-root') return true;
+    if (kind === 'commits-root') return true;
+    parentId = parent.parentId;
+  }
+  return false;
+}
+
+async function isInsideNonSubstantiveSession(store: TimStore, entry: Entry): Promise<boolean> {
+  let parentId = entry.parentId;
+  while (parentId) {
+    const parent = await store.read(parentId, { includeChildren: false });
+    if (!parent) break;
+    if (parent.metadata.kind === KIND_SESSION) {
+      const exchangeCount = Number(parent.metadata.exchange_count) || 0;
+      const summaryNode = await findChildByKind(store, parent.id, KIND_SUMMARY_ROOT);
+      const hasHandoff = sessionHasHandoffNote(summaryNode?.metadata);
+      return !isSubstantiveSession(exchangeCount, hasHandoff);
+    }
     parentId = parent.parentId;
   }
   return false;
@@ -61,7 +84,9 @@ async function isUnderSessionsOrCommitsRoot(store: TimStore, entry: Entry): Prom
 /** True when an entry is session/bookkeeping noise, not project news (G7). */
 export async function isDeltaBookkeepingEntry(store: TimStore, entry: Entry): Promise<boolean> {
   if (isExcludedKindOrTag(entry)) return true;
-  return isUnderSessionsOrCommitsRoot(store, entry);
+  if (await isUnderCommitsRoot(store, entry)) return true;
+  if (await isInsideNonSubstantiveSession(store, entry)) return true;
+  return false;
 }
 
 async function filterDeltaEntries(

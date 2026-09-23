@@ -102,7 +102,8 @@ export {
   type MarkerDiscoveryPolicy,
 } from './marker.js';
 
-export { collectDirectiveBriefing, clampSummary, recentExchanges, formatOpenWorkLines, buildNowBlock, isSubstantiveSession, SUBSTANTIVE_MIN_EXCHANGES } from './session-briefing.js';
+export { collectDirectiveBriefing, clampSummary, recentExchanges, formatOpenWorkLines, buildNowBlock } from './session-briefing.js';
+export { isSubstantiveSession, SUBSTANTIVE_MIN_EXCHANGES } from 'tim-store';
 
 export {
   rebalanceBatch,
@@ -120,7 +121,9 @@ export {
   buildProjectSummaryCommand,
   buildProjectSummarySpawnRequest,
   isSummarizerChild,
+  isTeamupWorker,
   SUMMARIZER_ENV_FLAG,
+  TEAMUP_WORKER_ENV_FLAG,
   spawnSummarizer,
   detachedSpawner,
   resolveSummarizeScriptPath,

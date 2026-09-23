@@ -9,6 +9,7 @@ import {
   KIND_BATCH,
   KIND_SUMMARY_ROOT,
   KIND_SESSION,
+  isSubstantiveSession,
 } from 'tim-store';
 import { connectTimMcp, callTimTool, type UnsummarizedBatch } from './mcp-client.js';
 import {
@@ -30,12 +31,7 @@ export const PROJECT_SUMMARY_MARKER = '## Project Summary';
  */
 export const SUMMARY_FAILURE_MARKER = '[ALL SUMMARIZER CLIs FAILED';
 
-const SUBSTANTIVE_MIN_EXCHANGES = 3;
 const PROJECT_SUMMARY_SESSION_LIMIT = 10;
-
-function isSubstantiveSession(exchangeCount: number, hasHandoffNote: boolean): boolean {
-  return exchangeCount >= SUBSTANTIVE_MIN_EXCHANGES || hasHandoffNote;
-}
 
 function sessionDateLabel(session: Entry): string {
   return typeof session.metadata.date === 'string'

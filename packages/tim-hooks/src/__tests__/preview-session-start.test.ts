@@ -34,10 +34,12 @@ describe('previewSessionStart', () => {
       harness: 't',
       batchSize: 5,
     });
-    await sessions.logExchange('prev-1', [
-      { role: 'user', content: 'q' },
-      { role: 'agent', content: 'a' },
-    ]);
+    for (let i = 1; i <= 3; i++) {
+      await sessions.logExchange('prev-1', [
+        { role: 'user', content: `q${i}` },
+        { role: 'agent', content: `a${i}` },
+      ]);
+    }
   });
 
   afterEach(() => {

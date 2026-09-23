@@ -2,15 +2,16 @@ import {
   SessionManager,
   findChildByKind,
   KIND_SUMMARY_ROOT,
+  isSubstantiveSession,
+  sessionHasHandoffNote,
   type TimStore,
 } from 'tim-store';
-import { buildNowBlock, isSubstantiveSession } from 'tim-hooks';
+import { buildNowBlock } from 'tim-hooks';
 import type { BriefingRenderContext, RecentSessionLine } from './project-output.js';
 
 async function sessionHandoffNote(store: TimStore, sessionId: string): Promise<boolean> {
   const summaryNode = await findChildByKind(store, sessionId, KIND_SUMMARY_ROOT);
-  const note = summaryNode?.metadata.handoff_note;
-  return typeof note === 'string' && note.trim().length > 0;
+  return sessionHasHandoffNote(summaryNode?.metadata);
 }
 
 export async function buildBriefingRenderContext(
@@ -23,41 +24,43 @@ export async function buildBriefingRenderContext(
   const nowBlockLines = await buildNowBlock(store, projectLabel);
 
   const rows = store.listProjectSessionsByActivity(projectId, 1000);
-  const totalSessionCount = rows.length;
-  const showCount = totalSessionCount >= 3
-    ? Math.max(3, recentSessionsCount)
-    : totalSessionCount;
+  const substantiveSessions: RecentSessionLine[] = [];
+  let hiddenShortCount = 0;
 
-  const recentSessions: RecentSessionLine[] = [];
-  for (const { id } of rows.slice(0, showCount)) {
+  for (const { id } of rows) {
     const session = await store.read(id);
     if (!session) continue;
     const summaryNode = await findChildByKind(store, id, KIND_SUMMARY_ROOT);
     const exchangeCount = Number(session.metadata.exchange_count) || 0;
     const hasHandoff = await sessionHandoffNote(store, id);
-    const trivial = !isSubstantiveSession(exchangeCount, hasHandoff);
+    if (!isSubstantiveSession(exchangeCount, hasHandoff)) {
+      hiddenShortCount += 1;
+      continue;
+    }
+
     const date = typeof session.metadata.date === 'string'
       ? session.metadata.date.slice(0, 10)
       : session.createdAt.slice(0, 10);
-
-    if (trivial) {
-      recentSessions.push({ exchanges: exchangeCount, date, summary: [], trivial: true });
-      continue;
-    }
 
     const stored = typeof summaryNode?.metadata.summary === 'string'
       ? summaryNode.metadata.summary.trim()
       : '';
     const summary = stored
-      ? stored.split('\n').map(l => l.trim()).filter(Boolean)
+      ? stored.split('\n').map(l => l.trim()).filter(Boolean).slice(0, 1)
       : [];
-    recentSessions.push({ exchanges: exchangeCount, date, summary, trivial: false });
+    substantiveSessions.push({ exchanges: exchangeCount, date, summary });
   }
+
+  const substantiveTotal = substantiveSessions.length;
+  const showCount = substantiveTotal >= 3
+    ? Math.max(3, recentSessionsCount)
+    : substantiveTotal;
 
   return {
     lastActivityDate: stats.lastActivity,
     nowBlockLines,
-    recentSessions,
-    totalSessionCount,
+    recentSessions: substantiveSessions.slice(0, showCount),
+    totalSessionCount: substantiveTotal,
+    hiddenShortSessionCount: hiddenShortCount,
   };
 }
