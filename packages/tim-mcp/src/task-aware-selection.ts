@@ -155,10 +155,48 @@ export function selectBriefingBlocks(
     return a.order - b.order;
   });
 
+  const nowSource = sorted.find(
+    block => block.id === 'now' && block.lines.some(line => line.trim().startsWith('- [')),
+  );
+  let pinnedNow: BriefingBlock | null = null;
+  if (nowSource) {
+    const compactLines = nowSource.lines.filter(
+      line => line.includes('── Now ──')
+        || line.trim().startsWith('- [')
+        || line.trim().startsWith('Handoff'),
+    );
+    const compactText = compactLines.join('\n');
+    if (tryChargeTokens(ledger, compactText)) {
+      pinnedNow = { ...nowSource, lines: compactLines };
+    }
+  }
+
+  const rulesSource = sorted.find(block => block.id === 'rules');
+  let pinnedRules: BriefingBlock | null = null;
+  if (rulesSource) {
+    const compactLines = rulesSource.lines.filter(
+      line => line.includes('── Rules ──')
+        || (line.trim().length > 0 && line.trim() !== 'Rules'),
+    );
+    const compactText = compactLines.join('\n');
+    if (tryChargeTokens(ledger, compactText)) {
+      pinnedRules = { ...rulesSource, lines: compactLines };
+    }
+  }
+
   const included: BriefingBlock[] = [];
   for (const block of sorted) {
+    if (block.id === 'now' && pinnedNow) {
+      included.push(pinnedNow);
+      continue;
+    }
+    if (block.id === 'rules' && pinnedRules) {
+      included.push(pinnedRules);
+      continue;
+    }
     const text = block.lines.join('\n');
     const separator = included.length ? '\n' : '';
+
     if (tryChargeTokens(ledger, separator + text)) {
       included.push(block);
       continue;
@@ -247,6 +285,20 @@ function selectContentBriefingBlocks(
   return mergeBlockSelections(reservedResult, generalResult);
 }
 
+function clipBriefingLines(text: string, maxBytes: number): string {
+  if (!text || maxBytes <= 0) return '';
+  const lines = text.split('\n');
+  const kept: string[] = [];
+  let used = 0;
+  for (const line of lines) {
+    const cost = Buffer.byteLength(line, 'utf8') + (kept.length > 0 ? 1 : 0);
+    if (used + cost > maxBytes) break;
+    used += cost;
+    kept.push(line);
+  }
+  return kept.join('\n');
+}
+
 function formatOmissionsLine(omissions: string[], maxBytes: number): string {
   if (omissions.length === 0) return '';
   const full = `… briefing omissions: ${omissions.join('; ')}`;
@@ -308,7 +360,7 @@ export function assembleBoundedBriefingText(
   const contentJoined = contentLines.join('\n');
   const contentEstimate = estimateTextTokens(contentJoined);
   const contentBounded = contentEstimate > contentLimit
-    ? boundRenderedText(contentJoined, contentLimit, briefingDrillDown)
+    ? { text: clipBriefingLines(contentJoined, contentLimit), truncated: true }
     : { text: contentJoined, truncated: false, estimatedTokens: contentEstimate };
 
   const parts: string[] = [];

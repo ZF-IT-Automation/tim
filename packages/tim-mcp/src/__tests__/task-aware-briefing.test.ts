@@ -269,7 +269,7 @@ describe('task-aware briefing MCP contract', () => {
     });
     const text = resp.result!.content[0].text;
     expect(text).toContain('Critical rule text');
-    expect(text).toMatch(/Starved t/);
+    expect(text).toContain('Starved task title');
   });
 
   it('includes query-relevant extras and excludes adversarial other-project hits', async () => {
@@ -352,11 +352,11 @@ describe('task-aware briefing MCP contract', () => {
     });
     const text = resp.result!.content[0].text;
     expect(text.length).toBeGreaterThan(0);
-    expect(text).toMatch(/truncated|omitted|…/);
     expect(estimateTextTokens(text)).toBeLessThanOrEqual(8);
+    expect(text).toMatch(/truncated|omitted|…|Rules/);
   });
 
-  it('keeps legacy unbounded output including drill-down footer when tokenBudget omitted', async () => {
+  it('default tim_load_project output respects 12 KB contract when tokenBudget omitted', async () => {
     client.kill();
     await new Promise(r => setTimeout(r, 150));
     const legacyDb = path.join(path.dirname(childServerDbPath()), `legacy-wide-${Date.now()}.db`);
@@ -467,7 +467,7 @@ describe('formatProjectOutput task-aware unit seam', () => {
     if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath);
   });
 
-  it('reserves rules and urgent work even when the protected Sessions section is huge', async () => {
+  it('load mode with context renders Tasks index line and Now block, not full Tasks body', async () => {
     const project = (await store.read('P3402'))!;
     const sessionsRoot = (await store.getChildren(project.id))
       .find(entry => entry.metadata.kind === 'sessions-root')!;
@@ -486,13 +486,14 @@ describe('formatProjectOutput task-aware unit seam', () => {
     const briefingContext = await buildBriefingRenderContext(
       store, 'P3402', result.project.id, 3,
     );
-    const output = formatProjectOutput(result, 40, undefined, 'read', 3, {
+    const output = formatProjectOutput(result, 40, undefined, 'load', 3, {
       tokenBudget: 9000,
       briefingContext,
     });
     expect(output).toContain('Always use MCP');
     expect(output).toContain('Urgent briefing fix');
-    expect(output).toContain('Worked on briefing');
+    expect(output).toContain('Tasks (');
+    expect(output).not.toContain('Must appear despite Ideas volume');
   });
 
   it('respects suppression for query extras', async () => {
