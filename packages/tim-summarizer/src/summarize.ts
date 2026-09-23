@@ -20,6 +20,8 @@ import {
   generateSessionRollup,
   generateSummaryHeuristic,
   generateSubstanceVerdict,
+  projectOverviewLines,
+  type SubstanceProjectContext,
   extractTags,
   FALLBACK_MARKER,
   type SummaryStatus,
@@ -192,6 +194,10 @@ export async function runBackfillSubstance(opts: BackfillSubstanceOptions = {}):
     for (const label of projects) {
       const project = await store.read(label);
       if (!project) continue;
+      const projectContext: SubstanceProjectContext = {
+        title: project.title,
+        overview: projectOverviewLines(project.content ?? ''),
+      };
       const rows = store.listProjectSessionsByActivity(project.id, 1000);
       for (const { id: sessionId } of rows) {
         if (opts.limit != null && processed >= opts.limit) break outer;
@@ -215,7 +221,7 @@ export async function runBackfillSubstance(opts: BackfillSubstanceOptions = {}):
           continue;
         } else {
           const combined = summaries.join('\n\n').trim();
-          const fromLlm = await generateSubstanceVerdict(combined);
+          const fromLlm = await generateSubstanceVerdict(combined, undefined, projectContext);
           verdict = fromLlm ?? 'low';
         }
 
