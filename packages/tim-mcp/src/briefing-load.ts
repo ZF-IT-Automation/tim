@@ -82,9 +82,14 @@ export async function loadProjectForBriefing(
   let remaining = options.budget;
 
   for (const [index, section] of topLevel.entries()) {
+    if (!seen.has(section.id)) {
+      seen.add(section.id);
+      children.push(section);
+      remaining = Math.max(0, options.budget - children.length);
+    }
     if (remaining <= 0) {
       truncated = true;
-      break;
+      continue;
     }
     // Reserve a share for every remaining protected section. A huge Sessions or
     // Rules section must not consume the entire budget before open work is read.
