@@ -341,9 +341,11 @@ describe('marker', () => {
     expect(d).toContain('- fixed the chain\n- next: install the hook');
     expect(d).toContain('── Open work ──');
     expect(d).toContain('- [in_progress, high] Ship the SessionStart hook');
-    // Binding must still happen, and the model must not re-fetch what it already has.
+    // Binding must still happen with a single coherent instruction.
     expect(d).toContain('tim_load_project(label="P0063")');
-    expect(d).toContain('already loaded');
+    expect(d).toContain('once to bind');
+    expect(d).not.toContain('already loaded');
+    expect(d).not.toContain('do NOT re-fetch');
   });
 
   it('buildLoadDirective ignores an empty briefing and keeps the plain directive', () => {
