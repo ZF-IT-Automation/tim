@@ -490,6 +490,7 @@ const TimWriteBatchSummarySchema = z.object({
   seqFrom: z.number().int().nonnegative(),
   seqTo: z.number().int().nonnegative(),
   tags: z.array(z.string()).optional(),
+  substance: z.enum(['none', 'low', 'real']).optional(),
 });
 
 const TimRollupSessionSummarySchema = z.object({
@@ -3421,12 +3422,12 @@ export async function createMcpServer(
         }
 
         case 'tim_write_batch_summary': {
-          const { sessionId, batchIndex, summary, seqFrom, seqTo, tags } =
+          const { sessionId, batchIndex, summary, seqFrom, seqTo, tags, substance } =
             TimWriteBatchSummarySchema.parse(args);
           const node = await getSessions().writeBatchSummary(sessionId, batchIndex, summary, {
             seqFrom,
             seqTo,
-          }, tags);
+          }, tags, substance);
           return {
             content: [{ type: 'text', text: formatToolResponse(node) }],
           };

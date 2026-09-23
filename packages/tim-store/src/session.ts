@@ -27,6 +27,7 @@ import {
   SUMMARY_NODE_TITLE,
 } from './session-tree.js';
 import { ensureProjectSchema } from './project-schema-init.js';
+import { aggregateSubstance, parseSessionSubstance } from './substantive-session.js';
 
 export type ExchangeRole = 'user' | 'agent';
 
@@ -671,13 +672,14 @@ export class SessionManager {
     summaryText: string,
     range: { seqFrom: number; seqTo: number },
     tags?: string[],
+    substance?: string,
   ): Promise<Entry> {
     sessionId = this.store.resolveSessionAlias(sessionId);
     const summaryNode = await findChildByKind(this.store, sessionId, KIND_SUMMARY_ROOT);
     if (!summaryNode) throw new Error(`Summary node missing for session: ${sessionId}`);
 
     const entry = this.store.runExclusive(() =>
-      this.writeBatchSummarySync(sessionId, summaryNode, batchIndex, summaryText, range, tags),
+      this.writeBatchSummarySync(sessionId, summaryNode, batchIndex, summaryText, range, tags, substance),
     );
     await this.aggregateSessionTags(sessionId);
     return entry;
@@ -690,6 +692,7 @@ export class SessionManager {
     summaryText: string,
     range: { seqFrom: number; seqTo: number },
     tags?: string[],
+    substance?: string,
   ): Entry {
     const findExisting = () =>
       this.store.getChildByKindSync(summaryNode.id, KIND_BATCH)
@@ -724,6 +727,7 @@ export class SessionManager {
           seq_to: mergedTo,
           sessionId,
           summarized_at: summarizedAt,
+          ...(substance ? { substance } : {}),
         }, sessionId, mergedFrom, mergedTo),
         tags: mergedTags,
       });
@@ -750,6 +754,7 @@ export class SessionManager {
           seq_to: range.seqTo,
           sessionId,
           summarized_at: summarizedAt,
+          ...(substance ? { substance } : {}),
         }, sessionId, range.seqFrom, range.seqTo),
         tags: [SESSION_SUMMARY_TAG, BATCH_SUMMARY_TAG, ...contentTags],
       });
@@ -855,6 +860,9 @@ export class SessionManager {
     const date = String(summaryNode.metadata.date ?? new Date().toISOString());
     const exchanges = await this.getSessionExchanges(sessionId);
     const seqRange = userSeqRange(exchanges);
+    const aggregatedSubstance = aggregateSubstance(
+      batches.map(b => parseSessionSubstance(b.metadata.substance)),
+    );
 
     await this.store.update(summaryNode.id, {
       title: SUMMARY_NODE_TITLE,
@@ -864,6 +872,7 @@ export class SessionManager {
         summary: text,
         exchanges: exchangeCount,
         date,
+        ...(aggregatedSubstance ? { substance: aggregatedSubstance } : {}),
         ...(seqRange
           ? { evidence: buildAgentDerivedSessionEvidence(sessionId, seqRange.seqFrom, seqRange.seqTo) }
           : {}),
