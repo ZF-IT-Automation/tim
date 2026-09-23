@@ -1,5 +1,5 @@
 import type { Entry, ProjectSchema } from 'tim-core';
-import { findSchemaSection } from 'tim-core';
+import { findSchemaSection, isClosedBugMetadata, resolveBugStatusFromMetadata } from 'tim-core';
 import type { LoadProjectResult } from 'tim-store';
 import { isTaskMarker, SUMMARY_NODE_TITLE } from 'tim-store';
 import { DEFAULT_BRIEFING_RECENT_SESSIONS, clampSummary } from 'tim-hooks';
@@ -30,6 +30,8 @@ export interface BriefingRenderContext {
   hiddenShortSessionCount?: number;
   /** Open-task counts from store.getTasks — same source as the Now block. */
   openTaskCounts?: { open: number; stale: number };
+  /** Open-bug count from store.getBugs — same source as the Sections index line. */
+  openBugCount?: number;
 }
 
 export interface FormatProjectOutputOptions {
@@ -50,6 +52,19 @@ export interface FormatProjectOutputOptions {
 export type { ProjectSchema, ProjectSchemaSection } from 'tim-core';
 
 const FORMAT_SEP = '─'.repeat(40);
+const RULE_LINE_MAX = 160;
+
+/** Display order for tim_load_project blocks (lower = earlier). */
+const LOAD_BLOCK_ORDER = {
+  header: 0,
+  now: 10,
+  rules: 20,
+  projectSummary: 30,
+  sectionsIndex: 40,
+  sectionBodyBase: 100,
+  recentSessions: 950,
+  footer: 9999,
+} as const;
 
 function truncText(s: string, max: number): string {
   const t = s.replace(/\s+/g, ' ').trim();
@@ -153,21 +168,45 @@ function countOpenBugs(children: Entry[]): number {
   return open;
 }
 
-function ruleLine(entry: Entry): string {
-  const body = sectionPreview(entry).trim();
+function ruleCompactLine(entry: Entry): string {
   const title = entryTitle(entry);
-  if (title !== 'Untitled' && body) return `${title}: ${body}`;
-  if (body) return body;
-  return title === 'Untitled' ? '' : title;
+  const body = sectionPreview(entry);
+  const bodyLines = body
+    .split('\n')
+    .map(line => line.replace(/^#{1,6}\s+/, '').trim())
+    .filter(line => line.length > 0);
+  const firstBody = bodyLines.find(line => line !== title) ?? bodyLines[0] ?? '';
+
+  let text: string;
+  if (title !== 'Untitled' && firstBody && firstBody !== title) {
+    text = `${title}: ${firstBody}`;
+  } else if (firstBody) {
+    text = firstBody;
+  } else if (title !== 'Untitled') {
+    text = title;
+  } else {
+    return '';
+  }
+
+  const normalized = text.replace(/\s+/g, ' ').trim();
+  const overLimit = normalized.length > RULE_LINE_MAX;
+  text = overLimit ? truncText(normalized, RULE_LINE_MAX) : normalized;
+
+  const hasMoreBody = bodyLines.length > 1
+    || body.replace(/\s+/g, ' ').trim().length > RULE_LINE_MAX;
+  if (hasMoreBody || overLimit) {
+    text += ` — tim_read("${entry.id}")`;
+  }
+  return text;
 }
 
 function renderRulesBlock(section: Entry, childMap: Map<string, Entry[]>): string[] {
   const lines: string[] = [];
-  const sectionLine = ruleLine(section);
+  const sectionLine = ruleCompactLine(section);
   if (sectionLine) lines.push(sectionLine);
   const children = childMap.get(section.id) ?? [];
   for (const child of children) {
-    const line = ruleLine(child);
+    const line = ruleCompactLine(child);
     if (line) lines.push(line);
   }
   return lines;
@@ -379,15 +418,7 @@ function isBugEntry(entry: Entry): boolean {
 }
 
 function resolveBugStatus(entry: Entry): string {
-  const bug = entry.metadata.bug;
-  if (typeof bug === 'object' && bug !== null && !Array.isArray(bug)) {
-    const st = (bug as { status?: unknown }).status;
-    if (typeof st === 'string' && st) return st;
-  }
-  if (String(entry.metadata.type ?? '') === 'bug' && typeof entry.metadata.status === 'string') {
-    return entry.metadata.status;
-  }
-  return 'open';
+  return resolveBugStatusFromMetadata(entry.metadata);
 }
 
 function resolveBugSeverity(entry: Entry): string | undefined {
@@ -441,7 +472,6 @@ const PROJECT_SUMMARY_MARKER = '## Project Summary';
 const RECENT_SESSIONS_COUNT = DEFAULT_BRIEFING_RECENT_SESSIONS;
 
 const CLOSED_TASK_STATUSES = new Set(['done', 'cancelled']);
-const CLOSED_BUG_STATUSES = new Set(['fixed', 'closed', 'resolved', 'wontfix', 'done']);
 
 const TASK_STATUS_SORT: Record<string, number> = {
   in_progress: 0,
@@ -485,7 +515,7 @@ function isClosedTask(entry: Entry): boolean {
 
 function isClosedBug(entry: Entry): boolean {
   if (!isBugEntry(entry)) return false;
-  return CLOSED_BUG_STATUSES.has(resolveBugStatus(entry));
+  return isClosedBugMetadata(entry.metadata);
 }
 
 function compareTaskEntries(a: Entry, b: Entry): number {
@@ -825,16 +855,11 @@ function formatProjectOutputWithTokenBudget(
   headerLines.push(`Access: ${project.metadata.access_count ?? 0}`);
   const projectPreview = resolveProjectPreview(project, sections);
   if (projectPreview) headerLines.push('', projectPreview);
-  if (projectSummary) {
-    const summaryBody = options.tokenBudget != null
-      ? clampSummaryHead(projectSummary, 2000)
-      : projectSummary;
-    headerLines.push('', '── Project Summary ──', '', summaryBody);
-  }
   const rulesSection = sections.find(isRulesSection);
 
+  const sectionsIndexLines: string[] = [];
   if (sections.length > 0) {
-    headerLines.push('', `── Sections (${sections.length}) ──`, '');
+    sectionsIndexLines.push('', `── Sections (${sections.length}) ──`, '');
     for (const section of sections) {
       const name = entryTitle(section);
       if (useLoadIndexLayout && isOverviewSection(section)
@@ -844,7 +869,7 @@ function formatProjectOutputWithTokenBudget(
           const hint = subkids.length > 0
             ? `${subkids.length} more`
             : 'full body';
-          headerLines.push(
+          sectionsIndexLines.push(
             `  Overview (${hint}) — tim_read("${section.id}")`,
           );
         }
@@ -853,24 +878,24 @@ function formatProjectOutputWithTokenBudget(
       if (useLoadIndexLayout && isTasksSection(section)
         && !sectionExplicitlyRequested(section, name, requestedSectionNames)) {
         const counts = ctx?.openTaskCounts ?? countOpenTasks(childMap.get(section.id) ?? []);
-        headerLines.push(
+        sectionsIndexLines.push(
           `  Tasks (${counts.open} open, ${counts.stale} stale) — tim_read("${section.id}")`,
         );
         continue;
       }
       if (isBugsSection(section)) {
-        const openCount = countOpenBugs(childMap.get(section.id) ?? []);
-        headerLines.push(`  Bugs (${openCount} open) — tim_read("${section.id}")`);
+        const openCount = ctx?.openBugCount ?? countOpenBugs(childMap.get(section.id) ?? []);
+        sectionsIndexLines.push(`  Bugs (${openCount} open) — tim_read("${section.id}")`);
         continue;
       }
-      headerLines.push(`  ${name} — tim_read("${section.id}")`);
+      sectionsIndexLines.push(`  ${name} — tim_read("${section.id}")`);
     }
   }
 
   const blocks: BriefingBlock[] = [{
     id: 'header',
     priority: BRIEFING_PRIORITY.header,
-    order: 0,
+    order: LOAD_BLOCK_ORDER.header,
     lines: headerLines,
   }];
 
@@ -878,7 +903,7 @@ function formatProjectOutputWithTokenBudget(
     blocks.push({
       id: 'now',
       priority: BRIEFING_PRIORITY.urgentTasks,
-      order: 1,
+      order: LOAD_BLOCK_ORDER.now,
       lines: ctx.nowBlockLines,
     });
   }
@@ -889,11 +914,32 @@ function formatProjectOutputWithTokenBudget(
       blocks.push({
         id: 'rules',
         priority: BRIEFING_PRIORITY.activeRules,
-        order: 2,
+        order: LOAD_BLOCK_ORDER.rules,
         lines: ['', '── Rules ──', '', ...rulesBody],
         drillDown: `tim_read("${rulesSection.id}")`,
       });
     }
+  }
+
+  if (projectSummary) {
+    const summaryBody = options.tokenBudget != null
+      ? clampSummaryHead(projectSummary, 2000)
+      : projectSummary;
+    blocks.push({
+      id: 'project-summary',
+      priority: BRIEFING_PRIORITY.header,
+      order: LOAD_BLOCK_ORDER.projectSummary,
+      lines: ['', '── Project Summary ──', '', summaryBody],
+    });
+  }
+
+  if (sectionsIndexLines.length > 0) {
+    blocks.push({
+      id: 'sections-index',
+      priority: BRIEFING_PRIORITY.header,
+      order: LOAD_BLOCK_ORDER.sectionsIndex,
+      lines: sectionsIndexLines,
+    });
   }
 
   if (sections.length > 0) {
@@ -913,7 +959,7 @@ function formatProjectOutputWithTokenBudget(
       blocks.push({
         id: `section:${section.id}`,
         priority: sectionPriority(name, false),
-        order: 10 + rendered.order,
+        order: LOAD_BLOCK_ORDER.sectionBodyBase + rendered.order,
         lines: ['', rendered.header, ...rendered.bodyLines],
       });
     }
@@ -945,7 +991,7 @@ function formatProjectOutputWithTokenBudget(
     blocks.push({
       id: 'recent-sessions',
       priority: BRIEFING_PRIORITY.recentSession,
-      order: 950,
+      order: LOAD_BLOCK_ORDER.recentSessions,
       lines: sessionLines,
       drillDown: `tim_resume_list({projectId:"${label}"})`,
     });
@@ -979,7 +1025,7 @@ function formatProjectOutputWithTokenBudget(
       blocks.push({
         id: 'recent-sessions',
         priority: BRIEFING_PRIORITY.recentSession,
-        order: 950,
+        order: LOAD_BLOCK_ORDER.recentSessions,
         lines: sessionLines,
         drillDown: `tim_resume_list({projectId:"${label}"})`,
       });
@@ -1001,7 +1047,7 @@ function formatProjectOutputWithTokenBudget(
   blocks.push({
     id: 'footer',
     priority: BRIEFING_PRIORITY.general,
-    order: 9999,
+    order: LOAD_BLOCK_ORDER.footer,
     lines: footerLines,
   });
 
