@@ -7,7 +7,7 @@ import {
   sessionHasHandoffNote,
   type TimStore,
 } from 'tim-store';
-import { buildNowBlock } from 'tim-hooks';
+import { buildNowBlock, countProjectOpenTasks } from 'tim-hooks';
 import type { BriefingRenderContext, RecentSessionLine } from './project-output.js';
 
 async function sessionHandoffNote(store: TimStore, sessionId: string): Promise<boolean> {
@@ -23,6 +23,7 @@ export async function buildBriefingRenderContext(
 ): Promise<BriefingRenderContext> {
   const stats = store.getProjectEntryStats(projectId);
   const nowBlockLines = await buildNowBlock(store, projectLabel);
+  const openTaskCounts = await countProjectOpenTasks(store, projectLabel);
 
   const rows = store.listProjectSessionsByActivity(projectId, 1000);
   const substantiveSessions: RecentSessionLine[] = [];
@@ -61,6 +62,7 @@ export async function buildBriefingRenderContext(
   return {
     lastActivityDate: stats.lastActivity,
     nowBlockLines,
+    openTaskCounts,
     recentSessions: substantiveSessions.slice(0, showCount),
     totalSessionCount: substantiveTotal,
     hiddenShortSessionCount: hiddenShortCount,

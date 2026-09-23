@@ -8,17 +8,24 @@ Both tools accept the same optional parameters:
 
 | Parameter | Type | Default | Notes |
 |-----------|------|---------|-------|
-| `tokenBudget` | integer 1–64000 | none (legacy callers unbounded) | Bounds the **rendered MCP text** when passed explicitly, or when `query` is set (falls back to `briefing.maxTokens`, 9000 when unset/invalid) |
+| `tokenBudget` | integer 1–64000 | **12288** (12 KB) when omitted | Bounds the **rendered MCP text** for `tim_load_project`, `tim_read_project`, and `tim_preview_briefing` |
 | `query` | string | none | Adds project-scoped task context extras |
 | `ftsQueryMode` | `literal` \| `or-terms` | `literal` | Passed through to scoped FTS for `query` |
 
-Legacy callers that omit both `query` and `tokenBudget` keep the previous unbounded brief shape (no `── Task context ──` block, no render clamp). `tim_preview_briefing` always bounds against the configured default when `tokenBudget` is omitted. It still accepts deprecated `maxTokens` as an alias for `tokenBudget` (including historical `maxTokens: 0` to omit directive briefing content).
+`tim_preview_briefing` still accepts deprecated `maxTokens` as an alias for `tokenBudget` (including historical `maxTokens: 0` to omit directive briefing content).
 
-### `tim_load_project` / `tim_read_project`
+### `tim_load_project`
 
-- `tokenBudget` applies to the formatted project brief returned by the tool (including footer, omission markers, and NEXT hint on binding loads).
-- `budget` (existing) still limits how many child entries `loadProject` reads from the store; it is independent of `tokenBudget`. Reserved sections (sessions, rules, tasks, general) are loaded before Log volume when no explicit `sections` filter is set.
-- `query` triggers a project-scoped FTS pass; hits are rendered in a `── Task context ──` block. Suppressed entries and other projects are excluded.
+- Default rendered brief is bounded to **12 KB** (`briefing.maxTokens`, default 12288).
+- With a briefing context (normal bind/load path), **Tasks** and **Overview** appear as index lines in the Sections block; their bodies are omitted because the **Now** block and Overview preview carry the essentials. Other sections render bodies under their headings.
+- Explicit `sections: ["Tasks"]` (or any named section) always renders that section's body even in load mode.
+- `budget` (existing) still limits how many child entries `loadProject` reads from the store; it is independent of `tokenBudget`.
+
+### `tim_read_project`
+
+- Uses the same default **12 KB** budget when `tokenBudget` is omitted.
+- **Read mode** renders section bodies (including Tasks and Overview) under their headings — not the load-only index layout.
+- `last activity` in the header uses the same project activity source as `tim_load_project`.
 
 ### `tim_preview_briefing`
 
@@ -26,21 +33,25 @@ Legacy callers that omit both `query` and `tokenBudget` keep the previous unboun
 - Uses the same block priority selection and whole-response bounding as load (directive, briefing, query extras).
 - Does **not** bind the session or write markers — preview remains read-only.
 
+## Session-start hook budget
+
+The session-start hook directive uses a **fixed 1024-unit budget** (~4 KB, G9). This is **not** controlled by `briefing.maxTokens` in config — that key bounds MCP project brief output only.
+
 ## Priority and budgeting
 
 Rendered output is assembled as priority-ordered blocks, then packed into `tokenBudget`:
 
-1. **Header** — project label, meta, description, project summary
-2. **Active rules** — sections whose title is `Rules` / `Agent Rules`, or whose title contains `rule` (case-insensitive). Rule entries outside those section titles follow general section priority.
-3. **Urgent open tasks** — Tasks section (open tasks sorted by status/priority/order)
-4. **Recent session / handoff** — Recent Sessions block (newest summaries)
-5. **General sections** — Decisions, Ideas, Bugs, etc.
+1. **Header** — project label, meta, description, project summary (head-clamped when long)
+2. **Now** — handoff note + top open tasks (load only, protected from trimming)
+3. **Active rules** — Rules section content
+4. **Recent session / handoff** — Recent Sessions block (newest substantive summaries)
+5. **General sections** — Decisions, Ideas, Bugs, etc. (section heading + body)
 6. **Task query extras** — only when `query` is set
-7. **Log** — lowest priority; at most three preview lines plus an explicit `… N log entries omitted (token budget)` marker
+7. **Log** — lowest priority; at most three preview lines plus an explicit omission marker
 
-Reserved tiers (1–4) are allocated before Log volume can consume the budget. Entry loading also fetches reserved sections before Log so a huge early Log tree cannot starve later rules, tasks, or sessions under normal defaults.
+Reserved tiers (1–4) are allocated before Log volume can consume the budget.
 
-When the budget is exhausted, omitted blocks are listed in a trailing `… briefing omissions:` line. A final safety clamp appends `… [briefing truncated to token budget]` when the assembled text still exceeds the limit (compact `…` at impossibly tiny budgets).
+When the budget is exhausted, omitted blocks are listed in a trailing `… briefing omissions:` line.
 
 ## Token estimation
 
@@ -48,11 +59,11 @@ When the budget is exhausted, omitted blocks are listed in a trailing `… brief
 estimatedTokens = utf8ByteLength
 ```
 
-Each UTF-8 byte consumes one budget unit. This is deliberately conservative for byte-based model tokenizers, not an exact token count; TIM does not assume four bytes fit into one token. The budget covers rendered text only, not protocol envelopes or model-specific special tokens. Unicode code points are never split. At budgets below three units, ASCII dots indicate truncation because a Unicode ellipsis needs three bytes.
+Each UTF-8 byte consumes one budget unit. Unicode code points are never split.
 
 ## Validation errors
 
-`tokenBudget` must be a finite **integer** in `1..64000`. Zero, negative, NaN, non-integer, and over-limit values return `isError: true` from MCP handlers. The configured default (`briefing.maxTokens`, typically 9000) is valid when passed explicitly; invalid configured values are clamped to 9000.
+`tokenBudget` must be a finite **integer** in `1..64000`. Zero, negative, NaN, non-integer, and over-limit values return `isError: true` from MCP handlers. Invalid configured `briefing.maxTokens` values are clamped to 12288.
 
 ## Limitations
 

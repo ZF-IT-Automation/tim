@@ -64,7 +64,6 @@ import {
   previewSessionStart,
   runPromptSubmit,
   syncNearestProjectMarker,
-  isTeamupWorker,
 } from 'tim-hooks';
 import { startIdleSweepTimer, stopIdleSweepTimer } from './idle-sweep-timer.js';
 import { handleUncaughtException, handleStdioStreamError, isBrokenPipeError } from './process-error-guards.js';
@@ -3209,9 +3208,6 @@ export async function createMcpServer(
         }
 
         case 'tim_session_start': {
-          if (isTeamupWorker()) {
-            return { content: [{ type: 'text', text: '' }] };
-          }
           const { sessionId, projectId, agentName, cwd, harness, batchSize, tool, model, taskSummary } =
             TimSessionStartSchema.parse(args);
           const cwdResolved = cwd ?? (isHttp ? '' : process.cwd());
@@ -3383,9 +3379,6 @@ export async function createMcpServer(
         }
 
         case 'tim_session_log': {
-          if (isTeamupWorker()) {
-            return { content: [{ type: 'text', text: '' }] };
-          }
           const { sessionId, entries } = TimSessionLogSchema.parse(args);
           const resolvedId = s.resolveSessionId(sessionId);
           const sessionEntry = await s.read(resolvedId);
@@ -3681,6 +3674,7 @@ export async function createMcpServer(
           const formatOptions = {
             ...(baseFormatOptions ?? {}),
             tokenBudget: baseFormatOptions?.tokenBudget ?? budgetCheck.value,
+            requestedSections: sections,
             briefingContext: await buildBriefingRenderContext(
               s,
               projectLabel,
@@ -3719,7 +3713,7 @@ export async function createMcpServer(
             result,
             budget,
             loadProjectSchema(),
-            bind ? 'load' : 'read',
+            'load',
             getBriefingRecentSessions(loadConfig()),
             formatOptions,
           );
@@ -3772,11 +3766,18 @@ export async function createMcpServer(
             query,
             ftsQueryMode,
           );
-          const formatOptions = buildFormatProjectOptions(
-            budgetCheck,
-            query,
-            queryExtras,
-          );
+          const stats = s.getProjectEntryStats(result.project.id);
+          const formatOptions = {
+            ...buildFormatProjectOptions(
+              budgetCheck,
+              query,
+              queryExtras,
+            ),
+            requestedSections: sections,
+            briefingContext: {
+              lastActivityDate: stats.lastActivity,
+            },
+          };
 
           const formatted = formatProjectOutput(
             result,
