@@ -31,5 +31,5 @@ reconstruct — not on a tidy summary:
 - **What was measured versus assumed.** A claim nobody verified must say so.
 - **Backups and rollback paths** for anything destructive that was done.
 
-Keep it dense, not long. Do not duplicate the automatic checkpoint's summary of what was discussed —
+Keep it dense, not long: ≤ 600 characters, one line per `done`/`wip`/`next`. A new note replaces the old one; it is not a changelog. Do not duplicate the automatic checkpoint's summary of what was discussed —
 that text is already rendered in the next briefing.
