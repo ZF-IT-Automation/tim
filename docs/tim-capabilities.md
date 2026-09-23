@@ -1,6 +1,6 @@
 # TIM capabilities and boundaries
 
-Status: public beta. This page describes the current product, not a historical vision. See the [README](../README.md) for setup and comparisons, the [CLI reference](tim-cli-reference.md) for commands, and [GitHub Issues](https://github.com/Bumblebiber/tim/issues) for implementation status.
+Status: public beta. This page describes the current product, not a historical vision. See the [README](../README.md) for setup and comparisons, the [CLI reference](tim-cli-reference.md) for commands, and [GitHub Issues](https://github.com/ZF-IT-Automation/tim/issues) for implementation status.
 
 ## What TIM is for
 
@@ -36,7 +36,7 @@ Optional operations have different data flows:
 - Sync sends encrypted envelopes to the configured service. The ordinary sync key and the additional secret passphrase represent distinct boundaries.
 - Usage feedback is device-local ranking telemetry; it is not evidence that users on another device found an entry useful.
 
-Secret-boundary enforcement and replicated delete ordering include reviewed corrections in [#28](https://github.com/Bumblebiber/tim/issues/28) and [#27](https://github.com/Bumblebiber/tim/issues/27). Final integration/publication status is tracked in the [implementation status](plans/2026-09-09-memory-program/IMPLEMENTATION-STATUS.md). Do not infer production readiness from the existence of an encryption feature.
+Secret-boundary enforcement and replicated delete ordering include reviewed corrections in [#28](https://github.com/ZF-IT-Automation/tim/issues/28) and [#27](https://github.com/ZF-IT-Automation/tim/issues/27). Final integration/publication status is tracked in the [implementation status](plans/2026-09-09-memory-program/IMPLEMENTATION-STATUS.md). Do not infer production readiness from the existence of an encryption feature.
 
 ## Public surfaces
 
@@ -74,6 +74,6 @@ Tests, build checks and type checking are useful evidence, not proof of summary 
 
 The [September 2026 improvement program](plans/2026-09-09-memory-program/README.md) tracks correctness fixes, evidence sources and authority, temporal validity, task-aware briefing, coverage diagnostics and bilingual retrieval evaluation. Features in that plan are not implied to be shipped by their inclusion here. A synthetic retrieval benchmark measures retrieval behavior, not real-world agent task success.
 
-Run `npm run benchmark:memory-quality` after building an isolated checkout. The [benchmark contract](memory-quality-benchmark.md) describes the shared context budget, observed evidence scoring, synthetic provider and optional real-provider mode. Known dependency advisories remain a separate [upgrade follow-up](https://github.com/Bumblebiber/tim/issues/40).
+Run `npm run benchmark:memory-quality` after building an isolated checkout. The [benchmark contract](memory-quality-benchmark.md) describes the shared context budget, observed evidence scoring, synthetic provider and optional real-provider mode. Known dependency advisories remain a separate [upgrade follow-up](https://github.com/ZF-IT-Automation/tim/issues/40).
 
 For migration, follow the [hmem runbook](hmem-to-tim-migration.md). For safe operational commands, consult the [CLI reference](tim-cli-reference.md). Historical design documents and old test counts are not a current capability contract.

@@ -21,6 +21,8 @@ Raw scorecards: `runs/`.
 - S1: sessions-root and commits-root are legitimate non-section roots (scorer counted them as loose).
 - G7: scorer only read the header line; now inspects the delta bullets in hook and preview.
 - G8: scorer matched only `in_progress`; now all open statuses incl. the legacy metadata shape.
+- G1: scorer accepted only an `Open work`/`Next` heading; now also `── Now ──` (the new first-screen block).
+- G2: header regex now accepts `last activity <date>` (the new header wording).
 - G5: scorer dated handoffs by the summary root's `updated_at`, which metadata writes bump; now by the owning session's date.
 
 ## Session filter — measurement behind the decision (2026-09-23, 591 sessions)

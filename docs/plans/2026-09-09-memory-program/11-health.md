@@ -7,7 +7,7 @@ Doctor and memory health show whether conversations were logged, summarized and 
 ## Blocked by
 
 - GitHub #30
-- https://github.com/Bumblebiber/tim/issues/33
+- https://github.com/ZF-IT-Automation/tim/issues/33
 
 ## Seam
 

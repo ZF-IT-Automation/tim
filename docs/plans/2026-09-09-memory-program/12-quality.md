@@ -6,10 +6,10 @@ A documented local command runs realistic bilingual memory scenarios and compare
 
 ## Blocked by
 
-- https://github.com/Bumblebiber/tim/issues/33
-- https://github.com/Bumblebiber/tim/issues/34
-- https://github.com/Bumblebiber/tim/issues/36
-- https://github.com/Bumblebiber/tim/issues/37
+- https://github.com/ZF-IT-Automation/tim/issues/33
+- https://github.com/ZF-IT-Automation/tim/issues/34
+- https://github.com/ZF-IT-Automation/tim/issues/36
+- https://github.com/ZF-IT-Automation/tim/issues/37
 
 ## Seam
 
