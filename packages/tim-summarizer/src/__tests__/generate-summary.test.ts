@@ -67,10 +67,24 @@ describe('extractTags', () => {
     expect(tags).toEqual(['#tim-cli']);
   });
 
-  it('treats garbled SUBSTANCE as undefined without throwing', () => {
+  it('treats garbled SUBSTANCE as undefined but still strips the line', () => {
     const { substance, body } = extractTags('Summary text\nSUBSTANCE: maybe\nTAGS: #x');
     expect(substance).toBeUndefined();
     expect(body).toBe('Summary text');
+  });
+
+  it('parses markdown-bold SUBSTANCE and strips it', () => {
+    const { substance, body } = extractTags('Work done\n**SUBSTANCE:** real');
+    expect(substance).toBe('real');
+    expect(body).toBe('Work done');
+  });
+
+  it('does not treat body lines as SUBSTANCE when scanning only the tail', () => {
+    const { substance, body } = extractTags(
+      'Substance: none of the tests failed\n- real work\nSUBSTANCE: real',
+    );
+    expect(substance).toBe('real');
+    expect(body).toContain('Substance: none of the tests failed');
   });
 });
 
