@@ -149,6 +149,100 @@ describe('session-start directive carries content', () => {
     );
   });
 
+  it('skips a trivial newest session and shows the prior substantive one', async () => {
+    const store = new TimStore(dbPath);
+    await store.createProject('P0070', { content: 'trivial skip project' });
+    const sessions = new SessionManager(store);
+    await sessions.startProjectSession({
+      sessionId: 'sess-substantive',
+      projectId: 'P0070',
+      agentName: 'test',
+      cwd,
+      harness: 'test',
+    });
+    for (let i = 1; i <= 3; i++) {
+      await sessions.logExchange('sess-substantive', [
+        { role: 'user', content: `question ${i}` },
+        { role: 'agent', content: `answer ${i}` },
+      ]);
+    }
+    await sessions.updateSessionSummary('sess-substantive', '- substantive work done');
+    await sessions.startProjectSession({
+      sessionId: 'sess-trivial',
+      projectId: 'P0070',
+      agentName: 'test',
+      cwd,
+      harness: 'test',
+    });
+    await sessions.logExchange('sess-trivial', [
+      { role: 'user', content: 'update mal claude code' },
+      { role: 'agent', content: 'ok' },
+    ]);
+    store.close();
+
+    const briefing = await pastWorkBriefing('P0070');
+    expect(briefing?.trivialSessionNote).toMatch(/skipped as trivial/);
+    expect(briefing?.previousSessionSummary).toContain('substantive work done');
+    expect(briefing?.previousSessionSummary).not.toContain('update mal claude code');
+  });
+
+  it('renders latest handoff from an older session when shown session differs', async () => {
+    const store = new TimStore(dbPath);
+    await store.createProject('P0071', { content: 'handoff older project' });
+    const sessions = new SessionManager(store);
+    await sessions.startProjectSession({
+      sessionId: 'sess-with-handoff',
+      projectId: 'P0071',
+      agentName: 'test',
+      cwd,
+      harness: 'test',
+    });
+    for (let i = 1; i <= 3; i++) {
+      await sessions.logExchange('sess-with-handoff', [
+        { role: 'user', content: `q${i}` },
+        { role: 'agent', content: `a${i}` },
+      ]);
+    }
+    await sessions.checkpoint('sess-with-handoff', {
+      handoffNote: 'done: memory program | next: briefing loop',
+    });
+    await sessions.updateSessionSummary('sess-with-handoff', '- older substantive session');
+
+    await sessions.startProjectSession({
+      sessionId: 'sess-newer-no-handoff',
+      projectId: 'P0071',
+      agentName: 'test',
+      cwd,
+      harness: 'test',
+    });
+    for (let i = 1; i <= 3; i++) {
+      await sessions.logExchange('sess-newer-no-handoff', [
+        { role: 'user', content: `n${i}` },
+        { role: 'agent', content: `m${i}` },
+      ]);
+    }
+    await sessions.updateSessionSummary('sess-newer-no-handoff', '- newer substantive, no handoff');
+
+    await sessions.startProjectSession({
+      sessionId: 'sess-trivial-2',
+      projectId: 'P0071',
+      agentName: 'test',
+      cwd,
+      harness: 'test',
+    });
+    await sessions.logExchange('sess-trivial-2', [
+      { role: 'user', content: 'tiny' },
+      { role: 'agent', content: 'ok' },
+    ]);
+    store.close();
+
+    const briefing = await pastWorkBriefing('P0071');
+    expect(briefing?.previousSessionSummary).toContain('newer substantive, no handoff');
+    expect(briefing?.latestHandoffNote).toContain('memory program');
+    expect(briefing?.latestHandoffLabel).toBeTruthy();
+    expect(briefing?.trivialSessionNote).toMatch(/skipped as trivial/);
+  });
+
   it('falls back to the checkpoint text when nothing rolled it up into the summary root', async () => {
     // The shape the automatic session-end hook leaves behind: a checkpoint child and
     // an untouched summary root, because only the summarizer writes metadata.summary.
