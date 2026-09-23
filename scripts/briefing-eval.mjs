@@ -353,7 +353,7 @@ function loadDbContext(dbPath, projectLabel) {
   `).get(project.id);
   const newestHandoffNote = handoffRow?.note ?? null;
 
-  // Open in_progress tasks in project subtree for G8 title lookup.
+  // Open tasks (any non-closed status, new or legacy metadata shape) in project subtree for G8 title lookup.
   const taskRows = db.prepare(`
     WITH RECURSIVE tree(id) AS (
       SELECT id FROM entries WHERE id = ?
@@ -363,7 +363,9 @@ function loadDbContext(dbPath, projectLabel) {
     SELECT e.title, e.updated_at
     FROM entries e
     JOIN tree t ON e.id = t.id
-    WHERE json_extract(e.metadata, '$.task.status') = 'in_progress'
+    WHERE COALESCE(json_extract(e.metadata, '$.task.status'), json_extract(e.metadata, '$.status'))
+          NOT IN ('done', 'cancelled', 'closed', 'wontfix')
+      AND (json_type(e.metadata, '$.task') IS NOT NULL OR json_extract(e.metadata, '$.type') = 'task')
   `).all(project.id);
   const openTasksByTitle = new Map(
     taskRows.map((r) => [normalizeTitle(r.title), r]),
