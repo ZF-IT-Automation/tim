@@ -87,6 +87,7 @@ import { buildBoundedSearchResponse, clampSearchRequest } from './search-respons
 import { executeTimSearch } from './tim-search-tool.js';
 import { validateTokenBudget, clampBriefingDefaultBudget, MAX_TOKEN_BUDGET, byteBudgetToHookMaxTokens } from './briefing-budget.js';
 import { loadProjectForBriefing } from './briefing-load.js';
+import { buildBriefingRenderContext } from './briefing-context.js';
 import {
   assembleBoundedBriefingText,
   BRIEFING_PRIORITY,
@@ -1060,11 +1061,7 @@ function resolveBriefingTokenBudget(
   }
   const explicit = tokenBudget ?? legacyMaxTokens;
   if (explicit === undefined || explicit === null) {
-    // Preview always bounds against config default; load/read only when query is task-aware.
-    if (options.preview || options.hasQuery) {
-      return { ok: true, value: configDefault, applyBounds: true };
-    }
-    return { ok: true, value: configDefault, applyBounds: false };
+    return { ok: true, value: configDefault, applyBounds: true };
   }
   const validated = validateTokenBudget(explicit, configDefault);
   if (!validated.ok) return validated;
@@ -3667,12 +3664,22 @@ export async function createMcpServer(
               `Save new insights as you go: tim_write with where:"${projectLabel}/<Section>" ` +
               `(Ideas, Decisions, Errors, Log) — never rely on chat history alone.`
             : '';
-          const formatOptions = buildFormatProjectOptions(
+          const baseFormatOptions = buildFormatProjectOptions(
             budgetCheck,
             query,
             queryExtras,
             nextHint || undefined,
           );
+          const formatOptions = {
+            ...(baseFormatOptions ?? {}),
+            tokenBudget: baseFormatOptions?.tokenBudget ?? budgetCheck.value,
+            briefingContext: await buildBriefingRenderContext(
+              s,
+              projectLabel,
+              result.project.id,
+              getBriefingRecentSessions(loadConfig()),
+            ),
+          };
 
           if (bind && sessionId) {
             try {

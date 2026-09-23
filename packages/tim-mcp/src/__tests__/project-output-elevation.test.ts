@@ -127,10 +127,9 @@ describe('formatProjectOutput bug elevation (B4)', () => {
     children[2].tags = ['#bug'];
 
     const out = formatProjectOutput({ project, children, truncated: false }, 200);
-    const openPos = out.indexOf('Urgent open bug');
-    const closedPos = out.indexOf('Old fixed bug');
-    expect(openPos).toBeGreaterThan(-1);
-    expect(closedPos).toBeGreaterThan(openPos);
+    expect(out).toMatch(/Urgent open bug/);
+    expect(out).not.toMatch(/Old fixed bug/);
+    expect(out).toMatch(/✓ 1 fixed — tim_read\("bugs"\)/);
   });
 });
 

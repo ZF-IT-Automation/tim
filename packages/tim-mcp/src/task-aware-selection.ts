@@ -315,10 +315,10 @@ export function formatQueryExtrasBlock(entries: Entry[], query: string): Briefin
   };
 }
 
-export function logSectionOmission(count: number, shown: number): string {
+export function logSectionOmission(count: number, shown: number, sectionId: string): string {
   const hidden = count - shown;
   if (hidden <= 0) return '';
-  return `… ${hidden} log ${hidden === 1 ? 'entry' : 'entries'} omitted (token budget)`;
+  return `… ${hidden} log ${hidden === 1 ? 'entry' : 'entries'} omitted — tim_read("${sectionId}")`;
 }
 
 export { sectionPriority, TASKS_SECTION_NAMES, LOG_SECTION_NAMES, RULES_SECTION_NAMES };

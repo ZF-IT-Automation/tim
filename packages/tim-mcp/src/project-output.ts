@@ -16,6 +16,20 @@ import {
 
 const LOG_SECTION_PREVIEW_MAX = 3;
 
+export interface RecentSessionLine {
+  exchanges: number;
+  date: string;
+  summary: string[];
+  trivial: boolean;
+}
+
+export interface BriefingRenderContext {
+  lastActivityDate?: string;
+  nowBlockLines?: string[];
+  recentSessions?: RecentSessionLine[];
+  totalSessionCount?: number;
+}
+
 export interface FormatProjectOutputOptions {
   /** When set, apply MCP render bounding; omit for legacy unbounded callers. */
   tokenBudget?: number;
@@ -23,6 +37,7 @@ export interface FormatProjectOutputOptions {
   queryExtras?: Entry[];
   /** Appended before whole-response bounding (e.g. load NEXT hint). */
   trailingSuffix?: string;
+  briefingContext?: BriefingRenderContext;
 }
 
 // The schema shape and its traversal live in tim-core — the same definition the
@@ -69,11 +84,14 @@ function parseProjectContent(title: string, content: string): ParsedProjectHeade
   };
 }
 
-function projectMetaLine(project: Entry, parsed: ParsedProjectHeader): string {
-  const date = String(project.metadata.updated_at ?? project.createdAt).slice(0, 10);
-  const bits = [`Status: ${parsed.status}`, date];
+function projectMetaLine(
+  project: Entry,
+  parsed: ParsedProjectHeader,
+  lastActivity?: string,
+): string {
+  const date = (lastActivity ?? String(project.metadata.updated_at ?? project.createdAt)).slice(0, 10);
+  const bits = [`Status: ${parsed.status}`, `last activity ${date}`];
   if (parsed.packages != null) bits.push(`${parsed.packages} packages`);
-  if (parsed.tests != null) bits.push(`${parsed.tests} tests`);
   return bits.join(' · ');
 }
 
@@ -360,7 +378,11 @@ interface PreparedSectionChildren {
   collapsedLabel: string;
 }
 
-function prepareSectionChildren(children: Entry[], sectionName: string): PreparedSectionChildren {
+function prepareSectionChildren(
+  children: Entry[],
+  sectionName: string,
+  sectionId?: string,
+): PreparedSectionChildren {
   if (sectionName === 'Tasks') {
     const tasks = children.filter(c => isTaskMarker(c.metadata.task));
     const nonTasks = children.filter(c => !isTaskMarker(c.metadata.task));
@@ -380,10 +402,13 @@ function prepareSectionChildren(children: Entry[], sectionName: string): Prepare
     const nonBugs = children.filter(c => !isBugEntry(c));
     const open = bugs.filter(c => !isClosedBug(c)).sort(compareBugEntries);
     const closed = bugs.filter(c => isClosedBug(c)).sort(compareBugEntries);
+    const readTarget = sectionId ?? sectionName;
     return {
-      visible: [...open, ...closed, ...nonBugs.sort(compareEntryOrder)],
-      collapsedCount: 0,
-      collapsedLabel: '',
+      visible: [...open, ...nonBugs.sort(compareEntryOrder)],
+      collapsedCount: closed.length,
+      collapsedLabel: closed.length > 0
+        ? `✓ ${closed.length} fixed — tim_read("${readTarget}")`
+        : '',
     };
   }
 
@@ -457,6 +482,7 @@ function formatChildrenTree(
   renderTail?: boolean,
   renderMode?: 'load' | 'read',
   sectionName?: string,
+  sectionId?: string,
   collapsed?: Pick<PreparedSectionChildren, 'collapsedCount' | 'collapsedLabel'>,
   taskAware = false,
 ): string[] {
@@ -496,17 +522,21 @@ function formatChildrenTree(
     if (subkids.length > 0 && shouldRenderChildren(childRenderDepth)) {
       const nextDepth = maxChildDepth(childRenderDepth);
       if (nextDepth > 0) {
-        lines.push(...formatChildrenTree(subkids, childMap, depth + 1, budget, schema, undefined, renderMode));
+        lines.push(...formatChildrenTree(
+          subkids, childMap, depth + 1, budget, schema, undefined, renderMode,
+          sectionName, sectionId,
+        ));
       }
     }
   }
 
   const hidden = children.length - shown;
   if (hidden > 0 && budget.remaining > 0) {
+    const expandTarget = sectionId ?? sectionName ?? 'section';
     if (taskAware && sectionName && LOG_SECTION_NAMES.has(sectionName.toLowerCase())) {
-      lines.push(`${indent}${logSectionOmission(children.length, shown)}`);
+      lines.push(`${indent}${logSectionOmission(children.length, shown, expandTarget)}`);
     } else {
-      lines.push(`${indent}… ${hidden} more${renderTail ? ' (older)' : ''}`);
+      lines.push(`${indent}… ${hidden} more — tim_read("${expandTarget}")${renderTail ? ' (older)' : ''}`);
     }
     budget.remaining -= 1;
   }
@@ -546,7 +576,7 @@ function renderSectionBody(
 
   const useTail = resolveRenderTail(section, schemaSection?.render_tail);
   const rawSubkids = childMap.get(section.id) ?? [];
-  const prepared = prepareSectionChildren(rawSubkids, name);
+  const prepared = prepareSectionChildren(rawSubkids, name, section.id);
   const subkids = prepared.visible;
   const budgetBefore = budgetState.remaining;
   const body: string[] = [];
@@ -569,6 +599,7 @@ function renderSectionBody(
           useTail,
           renderMode,
           name,
+          section.id,
           prepared,
           taskAware,
         ));
@@ -617,17 +648,20 @@ function formatProjectOutputWithTokenBudget(
   const budgetState: FormatBudget = { remaining: budget };
   const seenBodies = new Map<string, string>();
 
+  const ctx = options.briefingContext;
+
   const headerLines: string[] = [
     FORMAT_SEP,
     `${label} — ${parsed.title}`,
     FORMAT_SEP,
-    projectMetaLine(project, parsed),
+    projectMetaLine(project, parsed, ctx?.lastActivityDate),
   ];
   const tags = project.tags.map(t => (t.startsWith('#') ? t : `#${t}`)).join(' ');
   if (tags) headerLines.push(`Tags: ${tags}`);
   headerLines.push(`Access: ${project.metadata.access_count ?? 0}`);
   if (parsed.description) headerLines.push('', parsed.description);
   if (projectSummary) headerLines.push('', '── Project Summary ──', '', projectSummary);
+  if (ctx?.nowBlockLines?.length) headerLines.push(...ctx.nowBlockLines);
 
   const blocks: BriefingBlock[] = [{
     id: 'header',
@@ -667,28 +701,24 @@ function formatProjectOutputWithTokenBudget(
     }
   }
 
-  const sessions = children
-    .filter(c => c.tags.includes('#session-summary'))
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  if (sessions.length > 0) {
-    const shown = recentSessionsCount > 0 ? recentSessionsCount : RECENT_SESSIONS_COUNT;
-    const recent = sessions.slice(0, shown);
+  if (ctx?.recentSessions && ctx.recentSessions.length > 0) {
+    const total = ctx.totalSessionCount ?? ctx.recentSessions.length;
     const sessionLines: string[] = [
       '',
-      `── Recent Sessions (${recent.length}/${sessions.length}) ──`,
+      `── Recent Sessions (${ctx.recentSessions.length}/${total}) ──`,
       '',
     ];
-    for (const session of recent) {
-      const { exchanges, summary, date } = parseSessionEntry(
-        session,
-        entryById.get(session.parentId ?? ''),
-      );
-      sessionLines.push(`  ${exchanges} exchanges · ${date}`);
-      for (const line of summary) sessionLines.push(`    ${line}`);
-      if (summary.length === 0) sessionLines.push('    (no summary)');
+    for (const session of ctx.recentSessions) {
+      if (session.trivial) {
+        sessionLines.push(`  ${session.exchanges} exchanges · ${session.date} · trivial`);
+      } else {
+        sessionLines.push(`  ${session.exchanges} exchanges · ${session.date}`);
+        for (const line of session.summary) sessionLines.push(`    ${line}`);
+        if (session.summary.length === 0) sessionLines.push('    (no summary)');
+      }
     }
-    if (sessions.length > shown) {
-      sessionLines.push(`  … ${sessions.length - shown} older sessions`);
+    if (total > ctx.recentSessions.length) {
+      sessionLines.push(`  … ${total - ctx.recentSessions.length} older sessions`);
     }
     blocks.push({
       id: 'recent-sessions',
@@ -696,6 +726,37 @@ function formatProjectOutputWithTokenBudget(
       order: 950,
       lines: sessionLines,
     });
+  } else {
+    const sessions = children
+      .filter(c => c.tags.includes('#session-summary'))
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    if (sessions.length > 0) {
+      const shown = recentSessionsCount > 0 ? recentSessionsCount : RECENT_SESSIONS_COUNT;
+      const recent = sessions.slice(0, shown);
+      const sessionLines: string[] = [
+        '',
+        `── Recent Sessions (${recent.length}/${sessions.length}) ──`,
+        '',
+      ];
+      for (const session of recent) {
+        const { exchanges, summary, date } = parseSessionEntry(
+          session,
+          entryById.get(session.parentId ?? ''),
+        );
+        sessionLines.push(`  ${exchanges} exchanges · ${date}`);
+        for (const line of summary) sessionLines.push(`    ${line}`);
+        if (summary.length === 0) sessionLines.push('    (no summary)');
+      }
+      if (sessions.length > shown) {
+        sessionLines.push(`  … ${sessions.length - shown} older sessions`);
+      }
+      blocks.push({
+        id: 'recent-sessions',
+        priority: BRIEFING_PRIORITY.recentSession,
+        order: 950,
+        lines: sessionLines,
+      });
+    }
   }
 
   if (options.query && options.queryExtras && options.queryExtras.length > 0) {
@@ -810,7 +871,7 @@ export function formatProjectOutput(
 
       const useTail = resolveRenderTail(section, schemaSection?.render_tail);
       const rawSubkids = childMap.get(section.id) ?? [];
-      const prepared = prepareSectionChildren(rawSubkids, name);
+      const prepared = prepareSectionChildren(rawSubkids, name, section.id);
       const subkids = prepared.visible;
 
       // Render the body into a temp buffer first, so an identical body can be deduped.
@@ -837,6 +898,7 @@ export function formatProjectOutput(
               useTail,
               renderMode,
               name,
+              section.id,
               prepared,
             ));
           }

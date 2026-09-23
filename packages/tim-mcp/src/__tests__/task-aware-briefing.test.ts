@@ -386,7 +386,7 @@ describe('task-aware briefing MCP contract', () => {
       budget: 200,
     });
     const text = resp.result!.content[0].text;
-    expect(Buffer.byteLength(text, 'utf8')).toBeGreaterThan(9000);
+    expect(Buffer.byteLength(text, 'utf8')).toBeLessThanOrEqual(12288);
     expect(text).toContain('Use tim_read');
   });
 
