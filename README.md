@@ -7,7 +7,7 @@
 
 A local-first memory system for AI agents, built around projects and the work between sessions.
 
-[![CI](https://github.com/Bumblebiber/tim/actions/workflows/ci.yml/badge.svg)](https://github.com/Bumblebiber/tim/actions/workflows/ci.yml)
+[![CI](https://github.com/ZF-IT-Automation/tim/actions/workflows/ci.yml/badge.svg)](https://github.com/ZF-IT-Automation/tim/actions/workflows/ci.yml)
 ![Public beta](https://img.shields.io/badge/status-public_beta-orange)
 ![Node.js 22+](https://img.shields.io/badge/Node.js-22%2B-339933)
 
@@ -43,7 +43,7 @@ Local storage does not mean every optional operation stays local: the configured
 TIM is a **public beta**. Interfaces can change. Start from source with **Node.js 22+** and **npm 10+**:
 
 ```bash
-git clone https://github.com/Bumblebiber/tim.git
+git clone https://github.com/ZF-IT-Automation/tim.git
 cd tim
 npm ci
 
@@ -224,10 +224,10 @@ Know the boundaries:
 - FTS remains the default MCP search mode. Optional local embeddings need an available model and a populated, fresh index; no complete semantic-recall guarantee follows from the feature.
 - Summaries and evidence labels are inspectable records, not automatic fact verification. Contradictions are shown, not silently adjudicated.
 - Health distinguishes observed work, pending work and unknown states. Local sync timestamps do not establish current server reachability.
-- Known dependency advisories, including an archive-parser issue in the existing embedding dependency chain, remain tracked separately in [#40](https://github.com/Bumblebiber/tim/issues/40). See the [audit and upgrade contract](docs/reviews/2026-09-11-dependency-audit.md) before treating this beta as security-cleared.
+- Known dependency advisories, including an archive-parser issue in the existing embedding dependency chain, remain tracked separately in [#40](https://github.com/ZF-IT-Automation/tim/issues/40). See the [audit and upgrade contract](docs/reviews/2026-09-11-dependency-audit.md) before treating this beta as security-cleared.
 - The [bilingual quality benchmark](docs/memory-quality-benchmark.md) runs against temporary fixture databases. Synthetic vectors verify retrieval mechanics; they do not establish real-model understanding, agent task success or superiority over other memory products. Real-model checks are opt-in and report an explicit skip when unavailable.
 
-Follow the [implementation plan](docs/plans/2026-09-09-memory-program/README.md) and [GitHub Issues](https://github.com/Bumblebiber/tim/issues). Hosted sharing and broader project-management automation are not prerequisites for local use.
+Follow the [implementation plan](docs/plans/2026-09-09-memory-program/README.md) and [GitHub Issues](https://github.com/ZF-IT-Automation/tim/issues). Hosted sharing and broader project-management automation are not prerequisites for local use.
 
 ## Development
 

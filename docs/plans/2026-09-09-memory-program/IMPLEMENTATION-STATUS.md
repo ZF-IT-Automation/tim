@@ -35,7 +35,7 @@ Reproduce from an isolated checkout: `npm ci`, `npm run build`, `npm run lint`, 
 
 ## Remaining risk and operational boundary
 
-Dependency advisories predate this program and remain open in [#40](https://github.com/Bumblebiber/tim/issues/40): eleven affected packages, including a critical archive-parser advisory. The [audit](../../reviews/2026-09-11-dependency-audit.md) defines a separate upgrade contract. No forced major dependency migration was performed.
+Dependency advisories predate this program and remain open in [#40](https://github.com/ZF-IT-Automation/tim/issues/40): eleven affected packages, including a critical archive-parser advisory. The [audit](../../reviews/2026-09-11-dependency-audit.md) defines a separate upgrade contract. No forced major dependency migration was performed.
 
 No production database migration, maintenance, credential change, hosted deployment or live-runtime rebuild was performed. Installation and clean-build checks ran in isolated full clones. Live multi-device recovery and actual agent-task outcomes were not measured.
 

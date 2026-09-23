@@ -1,6 +1,6 @@
 # Task-aware bounded project briefings
 
-GitHub [#34](https://github.com/Bumblebiber/tim/issues/34). This document describes the additive MCP interfaces and how rendered briefing output is bounded. Token counts here are **approximate** — TIM uses a conservative UTF-8-byte heuristic, not an exact model tokenizer.
+GitHub [#34](https://github.com/ZF-IT-Automation/tim/issues/34). This document describes the additive MCP interfaces and how rendered briefing output is bounded. Token counts here are **approximate** — TIM uses a conservative UTF-8-byte heuristic, not an exact model tokenizer.
 
 ## Surfaces
 

@@ -14,19 +14,19 @@ Each ticket is a complete observable behavior. GitHub is the execution tracker; 
 
 | Ticket | Delivers | Blocked by |
 |---|---|---|
-| [#27](https://github.com/Bumblebiber/tim/issues/27) | Durable deletion versions; delayed sync updates cannot resurrect old entries | None |
-| [#28](https://github.com/Bumblebiber/tim/issues/28) | Extra secret encryption through ordinary CLI and automatic sync | None |
-| [#29](https://github.com/Bumblebiber/tim/issues/29) | Safe asynchronous summarizer launch and lock cleanup | None |
-| [#30](https://github.com/Bumblebiber/tim/issues/30) | Summary catch-up based on actual covered exchange sequences | None |
-| [#31](https://github.com/Bumblebiber/tim/issues/31) | Consistent summary-first section reads, child options, trust and usage | None |
-| [#32](https://github.com/Bumblebiber/tim/issues/32) | Filter-before-limit scoped recall and honored search modes | None |
-| [#33](https://github.com/Bumblebiber/tim/issues/33) | Independent semantic candidates and refreshed embeddings | #32 |
-| [#34](https://github.com/Bumblebiber/tim/issues/34) | Priority-preserving task-aware briefing within a context budget | #32, #31 |
-| [#35](https://github.com/Bumblebiber/tim/issues/35) | Inspectable evidence and preserved memory authority | #31 |
-| [#36](https://github.com/Bumblebiber/tim/issues/36) | Superseded decisions and current/as-of recall | #35, #32 |
-| [#37](https://github.com/Bumblebiber/tim/issues/37) | End-to-end memory coverage and actionable backlog | #30, #33 |
-| [#38](https://github.com/Bumblebiber/tim/issues/38) | Repeatable bilingual quality scenarios and explicit baselines | #33, #34, #36, #37 |
-| [#39](https://github.com/Bumblebiber/tim/issues/39) | New README, sourced comparisons and consistent public documentation | None; refresh status after code integration |
+| [#27](https://github.com/ZF-IT-Automation/tim/issues/27) | Durable deletion versions; delayed sync updates cannot resurrect old entries | None |
+| [#28](https://github.com/ZF-IT-Automation/tim/issues/28) | Extra secret encryption through ordinary CLI and automatic sync | None |
+| [#29](https://github.com/ZF-IT-Automation/tim/issues/29) | Safe asynchronous summarizer launch and lock cleanup | None |
+| [#30](https://github.com/ZF-IT-Automation/tim/issues/30) | Summary catch-up based on actual covered exchange sequences | None |
+| [#31](https://github.com/ZF-IT-Automation/tim/issues/31) | Consistent summary-first section reads, child options, trust and usage | None |
+| [#32](https://github.com/ZF-IT-Automation/tim/issues/32) | Filter-before-limit scoped recall and honored search modes | None |
+| [#33](https://github.com/ZF-IT-Automation/tim/issues/33) | Independent semantic candidates and refreshed embeddings | #32 |
+| [#34](https://github.com/ZF-IT-Automation/tim/issues/34) | Priority-preserving task-aware briefing within a context budget | #32, #31 |
+| [#35](https://github.com/ZF-IT-Automation/tim/issues/35) | Inspectable evidence and preserved memory authority | #31 |
+| [#36](https://github.com/ZF-IT-Automation/tim/issues/36) | Superseded decisions and current/as-of recall | #35, #32 |
+| [#37](https://github.com/ZF-IT-Automation/tim/issues/37) | End-to-end memory coverage and actionable backlog | #30, #33 |
+| [#38](https://github.com/ZF-IT-Automation/tim/issues/38) | Repeatable bilingual quality scenarios and explicit baselines | #33, #34, #36, #37 |
+| [#39](https://github.com/ZF-IT-Automation/tim/issues/39) | New README, sourced comparisons and consistent public documentation | None; refresh status after code integration |
 
 ## Acceptance and verification
 
