@@ -41,6 +41,7 @@ import {
   parseCodexNotifyArgs,
   maybeSpawnSummarizer,
   isSummarizerChild,
+  isTeamupWorker,
   type ProjectMarker,
 } from 'tim-hooks';
 import { buildTimMcpEntry, installMcpEntryForHosts } from './install.js';
@@ -652,6 +653,7 @@ async function cmdHook(args: string[]) {
   // their turns would store the summarizer's prompt as a user exchange and spawn a
   // fresh summarizer off it — so every hook no-ops inside the summarizer process tree.
   if (isSummarizerChild()) return;
+  if (isTeamupWorker()) return;
 
   const sub = args[0];
 

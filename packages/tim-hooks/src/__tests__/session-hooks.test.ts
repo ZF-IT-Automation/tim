@@ -104,6 +104,13 @@ describe('onSessionStop', () => {
     expect(isSummarizerChild({ TIM_SUMMARIZER: '' })).toBe(false);
   });
 
+  it('isTeamupWorker only fires on the exact flag value', async () => {
+    const { isTeamupWorker } = await import('../session-hooks.js');
+    expect(isTeamupWorker({ TEAMUP_WORKER: '1' })).toBe(true);
+    expect(isTeamupWorker({})).toBe(false);
+    expect(isTeamupWorker({ TEAMUP_WORKER: '' })).toBe(false);
+  });
+
   it('maybeSpawnSummarizer with batchFull skips below-threshold', async () => {
     await sessions.logExchange('st', [{ role: 'user', content: 'only' }]);
     writeMarker(dir, { project: 'P0003' });

@@ -16,6 +16,9 @@ import * as path from 'node:path';
 const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tim-test-home-'));
 process.env.HOME = home;
 process.env.USERPROFILE = home;
+// Workers run with TEAMUP_WORKER=1; session hooks must not inherit that in tests.
+delete process.env.TEAMUP_WORKER;
+delete process.env.TEAMUP_RUN_ID;
 // A machine with TIM installed has this directory; code that opens
 // ~/.tim/tim.db without creating it first would otherwise fail here for a
 // reason no production run has.

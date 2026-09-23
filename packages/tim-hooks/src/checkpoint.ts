@@ -27,6 +27,7 @@ import {
   repairPhantomProjectBinding,
   markerWithRepairedProject,
 } from './phantom-recovery.js';
+import { isTeamupWorker } from './session-hooks.js';
 import {
   maybeSpawnSummarizer,
   maybeSpawnProjectSummary,
@@ -43,7 +44,7 @@ export interface SessionEndOptions {
 }
 
 export interface SessionStartResult {
-  session: Entry;
+  session: Entry | null;
   project: Entry | null;
   /** Optional briefing supplement (delta, update check, …). */
   briefing?: string;
@@ -206,6 +207,10 @@ export async function runSessionStart(
     taskSummary?: string;
   },
 ): Promise<SessionStartResult> {
+  if (isTeamupWorker()) {
+    return { session: null, project: null, briefing: undefined };
+  }
+
   const sessions = new SessionManager(store);
   const { projectId, binding } = await resolveSessionProjectId(store, params.cwd, params.projectId);
 
@@ -365,7 +370,9 @@ export async function runSessionEnd(
   store: TimStore,
   sessionId: string,
   opts: SessionEndOptions = {},
-): Promise<Entry> {
+): Promise<Entry | null> {
+  if (isTeamupWorker()) return null;
+
   const cwd = opts.env?.TIM_CWD ?? process.cwd();
   const env: HookEnv = {
     TIM_SESSION_ID: sessionId,
@@ -413,6 +420,8 @@ export async function runHarnessSessionEnd(
   payload: { session_id?: unknown; cwd?: unknown },
   opts: SessionEndOptions = {},
 ): Promise<Entry | null> {
+  if (isTeamupWorker()) return null;
+
   const sessionId = typeof payload.session_id === 'string' ? payload.session_id.trim() : '';
   if (!sessionId) return null;
 

@@ -64,6 +64,7 @@ import {
   previewSessionStart,
   runPromptSubmit,
   syncNearestProjectMarker,
+  isTeamupWorker,
 } from 'tim-hooks';
 import { startIdleSweepTimer, stopIdleSweepTimer } from './idle-sweep-timer.js';
 import { handleUncaughtException, handleStdioStreamError, isBrokenPipeError } from './process-error-guards.js';
@@ -3207,6 +3208,9 @@ export async function createMcpServer(
         }
 
         case 'tim_session_start': {
+          if (isTeamupWorker()) {
+            return { content: [{ type: 'text', text: '' }] };
+          }
           const { sessionId, projectId, agentName, cwd, harness, batchSize, tool, model, taskSummary } =
             TimSessionStartSchema.parse(args);
           const cwdResolved = cwd ?? (isHttp ? '' : process.cwd());
@@ -3378,6 +3382,9 @@ export async function createMcpServer(
         }
 
         case 'tim_session_log': {
+          if (isTeamupWorker()) {
+            return { content: [{ type: 'text', text: '' }] };
+          }
           const { sessionId, entries } = TimSessionLogSchema.parse(args);
           const resolvedId = s.resolveSessionId(sessionId);
           const sessionEntry = await s.read(resolvedId);
