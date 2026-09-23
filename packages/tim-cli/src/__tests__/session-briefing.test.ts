@@ -4,7 +4,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { SessionManager, TimStore } from 'tim-store';
-import { clampSummary, collectDirectiveBriefing } from 'tim-hooks';
+import { clampSummary, collectDirectiveBriefing, buildNowBlock } from 'tim-hooks';
 
 const CLI = path.resolve(__dirname, '../../dist/cli.js');
 
@@ -593,5 +593,71 @@ describe('briefing falls back to batch summaries when a session has no rollup', 
     } finally {
       store.close();
     }
+  });
+});
+
+describe('handoff lookup (review #5)', () => {
+  let root: string;
+  let cwd: string;
+  let dbPath: string;
+
+  beforeEach(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'tim-handoff-lookup-'));
+    cwd = path.join(root, 'workspace');
+    dbPath = path.join(root, 'tim.db');
+    fs.mkdirSync(cwd);
+  });
+
+  afterEach(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it('finds handoff in a zero-exchange session via buildNowBlock', async () => {
+    const store = new TimStore(dbPath);
+    const sessions = new SessionManager(store);
+    await store.createProject('P0099', { content: 'zero exchange handoff' });
+    await sessions.startProjectSession({
+      sessionId: 'sess-zero-handoff',
+      projectId: 'P0099',
+      agentName: 'test',
+      cwd,
+      harness: 'test',
+    });
+    await sessions.checkpoint('sess-zero-handoff', {
+      handoffNote: 'done: setup only | next: log first exchange',
+    });
+    const now = await buildNowBlock(store, 'P0099');
+    expect(now.join('\n')).toContain('setup only');
+    store.close();
+  });
+
+  it('finds handoff stored only on a legacy checkpoint child', async () => {
+    const store = new TimStore(dbPath);
+    const sessions = new SessionManager(store);
+    const { findChildByKind, KIND_SUMMARY_ROOT } = await import('tim-store');
+    await store.createProject('P0098', { content: 'legacy child handoff' });
+    await sessions.startProjectSession({
+      sessionId: 'sess-legacy-child',
+      projectId: 'P0098',
+      agentName: 'test',
+      cwd,
+      harness: 'test',
+    });
+    await sessions.logExchange('sess-legacy-child', [
+      { role: 'user', content: 'one turn' },
+      { role: 'agent', content: 'ok' },
+    ]);
+    const summaryRoot = await findChildByKind(store, 'sess-legacy-child', KIND_SUMMARY_ROOT);
+    expect(summaryRoot).toBeTruthy();
+    await store.write('legacy checkpoint', {
+      parentId: summaryRoot!.id,
+      metadata: { kind: 'checkpoint', handoff_note: 'legacy child-only note' },
+    });
+    await store.update(summaryRoot!.id, {
+      metadata: { ...summaryRoot!.metadata, handoff_note: undefined },
+    });
+    const now = await buildNowBlock(store, 'P0098');
+    expect(now.join('\n')).toContain('legacy child-only note');
+    store.close();
   });
 });

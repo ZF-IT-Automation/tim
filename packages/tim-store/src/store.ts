@@ -956,6 +956,7 @@ export class TimStore implements MemoryInterface {
   listProjectSessionsByActivity(
     projectId: string,
     limit = 10,
+    opts?: { includeZeroExchange?: boolean },
   ): Array<{ id: string; lastActivity: string }> {
     const sessionsRoot = this.db.prepare(`
       SELECT id FROM entries
@@ -965,6 +966,15 @@ export class TimStore implements MemoryInterface {
     `).get(projectId) as { id: string } | undefined;
     if (!sessionsRoot) return [];
 
+    const zeroExchangeFilter = opts?.includeZeroExchange
+      ? ''
+      : `          -- A session that logged nothing is not resumable. Sub-agent runs register
+          -- one each (the summarizer's own codex call does), and being the newest
+          -- node they would otherwise mask the session the briefing is meant to
+          -- carry. An absent count is legacy data, not proof of emptiness — keep it.
+          AND COALESCE(json_extract(metadata, '$.exchange_count'), 1) > 0
+`;
+
     const rows = this.db.prepare(`
       WITH RECURSIVE sub AS (
         SELECT id, id AS root, created_at, rowid AS rid FROM entries
@@ -972,11 +982,7 @@ export class TimStore implements MemoryInterface {
           AND json_extract(metadata, '$.kind') = 'session'
           AND tombstoned_at IS NULL
           AND irrelevant = 0
-          -- A session that logged nothing is not resumable. Sub-agent runs register
-          -- one each (the summarizer's own codex call does), and being the newest
-          -- node they would otherwise mask the session the briefing is meant to
-          -- carry. An absent count is legacy data, not proof of emptiness — keep it.
-          AND COALESCE(json_extract(metadata, '$.exchange_count'), 1) > 0
+${zeroExchangeFilter}
         UNION ALL
         SELECT e.id, sub.root, e.created_at, e.rowid FROM entries e
         INNER JOIN sub ON e.parent_id = sub.id
