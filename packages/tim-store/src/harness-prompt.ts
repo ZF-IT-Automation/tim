@@ -17,10 +17,9 @@ export function stripHarnessBlocks(text: string): string {
   let out = text;
   for (const tag of HARNESS_BLOCK_TAGS) {
     out = out.replace(blockPattern(tag), '');
-    // Harness injects sometimes omit the closing tag — strip the tail when paired form missed.
-    out = out.replace(new RegExp(`<${tag}\\b[^>]*>[\\s\\S]*$`, 'gi'), '');
   }
-  return out.replace(/\s+/g, ' ').trim();
+  // Only complete blocks are removed; an unclosed tag may be followed by human text.
+  return out.trim();
 }
 
 /** True when the prompt is only harness blocks (no human text remains after strip). */
