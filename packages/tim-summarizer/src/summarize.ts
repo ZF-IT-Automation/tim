@@ -10,6 +10,7 @@ import {
   KIND_SUMMARY_ROOT,
   KIND_SESSION,
   isSubstantiveSession,
+  parseSessionSubstance,
 } from 'tim-store';
 import { connectTimMcp, callTimTool, type UnsummarizedBatch } from './mcp-client.js';
 import {
@@ -19,8 +20,10 @@ import {
   generateSessionRollup,
   generateSummaryHeuristic,
   extractTags,
+  toSingleLineSummary,
   FALLBACK_MARKER,
   type SummaryStatus,
+  type SessionSubstance,
 } from './generate-summary.js';
 
 export const PROJECT_SUMMARY_MARKER = '## Project Summary';
@@ -101,7 +104,8 @@ export async function runProjectSummary(label: string): Promise<boolean> {
         ? summaryNode.metadata.handoff_note.trim()
         : '';
       const exchangeCount = Number(session.metadata.exchange_count) || 0;
-      if (!isSubstantiveSession(exchangeCount, Boolean(handoff))) continue;
+      const substance = parseSessionSubstance(summaryNode?.metadata.substance);
+      if (!isSubstantiveSession(exchangeCount, Boolean(handoff), substance)) continue;
       const summaries = await sessionSummaryTexts(store, id);
       if (summaries.length === 0) continue;
       picked.push({ date: sessionDateLabel(session), summaries });
@@ -144,6 +148,13 @@ function seqRange(batch: UnsummarizedBatch): { seqFrom: number; seqTo: number } 
 
 function entryText(entry: Entry): string {
   return [entry.title, entry.content].filter(Boolean).join('\n').trim();
+}
+
+const AUTOMATION_SUMMARY = 'No user content (automation).';
+
+function batchHasOnlyEmptyUserTurns(batch: UnsummarizedBatch): boolean {
+  return batch.exchanges.length > 0
+    && batch.exchanges.every(e => !e.userContent.trim());
 }
 
 /** Process pending curation-queue entries via LLM (duplicates merge, decay confirm). */
@@ -323,21 +334,29 @@ export async function runSummarizerLoop(
   try {
     let batch = await callTimTool<UnsummarizedBatch>(client, 'tim_show_unsummarized', { sessionId });
     while (batch.exchanges.length > 0) {
-      const { text: raw, status } = await generateSummaryDetailed(batch, onMCPError);
-      if (status !== 'ok') opts.onDegraded?.({ batchIndex: batch.batchIndex, status });
       const { seqFrom, seqTo } = seqRange(batch);
       let summary: string;
       let tags: string[] | undefined;
+      let substance: SessionSubstance | undefined;
 
-      if (raw === FALLBACK_MARKER) {
-        summary =
-          `${SUMMARY_FAILURE_MARKER} — main agent please resummarize batch ${batch.batchIndex}]\n` +
-          `${batch.exchanges.map(e => `Q: ${e.userContent.trim().slice(0, 200)}`).join('\n')}`;
-        tags = undefined;
+      if (batchHasOnlyEmptyUserTurns(batch)) {
+        summary = AUTOMATION_SUMMARY;
+        substance = 'none';
       } else {
-        const extracted = extractTags(raw);
-        summary = extracted.body;
-        tags = extracted.tags.length > 0 ? extracted.tags : undefined;
+        const { text: raw, status } = await generateSummaryDetailed(batch, onMCPError);
+        if (status !== 'ok') opts.onDegraded?.({ batchIndex: batch.batchIndex, status });
+
+        if (raw === FALLBACK_MARKER) {
+          summary =
+            `${SUMMARY_FAILURE_MARKER} — main agent please resummarize batch ${batch.batchIndex}]\n` +
+            `${batch.exchanges.map(e => `Q: ${e.userContent.trim().slice(0, 200)}`).join('\n')}`;
+          tags = undefined;
+        } else {
+          const extracted = extractTags(raw);
+          substance = extracted.substance;
+          summary = substance === 'none' ? toSingleLineSummary(extracted.body) : extracted.body;
+          tags = extracted.tags.length > 0 ? extracted.tags : undefined;
+        }
       }
 
       await callTimTool(client, 'tim_write_batch_summary', {
@@ -347,6 +366,7 @@ export async function runSummarizerLoop(
         seqFrom,
         seqTo,
         ...(tags && { tags }),
+        ...(substance && { substance }),
       });
       written += 1;
       if (!batch.hasMore) break;
