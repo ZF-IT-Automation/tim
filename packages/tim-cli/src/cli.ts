@@ -83,6 +83,23 @@ function getDbPath(config: TimConfigFile): string {
   return process.env.TIM_DB_PATH || config.dbPath || path.join(os.homedir(), '.tim', 'tim.db');
 }
 
+function defaultLiveDbPath(): string {
+  return path.resolve(path.join(os.homedir(), '.tim', 'tim.db'));
+}
+
+/** Workers must not migrate the live ~/.tim/tim.db — use a copy via TIM_DB_PATH. */
+function assertWorkerMayMigrateSchema(dbPath: string): void {
+  if (process.env.TEAMUP_WORKER !== '1') return;
+  if (path.resolve(dbPath) === defaultLiveDbPath()) {
+    console.error(
+      'Refusing to migrate the live TIM database while running as a team-up worker.\n' +
+      `Resolved DB: ${path.resolve(dbPath)}\n` +
+      'Set TIM_DB_PATH to a database copy, or run migrate-schema outside TEAMUP_WORKER=1.',
+    );
+    process.exit(1);
+  }
+}
+
 function ensureDir(dir: string) {
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
@@ -1211,6 +1228,7 @@ async function cmdReleaseCheck(args: string[]) {
 async function cmdMigrateSchema() {
   const config = loadConfig();
   const dbPath = getDbPath(config);
+  assertWorkerMayMigrateSchema(dbPath);
   const store = new TimStore(dbPath, { allowMigrations: true });
   const result = store.lastMigration;
   if (!result) {
