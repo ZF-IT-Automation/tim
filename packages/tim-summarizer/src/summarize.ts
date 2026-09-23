@@ -9,6 +9,7 @@ import {
   KIND_BATCH,
   KIND_SUMMARY_ROOT,
   KIND_SESSION,
+  deriveSessionCoverage,
   isSubstantiveSession,
   parseSessionSubstance,
 } from 'tim-store';
@@ -149,6 +150,14 @@ interface BackfillSubstanceOptions {
   limit?: number;
 }
 
+function parseLimitArg(raw: string): number {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0 || !Number.isInteger(n)) {
+    throw new Error(`Invalid --limit: ${raw}`);
+  }
+  return n;
+}
+
 function parseBackfillSubstanceArgs(argv: string[]): BackfillSubstanceOptions | null {
   if (!argv.includes('--backfill-substance')) return null;
   const opts: BackfillSubstanceOptions = { dryRun: false };
@@ -157,8 +166,8 @@ function parseBackfillSubstanceArgs(argv: string[]): BackfillSubstanceOptions | 
     if (arg === '--dry-run') opts.dryRun = true;
     else if (arg === '--project' && argv[i + 1]) opts.project = argv[++i];
     else if (arg.startsWith('--project=')) opts.project = arg.slice('--project='.length) || undefined;
-    else if (arg === '--limit' && argv[i + 1]) opts.limit = Number(argv[++i]);
-    else if (arg.startsWith('--limit=')) opts.limit = Number(arg.slice('--limit='.length));
+    else if (arg === '--limit' && argv[i + 1]) opts.limit = parseLimitArg(argv[++i]!);
+    else if (arg.startsWith('--limit=')) opts.limit = parseLimitArg(arg.slice('--limit='.length));
   }
   return opts;
 }
@@ -190,13 +199,31 @@ async function updateWithBusyRetry(
   }
 }
 
-export async function runBackfillSubstance(opts: BackfillSubstanceOptions = {}): Promise<Record<SessionSubstance | 'skipped' | 'already', number>> {
-  const counts: Record<SessionSubstance | 'skipped' | 'already', number> = {
+/** Skip sessions still accumulating exchanges or awaiting summarization. */
+async function isSessionLiveForBackfill(
+  store: TimStore,
+  sessionId: string,
+  lastActivity: string,
+): Promise<boolean> {
+  const idleMinutes = loadConfig().summarizer?.idle_sweep?.idle_minutes ?? 15;
+  const idleMs = idleMinutes * 60_000;
+  const lastMs = Date.parse(lastActivity);
+  if (Number.isFinite(lastMs) && Date.now() - lastMs < idleMs) return true;
+
+  const coverage = await deriveSessionCoverage(store, sessionId);
+  return coverage.hasPendingSummarization;
+}
+
+export async function runBackfillSubstance(
+  opts: BackfillSubstanceOptions = {},
+): Promise<Record<SessionSubstance | 'skipped' | 'already' | 'failed', number>> {
+  const counts: Record<SessionSubstance | 'skipped' | 'already' | 'failed', number> = {
     none: 0,
     low: 0,
     real: 0,
     skipped: 0,
     already: 0,
+    failed: 0,
   };
   const store = new TimStore(resolveDbPath());
   try {
@@ -222,7 +249,7 @@ export async function runBackfillSubstance(opts: BackfillSubstanceOptions = {}):
         overview: projectOverviewLines(project.content ?? ''),
       };
       const rows = store.listProjectSessionsByActivity(project.id, 1000);
-      for (const { id: sessionId } of rows) {
+      for (const { id: sessionId, lastActivity } of rows) {
         if (opts.limit != null && processed >= opts.limit) break outer;
         const session = await store.read(sessionId);
         if (!session || session.metadata.kind !== KIND_SESSION) continue;
@@ -231,6 +258,11 @@ export async function runBackfillSubstance(opts: BackfillSubstanceOptions = {}):
         const existing = parseSessionSubstance(summaryNode.metadata.substance);
         if (existing) {
           counts.already += 1;
+          continue;
+        }
+
+        if (await isSessionLiveForBackfill(store, sessionId, lastActivity)) {
+          counts.skipped += 1;
           continue;
         }
 
@@ -245,7 +277,12 @@ export async function runBackfillSubstance(opts: BackfillSubstanceOptions = {}):
         } else {
           const combined = summaries.join('\n\n').trim();
           const fromLlm = await generateSubstanceVerdict(combined, undefined, projectContext);
-          verdict = fromLlm ?? 'low';
+          if (!fromLlm) {
+            counts.failed += 1;
+            processed += 1;
+            continue;
+          }
+          verdict = fromLlm;
         }
 
         if (!opts.dryRun) {
@@ -533,7 +570,7 @@ async function main(): Promise<void> {
       console.error(
         `tim-summarizer --backfill-substance (${mode}): ` +
         `none=${counts.none} low=${counts.low} real=${counts.real} ` +
-        `skipped=${counts.skipped} already=${counts.already}`,
+        `skipped=${counts.skipped} already=${counts.already} failed=${counts.failed}`,
       );
       process.exit(0);
     } catch (err) {
