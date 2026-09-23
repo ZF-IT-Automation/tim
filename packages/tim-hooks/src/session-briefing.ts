@@ -37,8 +37,48 @@ const RECENT_EXCHANGE_SIDE_MAX_CHARS = 400;
 // Share of the previous-session budget a handoff note may take. Bounded because
 // clampSummary keeps the tail: an unbounded note would evict the whole summary.
 const HANDOFF_NOTE_BUDGET_SHARE = 0.4;
-
 const HANDOFF_LOOKBACK_MS = 30 * 86400_000;
+const HIGH_PRIORITY_STATUSES = new Set(['high', 'critical']);
+
+async function findLatestProjectHandoff(
+  store: TimStore,
+  projectLabel: string,
+): Promise<{ date: string; note: string } | null> {
+  const project = await store.requireProject(projectLabel);
+  const rows = store.listProjectSessionsByActivity(project.id, 1000);
+  for (const { id } of rows) {
+    const summaryNode = await findChildByKind(store, id, KIND_SUMMARY_ROOT);
+    const raw = summaryNode?.metadata.handoff_note;
+    if (typeof raw !== 'string' || !raw.trim()) continue;
+    const session = await store.read(id);
+    const date = typeof session?.metadata.date === 'string'
+      ? session.metadata.date.slice(0, 10)
+      : (session?.createdAt ?? '').slice(0, 10);
+    return { date, note: raw.trim() };
+  }
+  return null;
+}
+
+/** Open-task counts from store.getTasks — shared by load header and Now block. */
+export async function countProjectOpenTasks(
+  store: TimStore,
+  projectLabel: string,
+): Promise<{ open: number; stale: number }> {
+  const all = await collectOpenWork(store, projectLabel);
+  return {
+    open: all.length,
+    stale: all.filter(entry => entry.stale).length,
+  };
+}
+
+function handoffAgeLabel(isoDate: string): string {
+  const ms = Date.parse(isoDate);
+  if (!Number.isFinite(ms)) return isoDate.slice(0, 10);
+  const days = Math.floor((Date.now() - ms) / 86400_000);
+  if (days <= 0) return `${isoDate.slice(0, 10)} · today`;
+  if (days === 1) return `${isoDate.slice(0, 10)} · 1d ago`;
+  return `${isoDate.slice(0, 10)} · ${days}d ago`;
+}
 
 /**
  * Clamp a summary to a char budget without losing its end. The last lines of a
@@ -368,8 +408,19 @@ export async function formatOpenWorkLines(
       const line = formatOpenWorkLine(entry.task, '');
       if (!tryPush(line)) break;
     }
-    if (stale.length > 0) {
-      tryPush(staleCollapseLine(stale.length, oldestStaleDate(stale), projectLabel));
+    const staleHigh = stale.filter(entry =>
+      HIGH_PRIORITY_STATUSES.has((entry.task.priority ?? '').toLowerCase()),
+    );
+    for (const entry of staleHigh) {
+      if (lines.length >= maxItems) break;
+      const suffix = entry.updatedAt ? taskStaleSuffix(entry.updatedAt) : '';
+      if (!tryPush(formatOpenWorkLine(entry.task, suffix))) break;
+    }
+    const staleRest = stale.filter(entry =>
+      !HIGH_PRIORITY_STATUSES.has((entry.task.priority ?? '').toLowerCase()),
+    );
+    if (staleRest.length > 0) {
+      tryPush(staleCollapseLine(staleRest.length, oldestStaleDate(staleRest), projectLabel));
     }
     return lines;
   }
@@ -394,24 +445,15 @@ export async function buildNowBlock(
   projectLabel: string,
 ): Promise<string[]> {
   const lines: string[] = ['', '── Now ──', ''];
-  const cutoff = Date.now() - HANDOFF_LOOKBACK_MS;
-  const sessions = new SessionManager(store);
-  const listed = await sessions.listResumableSessions(projectLabel, 50);
-
-  for (const session of listed) {
-    const activityMs = Date.parse(session.lastActivity);
-    if (!Number.isFinite(activityMs) || activityMs < cutoff) break;
-    const note = await sessionHandoffNote(store, session.sessionId);
-    if (!note) continue;
-    const date = (session.date ?? session.lastActivity).slice(0, 10);
-    const clipped = note
+  const handoff = await findLatestProjectHandoff(store, projectLabel);
+  if (handoff) {
+    const clipped = handoff.note
       .split('\n')
       .map(l => l.trim())
       .filter(Boolean)
       .slice(0, NOW_HANDOFF_MAX_LINES)
       .join(' ');
-    lines.push(`Handoff (${date}): ${oneLine(clipped, 240)}`);
-    break;
+    lines.push(`Handoff (${handoffAgeLabel(handoff.date)}): ${oneLine(clipped, 240)}`);
   }
 
   const tasks = await formatOpenWorkLines(store, projectLabel, NOW_OPEN_WORK_ITEMS, 4000);

@@ -22,6 +22,8 @@ export function getBriefingMaxTokens(config: TimConfigFile): number {
 }
 
 export function getDirectiveHookMaxTokens(_config: TimConfigFile): number {
+  // Fixed at 1024 (~4 KB) for session-start hook directives (G9). This is
+  // independent of briefing.maxTokens, which bounds tim_load_project output only.
   return DEFAULT_DIRECTIVE_HOOK_MAX_TOKENS;
 }
 
