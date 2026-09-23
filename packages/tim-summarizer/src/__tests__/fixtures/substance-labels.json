@@ -1,0 +1,108 @@
+{
+  "projectContext": {
+    "title": "TIM — Theoretically Infinite Memory | Active | Local-first project memory | TypeScript, SQLite, MCP",
+    "overview": "## Project overview\nTIM is a local-first memory service for AI agents working across projects and sessions. SQLite stores project knowledge, work items, recorded exchanges and derived summaries. MCP exposes agent tools; the CLI provides setup, diagnostics, migration and recovery. Optional synchronization and model-driven summarization are separate operational components.\n\nEleven packages: tim-core, tim-store, tim-mcp, tim-cli, tim-hooks, tim-summarizer, tim-migrate, tim-sync-client, tim-sync-server, tim-skills, tim-quality-benchmark.\n\n## Project Stats\n1868 entries · Last activity: 2026-09-23T19:46:31.082Z\n"
+  },
+  "sessions": [
+    {
+      "sessionTitle": "2026-09-09-1001",
+      "summaryText": "- README neu erstellt und auf GitHub veröffentlicht; Tickets/Pläne angelegt; lokale Fixes integriert. 1.917 Tests bestanden, 2 übersprungen.\n- Basis funktioniert. Erweiterungen unvollständig; Änderungen nicht vollständig gepusht. Kritische Risiken: Sync-Revivals, Secret-Schutz, Summarizer-Sicherheit, semantische Suche, Projektfilter, Session-Summaries.\n- Offen: Secret-Löschung, Alias-Suchfilter, Supervisor-Startfehler; Workflow-Limit präzisieren; Korrekturzyklus und unabhängige Prüfung fehlen. Keine aktiven `team-up-*`-Sessions.\n- Nächster Schritt: Drei Restfehler beheben, gezielt testen und danach unabhängige Prüfung starten.",
+      "expected": "real"
+    },
+    {
+      "sessionTitle": "2026-09-09-1739",
+      "summaryText": "- Monitored Cursor implementer; pane blank/frozen, no terminal evidence.\n- Classified worker as `working`; mailbox age 25s, below 900s silence threshold.\n- Sent no keys; no escalation. Nothing confirmed complete; implementation status unknown.\n- Open: watch for worker output or mailbox age reaching silence threshold.\n- Next: continue monitoring without intervention.",
+      "expected": "none"
+    },
+    {
+      "sessionTitle": "2026-09-09-1744",
+      "summaryText": "- Terminal reached workspace trust prompt; reviewer waiting.\n- Review work has not started; pane frozen but not idle.\n- Open item: confirm “Yes, I trust this folder.”\n- Next step: press `Down`, then `Enter`; resume review.",
+      "expected": "none"
+    },
+    {
+      "sessionTitle": "2026-09-09-1759",
+      "summaryText": "- Worker blocked at Claude Code workspace trust prompt after 937s elapsed\n- Prompt offered \"No, exit\" vs \"Yes, I trust this folder\" options; worker selected trust\n- Session state: waiting_input with mailbox_age_sec(930) vs silence_sec(900)\n- Trust prompt resolution verified; workflow resumed\n- Open: confirming no residual state issues from the trust prompt block\n- Next step: continue pending tasks from interrupted session",
+      "expected": "none"
+    },
+    {
+      "sessionTitle": "2026-09-10-0727",
+      "summaryText": "Topics: 1. <timestamp>Thursday, Sep 10, 2026, 9:27 AM (UTC+2)</timestamp>\nAgent responses hint at: {\"state\":\"waiting_input\",\"reason\":\"Claude Code is blocked on the workspace trust safety prompt wi…\n\nSummary:\n- Worker blocked on Claude Code workspace trust safety prompt for project /home/bbbee/projects/tasks/tim-20260910-final-fix-review\n- Required decision: \"No, exit\" vs \"Yes, I trust this folder\"\n- Agent state: waiting_input with keys [\"Down\",\"Enter\"] to navigate/confirm\n- Open item: whether trust was confirmed to resume the session",
+      "expected": "none"
+    },
+    {
+      "sessionTitle": "2026-09-10-0742",
+      "summaryText": "Topics: 1. <timestamp>Thursday, Sep 10, 2026, 9:42 AM (UTC+2)</timestamp>\nAgent responses hint at: {\"state\":\"waiting_input\",\"reason\":\"Claude Code blocked on workspace trust prompt with No selected…\n\n{\"state\":\"waiting_input\",\"reason\":\"Claude Code blocked on workspace trust prompt\",\"action\":\"answer\",\"keys\":[\"Down\",\"Enter\"],\"question\":\"\",\"evidence\":\"❯ No, exit\\n   Yes, I trust this folder\\n\\n Enter to confirm · Esc to cancel\"}TAGS: #session-continuity #summarizer #review",
+      "expected": "none"
+    },
+    {
+      "sessionTitle": "2026-09-10-1921",
+      "summaryText": "- Cron jobs triggered \"machweiter\" pokes into TMUX \"codex\" session at 00:01 and 05:02 on 11.9 to bypass 5h daily limit\n- Both pokes fired successfully but hit a weekly rate limit instead, blocking further work until 15. Sep 12:58 (\"weekly 0% left\")\n- Cron entries were cleaned up after the weekly limit block occurred\n- Work is currently paused; resumption possible after weekly limit resets at 15. Sep 12:58\n- Open tension between automated session continuation and rate-limit enforcement remains unresolved\n- Most likely next step: wait for weekly limit reset or manually trigger session continuation after 15. Sep 12:58",
+      "expected": "real"
+    },
+    {
+      "sessionTitle": "2026-09-10-2208",
+      "summaryText": "- Classified frozen Claude reviewer pane as `waiting_input`, not idle or crashed.\n- Mailbox age 25s, below 900s silence threshold; worker likely alive.\n- Sent `Down`, `Enter` to select “Yes, I trust this folder.”\n- Current state: trust confirmation action sent; continuation unverified.\n- Open question: Did Claude proceed after workspace trust confirmation?\n- Next step: Inspect reviewer pane and confirm whether Claude resumed.",
+      "expected": "none"
+    },
+    {
+      "sessionTitle": "2026-09-10-2223",
+      "summaryText": "- Worker state: waiting_input due to Claude Code workspace trust prompt\n- Frozen terminal NOT evidence of idleness (mailbox_age_sec 926 > silence_sec 900)\n- Action required: answer with Down+Enter to trust the folder\n- Decision needed: proceed with project access or exit",
+      "expected": "none"
+    },
+    {
+      "sessionTitle": "2026-09-11-0953",
+      "summaryText": "- Installed Tailscale on ARMv7 Surface RT, addressed kernel/TUN device considerations  \n- Evaluated SSH connectivity: Tailnet access vs reverse tunnel from tablet through Strato server  \n- Decided on approach: Tailscale on Strato server in same Tailnet versus reverse tunnel `ssh -R 2222:localhost:22`  \n- Current state: Tailscale installation explored; reverse tunnel method pending tablet username and /dev/net/tun verification  \n- Open threads: Which connectivity method to proceed with; confirming tablet username for SSH reverse tunnel; verifying /dev/net/tun availability  \n- Most likely next step: Verify /dev/net/tun on tablet and test reverse tunnel setup with correct username",
+      "expected": "none"
+    },
+    {
+      "sessionTitle": "2026-09-23-1811",
+      "summaryText": "Topics: 1. update mal claude code; 2. es muss 2\nAgent responses hint at: Schon aktuell: 2.1.267. Nix zu tun. | Du hast recht. `claude update` folgt `stable`-Tag (2.1.267), `latest` ist 2.1.280.\n2.1.280 drauf.…",
+      "expected": "none"
+    },
+    {
+      "sessionTitle": "2026-09-23-1819",
+      "summaryText": "Topics: 1. Review das Projekt; 2. <task-notification>; 3. <task-notification>; 4. Die Läufe dauern ungewöhnlich lang; 5. Sessions mit unter 3-5 exchanges sollten wir evtl komplett raus filtern, wie denkst du darüber\nAgent responses hint at: Dein Gefühl stimmt zum Teil. Das meiste ist aber kein willkürliches Schreiben der Agenten, sonder… | Der Code-Worker ist mitten in der Umsetzung (9 Dateien bisher). Ich warte auf die Meldung des Wat… | Der Watcher wartet weiter im Hintergrund, der Code-Worker ist noch nicht fertig.",
+      "expected": "real"
+    },
+    {
+      "sessionTitle": "2026-09-23-1845",
+      "summaryText": "Topics: 1. <timestamp>Wednesday, Sep 23, 2026, 8:45 PM (UTC+2)</timestamp>\nAgent responses hint at: {\"state\":\"working\",\"reason\":\"Pane shows active Cursor run spinner with token counter and an open …",
+      "expected": "none"
+    },
+    {
+      "sessionTitle": "2026-09-23-1854",
+      "summaryText": "- Completed Ticket C1: all 10 G1–G9/S2/S4 items across 11 unpushed `master` commits.\n- Works: handoff lookup, session selection/fallback, ACTION guidance, news deltas, project summaries, live header, protected Now block, session denominator, open-first bugs, collapsed tool blocks, budget trimming. Lint passes; 2099/2101 tests pass, 2 skipped.\n- Half-finished: manual DB copy needs `tim migrate-schema` v13→v14. Data curation remains: empty Overview, stale tasks, loose root nodes.\n- Open thread: review mailbox `RESULT.md` for full output and commit list; decide whether to run schema migration and curate data.\n- Next step: run `tim migrate-schema` v13→v14, then verify migrated DB and remaining curation issues.",
+      "expected": "real"
+    },
+    {
+      "sessionTitle": "2026-09-23-1928",
+      "summaryText": "- Implemented four briefing fixes: readable multiline overview, fresh-task priority, exact drill-down hints, protected 16-title section index.\n- Split changes into commits `183ef60`, `8d2afe2`, `96bd238`, `d305f00`; commits unpushed.\n- Current state: lint clean; 2103 tests passed, 2 skipped. Outputs within expected sizes.\n- Open thread: Eval 8/9; G3 fails because summary needs regeneration.\n- Next step: regenerate summary, then rerun G3/evaluation checks.",
+      "expected": "real"
+    },
+    {
+      "sessionTitle": "2026-09-23-2002",
+      "summaryText": "Topics: 1. <timestamp>Wednesday, Sep 23, 2026, 10:02 PM (UTC+2)</timestamp>\nAgent responses hint at: {\"state\":\"working\",\"reason\":\"Pane shows Cursor agent still Running at 89.8k tokens with 67% progr…",
+      "expected": "none"
+    },
+    {
+      "sessionTitle": "2026-09-23-2026",
+      "summaryText": "Topics: 1. <timestamp>Wednesday, Sep 23, 2026, 10:26 PM (UTC+2)</timestamp>\nAgent responses hint at: {\"state\":\"waiting_input\",\"reason\":\"Claude Code is blocked on the workspace trust confirmation pro…\n\nTopics: 1. <timestamp>Wednesday, Sep 23, 2026, 10:26 PM (UTC+2)</timestamp>\nAgent responses hint at: {\"state\":\"waiting_input\",\"reason\":\"Claude Code is blocked on the workspace trust confirmation pro…",
+      "expected": "none"
+    },
+    {
+      "sessionTitle": "2026-09-23-2041",
+      "summaryText": "Topics: 1. <timestamp>Wednesday, Sep 23, 2026, 10:41 PM (UTC+2)</timestamp>\nAgent responses hint at: {\"state\":\"waiting_input\",\"reason\":\"Claude Code is blocked on the workspace trust prompt with 'No,…\n\nTopics: 1. <timestamp>Wednesday, Sep 23, 2026, 10:41 PM (UTC+2)</timestamp>\nAgent responses hint at: {\"state\":\"waiting_input\",\"reason\":\"Claude Code is blocked on the workspace trust prompt with 'No,…",
+      "expected": "none"
+    },
+    {
+      "sessionTitle": "2026-09-23-2106",
+      "summaryText": "Topics: 1. <timestamp>Wednesday, Sep 23, 2026, 11:06 PM (UTC+2)</timestamp>\nAgent responses hint at: {\"state\":\"working\",\"reason\":\"Pane shows Running with token counter and recent HEARTBEAT write; ma…",
+      "expected": "none"
+    },
+    {
+      "sessionTitle": "2026-09-23-2121",
+      "summaryText": "Topics: 1. <timestamp>Wednesday, Sep 23, 2026, 11:21 PM (UTC+2)</timestamp>\nAgent responses hint at: {\"state\":\"working\",\"reason\":\"Pane shows active Cursor run with spinner, 109.35k tokens, and 14 fi…",
+      "expected": "none"
+    }
+  ]
+}
