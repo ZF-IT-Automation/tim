@@ -186,16 +186,36 @@ export function evalG6(hookText) {
   return result('G6', true, pass, pass, detail);
 }
 
-/** G7 — delta bullets are news, not bookkeeping (hook.txt). */
-export function evalG7(hookText) {
-  const m = hookText.match(/\[Since last session\]([^\n]*)/);
-  if (!m) {
-    return result('G7', true, true, true, 'no Since-last-session block');
+/**
+ * G7 — delta bullets are news, not bookkeeping. Scans every `[Since last session]`
+ * block in the hook text and the preview (tim_session_start briefing). Heuristic:
+ * a bullet is bookkeeping when it names a checkpoint/batch/exchange count, is a bare
+ * session timestamp title (YYYY-MM-DD-HHMM), or repeats a raw turn shown elsewhere
+ * in the preview (▸ user / ↳ agent lines) — i.e. it is an exchange node.
+ */
+export function evalG7(hookText, previewText = '') {
+  const texts = [hookText, previewText];
+  const turns = new Set();
+  for (const line of previewText.split('\n')) {
+    const t = line.replace(/^\s*[▸↳]\s*/, '').trim();
+    if (t && t !== line.trim()) turns.add(t.slice(0, 40));
   }
-  const tail = m[1];
-  const bad = /(session|exchange|batch|checkpoint|summary)\b/i.test(tail);
-  const pass = !bad;
-  return result('G7', true, pass, pass, `sinceLine="${tail.trim()}" bookkeeping=${bad}`);
+  const bad = [];
+  let blocks = 0;
+  for (const text of texts) {
+    const lines = text.split('\n');
+    lines.forEach((line, i) => {
+      if (!line.includes('[Since last session]')) return;
+      blocks++;
+      for (let j = i + 1; j < lines.length && /^\s*•/.test(lines[j]); j++) {
+        const b = lines[j].replace(/^\s*•\s*/, '').trim();
+        if (/checkpoint|\bbatch\b|\bexchanges?\b/i.test(b) || /^\d{4}-\d{2}-\d{2}-\d{4}$/.test(b) || turns.has(b.slice(0, 40))) bad.push(b.slice(0, 40));
+      }
+    });
+  }
+  if (blocks === 0) return result('G7', true, true, true, 'no Since-last-session block');
+  const pass = bad.length === 0;
+  return result('G7', true, pass, bad.length, `blocks=${blocks} bookkeeping=${JSON.stringify(bad)}`);
 }
 
 /** G8 — open work trustworthy (hook open work + load tasks). */
@@ -241,7 +261,7 @@ export function evalG9Load(loadText) {
 
 /** S1 — no loose root children. */
 export function evalS1(structure) {
-  const loose = structure?.looseDirectChildren?.length ?? -1;
+  const loose = (structure?.looseDirectChildren ?? null)?.filter?.(c => !['sessions-root', 'commits-root'].includes(c?.kind)).length ?? -1;
   const pass = loose === 0;
   return result('S1', false, pass, loose, `looseDirectChildren=${loose}`);
 }
@@ -296,7 +316,7 @@ export function evaluateAll(ctx) {
     evalG4(ctx.loadText, ctx.db),
     evalG5(ctx.previewText, ctx.db),
     evalG6(ctx.hookText),
-    evalG7(ctx.hookText),
+    evalG7(ctx.hookText, ctx.previewText),
     evalG8(ctx.hookText, ctx.loadText, ctx.db, ctx.now),
     evalG9Directive(ctx.hookText),
     evalG9Load(ctx.loadText),
