@@ -175,9 +175,10 @@ function parseSubstanceToken(raw: string): SessionSubstance | undefined {
   return undefined;
 }
 
-/** Parse SUBSTANCE verdict from a line; garbled → undefined. */
+/** Parse SUBSTANCE verdict from a line; garbled → undefined. Strips markdown emphasis. */
 export function parseSubstanceLine(line: string): SessionSubstance | undefined {
-  const match = line.trim().match(/^SUBSTANCE:\s*(.+)$/i);
+  const stripped = line.trim().replace(/[*_]/g, '');
+  const match = stripped.match(/^SUBSTANCE:\s*(.+)$/i);
   if (!match) return undefined;
   return parseSubstanceToken(match[1]!.split(/\s/)[0] ?? '');
 }
@@ -200,16 +201,28 @@ export function extractTags(text: string): { body: string; tags: string[]; subst
   let substance: SessionSubstance | undefined;
   let tagLineIdx = -1;
 
-  for (let i = lines.length - 1; i >= 0; i--) {
+  const nonEmptyTail: number[] = [];
+  for (let i = lines.length - 1; i >= 0 && nonEmptyTail.length < 3; i--) {
+    if (lines[i]!.trim().length > 0) nonEmptyTail.unshift(i);
+  }
+
+  for (const i of nonEmptyTail) {
     const trimmed = lines[i]!.trim();
-    if (tagLineIdx < 0 && /^TAGS:\s*/i.test(trimmed)) {
+    const normalized = trimmed.replace(/[*_]/g, '');
+    if (tagLineIdx < 0 && /^TAGS:\s*/i.test(normalized)) {
       tagLineIdx = i;
       stripIdx.add(i);
-      continue;
     }
-    if (!substance && /^SUBSTANCE:\s*/i.test(trimmed)) {
-      substance = parseSubstanceLine(trimmed);
+  }
+
+  for (let t = nonEmptyTail.length - 1; t >= 0; t--) {
+    const i = nonEmptyTail[t]!;
+    const trimmed = lines[i]!.trim();
+    const normalized = trimmed.replace(/[*_]/g, '');
+    if (/^SUBSTANCE:\s*/i.test(normalized)) {
+      if (substance === undefined) substance = parseSubstanceLine(trimmed);
       stripIdx.add(i);
+      break;
     }
   }
 
@@ -565,4 +578,41 @@ export async function generateSummaryDetailed(
 
 export async function generateSummary(batch: UnsummarizedBatch, onError?: ErrorLogFn): Promise<string> {
   return (await generateSummaryDetailed(batch, onError)).text;
+}
+
+const SUBSTANCE_VERDICT_PROMPT =
+  'You classify whether an existing session summary describes substantive project work.\n' +
+  'Reply with exactly one line: SUBSTANCE: none | low | real\n' +
+  'none = no project work or decisions; low = minor housekeeping; real = work, findings or decisions.\n\n' +
+  'Summary:\n';
+
+/** Ask the configured summarizer chain for a SUBSTANCE verdict only (no summary rewrite). */
+export async function generateSubstanceVerdict(
+  summaryText: string,
+  onError?: ErrorLogFn,
+): Promise<SessionSubstance | undefined> {
+  const config = loadConfig();
+  const chain = config.summarizer?.chain;
+  if (!chain || chain.length === 0) return undefined;
+
+  const prompt = `${SUBSTANCE_VERDICT_PROMPT}${summaryText.trim().slice(0, 4000)}`;
+  const timeoutSec = config.summarizer?.timeout_sec ?? 600;
+
+  for (const entry of chain) {
+    const result = await tryCli(
+      entry.cli,
+      entry.model,
+      entry.provider,
+      prompt,
+      timeoutSec,
+      onError,
+      entry.args,
+    );
+    if (!result) continue;
+    const { substance } = extractTags(result);
+    if (substance) return substance;
+    const line = result.split('\n').map(l => l.trim()).find(l => /^SUBSTANCE:/i.test(l.replace(/[*_]/g, '')));
+    if (line) return parseSubstanceLine(line);
+  }
+  return undefined;
 }

@@ -19,8 +19,8 @@ import {
   generateProjectSummary,
   generateSessionRollup,
   generateSummaryHeuristic,
+  generateSubstanceVerdict,
   extractTags,
-  toSingleLineSummary,
   FALLBACK_MARKER,
   type SummaryStatus,
   type SessionSubstance,
@@ -139,6 +139,99 @@ function parseProjectSummaryArg(argv: string[]): string | null {
   const eq = argv.find(a => a.startsWith('--project-summary='));
   if (eq) return eq.slice('--project-summary='.length) || null;
   return null;
+}
+
+interface BackfillSubstanceOptions {
+  project?: string;
+  dryRun?: boolean;
+  limit?: number;
+}
+
+function parseBackfillSubstanceArgs(argv: string[]): BackfillSubstanceOptions | null {
+  if (!argv.includes('--backfill-substance')) return null;
+  const opts: BackfillSubstanceOptions = { dryRun: false };
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i]!;
+    if (arg === '--dry-run') opts.dryRun = true;
+    else if (arg === '--project' && argv[i + 1]) opts.project = argv[++i];
+    else if (arg.startsWith('--project=')) opts.project = arg.slice('--project='.length) || undefined;
+    else if (arg === '--limit' && argv[i + 1]) opts.limit = Number(argv[++i]);
+    else if (arg.startsWith('--limit=')) opts.limit = Number(arg.slice('--limit='.length));
+  }
+  return opts;
+}
+
+/**
+ * Backfill metadata.substance on summary-root nodes that predate the verdict pass.
+ * Idempotent and resumable — skips sessions that already have a substance verdict.
+ */
+export async function runBackfillSubstance(opts: BackfillSubstanceOptions = {}): Promise<Record<SessionSubstance | 'skipped' | 'already', number>> {
+  const counts: Record<SessionSubstance | 'skipped' | 'already', number> = {
+    none: 0,
+    low: 0,
+    real: 0,
+    skipped: 0,
+    already: 0,
+  };
+  const store = new TimStore(resolveDbPath());
+  try {
+    const projects: string[] = [];
+    if (opts.project) {
+      const resolved = await store.resolveProjectLabel(opts.project);
+      if (resolved.status !== 'found') {
+        throw new Error(`Project not found: ${opts.project}`);
+      }
+      projects.push(resolved.label);
+    } else {
+      const all = await store.listProjects();
+      projects.push(...all.map(p => p.label || p.id));
+    }
+
+    let processed = 0;
+    outer:
+    for (const label of projects) {
+      const project = await store.read(label);
+      if (!project) continue;
+      const rows = store.listProjectSessionsByActivity(project.id, 1000);
+      for (const { id: sessionId } of rows) {
+        if (opts.limit != null && processed >= opts.limit) break outer;
+        const session = await store.read(sessionId);
+        if (!session || session.metadata.kind !== KIND_SESSION) continue;
+        const summaryNode = await findChildByKind(store, sessionId, KIND_SUMMARY_ROOT);
+        if (!summaryNode) continue;
+        const existing = parseSessionSubstance(summaryNode.metadata.substance);
+        if (existing) {
+          counts.already += 1;
+          continue;
+        }
+
+        const summaries = await sessionSummaryTexts(store, sessionId);
+        const exchangeCount = Number(session.metadata.exchange_count) || 0;
+        let verdict: SessionSubstance;
+        if (summaries.length === 0 && exchangeCount < 3) {
+          verdict = 'none';
+        } else if (summaries.length === 0) {
+          counts.skipped += 1;
+          continue;
+        } else {
+          const combined = summaries.join('\n\n').trim();
+          const fromLlm = await generateSubstanceVerdict(combined);
+          verdict = fromLlm ?? 'low';
+        }
+
+        if (!opts.dryRun) {
+          await store.update(summaryNode.id, {
+            metadata: { substance: verdict },
+          });
+        }
+        counts[verdict] += 1;
+        processed += 1;
+      }
+    }
+    return counts;
+  } finally {
+    store.close();
+  }
 }
 
 function seqRange(batch: UnsummarizedBatch): { seqFrom: number; seqTo: number } {
@@ -354,7 +447,7 @@ export async function runSummarizerLoop(
         } else {
           const extracted = extractTags(raw);
           substance = extracted.substance;
-          summary = substance === 'none' ? toSingleLineSummary(extracted.body) : extracted.body;
+          summary = extracted.body;
           tags = extracted.tags.length > 0 ? extracted.tags : undefined;
         }
       }
@@ -403,6 +496,24 @@ export async function runSummarizerLoop(
 }
 
 async function main(): Promise<void> {
+  const backfillOpts = parseBackfillSubstanceArgs(process.argv);
+  if (backfillOpts) {
+    try {
+      const counts = await runBackfillSubstance(backfillOpts);
+      const mode = backfillOpts.dryRun ? 'dry-run' : 'write';
+      console.error(
+        `tim-summarizer --backfill-substance (${mode}): ` +
+        `none=${counts.none} low=${counts.low} real=${counts.real} ` +
+        `skipped=${counts.skipped} already=${counts.already}`,
+      );
+      process.exit(0);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`tim-summarizer backfill-substance failed: ${msg}`);
+      process.exit(1);
+    }
+  }
+
   // Project-summary mode: aggregate session summaries into project.content
   const projectLabel = parseProjectSummaryArg(process.argv);
   if (projectLabel) {
