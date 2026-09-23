@@ -36,6 +36,8 @@ export interface BriefingBlock {
   lines: string[];
   /** Display order among blocks of equal priority (lower first). */
   order: number;
+  /** Exact MCP call to expand collapsed/truncated content from this block. */
+  drillDown?: string;
 }
 
 export interface BriefingSelectionResult {
@@ -66,6 +68,26 @@ function firstNonEmptyLineIndex(lines: string[]): number {
   return lines.findIndex(line => line.trim().length > 0);
 }
 
+function sectionDrillDown(blockId: string): string | undefined {
+  if (!blockId.startsWith('section:')) return undefined;
+  const sectionId = blockId.slice('section:'.length);
+  return sectionId ? `tim_read("${sectionId}")` : undefined;
+}
+
+function blockDrillDown(block: BriefingBlock): string | undefined {
+  return block.drillDown ?? sectionDrillDown(block.id);
+}
+
+function sectionTitleOnlyLine(block: BriefingBlock): string | null {
+  if (!block.id.startsWith('section:')) return null;
+  const drillDown = blockDrillDown(block);
+  if (!drillDown) return null;
+  const titleLine = block.lines.find(line => line.trim().length > 0 && !line.includes('──'));
+  if (!titleLine) return null;
+  const name = titleLine.trim();
+  return `  ${name} — ${drillDown}`;
+}
+
 /** Partial inclusion: keep leading spacers, first heading, and bounded body when feasible. */
 function tryPartialBlockInclusion(
   ledger: TokenBudgetLedger,
@@ -75,9 +97,15 @@ function tryPartialBlockInclusion(
   const firstIdx = firstNonEmptyLineIndex(block.lines);
   if (firstIdx < 0) return { block: null, omission: null };
 
+  const drillDown = blockDrillDown(block);
+  const titleOnly = sectionTitleOnlyLine(block);
   const prefixLines = block.lines.slice(0, firstIdx + 1);
   const prefixText = prefixLines.join('\n');
   if (!tryChargeTokens(ledger, separator + prefixText)) {
+    if (titleOnly && tryChargeTokens(ledger, separator + titleOnly)) {
+      const omission = `${block.id}: body omitted (token budget) — ${drillDown}`;
+      return { block: { ...block, lines: [titleOnly] }, omission };
+    }
     return { block: null, omission: null };
   }
 
@@ -86,17 +114,31 @@ function tryPartialBlockInclusion(
   let truncated = false;
   if (restText && ledger.remaining > 1) {
     tryChargeTokens(ledger, '\n');
-    const partial = chargePartialTokens(ledger, restText);
+    const partial = chargePartialTokens(
+      ledger,
+      restText,
+      undefined,
+      block.id.startsWith('section:') ? drillDown : undefined,
+    );
     truncated = partial.truncated;
-    if (partial.text) outLines.push(...partial.text.split('\n'));
+    if (truncated && titleOnly) {
+      outLines.length = firstIdx + 1;
+      outLines[firstIdx] = titleOnly;
+    } else if (partial.text) {
+      outLines.push(...partial.text.split('\n'));
+    }
   }
 
   const omittedLines = block.lines.length - outLines.length;
   let omission: string | null = null;
   if (truncated) {
-    omission = `${block.id}: truncated (token budget)`;
+    omission = drillDown
+      ? `${block.id}: truncated (token budget) — ${drillDown}`
+      : `${block.id}: truncated (token budget)`;
   } else if (omittedLines > 0) {
-    omission = `${block.id}: ${omittedLines} lines omitted (token budget)`;
+    omission = drillDown
+      ? `${block.id}: ${omittedLines} lines omitted (token budget) — ${drillDown}`
+      : `${block.id}: ${omittedLines} lines omitted (token budget)`;
   }
   return { block: { ...block, lines: outLines }, omission };
 }
@@ -127,7 +169,19 @@ export function selectBriefingBlocks(
       if (partial.omission) omissions.push(partial.omission);
       continue;
     }
-    omissions.push(`${block.id}: omitted (token budget)`);
+    const titleOnly = sectionTitleOnlyLine(block);
+    if (titleOnly && tryChargeTokens(ledger, separator + titleOnly)) {
+      included.push({ ...block, lines: [titleOnly] });
+      const drillDown = blockDrillDown(block);
+      omissions.push(drillDown
+        ? `${block.id}: omitted (token budget) — ${drillDown}`
+        : `${block.id}: omitted (token budget)`);
+      continue;
+    }
+    const drillDown = blockDrillDown(block);
+    omissions.push(drillDown
+      ? `${block.id}: omitted (token budget) — ${drillDown}`
+      : `${block.id}: omitted (token budget)`);
   }
 
   included.sort((a, b) => a.order - b.order);
@@ -209,6 +263,7 @@ export function assembleBoundedBriefingText(
   blocks: BriefingBlock[],
   tokenBudget: number,
   trailingParts: string[] = [],
+  briefingDrillDown?: string,
 ): { text: string; omissions: string[]; truncated: boolean } {
   const footerBlocks = blocks.filter(block => block.id === 'footer');
   const contentBlocks = blocks.filter(block => block.id !== 'footer');
@@ -228,7 +283,7 @@ export function assembleBoundedBriefingText(
     for (const block of included) outLines.push(...block.lines);
     const omissionsLine = formatOmissionsLine(omissions, Math.max(0, tokenBudget - estimateTextTokens(outLines.join('\n'))));
     if (omissionsLine) outLines.push('', omissionsLine);
-    const bounded = boundRenderedText(outLines.join('\n'), tokenBudget);
+    const bounded = boundRenderedText(outLines.join('\n'), tokenBudget, briefingDrillDown);
     return {
       text: bounded.text,
       omissions,
@@ -253,7 +308,7 @@ export function assembleBoundedBriefingText(
   const contentJoined = contentLines.join('\n');
   const contentEstimate = estimateTextTokens(contentJoined);
   const contentBounded = contentEstimate > contentLimit
-    ? boundRenderedText(contentJoined, contentLimit)
+    ? boundRenderedText(contentJoined, contentLimit, briefingDrillDown)
     : { text: contentJoined, truncated: false, estimatedTokens: contentEstimate };
 
   const parts: string[] = [];

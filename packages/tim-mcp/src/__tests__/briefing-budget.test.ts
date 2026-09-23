@@ -61,6 +61,12 @@ describe('briefing-budget', () => {
     expect(bounded.text).toContain(BRIEFING_TRUNCATION_MARKER);
   });
 
+  it('appends drill-down hint when truncation marker has room', () => {
+    const bounded = boundRenderedText('x'.repeat(200), 120, 'tim_read("section-id")');
+    expect(bounded.truncated).toBe(true);
+    expect(bounded.text).toContain('tim_read("section-id")');
+  });
+
   it('converts MCP byte budgets to hook maxTokens units', () => {
     expect(byteBudgetToHookMaxTokens(9000)).toBe(2250);
     expect(byteBudgetToHookMaxTokens(0)).toBe(0);

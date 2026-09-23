@@ -4,6 +4,11 @@ export const MAX_TOKEN_BUDGET = 64000;
 /** Appended when a final safety clamp trims assembled briefing text. */
 export const BRIEFING_TRUNCATION_MARKER = '… [briefing truncated to token budget]';
 
+export function briefingTruncationSuffix(drillDown?: string): string {
+  if (!drillDown?.trim()) return BRIEFING_TRUNCATION_MARKER;
+  return `${BRIEFING_TRUNCATION_MARKER} — ${drillDown.trim()}`;
+}
+
 /** Hooks approximate tokens as CHARS_PER_TOKEN visible characters — reconcile with byte budget. */
 export const HOOK_CHARS_PER_TOKEN = 4;
 
@@ -34,9 +39,12 @@ export function byteBudgetToHookMaxTokens(byteBudget: number): number {
   return Math.max(1, Math.floor(byteBudget / HOOK_CHARS_PER_TOKEN));
 }
 
-function truncationMarkerForBudget(limit: number): string {
-  const fullCost = estimateTextTokens(BRIEFING_TRUNCATION_MARKER);
-  if (limit >= fullCost) return BRIEFING_TRUNCATION_MARKER;
+function truncationMarkerForBudget(limit: number, drillDown?: string): string {
+  const marker = briefingTruncationSuffix(drillDown);
+  const fullCost = estimateTextTokens(marker);
+  if (limit >= fullCost) return marker;
+  const short = BRIEFING_TRUNCATION_MARKER;
+  if (limit >= estimateTextTokens(short)) return short;
   return limit >= 3 ? '…' : '.'.repeat(Math.max(0, limit));
 }
 
@@ -110,11 +118,12 @@ export function chargePartialTokens(
   ledger: TokenBudgetLedger,
   text: string,
   maxTokens?: number,
+  drillDown?: string,
 ): { text: string; charged: number; truncated: boolean } {
   const cap = Math.min(maxTokens ?? ledger.remaining, ledger.remaining);
   if (cap <= 0 || !text) return { text: '', charged: 0, truncated: !!text };
 
-  const bounded = boundRenderedText(text, cap);
+  const bounded = boundRenderedText(text, cap, drillDown);
   const finalText = bounded.text;
   const truncated = bounded.truncated;
   const charged = estimateTextTokens(finalText);
@@ -124,7 +133,7 @@ export function chargePartialTokens(
 }
 
 /** Final safety clamp on an assembled MCP response string. */
-export function boundRenderedText(text: string, tokenBudget: number): {
+export function boundRenderedText(text: string, tokenBudget: number, drillDown?: string): {
   text: string;
   truncated: boolean;
   estimatedTokens: number;
@@ -135,7 +144,7 @@ export function boundRenderedText(text: string, tokenBudget: number): {
   }
 
   const limit = Math.max(0, Math.floor(tokenBudget));
-  const ellipsis = truncationMarkerForBudget(limit);
+  const ellipsis = truncationMarkerForBudget(limit, drillDown);
   const ellipsisCost = estimateTextTokens(ellipsis);
   const contentBudget = Math.max(0, limit - ellipsisCost);
   const clipped = clipToTokenBudget(text, contentBudget);
