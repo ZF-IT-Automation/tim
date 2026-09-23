@@ -13,7 +13,7 @@ import {
   parseSessionSubstance,
   type TimStore,
 } from 'tim-store';
-import type { Entry } from 'tim-core';
+import { isClosedBugStatus, type Entry } from 'tim-core';
 import type { DirectiveBriefing } from './marker.js';
 
 const CLOSED_TASK_STATUSES = new Set(['done', 'cancelled', 'closed', 'wontfix']);
@@ -69,6 +69,18 @@ export async function countProjectOpenTasks(
     open: all.length,
     stale: all.filter(entry => entry.stale).length,
   };
+}
+
+/** Open-bug count from store.getBugs — same status resolution as the Bugs renderer. */
+export async function countProjectOpenBugs(
+  store: TimStore,
+  projectLabel: string,
+): Promise<number> {
+  const bugs = await store.getBugs();
+  return bugs.filter(
+    bug => bug.project_label === projectLabel
+      && !isClosedBugStatus(bug.status ?? 'open'),
+  ).length;
 }
 
 function handoffAgeLabel(isoDate: string): string {
