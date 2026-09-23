@@ -16,7 +16,10 @@ import type { DirectiveBriefing } from './marker.js';
 
 const CLOSED_TASK_STATUSES = new Set(['done', 'cancelled', 'closed', 'wontfix']);
 const MAX_OPEN_WORK_ITEMS = 12;
+const NOW_OPEN_WORK_ITEMS = 5;
 const OPEN_WORK_ITEM_MAX_CHARS = 160;
+const STALE_TASK_DAYS = 14;
+const NOW_HANDOFF_MAX_LINES = 3;
 
 // Split of briefing.maxTokens: the previous session is the reason the briefing
 // exists, open work is the shorter, denser half.
@@ -287,10 +290,19 @@ async function previousSession(
   };
 }
 
-/** Open tasks of the project, highest-priority first (store already orders them). */
-async function openWork(
+function taskStaleSuffix(updatedAt: string): string {
+  const updatedMs = Date.parse(updatedAt);
+  if (!Number.isFinite(updatedMs)) return '';
+  const ageDays = (Date.now() - updatedMs) / 86400_000;
+  if (ageDays <= STALE_TASK_DAYS) return '';
+  return ` · stale since ${updatedAt.slice(0, 10)}`;
+}
+
+/** Open-task lines for briefings; same ordering as the directive's open work. */
+export async function formatOpenWorkLines(
   store: TimStore,
   projectLabel: string,
+  maxItems: number,
   maxChars: number,
 ): Promise<string[]> {
   const tasks = await store.getTasks();
@@ -301,15 +313,61 @@ async function openWork(
     if (task.project_label !== projectLabel) continue;
     if (task.status && CLOSED_TASK_STATUSES.has(task.status)) continue;
 
+    const entry = await store.read(task.id, { includeChildren: false });
+    const stale = entry ? taskStaleSuffix(entry.updatedAt) : '';
     const status = task.status ?? 'todo';
     const priority = task.priority ? `, ${task.priority}` : '';
-    const line = `- [${status}${priority}] ${oneLine(task.title, OPEN_WORK_ITEM_MAX_CHARS)}`;
+    const line = `- [${status}${priority}] ${oneLine(task.title, OPEN_WORK_ITEM_MAX_CHARS)}${stale}`;
     if (used + line.length + 1 > maxChars) break;
     used += line.length + 1;
     lines.push(line);
-    if (lines.length >= MAX_OPEN_WORK_ITEMS) break;
+    if (lines.length >= maxItems) break;
   }
   return lines;
+}
+
+/** Compact first-screen block: recent handoff + top open tasks (G1, G8). */
+export async function buildNowBlock(
+  store: TimStore,
+  projectLabel: string,
+): Promise<string[]> {
+  const lines: string[] = ['', '── Now ──', ''];
+  const cutoff = Date.now() - HANDOFF_LOOKBACK_MS;
+  const sessions = new SessionManager(store);
+  const listed = await sessions.listResumableSessions(projectLabel, 50);
+
+  for (const session of listed) {
+    const activityMs = Date.parse(session.lastActivity);
+    if (!Number.isFinite(activityMs) || activityMs < cutoff) break;
+    const note = await sessionHandoffNote(store, session.sessionId);
+    if (!note) continue;
+    const date = (session.date ?? session.lastActivity).slice(0, 10);
+    const clipped = note
+      .split('\n')
+      .map(l => l.trim())
+      .filter(Boolean)
+      .slice(0, NOW_HANDOFF_MAX_LINES)
+      .join(' ');
+    lines.push(`Handoff (${date}): ${oneLine(clipped, 240)}`);
+    break;
+  }
+
+  const tasks = await formatOpenWorkLines(store, projectLabel, NOW_OPEN_WORK_ITEMS, 4000);
+  if (tasks.length > 0) {
+    if (lines.length > 3) lines.push('');
+    lines.push(...tasks);
+  }
+
+  return lines.length > 3 ? lines : [];
+}
+
+/** Open tasks of the project, highest-priority first (store already orders them). */
+async function openWork(
+  store: TimStore,
+  projectLabel: string,
+  maxChars: number,
+): Promise<string[]> {
+  return formatOpenWorkLines(store, projectLabel, MAX_OPEN_WORK_ITEMS, maxChars);
 }
 
 /**

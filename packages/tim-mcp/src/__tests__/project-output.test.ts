@@ -122,7 +122,7 @@ describe('formatProjectOutput render_tail', () => {
     expect(out).toMatch(/Entry 1/);
     expect(out).toMatch(/Entry 10/);
     expect(out).not.toMatch(/Entry 11\b/);
-    expect(out).toMatch(/… 2 more$/m);
+    expect(out).toMatch(/… 2 more — tim_read\("log"\)$/m);
   });
 
   it('shows last N children when schema sets render_tail', () => {
@@ -137,7 +137,7 @@ describe('formatProjectOutput render_tail', () => {
     expect(out).toMatch(/Entry 12/);
     expect(out).not.toMatch(/Entry 1\b/);
     expect(out).not.toMatch(/Entry 2\b/);
-    expect(out).toMatch(/… 2 more \(older\)$/m);
+    expect(out).toMatch(/… 2 more — tim_read\("log"\) \(older\)$/m);
   });
 
   it('per-entry metadata.render_tail overrides schema', () => {
@@ -147,7 +147,7 @@ describe('formatProjectOutput render_tail', () => {
       200,
     );
     expect(out).toMatch(/Entry 12/);
-    expect(out).toMatch(/… 2 more \(older\)$/m);
+    expect(out).toMatch(/… 2 more — tim_read\("log"\) \(older\)$/m);
   });
 });
 
