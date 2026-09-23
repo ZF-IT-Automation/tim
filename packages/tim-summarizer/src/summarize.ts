@@ -167,6 +167,29 @@ function parseBackfillSubstanceArgs(argv: string[]): BackfillSubstanceOptions | 
  * Backfill metadata.substance on summary-root nodes that predate the verdict pass.
  * Idempotent and resumable — skips sessions that already have a substance verdict.
  */
+function isSqliteBusyError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const code = (err as Error & { code?: string }).code;
+  return code === 'SQLITE_BUSY' || /database is locked/i.test(err.message);
+}
+
+async function updateWithBusyRetry(
+  store: TimStore,
+  id: string,
+  patch: Parameters<TimStore['update']>[1],
+): Promise<void> {
+  const delays = [50, 150, 400];
+  for (let attempt = 0; attempt < delays.length; attempt++) {
+    try {
+      await store.update(id, patch);
+      return;
+    } catch (err) {
+      if (!isSqliteBusyError(err) || attempt === delays.length - 1) throw err;
+      await new Promise(r => setTimeout(r, delays[attempt]));
+    }
+  }
+}
+
 export async function runBackfillSubstance(opts: BackfillSubstanceOptions = {}): Promise<Record<SessionSubstance | 'skipped' | 'already', number>> {
   const counts: Record<SessionSubstance | 'skipped' | 'already', number> = {
     none: 0,
@@ -226,7 +249,7 @@ export async function runBackfillSubstance(opts: BackfillSubstanceOptions = {}):
         }
 
         if (!opts.dryRun) {
-          await store.update(summaryNode.id, {
+          await updateWithBusyRetry(store, summaryNode.id, {
             metadata: { substance: verdict },
           });
         }
