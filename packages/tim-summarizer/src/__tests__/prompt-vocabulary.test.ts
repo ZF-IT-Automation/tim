@@ -36,9 +36,10 @@ describe('buildPrompt vocabulary hint (criteria 1 + 2)', () => {
     expect(withoutField).toContain('Give 1-3 subject tags');
   });
 
-  it('still asks for the TAGS line when a vocabulary is present', () => {
+  it('still asks for SUBSTANCE and TAGS lines when a vocabulary is present', () => {
     const prompt = buildPrompt({ ...base, vocabulary: ['#sync'] });
-    expect(prompt).toContain('End your response with a line: TAGS:');
+    expect(prompt).toContain('SUBSTANCE: none | low | real');
+    expect(prompt).toContain('TAGS: #tag1 #tag2');
   });
 
   // Verbatim reuse alone left the widest hole measured: a vocabulary holding

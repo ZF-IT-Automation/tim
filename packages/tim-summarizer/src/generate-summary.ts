@@ -108,7 +108,11 @@ export function buildPrompt(batch: UnsummarizedBatch): string {
     // has none, so every run invents its own phrasing. Four fixed words cannot
     // drift, and they answer the question a subject tag alone cannot: not "the
     // summarizer" but "the session where the summarizer was debugged".
-    `End your response with a line: TAGS: #tag1 #tag2 ... (lowercase kebab-case, # prefix). ` +
+    `End your response with two lines (in this order):\n` +
+    `SUBSTANCE: none | low | real — none = no project work or decisions (version checks, greetings, aborted starts); ` +
+    `low = minor housekeeping; real = work, findings or decisions. ` +
+    `When substance is none, write a single-line summary (no bullets).\n` +
+    `TAGS: #tag1 #tag2 ... (lowercase kebab-case, # prefix). ` +
     `Give 1-3 subject tags. A subject tag names a feature, subsystem or subject that could ` +
     `have its own file or spec — #session-continuity, #summarizer, #topic-recall, #tim-viewer. ` +
     `Never a container (#queue, #tasks) and never the project itself (#tim, #hermes). ` +
@@ -163,36 +167,69 @@ function normalizeTag(raw: string): string | null {
   return `#${name}`;
 }
 
-/** Parse TAGS line from LLM output; strip it from body. */
-export function extractTags(text: string): { body: string; tags: string[] } {
+export type SessionSubstance = 'none' | 'low' | 'real';
+
+function parseSubstanceToken(raw: string): SessionSubstance | undefined {
+  const token = raw.trim().toLowerCase();
+  if (token === 'none' || token === 'low' || token === 'real') return token;
+  return undefined;
+}
+
+/** Parse SUBSTANCE verdict from a line; garbled → undefined. */
+export function parseSubstanceLine(line: string): SessionSubstance | undefined {
+  const match = line.trim().match(/^SUBSTANCE:\s*(.+)$/i);
+  if (!match) return undefined;
+  return parseSubstanceToken(match[1]!.split(/\s/)[0] ?? '');
+}
+
+/** Collapse multi-line summary to one line for substance=none. */
+export function toSingleLineSummary(text: string): string {
+  for (const line of text.split('\n')) {
+    const trimmed = line.replace(/^[-*•]\s*/, '').trim();
+    if (trimmed) return trimmed;
+  }
+  return 'No substantive project work.';
+}
+
+/** Parse TAGS and SUBSTANCE lines from LLM output; strip them from body. */
+export function extractTags(text: string): { body: string; tags: string[]; substance?: SessionSubstance } {
   if (text === FALLBACK_MARKER) return { body: text, tags: [] };
 
   const lines = text.split('\n');
+  const stripIdx = new Set<number>();
+  let substance: SessionSubstance | undefined;
   let tagLineIdx = -1;
+
   for (let i = lines.length - 1; i >= 0; i--) {
-    if (/^TAGS:\s*/i.test(lines[i]!.trim())) {
+    const trimmed = lines[i]!.trim();
+    if (tagLineIdx < 0 && /^TAGS:\s*/i.test(trimmed)) {
       tagLineIdx = i;
-      break;
+      stripIdx.add(i);
+      continue;
+    }
+    if (!substance && /^SUBSTANCE:\s*/i.test(trimmed)) {
+      substance = parseSubstanceLine(trimmed);
+      stripIdx.add(i);
     }
   }
-  if (tagLineIdx < 0) return { body: text.trimEnd(), tags: [] };
-
-  const tagLine = lines[tagLineIdx]!.trim();
-  const tagPart = tagLine.replace(/^TAGS:\s*/i, '');
-  const rawTags = tagPart.match(/#\S+/g) ?? [];
 
   const tags: string[] = [];
-  const seen = new Set<string>();
-  for (const raw of rawTags) {
-    const normalized = normalizeTag(raw);
-    if (normalized && !seen.has(normalized)) {
-      seen.add(normalized);
-      tags.push(normalized);
+  if (tagLineIdx >= 0) {
+    const tagLine = lines[tagLineIdx]!.trim();
+    const tagPart = tagLine.replace(/^TAGS:\s*/i, '');
+    const rawTags = tagPart.match(/#\S+/g) ?? [];
+    const seen = new Set<string>();
+    for (const raw of rawTags) {
+      const normalized = normalizeTag(raw);
+      if (normalized && !seen.has(normalized)) {
+        seen.add(normalized);
+        tags.push(normalized);
+      }
     }
   }
 
-  const body = [...lines.slice(0, tagLineIdx), ...lines.slice(tagLineIdx + 1)].join('\n').trimEnd();
-  return { body, tags: tags.slice(0, 5) };
+  const body = lines.filter((_, i) => !stripIdx.has(i)).join('\n').trimEnd();
+  return { body, tags: tags.slice(0, 5), ...(substance ? { substance } : {}) };
 }
 
 function appendSummarizerLog(line: string): void {
