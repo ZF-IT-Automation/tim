@@ -9,6 +9,7 @@ import {
   KIND_EXCHANGES_ROOT,
   KIND_EXCHANGE_BATCH,
   CHARS_PER_TOKEN,
+  isSubstantiveSession,
   type TimStore,
 } from 'tim-store';
 import type { Entry } from 'tim-core';
@@ -36,13 +37,7 @@ const RECENT_EXCHANGE_SIDE_MAX_CHARS = 400;
 // clampSummary keeps the tail: an unbounded note would evict the whole summary.
 const HANDOFF_NOTE_BUDGET_SHARE = 0.4;
 
-/** Substantive = enough exchanges or an explicit handoff note (G5). */
-export const SUBSTANTIVE_MIN_EXCHANGES = 3;
 const HANDOFF_LOOKBACK_MS = 30 * 86400_000;
-
-export function isSubstantiveSession(exchangeCount: number, hasHandoffNote: boolean): boolean {
-  return exchangeCount >= SUBSTANTIVE_MIN_EXCHANGES || hasHandoffNote;
-}
 
 /**
  * Clamp a summary to a char budget without losing its end. The last lines of a
@@ -224,12 +219,11 @@ interface PreviousSessionResult {
   summary?: string;
   recent?: string[];
   sessionId?: string;
-  trivialSessionNote?: string;
   latestHandoffLabel?: string;
   latestHandoffNote?: string;
 }
 
-/** Newest substantive session; trivial newest is noted, not shown as previous work. */
+/** Newest substantive session; non-substantive sessions are not candidates. */
 async function previousSession(
   store: TimStore,
   projectLabel: string,
@@ -240,10 +234,9 @@ async function previousSession(
   const listed = await sessions.listResumableSessions(projectLabel, 50);
   if (listed.length === 0) return {};
 
-  const newest = listed[0];
   const cutoff = Date.now() - HANDOFF_LOOKBACK_MS;
 
-  let chosen = newest;
+  let chosen: (typeof listed)[number] | undefined;
   for (const candidate of listed) {
     const note = await sessionHandoffNote(store, candidate.sessionId);
     if (isSubstantiveSession(candidate.exchangeCount, Boolean(note))) {
@@ -251,6 +244,7 @@ async function previousSession(
       break;
     }
   }
+  if (!chosen) return {};
 
   const content = await sessionBriefingContent(store, chosen.sessionId, maxChars, rawMaxChars);
   if (!content.summary && !content.recent?.length) return {};
@@ -258,13 +252,6 @@ async function previousSession(
   const date = (chosen.date ?? chosen.lastActivity).slice(0, 10);
   const bits = [date, `${chosen.exchangeCount} exchanges`];
   if (chosen.tool) bits.push(chosen.tool);
-
-  let trivialSessionNote: string | undefined;
-  if (newest.sessionId !== chosen.sessionId) {
-    const skipDate = (newest.date ?? newest.lastActivity).slice(0, 10);
-    trivialSessionNote =
-      `Newest session ${skipDate} (${newest.exchangeCount} exchanges) skipped as trivial`;
-  }
 
   let latestHandoffLabel: string | undefined;
   let latestHandoffNote: string | undefined;
@@ -283,7 +270,6 @@ async function previousSession(
     sessionId: chosen.sessionId,
     label: bits.join(' · '),
     ...content,
-    ...(trivialSessionNote ? { trivialSessionNote } : {}),
     ...(latestHandoffLabel && latestHandoffNote
       ? { latestHandoffLabel, latestHandoffNote }
       : {}),
@@ -473,19 +459,17 @@ export async function collectDirectiveBriefing(
   const recent = previous.recent ?? [];
   const spent = (previous.summary?.length ?? 0)
     + (previous.latestHandoffNote?.length ?? 0)
-    + (previous.trivialSessionNote?.length ?? 0)
     + recent.reduce((n, block) => n + block.length + 1, 0);
   const work = await openWork(store, projectLabel, Math.max(0, maxChars - spent)).catch(() => []);
 
   if (!previous.summary && recent.length === 0 && work.length === 0
-    && !previous.trivialSessionNote && !previous.latestHandoffNote) {
+    && !previous.latestHandoffNote) {
     return undefined;
   }
   return {
     ...(previous.label ? { previousSessionLabel: previous.label } : {}),
     ...(previous.summary ? { previousSessionSummary: previous.summary } : {}),
     ...(recent.length > 0 ? { recentExchanges: recent } : {}),
-    ...(previous.trivialSessionNote ? { trivialSessionNote: previous.trivialSessionNote } : {}),
     ...(previous.latestHandoffLabel && previous.latestHandoffNote
       ? { latestHandoffLabel: previous.latestHandoffLabel, latestHandoffNote: previous.latestHandoffNote }
       : {}),

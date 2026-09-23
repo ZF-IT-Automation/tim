@@ -181,7 +181,7 @@ describe('session-start directive carries content', () => {
     store.close();
 
     const briefing = await pastWorkBriefing('P0070');
-    expect(briefing?.trivialSessionNote).toMatch(/skipped as trivial/);
+    expect(briefing?.trivialSessionNote).toBeUndefined();
     expect(briefing?.previousSessionSummary).toContain('substantive work done');
     expect(briefing?.previousSessionSummary).not.toContain('update mal claude code');
   });
@@ -240,7 +240,7 @@ describe('session-start directive carries content', () => {
     expect(briefing?.previousSessionSummary).toContain('newer substantive, no handoff');
     expect(briefing?.latestHandoffNote).toContain('memory program');
     expect(briefing?.latestHandoffLabel).toBeTruthy();
-    expect(briefing?.trivialSessionNote).toMatch(/skipped as trivial/);
+    expect(briefing?.trivialSessionNote).toBeUndefined();
   });
 
   it('falls back to the checkpoint text when nothing rolled it up into the summary root', async () => {
@@ -256,10 +256,12 @@ describe('session-start directive carries content', () => {
       cwd,
       harness: 'test',
     });
-    await sessions.logExchange('sess-checkpoint-only', [
-      { role: 'user', content: 'do the thing' },
-      { role: 'agent', content: 'done' },
-    ]);
+    for (let i = 1; i <= 3; i++) {
+      await sessions.logExchange('sess-checkpoint-only', [
+        { role: 'user', content: `do the thing ${i}` },
+        { role: 'agent', content: `done ${i}` },
+      ]);
+    }
     await sessions.checkpoint('sess-checkpoint-only', {
       summarize: async () => 'Session checkpoint: 1 exchange\nTopics: 1. do the thing',
     });
@@ -440,19 +442,19 @@ describe('briefing falls back to batch summaries when a session has no rollup', 
     });
     // Every exchange covered by the batch summary below, so the raw tail — the
     // last thing the cascade could have fallen back to — is empty.
-    await sessions.logExchange('sess-nobody-rolled-up', [
-      { role: 'user', content: 'first question' },
-      { role: 'agent', content: 'first answer' },
-      { role: 'user', content: 'second question' },
-      { role: 'agent', content: 'second answer' },
-    ]);
+    for (let i = 1; i <= 3; i++) {
+      await sessions.logExchange('sess-nobody-rolled-up', [
+        { role: 'user', content: `question ${i}` },
+        { role: 'agent', content: `answer ${i}` },
+      ]);
+    }
     await sessions.writeBatchSummary(
       'sess-nobody-rolled-up', 1,
-      'BATCH ONE: the parser was rewritten', { seqFrom: 1, seqTo: 1 }, ['#parser'],
+      'BATCH ONE: the parser was rewritten', { seqFrom: 1, seqTo: 2 }, ['#parser'],
     );
     await sessions.writeBatchSummary(
       'sess-nobody-rolled-up', 2,
-      'BATCH TWO: and then the tests were fixed', { seqFrom: 2, seqTo: 2 }, ['#parser'],
+      'BATCH TWO: and then the tests were fixed', { seqFrom: 3, seqTo: 3 }, ['#parser'],
     );
     // No updateSessionSummary and no checkpoint: that is the whole point.
     store.close();

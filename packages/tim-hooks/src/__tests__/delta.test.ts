@@ -152,4 +152,55 @@ describe('getDeltaBriefing', () => {
 
     expect(await computeDeltaBriefing(store, 'P0005')).toBeNull();
   });
+
+  it('excludes entries inside non-substantive sessions', async () => {
+    const { isDeltaBookkeepingEntry } = await import('../delta.js');
+    const noise = {
+      id: 'note-in-short-session',
+      title: 'Worker prompt',
+      content: 'mailbox task',
+      parentId: 'sess-short',
+      contentType: 'text',
+      depth: 4,
+      confidence: 1,
+      createdAt: '2026-02-01T00:00:00.000Z',
+      updatedAt: '2026-02-01T00:00:00.000Z',
+      accessedAt: '2026-02-01T00:00:00.000Z',
+      decayRate: 0,
+      visibility: 1,
+      tags: [],
+      irrelevant: false,
+      favorite: false,
+      tombstonedAt: null,
+      metadata: { kind: 'note' },
+    } as const;
+
+    vi.spyOn(store, 'read').mockImplementation(async (id: string) => {
+      if (id === 'sess-short') {
+        return {
+          id: 'sess-short',
+          title: 'Short',
+          content: '',
+          parentId: 'sessions-root',
+          contentType: 'text',
+          depth: 2,
+          confidence: 1,
+          createdAt: '2026-02-01T00:00:00.000Z',
+          updatedAt: '2026-02-01T00:00:00.000Z',
+          accessedAt: '2026-02-01T00:00:00.000Z',
+          decayRate: 0,
+          visibility: 1,
+          tags: [],
+          irrelevant: false,
+          favorite: false,
+          tombstonedAt: null,
+          metadata: { kind: 'session', exchange_count: 1 },
+        } as any;
+      }
+      return null;
+    });
+    vi.spyOn(store, 'getChildByKind' as any).mockResolvedValue([]);
+
+    expect(await isDeltaBookkeepingEntry(store, noise as any)).toBe(true);
+  });
 });
