@@ -298,6 +298,61 @@ function taskStaleSuffix(updatedAt: string): string {
   return ` · stale since ${updatedAt.slice(0, 10)}`;
 }
 
+function isTaskStale(updatedAt: string): boolean {
+  return taskStaleSuffix(updatedAt).length > 0;
+}
+
+function staleTasksDrillDown(projectLabel: string): string {
+  return `tim_show({what:"tasks", root:"${projectLabel}"})`;
+}
+
+function formatOpenWorkLine(
+  task: { status?: string | null; priority?: string | null; title: string },
+  staleSuffix: string,
+): string {
+  const status = task.status ?? 'todo';
+  const priority = task.priority ? `, ${task.priority}` : '';
+  return `- [${status}${priority}] ${oneLine(task.title, OPEN_WORK_ITEM_MAX_CHARS)}${staleSuffix}`;
+}
+
+interface OpenWorkEntry {
+  task: { id: string; status?: string | null; priority?: string | null; title: string };
+  updatedAt: string;
+  stale: boolean;
+}
+
+async function collectOpenWork(
+  store: TimStore,
+  projectLabel: string,
+): Promise<OpenWorkEntry[]> {
+  const tasks = await store.getTasks();
+  const entries: OpenWorkEntry[] = [];
+  for (const task of tasks) {
+    if (task.project_label !== projectLabel) continue;
+    if (task.status && CLOSED_TASK_STATUSES.has(task.status)) continue;
+    const row = await store.read(task.id, { includeChildren: false });
+    const updatedAt = row?.updatedAt ?? '';
+    entries.push({
+      task,
+      updatedAt,
+      stale: updatedAt ? isTaskStale(updatedAt) : false,
+    });
+  }
+  return entries;
+}
+
+function staleCollapseLine(count: number, oldestDate: string, projectLabel: string): string {
+  return `+ ${count} stale open task${count === 1 ? '' : 's'} (untouched since ${oldestDate}) — ${staleTasksDrillDown(projectLabel)}`;
+}
+
+function oldestStaleDate(entries: OpenWorkEntry[]): string {
+  const dates = entries
+    .map(e => e.updatedAt.slice(0, 10))
+    .filter(d => d.length > 0)
+    .sort();
+  return dates[0] ?? 'unknown';
+}
+
 /** Open-task lines for briefings; same ordering as the directive's open work. */
 export async function formatOpenWorkLines(
   store: TimStore,
@@ -305,23 +360,41 @@ export async function formatOpenWorkLines(
   maxItems: number,
   maxChars: number,
 ): Promise<string[]> {
-  const tasks = await store.getTasks();
+  const all = await collectOpenWork(store, projectLabel);
+  const fresh = all.filter(e => !e.stale);
+  const stale = all.filter(e => e.stale);
   const lines: string[] = [];
   let used = 0;
 
-  for (const task of tasks) {
-    if (task.project_label !== projectLabel) continue;
-    if (task.status && CLOSED_TASK_STATUSES.has(task.status)) continue;
-
-    const entry = await store.read(task.id, { includeChildren: false });
-    const stale = entry ? taskStaleSuffix(entry.updatedAt) : '';
-    const status = task.status ?? 'todo';
-    const priority = task.priority ? `, ${task.priority}` : '';
-    const line = `- [${status}${priority}] ${oneLine(task.title, OPEN_WORK_ITEM_MAX_CHARS)}${stale}`;
-    if (used + line.length + 1 > maxChars) break;
+  const tryPush = (line: string): boolean => {
+    if (used + line.length + 1 > maxChars) return false;
     used += line.length + 1;
     lines.push(line);
-    if (lines.length >= maxItems) break;
+    return true;
+  };
+
+  if (fresh.length > 0) {
+    for (const entry of fresh) {
+      if (lines.length >= maxItems) break;
+      const line = formatOpenWorkLine(entry.task, '');
+      if (!tryPush(line)) break;
+    }
+    if (stale.length > 0) {
+      tryPush(staleCollapseLine(stale.length, oldestStaleDate(stale), projectLabel));
+    }
+    return lines;
+  }
+
+  if (stale.length === 0) return lines;
+
+  const previewCount = Math.min(3, stale.length);
+  for (const entry of stale.slice(0, previewCount)) {
+    const suffix = entry.updatedAt ? taskStaleSuffix(entry.updatedAt) : '';
+    tryPush(formatOpenWorkLine(entry.task, suffix));
+  }
+  const hidden = stale.length - previewCount;
+  if (hidden > 0) {
+    tryPush(staleCollapseLine(hidden, oldestStaleDate(stale), projectLabel));
   }
   return lines;
 }
