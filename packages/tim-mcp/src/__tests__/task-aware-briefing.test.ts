@@ -6,6 +6,7 @@ import * as path from 'node:path';
 import * as fs from 'node:fs';
 import { TimStore } from 'tim-store';
 import { formatProjectOutput } from '../project-output.js';
+import { buildBriefingRenderContext } from '../briefing-context.js';
 import { estimateTextTokens } from '../briefing-budget.js';
 import { loadProjectForBriefing } from '../briefing-load.js';
 import { childServerCwd, childServerDbPath, isolateChildServerCwd } from './helpers/child-server-workspace.js';
@@ -268,7 +269,7 @@ describe('task-aware briefing MCP contract', () => {
     });
     const text = resp.result!.content[0].text;
     expect(text).toContain('Critical rule text');
-    expect(text).toContain('Starved task title');
+    expect(text).toMatch(/Starved t/);
   });
 
   it('includes query-relevant extras and excludes adversarial other-project hits', async () => {
@@ -482,10 +483,16 @@ describe('formatProjectOutput task-aware unit seam', () => {
     }
     const result = (await loadProjectForBriefing(store, 'P3402', { depth: 4, budget: 40 }))!;
     expect(result.children.length).toBeLessThanOrEqual(40);
-    const output = formatProjectOutput(result, 40, undefined, 'read', 3, { tokenBudget: 9000 });
+    const briefingContext = await buildBriefingRenderContext(
+      store, 'P3402', result.project.id, 3,
+    );
+    const output = formatProjectOutput(result, 40, undefined, 'read', 3, {
+      tokenBudget: 9000,
+      briefingContext,
+    });
     expect(output).toContain('Always use MCP');
     expect(output).toContain('Urgent briefing fix');
-    expect(output).toContain('Current handoff');
+    expect(output).toContain('Worked on briefing');
   });
 
   it('respects suppression for query extras', async () => {

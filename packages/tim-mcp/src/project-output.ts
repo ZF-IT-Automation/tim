@@ -20,7 +20,6 @@ export interface RecentSessionLine {
   exchanges: number;
   date: string;
   summary: string[];
-  trivial: boolean;
 }
 
 export interface BriefingRenderContext {
@@ -28,6 +27,7 @@ export interface BriefingRenderContext {
   nowBlockLines?: string[];
   recentSessions?: RecentSessionLine[];
   totalSessionCount?: number;
+  hiddenShortSessionCount?: number;
 }
 
 export interface FormatProjectOutputOptions {
@@ -106,6 +106,67 @@ function isOverviewSection(section: Entry): boolean {
   const title = entryTitle(section);
   return title.toLowerCase() === 'overview'
     || (section.metadata.kind === 'section' && title === 'Overview');
+}
+
+function isTasksSection(section: Entry): boolean {
+  return entryTitle(section) === 'Tasks';
+}
+
+function isRulesSection(section: Entry): boolean {
+  return entryTitle(section).toLowerCase() === 'rules';
+}
+
+function isBugsSection(section: Entry): boolean {
+  return entryTitle(section) === 'Bugs';
+}
+
+const STALE_TASK_DAYS = 14;
+
+function isTaskStale(updatedAt: string): boolean {
+  const updatedMs = Date.parse(updatedAt);
+  if (!Number.isFinite(updatedMs)) return false;
+  return (Date.now() - updatedMs) / 86400_000 > STALE_TASK_DAYS;
+}
+
+function countOpenTasks(children: Entry[]): { open: number; stale: number } {
+  let open = 0;
+  let stale = 0;
+  for (const child of children) {
+    if (!isTaskMarker(child.metadata.task)) continue;
+    if (isClosedTask(child)) continue;
+    open += 1;
+    if (isTaskStale(child.updatedAt)) stale += 1;
+  }
+  return { open, stale };
+}
+
+function countOpenBugs(children: Entry[]): number {
+  let open = 0;
+  for (const child of children) {
+    if (!isBugEntry(child)) continue;
+    if (!isClosedBug(child)) open += 1;
+  }
+  return open;
+}
+
+function ruleLine(entry: Entry): string {
+  const body = sectionPreview(entry).trim();
+  const title = entryTitle(entry);
+  if (title !== 'Untitled' && body) return `${title}: ${body}`;
+  if (body) return body;
+  return title === 'Untitled' ? '' : title;
+}
+
+function renderRulesBlock(section: Entry, childMap: Map<string, Entry[]>): string[] {
+  const lines: string[] = [];
+  const sectionLine = ruleLine(section);
+  if (sectionLine) lines.push(sectionLine);
+  const children = childMap.get(section.id) ?? [];
+  for (const child of children) {
+    const line = ruleLine(child);
+    if (line) lines.push(line);
+  }
+  return lines;
 }
 
 function overviewPreviewLines(content: string, maxLines = 5): string {
@@ -711,7 +772,7 @@ function formatProjectOutputWithTokenBudget(
       : projectSummary;
     headerLines.push('', '── Project Summary ──', '', summaryBody);
   }
-  if (ctx?.nowBlockLines?.length) headerLines.push(...ctx.nowBlockLines);
+  const rulesSection = sections.find(isRulesSection);
 
   if (sections.length > 0) {
     headerLines.push('', `── Sections (${sections.length}) ──`, '');
@@ -726,6 +787,18 @@ function formatProjectOutputWithTokenBudget(
         }
         continue;
       }
+      if (isTasksSection(section)) {
+        const counts = countOpenTasks(childMap.get(section.id) ?? []);
+        headerLines.push(
+          `  Tasks (${counts.open} open, ${counts.stale} stale) — tim_read("${section.id}")`,
+        );
+        continue;
+      }
+      if (isBugsSection(section)) {
+        const openCount = countOpenBugs(childMap.get(section.id) ?? []);
+        headerLines.push(`  Bugs (${openCount} open) — tim_read("${section.id}")`);
+        continue;
+      }
       headerLines.push(`  ${name} — tim_read("${section.id}")`);
     }
   }
@@ -737,10 +810,34 @@ function formatProjectOutputWithTokenBudget(
     lines: headerLines,
   }];
 
+  if (ctx?.nowBlockLines?.length) {
+    blocks.push({
+      id: 'now',
+      priority: BRIEFING_PRIORITY.urgentTasks,
+      order: 1,
+      lines: ctx.nowBlockLines,
+    });
+  }
+
+  if (rulesSection) {
+    const rulesBody = renderRulesBlock(rulesSection, childMap);
+    if (rulesBody.length > 0) {
+      blocks.push({
+        id: 'rules',
+        priority: BRIEFING_PRIORITY.activeRules,
+        order: 2,
+        lines: ['', '── Rules ──', '', ...rulesBody],
+        drillDown: `tim_read("${rulesSection.id}")`,
+      });
+    }
+  }
+
   if (sections.length > 0) {
     for (const section of sections) {
       const name = entryTitle(section);
-      if (isOverviewSection(section)) continue;
+      if (isOverviewSection(section) || isTasksSection(section) || isRulesSection(section)) {
+        continue;
+      }
       const rendered = renderSectionBody(
         section, name, childMap, budgetState, schema, renderMode, seenBodies, true,
       );
@@ -762,13 +859,14 @@ function formatProjectOutputWithTokenBudget(
       '',
     ];
     for (const session of ctx.recentSessions) {
-      if (session.trivial) {
-        sessionLines.push(`  ${session.exchanges} exchanges · ${session.date} · trivial`);
-      } else {
-        sessionLines.push(`  ${session.exchanges} exchanges · ${session.date}`);
-        for (const line of session.summary) sessionLines.push(`    ${line}`);
-        if (session.summary.length === 0) sessionLines.push('    (no summary)');
-      }
+      sessionLines.push(`  ${session.exchanges} exchanges · ${session.date}`);
+      for (const line of session.summary) sessionLines.push(`    ${line}`);
+      if (session.summary.length === 0) sessionLines.push('    (no summary yet)');
+    }
+    if (ctx.hiddenShortSessionCount && ctx.hiddenShortSessionCount > 0) {
+      sessionLines.push(
+        `  + ${ctx.hiddenShortSessionCount} short sessions hidden (< 3 turns)`,
+      );
     }
     if (total > ctx.recentSessions.length) {
       const hidden = total - ctx.recentSessions.length;
@@ -802,7 +900,7 @@ function formatProjectOutputWithTokenBudget(
         );
         sessionLines.push(`  ${exchanges} exchanges · ${date}`);
         for (const line of summary) sessionLines.push(`    ${line}`);
-        if (summary.length === 0) sessionLines.push('    (no summary)');
+        if (summary.length === 0) sessionLines.push('    (no summary yet)');
       }
       if (sessions.length > shown) {
         const hidden = sessions.length - shown;

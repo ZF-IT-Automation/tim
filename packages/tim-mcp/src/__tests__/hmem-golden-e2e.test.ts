@@ -235,9 +235,8 @@ describe('hmem golden E2E', () => {
       bind: false,
       depth: 3,
     })).result!.content[0].text;
-    expect(loaded).toContain('Tasks');
+    expect(loaded).toMatch(/Tasks \(\d+ open/);
     expect(loaded).toContain('Notes');
-    expect(loaded).toContain('Implement hmem import audit');
     expect(loaded).toContain('Track the repair flow');
   });
 });
