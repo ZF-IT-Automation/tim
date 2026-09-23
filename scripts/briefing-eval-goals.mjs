@@ -48,7 +48,7 @@ function parseOpenWorkLines(text) {
 }
 
 function parseHeaderMeta(line) {
-  const m = line.match(/^Status:\s*(.+?) · (\d{4}-\d{2}-\d{2})(?: · (\d+) tests)?/);
+  const m = line.match(/^Status:\s*(.+?) · (?:last activity )?(\d{4}-\d{2}-\d{2})(?: · (\d+) tests)?/);
   if (!m) return null;
   return { status: m[1], date: m[2], tests: m[3] ? Number(m[3]) : undefined };
 }
@@ -86,7 +86,7 @@ export function evalG1(loadText) {
     lines.some((l) => l.trim().length > 20 && !/^─/.test(l.trim()));
   const hasDate = ISO_DATE.test(block);
   const hasOpen =
-    /── Open work ──|Open work|── Next|NEXT:/i.test(block) ||
+    /── Open work ──|Open work|── Now ──|── Next|NEXT:/i.test(block) ||
     /\bTasks\b/.test(block) && /\[in_progress\]/.test(block);
   const pass = hasOverview && hasDate && hasOpen;
   const detail = `overview=${hasOverview} date=${hasDate} openOrTasks=${hasOpen}`;
