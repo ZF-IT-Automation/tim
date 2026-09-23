@@ -1,5 +1,6 @@
 import type { Entry } from 'tim-core';
 import type { TimStore } from './store.js';
+import { isCountableUserExchange } from './harness-prompt.js';
 
 export const SESSIONS_SECTION_TITLE = 'Sessions';
 export const SUMMARY_NODE_TITLE = 'Summary';
@@ -87,7 +88,7 @@ export async function deriveCounters(
     for (let i = 0; i < batches.length; i++) {
       const batch = batches[i]!;
       const users = (await store.getChildrenBySeq(batch.id)).filter(
-        u => u.metadata.role === 'user',
+        u => u.metadata.role === 'user' && isCountableUserExchange(u),
       );
       const isLast = i === batches.length - 1;
       if (isLast && users.length === 0) continue;
@@ -95,7 +96,7 @@ export async function deriveCounters(
     }
   } else {
     exchangeCount = (await store.getChildren(sessionId, { metadataKind: KIND_EXCHANGE }))
-      .filter(u => u.metadata.role === 'user').length;
+      .filter(u => u.metadata.role === 'user' && isCountableUserExchange(u)).length;
   }
 
   let batchesSummarized = 0;
@@ -121,7 +122,7 @@ export function deriveCountersSync(
     for (let i = 0; i < batches.length; i++) {
       const batch = batches[i]!;
       const users = store.getChildrenBySeqSync(batch.id).filter(
-        u => u.metadata.role === 'user',
+        u => u.metadata.role === 'user' && isCountableUserExchange(u),
       );
       const isLast = i === batches.length - 1;
       if (isLast && users.length === 0) continue;
@@ -129,7 +130,7 @@ export function deriveCountersSync(
     }
   } else {
     exchangeCount = store.getChildByKindSync(sessionId, KIND_EXCHANGE)
-      .filter(u => u.metadata.role === 'user').length;
+      .filter(u => u.metadata.role === 'user' && isCountableUserExchange(u)).length;
   }
 
   let batchesSummarized = 0;
