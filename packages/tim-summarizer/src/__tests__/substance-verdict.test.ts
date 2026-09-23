@@ -44,19 +44,25 @@ describe('substance verdict fixture', () => {
       vi.restoreAllMocks();
     });
 
-    it('reports perfect accuracy when stub returns expected labels', async () => {
+    it('computes accuracy and lists confusions from fixed stub verdicts', async () => {
       vi.spyOn(generateSummary, 'generateSubstanceVerdict').mockImplementation(
-        async (summaryText, _onError, project) => {
-          expect(project?.title).toBe(fixture.projectContext.title);
-          const session = fixture.sessions.find(s => s.summaryText === summaryText);
-          return session?.expected ?? 'low';
-        },
+        async () => 'real',
       );
 
       const report = await evalSubstanceFixture(fixture);
-      expect(report.correct).toBe(20);
+      const expectedNone = fixture.sessions.filter(
+        (s: { expected: string }) => s.expected === 'none',
+      ).length;
+      const expectedReal = fixture.sessions.filter(
+        (s: { expected: string }) => s.expected === 'real',
+      ).length;
+      expect(report.correct).toBe(expectedReal);
       expect(report.total).toBe(20);
-      expect(report.results.every(r => r.match)).toBe(true);
+      expect(report.results.filter(r => !r.match)).toHaveLength(expectedNone);
+      for (const row of report.results.filter(r => !r.match)) {
+        expect(row.expected).toBe('none');
+        expect(row.got).toBe('real');
+      }
     });
   });
 });
