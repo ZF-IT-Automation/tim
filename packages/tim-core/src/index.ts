@@ -426,6 +426,12 @@ export {
   entrySearchStatusSql,
 } from './task-status.js';
 export {
+  CLOSED_BUG_STATUSES,
+  resolveBugStatusFromMetadata,
+  isClosedBugStatus,
+  isClosedBugMetadata,
+} from './bug-status.js';
+export {
   PROMPT_STOP_WORDS,
   extractPromptTerms,
   buildPromptSearchQuery,
