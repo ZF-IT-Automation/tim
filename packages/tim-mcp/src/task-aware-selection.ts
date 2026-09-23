@@ -1,5 +1,6 @@
 import type { Entry } from 'tim-core';
 import type { TimStore } from 'tim-store';
+import { CHARS_PER_TOKEN } from 'tim-store';
 import {
   boundRenderedText,
   chargePartialTokens,
@@ -299,15 +300,15 @@ function clipBriefingLines(text: string, maxBytes: number): string {
   return kept.join('\n');
 }
 
-function formatOmissionsLine(omissions: string[], maxBytes: number): string {
+function formatOmissionsLine(omissions: string[], maxTokens: number): string {
   if (omissions.length === 0) return '';
   const full = `… briefing omissions: ${omissions.join('; ')}`;
-  if (estimateTextTokens(full) <= maxBytes) return full;
+  if (estimateTextTokens(full) <= maxTokens) return full;
   const summary = omissions.length === 1
     ? `… briefing omissions: ${omissions[0]}`
     : `… briefing omissions: ${omissions.length} blocks omitted (token budget)`;
-  if (estimateTextTokens(summary) <= maxBytes) return summary;
-  return boundRenderedText(summary, maxBytes).text;
+  if (estimateTextTokens(summary) <= maxTokens) return summary;
+  return boundRenderedText(summary, maxTokens).text;
 }
 
 /** Shared selection + whole-response bounding for load and preview MCP surfaces. */
@@ -360,7 +361,7 @@ export function assembleBoundedBriefingText(
   const contentJoined = contentLines.join('\n');
   const contentEstimate = estimateTextTokens(contentJoined);
   const contentBounded = contentEstimate > contentLimit
-    ? { text: clipBriefingLines(contentJoined, contentLimit), truncated: true }
+    ? { text: clipBriefingLines(contentJoined, contentLimit * CHARS_PER_TOKEN), truncated: true }
     : { text: contentJoined, truncated: false, estimatedTokens: contentEstimate };
 
   const parts: string[] = [];
