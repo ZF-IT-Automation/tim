@@ -30,6 +30,42 @@ export const PROJECT_SUMMARY_MARKER = '## Project Summary';
  */
 export const SUMMARY_FAILURE_MARKER = '[ALL SUMMARIZER CLIs FAILED';
 
+const SUBSTANTIVE_MIN_EXCHANGES = 3;
+const PROJECT_SUMMARY_SESSION_LIMIT = 10;
+
+function isSubstantiveSession(exchangeCount: number, hasHandoffNote: boolean): boolean {
+  return exchangeCount >= SUBSTANTIVE_MIN_EXCHANGES || hasHandoffNote;
+}
+
+function sessionDateLabel(session: Entry): string {
+  return typeof session.metadata.date === 'string'
+    ? session.metadata.date.slice(0, 10)
+    : session.createdAt.slice(0, 10);
+}
+
+async function sessionSummaryTexts(
+  store: TimStore,
+  sessionId: string,
+): Promise<string[]> {
+  const summaryNode = await findChildByKind(store, sessionId, KIND_SUMMARY_ROOT);
+  if (!summaryNode) return [];
+
+  const stored = typeof summaryNode.metadata.summary === 'string'
+    ? summaryNode.metadata.summary.trim()
+    : '';
+  if (stored) return [stored];
+
+  const children = await store.getChildren(summaryNode.id);
+  const batchSummaries = children
+    .filter(c => c.tags.includes('#batch-summary') || c.metadata.kind === KIND_BATCH)
+    .sort((a, b) => (Number(a.metadata.batch_index) || 0) - (Number(b.metadata.batch_index) || 0))
+    .map(c => (c.content ?? '').trim() || c.title.trim())
+    .filter(Boolean);
+  if (batchSummaries.length > 0) return batchSummaries;
+  const body = summaryNode.content?.trim() || summaryNode.title.trim();
+  return body ? [body] : [];
+}
+
 /**
  * Idempotently merge a project summary into the project content body.
  * Strips any existing `## Project Summary` block first, so running it twice
@@ -55,39 +91,36 @@ function resolveDbPath(): string {
 export async function runProjectSummary(label: string): Promise<boolean> {
   const store = new TimStore(resolveDbPath());
   try {
-    const result = await store.loadProject(label);
-    if (!result) throw new Error(`Project not found: ${label}`);
+    const project = await store.requireProject(label);
+    const rows = store.listProjectSessionsByActivity(project.id, 1000);
+    if (rows.length === 0) return false;
 
-    // Collect batch summary content from each session-summary-root node.
-    // The root nodes themselves have empty content; real summaries are in #batch-summary children.
-    const sessionNodes = result.children
-      .filter(c => c.tags.includes('#session-summary'))
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-
-    if (sessionNodes.length === 0) return false;
-
-    const summaries: string[] = [];
-    for (const session of sessionNodes) {
-      const children = await store.getChildren(session.id);
-      const batchSummaries = children
-        .filter(c => c.tags.includes('#batch-summary'))
-        .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-        .map(c => c.content?.trim() || c.title.trim())
-        .filter(Boolean);
-      if (batchSummaries.length > 0) {
-        summaries.push(...batchSummaries);
-      } else if (session.content?.trim()) {
-        summaries.push(session.content.trim());
-      }
+    const picked: Array<{ date: string; summaries: string[] }> = [];
+    for (const { id } of rows) {
+      if (picked.length >= PROJECT_SUMMARY_SESSION_LIMIT) break;
+      const session = await store.read(id);
+      if (!session || session.metadata.kind !== KIND_SESSION) continue;
+      const summaryNode = await findChildByKind(store, id, KIND_SUMMARY_ROOT);
+      const handoff = typeof summaryNode?.metadata.handoff_note === 'string'
+        ? summaryNode.metadata.handoff_note.trim()
+        : '';
+      const exchangeCount = Number(session.metadata.exchange_count) || 0;
+      if (!isSubstantiveSession(exchangeCount, Boolean(handoff))) continue;
+      const summaries = await sessionSummaryTexts(store, id);
+      if (summaries.length === 0) continue;
+      picked.push({ date: sessionDateLabel(session), summaries });
     }
-    if (summaries.length === 0) return false;
+    if (picked.length === 0) return false;
 
-    const summary = await generateProjectSummary(summaries);
-    if (!summary) return false; // total CLI failure → write nothing
+    const generated = await generateProjectSummary(picked.flatMap(p => p.summaries));
+    if (!generated) return false;
 
-    const newContent = mergeProjectSummary(result.project.content, summary);
-    await store.update(result.project.id, {
-      title: result.project.title,
+    const dates = picked.map(p => p.date).sort();
+    const coverage = `_Covers ${picked.length} sessions, ${dates[0]} – ${dates[dates.length - 1]}_`;
+    const summary = `${coverage}\n${generated.trim()}`;
+    const newContent = mergeProjectSummary(project.content, summary);
+    await store.update(project.id, {
+      title: project.title,
       content: newContent,
     });
 
