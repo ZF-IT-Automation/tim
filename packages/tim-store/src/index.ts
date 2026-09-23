@@ -72,9 +72,12 @@ export {
   type EnsureProjectSchemaResult,
 } from './project-schema-init.js';
 export {
+  aggregateSubstance,
   isSubstantiveSession,
+  parseSessionSubstance,
   sessionHasHandoffNote,
   SUBSTANTIVE_MIN_EXCHANGES,
+  type SessionSubstance,
 } from './substantive-session.js';
 export {
   SessionManager,

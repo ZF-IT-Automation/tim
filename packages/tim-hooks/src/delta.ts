@@ -4,6 +4,7 @@ import {
   isSubstantiveSession,
   KIND_SESSION,
   KIND_SUMMARY_ROOT,
+  parseSessionSubstance,
   sessionHasHandoffNote,
   type TimStore,
 } from 'tim-store';
@@ -74,7 +75,8 @@ async function isInsideNonSubstantiveSession(store: TimStore, entry: Entry): Pro
       const exchangeCount = Number(parent.metadata.exchange_count) || 0;
       const summaryNode = await findChildByKind(store, parent.id, KIND_SUMMARY_ROOT);
       const hasHandoff = sessionHasHandoffNote(summaryNode?.metadata);
-      return !isSubstantiveSession(exchangeCount, hasHandoff);
+      const substance = parseSessionSubstance(summaryNode?.metadata.substance);
+      return !isSubstantiveSession(exchangeCount, hasHandoff, substance);
     }
     parentId = parent.parentId;
   }
