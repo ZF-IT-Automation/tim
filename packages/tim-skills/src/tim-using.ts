@@ -1,17 +1,5 @@
 export const TIM_USING_SKILL = {
-  name: 'tim-using',
-  description: 'When to write, read, or search TIM — one example each.',
-  content: `# tim-using
-
-| Goal | Tool | Example |
-|------|------|---------|
-| Save new fact/task/idea | \`tim_write\` | \`tim_write({ where: "P0063/Ideas", title: "Cache layer", content: "...", tags: ["#tim"] })\` |
-| Known label/id, need body | \`tim_read\` | \`tim_read({ id: "P0063" })\` or \`tim_read({ id: "L0042", depth: 2 })\` |
-| Keyword lookup | \`tim_search\` | \`tim_search({ query: "sqlite WAL", topK: 10 })\` |
-
-Rules:
-- \`tim_write\` = create only. Edit → \`tim_update\` (read first, merge, then update).
-- \`duplicate_suspected\` → read candidate, extend via \`tim_update\`, don't \`force:true\` blindly.
-- Topic tags only (#tim). Status/priority → \`metadata.task\`.
-`,
+  name: "tim-using",
+  description: "When to write, read, or search TIM — one example each.",
+  content: "# tim-using\n\n| Goal | Tool | Example |\n|------|------|---------|\n| Save new fact/task/idea | `tim_write` | `tim_write({ where: \"P0063/Ideas\", title: \"Cache layer\", content: \"...\", tags: [\"#tim\"] })` |\n| Known label/id, need body | `tim_read` | `tim_read({ id: \"P0063\" })` or `tim_read({ id: \"L0042\", depth: 2 })` |\n| Keyword lookup | `tim_search` | `tim_search({ query: \"sqlite WAL\", topK: 10 })` |\n\nRules:\n- `tim_write` = create only. Edit → `tim_update` (read first, merge, then update).\n- `duplicate_suspected` → read candidate, extend via `tim_update`, don't `force:true` blindly.\n- Topic tags only (#tim). Status/priority → `metadata.task`.\n\n## Writing so the session-start brief stays useful\n\nEvery entry you write is read later as a one-line preview by an agent that knows nothing else.\nThe brief can only be as good as these entries.\n\n- **Title** ≤ 80 chars, names the subject. Status/severity go in `metadata.task`/metadata, never in the title — the renderer prints them.\n- **First body line is the conclusion.** Previews show ~500 chars; reasoning comes after.\n- **One language per project** — the language of its Overview. Don't switch mid-project.\n- **Put it in an existing section** (`where: \"P0063/Bugs\"`, `/Decisions`, `/Log`, `/Ideas`). Never create new direct children of the project root.\n- **Decisions** = the choice + the alternative that lost + why. **Log** = one dated entry per finished piece of work, not per step.\n- **Keep state where it lives.** Finishing a task → set its status now. The Overview's `State` line changes → update it now.\n- **A failed write is not done.** If a TIM call fails (e.g. `Transport closed`), retry, or tell the user it is unsaved. Do not park memory in repo files like `HANDOFF.md` — the next brief cannot see them.\n",
 };
