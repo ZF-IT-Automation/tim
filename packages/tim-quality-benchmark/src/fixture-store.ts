@@ -87,6 +87,10 @@ async function seedPartialSession(
     { role: 'user', content: 'Q3 tail pending' },
     { role: 'agent', content: 'A3 tail pending' },
   ]);
+  await sessions.updateSessionSummary(
+    'bench-partial',
+    'Partial session checkpoint [gold:session-partial]\nCovered exchanges 1-2; tail still pending summarization.',
+  );
 }
 
 async function writeFixtureEntry(
