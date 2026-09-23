@@ -10,6 +10,7 @@ import {
   KIND_EXCHANGE_BATCH,
   CHARS_PER_TOKEN,
   isSubstantiveSession,
+  parseSessionSubstance,
   type TimStore,
 } from 'tim-store';
 import type { Entry } from 'tim-core';
@@ -238,8 +239,10 @@ async function previousSession(
 
   let chosen: (typeof listed)[number] | undefined;
   for (const candidate of listed) {
+    const summaryNode = await findChildByKind(store, candidate.sessionId, KIND_SUMMARY_ROOT);
     const note = await sessionHandoffNote(store, candidate.sessionId);
-    if (isSubstantiveSession(candidate.exchangeCount, Boolean(note))) {
+    const substance = parseSessionSubstance(summaryNode?.metadata.substance);
+    if (isSubstantiveSession(candidate.exchangeCount, Boolean(note), substance)) {
       chosen = candidate;
       break;
     }

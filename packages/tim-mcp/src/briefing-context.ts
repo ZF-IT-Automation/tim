@@ -3,6 +3,7 @@ import {
   findChildByKind,
   KIND_SUMMARY_ROOT,
   isSubstantiveSession,
+  parseSessionSubstance,
   sessionHasHandoffNote,
   type TimStore,
 } from 'tim-store';
@@ -33,7 +34,8 @@ export async function buildBriefingRenderContext(
     const summaryNode = await findChildByKind(store, id, KIND_SUMMARY_ROOT);
     const exchangeCount = Number(session.metadata.exchange_count) || 0;
     const hasHandoff = await sessionHandoffNote(store, id);
-    if (!isSubstantiveSession(exchangeCount, hasHandoff)) {
+    const substance = parseSessionSubstance(summaryNode?.metadata.substance);
+    if (!isSubstantiveSession(exchangeCount, hasHandoff, substance)) {
       hiddenShortCount += 1;
       continue;
     }
