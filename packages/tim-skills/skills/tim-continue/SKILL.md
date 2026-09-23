@@ -30,8 +30,8 @@ in this directory.
   throws once the current session has logged an exchange.
 - No topic argument and no session picker: this is the newest *substantive*
   session (≥ 3 turns, a handoff note, or judged real by the summarizer — worker
-  and automation sessions never count), plus the newest handoff note of the last
-  30 days if it belongs to another session. For anything older or
-  subject-specific, use `/tim-resume-topic`.
+  and automation sessions never count), plus the newest handoff note from another
+  session when it belongs elsewhere. For anything older or subject-specific, use
+  `/tim-resume-topic`.
 - If the previous session left no handoff note, say so plainly rather than
   presenting its summary as a plan.
