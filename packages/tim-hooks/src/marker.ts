@@ -542,14 +542,10 @@ function briefingBlock(briefing?: DirectiveBriefing): string[] {
   return out;
 }
 
-function actionLine(projectLabel: string, tail: string, hasBriefing: boolean): string {
-  const lead = hasBriefing
-    ? `ACTION: the context above is already loaded — do NOT re-fetch it. Call ` +
-      `tim_load_project(label="${projectLabel}") now to bind this session and pull the ` +
-      `full project brief, then run the tim-session-start skill.`
-    : `ACTION: call tim_load_project(label="${projectLabel}") now to load the project ` +
-      `brief from the TIM store, then run the tim-session-start skill.`;
-  return `${lead} ${tail}`;
+function actionLine(projectLabel: string, tail: string): string {
+  return `ACTION: call tim_load_project(label="${projectLabel}") once to bind this session and ` +
+    `get the full project brief — the open-work lines above need not be re-queried. ` +
+    `Then run the tim-session-start skill. ${tail}`;
 }
 
 /**
@@ -575,7 +571,6 @@ export function buildLoadDirective(
       `STEP 1 (project binding) is already decided by this marker — do NOT ask which ` +
         `project, and do NOT run any hmem/active-project cwd→project resolution. ` +
         `The TIM marker is authoritative for this turn.`,
-      block.length > 0,
     ),
   ].join('\n');
 }
@@ -599,7 +594,6 @@ export function buildSessionDirective(
       `STEP 1 is already decided by this TIM session — do NOT ask which project, and do NOT ` +
         `run any hmem/active-project cwd→project resolution. The TIM binding is authoritative ` +
         `for this turn.`,
-      block.length > 0,
     ),
   ].join('\n');
 }
