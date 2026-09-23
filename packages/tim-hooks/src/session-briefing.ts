@@ -11,6 +11,7 @@ import {
   CHARS_PER_TOKEN,
   isSubstantiveSession,
   parseSessionSubstance,
+  isCountableUserExchange,
   type TimStore,
 } from 'tim-store';
 import { isClosedBugStatus, type Entry } from 'tim-core';
@@ -37,13 +38,12 @@ const RECENT_EXCHANGE_SIDE_MAX_CHARS = 400;
 // Share of the previous-session budget a handoff note may take. Bounded because
 // clampSummary keeps the tail: an unbounded note would evict the whole summary.
 const HANDOFF_NOTE_BUDGET_SHARE = 0.4;
-const HANDOFF_LOOKBACK_MS = 30 * 86400_000;
 const HIGH_PRIORITY_STATUSES = new Set(['high', 'critical']);
 
 async function findLatestProjectHandoff(
   store: TimStore,
   projectLabel: string,
-): Promise<{ date: string; note: string } | null> {
+): Promise<{ sessionId: string; date: string; note: string } | null> {
   const project = await store.requireProject(projectLabel);
   const rows = store.listProjectSessionsByActivity(project.id, 1000);
   for (const { id } of rows) {
@@ -54,7 +54,7 @@ async function findLatestProjectHandoff(
     const date = typeof session?.metadata.date === 'string'
       ? session.metadata.date.slice(0, 10)
       : (session?.createdAt ?? '').slice(0, 10);
-    return { date, note: raw.trim() };
+    return { sessionId: id, date, note: raw.trim() };
   }
   return null;
 }
@@ -193,7 +193,9 @@ export async function recentExchanges(
   const users: Entry[] = [];
   for (const batch of batches) {
     users.push(
-      ...(await store.getChildrenBySeq(batch.id)).filter(u => u.metadata.role === 'user'),
+      ...(await store.getChildrenBySeq(batch.id)).filter(
+        u => u.metadata.role === 'user' && isCountableUserExchange(u),
+      ),
     );
   }
   const tail = users
@@ -287,8 +289,6 @@ async function previousSession(
   const listed = await sessions.listResumableSessions(projectLabel, 50);
   if (listed.length === 0) return {};
 
-  const cutoff = Date.now() - HANDOFF_LOOKBACK_MS;
-
   let chosen: (typeof listed)[number] | undefined;
   for (const candidate of listed) {
     const summaryNode = await findChildByKind(store, candidate.sessionId, KIND_SUMMARY_ROOT);
@@ -310,15 +310,13 @@ async function previousSession(
 
   let latestHandoffLabel: string | undefined;
   let latestHandoffNote: string | undefined;
-  for (const candidate of listed) {
-    const activityMs = Date.parse(candidate.lastActivity);
-    if (!Number.isFinite(activityMs) || activityMs < cutoff) break;
-    const note = await sessionHandoffNote(store, candidate.sessionId);
-    if (!note) continue;
-    if (candidate.sessionId === chosen.sessionId) break;
-    latestHandoffLabel = (candidate.date ?? candidate.lastActivity).slice(0, 10);
-    latestHandoffNote = clampSummary(note, Math.floor(maxChars * HANDOFF_NOTE_BUDGET_SHARE));
-    break;
+  const projectHandoff = await findLatestProjectHandoff(store, projectLabel);
+  if (projectHandoff && projectHandoff.sessionId !== chosen.sessionId) {
+    latestHandoffLabel = handoffAgeLabel(projectHandoff.date);
+    latestHandoffNote = clampSummary(
+      projectHandoff.note,
+      Math.floor(maxChars * HANDOFF_NOTE_BUDGET_SHARE),
+    );
   }
 
   return {
