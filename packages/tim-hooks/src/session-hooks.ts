@@ -70,6 +70,14 @@ export function isSummarizerChild(env: NodeJS.ProcessEnv = process.env): boolean
   return env[SUMMARIZER_ENV_FLAG] === '1';
 }
 
+/** team-up worker flag — workers must not create sessions or log exchanges. */
+export const TEAMUP_WORKER_ENV_FLAG = 'TEAMUP_WORKER';
+
+/** True when spawned as a team-up worker; session hooks and MCP session tools no-op. */
+export function isTeamupWorker(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env[TEAMUP_WORKER_ENV_FLAG] === '1';
+}
+
 /**
  * @deprecated Shell-based spawn removed — use {@link buildSummarizerSpawnRequest} with
  * {@link spawnSummarizer} instead.

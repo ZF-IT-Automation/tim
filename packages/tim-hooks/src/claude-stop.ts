@@ -4,6 +4,7 @@ import type { TimStore } from 'tim-store';
 import { SessionManager, deriveCounters } from 'tim-store';
 import { afterExchangeLogged, type CadenceResult } from './cadence-runner.js';
 import { ensureHookSession } from './hook-session.js';
+import { isTeamupWorker } from './session-hooks.js';
 
 /** Tail window, not a file-size limit: only the last turn is needed. */
 export const MAX_TRANSCRIPT_BYTES = 1024 * 1024;
@@ -176,6 +177,8 @@ export async function runClaudeStop(
   payload: ClaudeStopPayload,
   options: { cwd: string; agent?: { agentName: string; harness: string } },
 ): Promise<ClaudeStopResult> {
+  if (isTeamupWorker()) return { logged: false };
+
   const sessionId = typeof payload.session_id === 'string' ? payload.session_id.trim() : '';
   const transcriptPath =
     typeof payload.transcript_path === 'string' ? payload.transcript_path.trim() : '';

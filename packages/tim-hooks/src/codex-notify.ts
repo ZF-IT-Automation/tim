@@ -4,6 +4,7 @@ import { SessionManager } from 'tim-store';
 import { afterExchangeLogged, type CadenceResult } from './cadence-runner.js';
 import { MAX_EXCHANGE_CHARS } from './claude-stop.js';
 import { ensureHookSession } from './hook-session.js';
+import { isTeamupWorker } from './session-hooks.js';
 
 /**
  * Codex 0.147 has no turn-end hook event — its hook surface stops at
@@ -66,6 +67,8 @@ export async function runCodexNotify(
   payload: CodexNotifyPayload,
   options: { cwd: string },
 ): Promise<CodexNotifyResult> {
+  if (isTeamupWorker()) return { logged: false };
+
   // Anything but a completed turn is not an exchange, including a payload that
   // names no type at all — notify carries other event types.
   if (payload.type !== 'agent-turn-complete') return { logged: false };

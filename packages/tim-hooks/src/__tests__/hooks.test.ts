@@ -196,6 +196,30 @@ describe('session-end checkpoint orchestration', () => {
     store.close();
   });
 
+  it('runSessionStart is a no-op when TEAMUP_WORKER=1', async () => {
+    const store = new TimStore(':memory:');
+    await store.createProject('P0098', { content: 'worker noop' });
+    const prev = process.env.TEAMUP_WORKER;
+    process.env.TEAMUP_WORKER = '1';
+    try {
+      const result = await runSessionStart(store, {
+        sessionId: 'worker-skip',
+        agentName: 'agent',
+        cwd: '/tmp',
+        harness: 'test',
+        projectId: 'P0098',
+      });
+      expect(result.session).toBeNull();
+      expect(result.briefing).toBeUndefined();
+      const listed = await new SessionManager(store).listResumableSessions('P0098', 10);
+      expect(listed).toHaveLength(0);
+    } finally {
+      if (prev === undefined) delete process.env.TEAMUP_WORKER;
+      else process.env.TEAMUP_WORKER = prev;
+      store.close();
+    }
+  });
+
   it('loads project context when active-project file is set', async () => {
     const store = new TimStore(':memory:');
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tim-proj-'));
