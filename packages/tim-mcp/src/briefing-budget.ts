@@ -10,7 +10,7 @@ export const HOOK_CHARS_PER_TOKEN = 4;
 /** @deprecated Use MAX_TOKEN_BUDGET — kept for existing importers. */
 export const MAX_TOKEN_BUDGET_PARAM = MAX_TOKEN_BUDGET;
 
-export const DEFAULT_BRIEFING_TOKEN_BUDGET = 9000;
+export const DEFAULT_BRIEFING_TOKEN_BUDGET = 12288;
 
 export type TokenBudgetValidation =
   | { ok: true; value: number }

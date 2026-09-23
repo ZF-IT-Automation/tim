@@ -34,7 +34,7 @@ describe('briefing-budget', () => {
 
   it('clamps invalid configured defaults', () => {
     expect(clampBriefingDefaultBudget(9000)).toBe(9000);
-    expect(clampBriefingDefaultBudget(Number.NaN)).toBe(9000);
+    expect(clampBriefingDefaultBudget(Number.NaN)).toBe(12288);
     expect(clampBriefingDefaultBudget(999999)).toBe(MAX_TOKEN_BUDGET);
   });
 

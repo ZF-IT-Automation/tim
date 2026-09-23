@@ -27,11 +27,13 @@ export { getDeltaBriefing, computeDeltaBriefing, isDeltaBookkeepingEntry, type D
 export {
   getCheckpointEveryN,
   getBriefingMaxTokens,
+  getDirectiveHookMaxTokens,
   getBriefingRecentSessions,
   shouldAutoCheckpoint,
   checkpointCadenceReminder,
   DEFAULT_CHECKPOINT_EVERY_N,
   DEFAULT_BRIEFING_MAX_TOKENS,
+  DEFAULT_DIRECTIVE_HOOK_MAX_TOKENS,
   DEFAULT_BRIEFING_RECENT_SESSIONS,
 } from './cadence.js';
 
@@ -100,7 +102,7 @@ export {
   type MarkerDiscoveryPolicy,
 } from './marker.js';
 
-export { collectDirectiveBriefing, clampSummary, recentExchanges } from './session-briefing.js';
+export { collectDirectiveBriefing, clampSummary, recentExchanges, formatOpenWorkLines, buildNowBlock, isSubstantiveSession, SUBSTANTIVE_MIN_EXCHANGES } from './session-briefing.js';
 
 export {
   rebalanceBatch,

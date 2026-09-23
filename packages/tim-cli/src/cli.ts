@@ -19,6 +19,7 @@ import {
   findMarker,
   findMarkerOptionsFromEnv,
   getBriefingMaxTokens,
+  getDirectiveHookMaxTokens,
   buildLoadDirective,
   buildSessionDirective,
   collectDirectiveBriefing,
@@ -522,7 +523,7 @@ async function buildStartDirectiveForCwd(cwd: string, walkUp?: boolean): Promise
     const briefing = await collectDirectiveBriefing(
       store,
       projectLabel,
-      getBriefingMaxTokens(config),
+      getDirectiveHookMaxTokens(config),
       false,
     ).catch(() => undefined);
     return buildLoadDirective(projectLabel, dir, binding, briefing);
@@ -609,7 +610,7 @@ async function cmdResolveSession(args: string[]) {
       const briefing = await collectDirectiveBriefing(
         store,
         projectRef,
-        getBriefingMaxTokens(config),
+        getDirectiveHookMaxTokens(config),
         false,
       ).catch(() => undefined);
       process.stdout.write(buildSessionDirective(projectRef, cwd, binding, briefing));
