@@ -243,6 +243,63 @@ describe('session-start directive carries content', () => {
     expect(briefing?.trivialSessionNote).toBeUndefined();
   });
 
+  it('finds the substantive session and the handoff behind a burst of 60 short sessions', async () => {
+    const store = new TimStore(dbPath);
+    await store.createProject('P0074', { content: 'burst project' });
+    const sessions = new SessionManager(store);
+    const start = (id: string) => sessions.startProjectSession({
+      sessionId: id, projectId: 'P0074', agentName: 'test', cwd, harness: 'test',
+    });
+    await start('sess-real');
+    for (let i = 1; i <= 3; i++) {
+      await sessions.logExchange('sess-real', [
+        { role: 'user', content: `q${i}` },
+        { role: 'agent', content: `a${i}` },
+      ]);
+    }
+    await sessions.checkpoint('sess-real', { handoffNote: 'done: burst test | next: keep going' });
+    await sessions.updateSessionSummary('sess-real', '- the real work');
+    for (let i = 0; i < 60; i++) {
+      await start(`sess-auto-${i}`);
+      await sessions.logExchange(`sess-auto-${i}`, [
+        { role: 'user', content: 'summarize this' },
+        { role: 'agent', content: 'ok' },
+      ]);
+    }
+    store.close();
+
+    const briefing = await pastWorkBriefing('P0074');
+    expect(briefing?.previousSessionSummary).toContain('the real work');
+  });
+
+  it('still shows the newest handoff when no session qualifies as substantive', async () => {
+    const store = new TimStore(dbPath);
+    await store.createProject('P0075', { content: 'handoff-only project' });
+    const sessions = new SessionManager(store);
+    await sessions.startProjectSession({
+      sessionId: 'sess-short-handoff-src', projectId: 'P0075', agentName: 'test', cwd, harness: 'test',
+    });
+    await sessions.logExchange('sess-short-handoff-src', [
+      { role: 'user', content: 'q' },
+      { role: 'agent', content: 'a' },
+    ]);
+    await sessions.checkpoint('sess-short-handoff-src', { handoffNote: 'done: x | next: y' });
+    await sessions.startProjectSession({
+      sessionId: 'sess-short-2', projectId: 'P0075', agentName: 'test', cwd, harness: 'test',
+    });
+    await sessions.logExchange('sess-short-2', [
+      { role: 'user', content: 'tiny' },
+      { role: 'agent', content: 'ok' },
+    ]);
+    store.close();
+
+    const briefing = await pastWorkBriefing('P0075');
+    // The handoff session itself is substantive (handoff note) and is shown as previous session;
+    // either way the note must reach the agent.
+    const text = `${briefing?.previousSessionSummary ?? ''} ${briefing?.latestHandoffNote ?? ''}`;
+    expect(text).toContain('next: y');
+  });
+
   it('shows newest project handoff with age label even when older than 30 days', async () => {
     const store = new TimStore(dbPath);
     await store.createProject('P0072', { content: 'old handoff project' });

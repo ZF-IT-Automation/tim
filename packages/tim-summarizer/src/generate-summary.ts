@@ -261,7 +261,12 @@ function runCliProcess(
   timeoutSec: number,
 ): Promise<{ stdout: string; stderr: string; code: number | null; signal: NodeJS.Signals | null; timedOut: boolean }> {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { stdio: ['pipe', 'pipe', 'pipe'] });
+    // The summarizer's own LLM calls are workers: without the flag, each CLI's TIM
+    // hooks log the call as a new session (97 junk sessions from one backfill run).
+    const child = spawn(command, args, {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: { ...process.env, TEAMUP_WORKER: '1' },
+    });
     let stdout = '';
     let stderr = '';
     let timedOut = false;

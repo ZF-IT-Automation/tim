@@ -286,8 +286,21 @@ async function previousSession(
   rawMaxChars: number,
 ): Promise<PreviousSessionResult> {
   const sessions = new SessionManager(store);
-  const listed = await sessions.listResumableSessions(projectLabel, 50);
-  if (listed.length === 0) return {};
+  // Scan past bursts of short automation sessions: a fixed window of 50 was filled
+  // entirely by summarizer/automation sessions on a live DB and hid everything.
+  const listed = await sessions.listResumableSessions(projectLabel, 1000);
+  const projectHandoff = await findLatestProjectHandoff(store, projectLabel);
+  const handoffOnly = (excludeSessionId?: string): PreviousSessionResult =>
+    projectHandoff && projectHandoff.sessionId !== excludeSessionId
+      ? {
+          latestHandoffLabel: handoffAgeLabel(projectHandoff.date),
+          latestHandoffNote: clampSummary(
+            projectHandoff.note,
+            Math.floor(maxChars * HANDOFF_NOTE_BUDGET_SHARE),
+          ),
+        }
+      : {};
+  if (listed.length === 0) return handoffOnly();
 
   let chosen: (typeof listed)[number] | undefined;
   for (const candidate of listed) {
@@ -299,33 +312,20 @@ async function previousSession(
       break;
     }
   }
-  if (!chosen) return {};
+  if (!chosen) return handoffOnly();
 
   const content = await sessionBriefingContent(store, chosen.sessionId, maxChars, rawMaxChars);
-  if (!content.summary && !content.recent?.length) return {};
+  if (!content.summary && !content.recent?.length) return handoffOnly();
 
   const date = (chosen.date ?? chosen.lastActivity).slice(0, 10);
   const bits = [date, `${chosen.exchangeCount} exchanges`];
   if (chosen.tool) bits.push(chosen.tool);
 
-  let latestHandoffLabel: string | undefined;
-  let latestHandoffNote: string | undefined;
-  const projectHandoff = await findLatestProjectHandoff(store, projectLabel);
-  if (projectHandoff && projectHandoff.sessionId !== chosen.sessionId) {
-    latestHandoffLabel = handoffAgeLabel(projectHandoff.date);
-    latestHandoffNote = clampSummary(
-      projectHandoff.note,
-      Math.floor(maxChars * HANDOFF_NOTE_BUDGET_SHARE),
-    );
-  }
-
   return {
     sessionId: chosen.sessionId,
     label: bits.join(' · '),
     ...content,
-    ...(latestHandoffLabel && latestHandoffNote
-      ? { latestHandoffLabel, latestHandoffNote }
-      : {}),
+    ...handoffOnly(chosen.sessionId),
   };
 }
 
