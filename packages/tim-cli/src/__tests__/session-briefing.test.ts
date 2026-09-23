@@ -243,6 +243,59 @@ describe('session-start directive carries content', () => {
     expect(briefing?.trivialSessionNote).toBeUndefined();
   });
 
+  it('shows newest project handoff with age label even when older than 30 days', async () => {
+    const store = new TimStore(dbPath);
+    await store.createProject('P0072', { content: 'old handoff project' });
+    const sessions = new SessionManager(store);
+    await sessions.startProjectSession({
+      sessionId: 'sess-old-handoff',
+      projectId: 'P0072',
+      agentName: 'test',
+      cwd,
+      harness: 'test',
+    });
+    for (let i = 1; i <= 3; i++) {
+      await sessions.logExchange('sess-old-handoff', [
+        { role: 'user', content: `old q${i}` },
+        { role: 'agent', content: `old a${i}` },
+      ]);
+    }
+    await sessions.checkpoint('sess-old-handoff', {
+      handoffNote: 'done: September handoff | next: resume briefing loop',
+    });
+    await sessions.updateSessionSummary('sess-old-handoff', '- older session with handoff');
+    const oldSession = await store.read('sess-old-handoff');
+    if (oldSession) {
+      await store.update('sess-old-handoff', {
+        metadata: {
+          ...oldSession.metadata,
+          date: '2026-09-09',
+        },
+      });
+    }
+
+    await sessions.startProjectSession({
+      sessionId: 'sess-new-substantive',
+      projectId: 'P0072',
+      agentName: 'test',
+      cwd,
+      harness: 'test',
+    });
+    for (let i = 1; i <= 4; i++) {
+      await sessions.logExchange('sess-new-substantive', [
+        { role: 'user', content: `new q${i}` },
+        { role: 'agent', content: `new a${i}` },
+      ]);
+    }
+    await sessions.updateSessionSummary('sess-new-substantive', '- newest substantive, no handoff');
+    store.close();
+
+    const briefing = await pastWorkBriefing('P0072');
+    expect(briefing?.previousSessionSummary).toContain('newest substantive, no handoff');
+    expect(briefing?.latestHandoffNote).toContain('September handoff');
+    expect(briefing?.latestHandoffLabel).toMatch(/2026-09-09 · \d+d ago/);
+  });
+
   it('falls back to the checkpoint text when nothing rolled it up into the summary root', async () => {
     // The shape the automatic session-end hook leaves behind: a checkpoint child and
     // an untouched summary root, because only the summarizer writes metadata.summary.
