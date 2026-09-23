@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { TimStore } from 'tim-store';
-import { getDeltaBriefing } from '../delta.js';
+import { getDeltaBriefing, computeDeltaBriefing } from '../delta.js';
 
 describe('getDeltaBriefing', () => {
   let dir: string;
@@ -82,5 +82,74 @@ describe('getDeltaBriefing', () => {
 
     const block = await getDeltaBriefing(store, proj.id, { timeoutMs: 50 });
     expect(block).toBeNull();
+  });
+
+  it('excludes session and exchange bookkeeping from delta counts and bullets', async () => {
+    const proj = await store.createProject('P0004', { content: 'Proj' });
+    const task = await store.write('Real task change', {
+      parentId: proj.id,
+      metadata: { kind: 'task' },
+    });
+    const sessionNoise = {
+      id: 'sess-noise',
+      title: 'Session noise',
+      content: '',
+      parentId: proj.id,
+      contentType: 'text',
+      depth: 2,
+      confidence: 1,
+      createdAt: '2026-02-01T00:00:00.000Z',
+      updatedAt: '2026-02-01T00:00:00.000Z',
+      accessedAt: '2026-02-01T00:00:00.000Z',
+      decayRate: 0,
+      visibility: 1,
+      tags: ['#session-summary'],
+      irrelevant: false,
+      favorite: false,
+      tombstonedAt: null,
+      metadata: { kind: 'session' },
+    } as const;
+
+    vi.spyOn(store, 'getPreviousSession').mockResolvedValue(null);
+    vi.spyOn(store, 'getChangedSince').mockResolvedValue({
+      created: [task, sessionNoise as any],
+      updated: [],
+      deleted: [],
+    });
+
+    const block = await computeDeltaBriefing(store, 'P0004');
+    expect(block).toContain('1 new');
+    expect(block).not.toContain('Session noise');
+    expect(block).toMatch(/Real task change/);
+  });
+
+  it('returns null when only bookkeeping entries changed', async () => {
+    await store.createProject('P0005', { content: 'Proj' });
+    vi.spyOn(store, 'getPreviousSession').mockResolvedValue(null);
+    vi.spyOn(store, 'getChangedSince').mockResolvedValue({
+      created: [{
+        id: 'cp',
+        title: 'Checkpoint',
+        content: 'body',
+        parentId: 'x',
+        contentType: 'text',
+        depth: 3,
+        confidence: 1,
+        createdAt: '2026-02-01T00:00:00.000Z',
+        updatedAt: '2026-02-01T00:00:00.000Z',
+        accessedAt: '2026-02-01T00:00:00.000Z',
+        decayRate: 0,
+        visibility: 1,
+        tags: ['#checkpoint'],
+        irrelevant: false,
+        favorite: false,
+        tombstonedAt: null,
+        metadata: { kind: 'checkpoint' },
+      } as any],
+      updated: [],
+      deleted: [],
+    });
+
+    expect(await computeDeltaBriefing(store, 'P0005')).toBeNull();
   });
 });

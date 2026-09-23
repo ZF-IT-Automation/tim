@@ -22,7 +22,7 @@ export {
   type SessionStartPreview,
 } from './checkpoint.js';
 
-export { getDeltaBriefing, type DeltaBriefingOptions } from './delta.js';
+export { getDeltaBriefing, computeDeltaBriefing, isDeltaBookkeepingEntry, type DeltaBriefingOptions } from './delta.js';
 
 export {
   getCheckpointEveryN,
