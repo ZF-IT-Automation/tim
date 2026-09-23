@@ -141,6 +141,14 @@ describe('session-start directive carries content', () => {
     expect(briefing?.openWork?.join('\n')).toContain('Ship the SessionStart hook');
   });
 
+  it('reads handoff note from summary root metadata (checkpoint path)', async () => {
+    await seed();
+    const briefing = await pastWorkBriefing('P0063');
+    expect(briefing?.previousSessionSummary).toContain(
+      'handoff: done: wired the reader | next: watch it render in a live session',
+    );
+  });
+
   it('falls back to the checkpoint text when nothing rolled it up into the summary root', async () => {
     // The shape the automatic session-end hook leaves behind: a checkpoint child and
     // an untouched summary root, because only the summarizer writes metadata.summary.

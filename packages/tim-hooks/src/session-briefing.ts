@@ -74,16 +74,21 @@ function oneLine(text: string, maxChars: number): string {
  */
 async function latestCheckpoint(
   store: TimStore,
-  summaryNodeId: string,
+  summaryNode: Entry,
 ): Promise<{ note: string; text: string }> {
-  const children = await store.getChildren(summaryNodeId);
-  let note = '';
+  const rootNote = typeof summaryNode.metadata.handoff_note === 'string'
+    ? summaryNode.metadata.handoff_note.trim()
+    : '';
+  const children = await store.getChildren(summaryNode.id);
+  let note = rootNote;
   let text = '';
   for (const child of children) {
-    const childNote = typeof child.metadata.handoff_note === 'string'
-      ? child.metadata.handoff_note.trim()
-      : '';
-    if (childNote) note = childNote;
+    if (!note) {
+      const childNote = typeof child.metadata.handoff_note === 'string'
+        ? child.metadata.handoff_note.trim()
+        : '';
+      if (childNote) note = childNote;
+    }
     if (child.metadata.kind === 'checkpoint' && child.content.trim()) {
       text = child.content.trim();
     }
@@ -167,7 +172,7 @@ async function previousSession(
 
   const summaryNode = await findChildByKind(store, latest.sessionId, KIND_SUMMARY_ROOT);
   const { note, text } = summaryNode
-    ? await latestCheckpoint(store, summaryNode.id).catch(() => ({ note: '', text: '' }))
+    ? await latestCheckpoint(store, summaryNode).catch(() => ({ note: '', text: '' }))
     : { note: '', text: '' };
 
   // Four sources, best first: the summarizer's rollup on the root, then the newest
