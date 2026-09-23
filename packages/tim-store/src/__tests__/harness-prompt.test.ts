@@ -47,7 +47,7 @@ describe('logExchange harness filtering', () => {
     if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath);
   });
 
-  it('does not count harness-only user turns; merges agent onto previous exchange', async () => {
+  it('does not count harness-only user turns', async () => {
     const store = new TimStore(dbPath);
     const project = await store.createProject('P0099', { content: 'harness test' });
     const sessions = new SessionManager(store);
@@ -67,6 +67,47 @@ describe('logExchange harness filtering', () => {
       { role: 'agent', content: 'C7 ist vorbereitet.' },
     ]);
     expect((await deriveCounters(store, 'harness-s')).exchangeCount).toBe(1);
+    store.close();
+  });
+
+  it('stores human text verbatim, including newlines and text after an unclosed tag', async () => {
+    const store = new TimStore(dbPath);
+    await store.createProject('P0098', { content: 'verbatim' });
+    const sessions = new SessionManager(store);
+    await sessions.startProjectSession({ sessionId: 'v-s', projectId: 'P0098', agentName: 'a', cwd: '/tmp', harness: 't' });
+    const human = 'Zeile eins\n\n  eingerückt\nIch schreibe <system-reminder> ohne Ende und dann mehr Text';
+    const written = await sessions.logExchange('v-s', [
+      { role: 'user', content: human },
+      { role: 'agent', content: 'ok' },
+    ]);
+    const user = written.find(e => e.metadata.role === 'user');
+    // writeSync stores the first line as title (pre-existing); the rest is the body.
+    expect(user?.title).toBe('Zeile eins');
+    expect(user?.content).toContain('eingerückt\nIch schreibe <system-reminder> ohne Ende und dann mehr Text');
+    expect(user?.metadata.system_turn).toBeUndefined();
+    store.close();
+  });
+
+  it('flags a harness-only turn and replays it idempotently', async () => {
+    const store = new TimStore(dbPath);
+    await store.createProject('P0097', { content: 'replay' });
+    const sessions = new SessionManager(store);
+    await sessions.startProjectSession({ sessionId: 'r-s', projectId: 'P0097', agentName: 'a', cwd: '/tmp', harness: 't' });
+    const turn = [
+      { role: 'user' as const, content: LIVE_TASK_NOTIFICATION },
+      { role: 'agent' as const, content: 'C7 ist vorbereitet.' },
+    ];
+    await sessions.logExchangeOnce('r-s', 'k1', turn);
+    await sessions.logExchangeOnce('r-s', 'k1', turn);
+    const agentCount = (store.db as any)
+      .prepare("SELECT count(*) c FROM entries WHERE json_extract(metadata,'$.sessionId')='r-s' AND json_extract(metadata,'$.role')='agent'")
+      .get().c;
+    expect(agentCount).toBe(1);
+    const flagged = (store.db as any)
+      .prepare("SELECT count(*) c FROM entries WHERE json_extract(metadata,'$.sessionId')='r-s' AND json_extract(metadata,'$.system_turn')=1")
+      .get().c;
+    expect(flagged).toBe(1);
+    expect((await deriveCounters(store, 'r-s')).exchangeCount).toBe(0);
     store.close();
   });
 });

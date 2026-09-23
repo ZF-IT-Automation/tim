@@ -434,16 +434,14 @@ export class SessionManager {
     let currentUser: Entry | null = allUserNodes[allUserNodes.length - 1] ?? null;
     const result: Entry[] = [];
     const keyMeta = options.exchangeKey ? { exchange_key: options.exchangeKey } : {};
-    let attachAgentToPrevious = false;
 
     for (const e of entries) {
       if (e.role === 'user') {
-        attachAgentToPrevious = false;
-        const { content, systemTurn } = sanitizeUserExchangeContent(e.content);
-        if (systemTurn) {
-          attachAgentToPrevious = true;
-          continue;
-        }
+        // Human text is stored verbatim. A harness-only prompt (e.g. <task-notification>)
+        // is stored too, flagged system_turn, so counts/briefings skip it and replays
+        // stay idempotent.
+        const { systemTurn } = sanitizeUserExchangeContent(e.content);
+        const content = e.content;
         if (usersInBatch.length >= batchSize) {
           const fullBatchId = batchNode.id;
           const fullBatchIndex =
@@ -466,30 +464,11 @@ export class SessionManager {
         seq += 1;
         currentUser = this.store.writeSync(content, {
           parentId: batchNode.id,
-          metadata: { kind: KIND_EXCHANGE, role: 'user', seq, sessionId, ...keyMeta },
+          metadata: { kind: KIND_EXCHANGE, role: 'user', seq, sessionId, ...keyMeta, ...(systemTurn ? { system_turn: true } : {}) },
         });
         usersInBatch.push(currentUser);
         result.push(currentUser);
       } else {
-        if (attachAgentToPrevious) {
-          attachAgentToPrevious = false;
-          if (currentUser) {
-            const replies = this.store.getChildrenBySeqSync(currentUser.id);
-            const existingAgent = replies.find(r => r.metadata.role === 'agent') ?? null;
-            if (existingAgent) {
-              const merged = [existingAgent.content.trim(), e.content.trim()].filter(Boolean).join('\n');
-              const updated = this.store.updateSync(existingAgent.id, { content: merged });
-              result.push(updated);
-            } else {
-              const a = this.store.writeSync(e.content, {
-                parentId: currentUser.id,
-                metadata: { kind: KIND_EXCHANGE, role: 'agent', seq: currentUser.metadata.seq, sessionId, ...keyMeta },
-              });
-              result.push(a);
-            }
-          }
-          continue;
-        }
         const parentId = currentUser ? currentUser.id : batchNode.id;
         const agentSeq = currentUser ? currentUser.metadata.seq : seq;
         const a = this.store.writeSync(e.content, {
