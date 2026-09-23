@@ -28,6 +28,7 @@ import {
 } from './session-tree.js';
 import { ensureProjectSchema } from './project-schema-init.js';
 import { aggregateSubstance, parseSessionSubstance } from './substantive-session.js';
+import { isCountableUserExchange, sanitizeUserExchangeContent } from './harness-prompt.js';
 
 export type ExchangeRole = 'user' | 'agent';
 
@@ -211,7 +212,7 @@ export function exchangeText(entry: Entry): string {
 const DEFAULT_SUMMARIZER: Summarizer = async (exchanges) => {
   if (exchanges.length === 0) return 'Empty session — no exchanges to checkpoint.';
 
-  const userMsgs = exchanges.filter(e => e.metadata.role === 'user');
+  const userMsgs = exchanges.filter(e => e.metadata.role === 'user' && isCountableUserExchange(e));
   const agentMsgs = exchanges.filter(e => e.metadata.role === 'agent');
 
   const topics = userMsgs
@@ -433,9 +434,16 @@ export class SessionManager {
     let currentUser: Entry | null = allUserNodes[allUserNodes.length - 1] ?? null;
     const result: Entry[] = [];
     const keyMeta = options.exchangeKey ? { exchange_key: options.exchangeKey } : {};
+    let attachAgentToPrevious = false;
 
     for (const e of entries) {
       if (e.role === 'user') {
+        attachAgentToPrevious = false;
+        const { content, systemTurn } = sanitizeUserExchangeContent(e.content);
+        if (systemTurn) {
+          attachAgentToPrevious = true;
+          continue;
+        }
         if (usersInBatch.length >= batchSize) {
           const fullBatchId = batchNode.id;
           const fullBatchIndex =
@@ -456,13 +464,32 @@ export class SessionManager {
           });
         }
         seq += 1;
-        currentUser = this.store.writeSync(e.content, {
+        currentUser = this.store.writeSync(content, {
           parentId: batchNode.id,
           metadata: { kind: KIND_EXCHANGE, role: 'user', seq, sessionId, ...keyMeta },
         });
         usersInBatch.push(currentUser);
         result.push(currentUser);
       } else {
+        if (attachAgentToPrevious) {
+          attachAgentToPrevious = false;
+          if (currentUser) {
+            const replies = this.store.getChildrenBySeqSync(currentUser.id);
+            const existingAgent = replies.find(r => r.metadata.role === 'agent') ?? null;
+            if (existingAgent) {
+              const merged = [existingAgent.content.trim(), e.content.trim()].filter(Boolean).join('\n');
+              const updated = this.store.updateSync(existingAgent.id, { content: merged });
+              result.push(updated);
+            } else {
+              const a = this.store.writeSync(e.content, {
+                parentId: currentUser.id,
+                metadata: { kind: KIND_EXCHANGE, role: 'agent', seq: currentUser.metadata.seq, sessionId, ...keyMeta },
+              });
+              result.push(a);
+            }
+          }
+          continue;
+        }
         const parentId = currentUser ? currentUser.id : batchNode.id;
         const agentSeq = currentUser ? currentUser.metadata.seq : seq;
         const a = this.store.writeSync(e.content, {
@@ -586,6 +613,7 @@ export class SessionManager {
         u => u.metadata.role === 'user',
       );
       for (const u of users) {
+        if (!isCountableUserExchange(u)) continue;
         const seq = Number(u.metadata.seq);
         if (seq <= seqFloor) continue;
         const replies = await this.store.getChildren(u.id);

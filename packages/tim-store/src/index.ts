@@ -80,6 +80,12 @@ export {
   type SessionSubstance,
 } from './substantive-session.js';
 export {
+  stripHarnessBlocks,
+  isHarnessOnlyPrompt,
+  sanitizeUserExchangeContent,
+  isCountableUserExchange,
+} from './harness-prompt.js';
+export {
   SessionManager,
   resolveCurrentSession,
   ensureProjectForPath,
