@@ -102,6 +102,41 @@ function entryTitle(entry: Entry): string {
   return first || 'Untitled';
 }
 
+function isOverviewSection(section: Entry): boolean {
+  const title = entryTitle(section);
+  return title.toLowerCase() === 'overview'
+    || (section.metadata.kind === 'section' && title === 'Overview');
+}
+
+function overviewPreviewLines(content: string, maxLines = 5): string {
+  return content
+    .split('\n')
+    .map(line => line.trimEnd())
+    .filter(line => line.trim().length > 0)
+    .slice(0, maxLines)
+    .join('\n');
+}
+
+function rootBodyFirstParagraph(content: string, maxLines = 5): string {
+  const withoutSummary = content.split(PROJECT_SUMMARY_MARKER)[0] ?? content;
+  const withoutHeadings = withoutSummary.replace(/^#{1,6}\s+.*$/gm, '').trim();
+  const firstParagraph = withoutHeadings.split(/\n\s*\n/)[0] ?? withoutHeadings;
+  return overviewPreviewLines(firstParagraph, maxLines);
+}
+
+function resolveProjectPreview(
+  project: Entry,
+  sections: Entry[],
+): string {
+  const overview = sections.find(isOverviewSection);
+  if (overview && sectionPreview(overview).trim()) {
+    return overviewPreviewLines(sectionPreview(overview));
+  }
+  const body = project.content.split(PROJECT_SUMMARY_MARKER)[0]?.trimEnd() ?? '';
+  if (!body) return '';
+  return rootBodyFirstParagraph(body);
+}
+
 function sectionPreview(entry: Entry): string {
   return entry.content.trim();
 }
@@ -650,31 +685,6 @@ function formatProjectOutputWithTokenBudget(
 
   const ctx = options.briefingContext;
 
-  const headerLines: string[] = [
-    FORMAT_SEP,
-    `${label} — ${parsed.title}`,
-    FORMAT_SEP,
-    projectMetaLine(project, parsed, ctx?.lastActivityDate),
-  ];
-  const tags = project.tags.map(t => (t.startsWith('#') ? t : `#${t}`)).join(' ');
-  if (tags) headerLines.push(`Tags: ${tags}`);
-  headerLines.push(`Access: ${project.metadata.access_count ?? 0}`);
-  if (parsed.description) headerLines.push('', parsed.description);
-  if (projectSummary) {
-    const summaryBody = options.tokenBudget != null
-      ? clampSummary(projectSummary, 2000)
-      : projectSummary;
-    headerLines.push('', '── Project Summary ──', '', summaryBody);
-  }
-  if (ctx?.nowBlockLines?.length) headerLines.push(...ctx.nowBlockLines);
-
-  const blocks: BriefingBlock[] = [{
-    id: 'header',
-    priority: BRIEFING_PRIORITY.header,
-    order: 0,
-    lines: headerLines,
-  }];
-
   const sections = children
     .filter(c =>
       c.parentId === project.id &&
@@ -684,24 +694,62 @@ function formatProjectOutputWithTokenBudget(
     )
     .sort(compareEntryOrder);
 
+  const headerLines: string[] = [
+    FORMAT_SEP,
+    `${label} — ${parsed.title}`,
+    FORMAT_SEP,
+    projectMetaLine(project, parsed, ctx?.lastActivityDate),
+  ];
+  const tags = project.tags.map(t => (t.startsWith('#') ? t : `#${t}`)).join(' ');
+  if (tags) headerLines.push(`Tags: ${tags}`);
+  headerLines.push(`Access: ${project.metadata.access_count ?? 0}`);
+  const projectPreview = resolveProjectPreview(project, sections);
+  if (projectPreview) headerLines.push('', projectPreview);
+  if (projectSummary) {
+    const summaryBody = options.tokenBudget != null
+      ? clampSummary(projectSummary, 2000)
+      : projectSummary;
+    headerLines.push('', '── Project Summary ──', '', summaryBody);
+  }
+  if (ctx?.nowBlockLines?.length) headerLines.push(...ctx.nowBlockLines);
+
   if (sections.length > 0) {
-    blocks.push({
-      id: 'sections-header',
-      priority: BRIEFING_PRIORITY.header,
-      order: 1,
-      lines: ['', `── Sections (${sections.length}) ──`, ''],
-    });
+    headerLines.push('', `── Sections (${sections.length}) ──`, '');
     for (const section of sections) {
       const name = entryTitle(section);
+      if (isOverviewSection(section)) {
+        const subkids = childMap.get(section.id) ?? [];
+        if (subkids.length > 0) {
+          headerLines.push(
+            `  Overview: ${subkids.length} more — tim_read("${section.id}")`,
+          );
+        }
+        continue;
+      }
+      headerLines.push(`  ${name} — tim_read("${section.id}")`);
+    }
+  }
+
+  const blocks: BriefingBlock[] = [{
+    id: 'header',
+    priority: BRIEFING_PRIORITY.header,
+    order: 0,
+    lines: headerLines,
+  }];
+
+  if (sections.length > 0) {
+    for (const section of sections) {
+      const name = entryTitle(section);
+      if (isOverviewSection(section)) continue;
       const rendered = renderSectionBody(
         section, name, childMap, budgetState, schema, renderMode, seenBodies, true,
       );
-      if (!rendered) continue;
+      if (!rendered || rendered.bodyLines.length === 0) continue;
       blocks.push({
         id: `section:${section.id}`,
         priority: sectionPriority(name, false),
         order: 10 + rendered.order,
-        lines: [rendered.header, ...rendered.bodyLines],
+        lines: rendered.bodyLines,
       });
     }
   }
@@ -723,13 +771,17 @@ function formatProjectOutputWithTokenBudget(
       }
     }
     if (total > ctx.recentSessions.length) {
-      sessionLines.push(`  … ${total - ctx.recentSessions.length} older sessions`);
+      const hidden = total - ctx.recentSessions.length;
+      sessionLines.push(
+        `  … ${hidden} older sessions — tim_resume_list({projectId:"${label}"})`,
+      );
     }
     blocks.push({
       id: 'recent-sessions',
       priority: BRIEFING_PRIORITY.recentSession,
       order: 950,
       lines: sessionLines,
+      drillDown: `tim_resume_list({projectId:"${label}"})`,
     });
   } else {
     const sessions = children
@@ -753,13 +805,17 @@ function formatProjectOutputWithTokenBudget(
         if (summary.length === 0) sessionLines.push('    (no summary)');
       }
       if (sessions.length > shown) {
-        sessionLines.push(`  … ${sessions.length - shown} older sessions`);
+        const hidden = sessions.length - shown;
+        sessionLines.push(
+          `  … ${hidden} older sessions — tim_resume_list({projectId:"${label}"})`,
+        );
       }
       blocks.push({
         id: 'recent-sessions',
         priority: BRIEFING_PRIORITY.recentSession,
         order: 950,
         lines: sessionLines,
+        drillDown: `tim_resume_list({projectId:"${label}"})`,
       });
     }
   }
@@ -787,6 +843,7 @@ function formatProjectOutputWithTokenBudget(
     blocks,
     options.tokenBudget ?? 0,
     options.trailingSuffix ? [options.trailingSuffix] : [],
+    `tim_load_project({label:"${label}", bind:false})`,
   );
   return text;
 }

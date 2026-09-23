@@ -424,6 +424,54 @@ describe('formatProjectOutput section block layout', () => {
   });
 });
 
+describe('formatProjectOutput overview preview', () => {
+  const project = {
+    id: 'P1',
+    parentId: null,
+    metadata: { label: 'P1', kind: 'project', access_count: 0 },
+    title: 'P1 — Demo | Active | TypeScript, SQLite, MCP',
+    content: '## Project overview\nSquashed root body that should not appear.\n\n## Project Summary\n- summary bullet',
+    tags: [],
+    createdAt: '2026-06-01T00:00:00Z',
+    updatedAt: '2026-06-01T00:00:00Z',
+  } as any;
+
+  it('uses Overview section content in the header and skips duplicate body', () => {
+    const overview = {
+      id: 'overview-id',
+      parentId: 'P1',
+      title: 'Overview',
+      metadata: { kind: 'section', order: 1 },
+      tags: [],
+      content: 'Line one from overview.\nLine two from overview.\nLine three.',
+      createdAt: '2026-06-01T00:00:00Z',
+    } as any;
+    const child = {
+      id: 'child-id',
+      parentId: 'overview-id',
+      title: 'Audience',
+      metadata: {},
+      tags: [],
+      content: 'Developers',
+      createdAt: '2026-06-01T00:00:00Z',
+    } as any;
+
+    const out = formatProjectOutput(
+      { project, children: [overview, child], truncated: false },
+      200,
+      undefined,
+      'load',
+      3,
+      { tokenBudget: 12000 },
+    );
+    expect(out).toContain('Line one from overview.');
+    expect(out).toContain('Line two from overview.');
+    expect(out).not.toMatch(/\n\nSquashed root body/);
+    expect(out).toContain('Overview: 1 more — tim_read("overview-id")');
+    expect(out).not.toMatch(/  Overview\n    Line one/);
+  });
+});
+
 describe('formatProjectOutput project summary', () => {
   it('renders Project Summary block and keeps it out of the description', () => {
     const project = {
