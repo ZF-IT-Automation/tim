@@ -338,8 +338,11 @@ function loadDbContext(dbPath, projectLabel) {
   const handoffRow = db.prepare(`
     SELECT json_extract(e.metadata, '$.handoff_note') AS note, e.updated_at
     FROM entries e
+    JOIN entries s ON s.id = e.parent_id
     WHERE json_extract(e.metadata, '$.handoff_note') IS NOT NULL
-      AND e.updated_at >= datetime('now', '-30 days')
+      -- Date by the owning session, not e.updated_at: metadata writes (e.g. a
+      -- substance backfill) bump updated_at on old summary roots.
+      AND json_extract(s.metadata, '$.date') >= strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-30 days')
       AND e.id IN (
         WITH RECURSIVE tree(id) AS (
           SELECT id FROM entries WHERE id = ?
@@ -348,7 +351,7 @@ function loadDbContext(dbPath, projectLabel) {
         )
         SELECT id FROM tree
       )
-    ORDER BY e.updated_at DESC
+    ORDER BY json_extract(s.metadata, '$.date') DESC
     LIMIT 1
   `).get(project.id);
   const newestHandoffNote = handoffRow?.note ?? null;
