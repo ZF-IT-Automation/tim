@@ -10,9 +10,15 @@ import {
 import { buildNowBlock, countProjectOpenBugs, countProjectOpenTasks } from 'tim-hooks';
 import type { BriefingRenderContext, RecentSessionLine } from './project-output.js';
 
-async function sessionHandoffNote(store: TimStore, sessionId: string): Promise<boolean> {
+async function sessionHasHandoffInTree(store: TimStore, sessionId: string): Promise<boolean> {
   const summaryNode = await findChildByKind(store, sessionId, KIND_SUMMARY_ROOT);
-  return sessionHasHandoffNote(summaryNode?.metadata);
+  if (!summaryNode) return false;
+  if (sessionHasHandoffNote(summaryNode.metadata)) return true;
+  const children = await store.getChildren(summaryNode.id);
+  for (const child of children) {
+    if (sessionHasHandoffNote(child.metadata)) return true;
+  }
+  return false;
 }
 
 export async function buildBriefingRenderContext(
@@ -35,7 +41,7 @@ export async function buildBriefingRenderContext(
     if (!session) continue;
     const summaryNode = await findChildByKind(store, id, KIND_SUMMARY_ROOT);
     const exchangeCount = Number(session.metadata.exchange_count) || 0;
-    const hasHandoff = await sessionHandoffNote(store, id);
+    const hasHandoff = await sessionHasHandoffInTree(store, id);
     const substance = parseSessionSubstance(summaryNode?.metadata.substance);
     if (!isSubstantiveSession(exchangeCount, hasHandoff, substance)) {
       hiddenShortCount += 1;

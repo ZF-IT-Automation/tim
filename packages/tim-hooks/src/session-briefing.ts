@@ -45,16 +45,17 @@ async function findLatestProjectHandoff(
   projectLabel: string,
 ): Promise<{ sessionId: string; date: string; note: string } | null> {
   const project = await store.requireProject(projectLabel);
-  const rows = store.listProjectSessionsByActivity(project.id, 1000);
+  const rows = store.listProjectSessionsByActivity(project.id, 1000, {
+    includeZeroExchange: true,
+  });
   for (const { id } of rows) {
-    const summaryNode = await findChildByKind(store, id, KIND_SUMMARY_ROOT);
-    const raw = summaryNode?.metadata.handoff_note;
-    if (typeof raw !== 'string' || !raw.trim()) continue;
+    const note = await sessionHandoffNote(store, id);
+    if (!note) continue;
     const session = await store.read(id);
     const date = typeof session?.metadata.date === 'string'
       ? session.metadata.date.slice(0, 10)
       : (session?.createdAt ?? '').slice(0, 10);
-    return { sessionId: id, date, note: raw.trim() };
+    return { sessionId: id, date, note };
   }
   return null;
 }
