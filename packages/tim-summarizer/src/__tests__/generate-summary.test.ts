@@ -5,6 +5,8 @@ import * as path from 'path';
 import {
   generateSummaryHeuristic,
   extractTags,
+  parseSubstanceLine,
+  toSingleLineSummary,
   tryCli,
   FALLBACK_MARKER,
 } from '../generate-summary.js';
@@ -54,6 +56,36 @@ describe('extractTags', () => {
     const { body, tags } = extractTags(FALLBACK_MARKER);
     expect(body).toBe(FALLBACK_MARKER);
     expect(tags).toEqual([]);
+  });
+
+  it('parses SUBSTANCE line and strips it from body', () => {
+    const text =
+      '- checked version\n- no work done\n\nSUBSTANCE: none\nTAGS: #tim-cli';
+    const { body, tags, substance } = extractTags(text);
+    expect(substance).toBe('none');
+    expect(body).toBe('- checked version\n- no work done');
+    expect(tags).toEqual(['#tim-cli']);
+  });
+
+  it('treats garbled SUBSTANCE as undefined without throwing', () => {
+    const { substance, body } = extractTags('Summary text\nSUBSTANCE: maybe\nTAGS: #x');
+    expect(substance).toBeUndefined();
+    expect(body).toBe('Summary text');
+  });
+});
+
+describe('parseSubstanceLine', () => {
+  it('parses valid tokens only', () => {
+    expect(parseSubstanceLine('SUBSTANCE: real')).toBe('real');
+    expect(parseSubstanceLine('substance: LOW')).toBe('low');
+    expect(parseSubstanceLine('SUBSTANCE: garbage')).toBeUndefined();
+  });
+});
+
+describe('toSingleLineSummary', () => {
+  it('takes first non-empty line and strips bullet prefix', () => {
+    expect(toSingleLineSummary('- Version check only\n- Nothing else')).toBe('Version check only');
+    expect(toSingleLineSummary('')).toBe('No substantive project work.');
   });
 });
 
