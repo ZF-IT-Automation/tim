@@ -135,6 +135,7 @@ export function selectBriefingBlocks(
 }
 
 const RESERVED_CONTENT_PRIORITIES = new Set<BriefingPriority>([
+  BRIEFING_PRIORITY.header,
   BRIEFING_PRIORITY.activeRules,
   BRIEFING_PRIORITY.urgentTasks,
   BRIEFING_PRIORITY.recentSession,

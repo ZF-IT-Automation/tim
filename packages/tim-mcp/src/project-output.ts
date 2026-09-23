@@ -2,7 +2,7 @@ import type { Entry, ProjectSchema } from 'tim-core';
 import { findSchemaSection } from 'tim-core';
 import type { LoadProjectResult } from 'tim-store';
 import { isTaskMarker, SUMMARY_NODE_TITLE } from 'tim-store';
-import { DEFAULT_BRIEFING_RECENT_SESSIONS } from 'tim-hooks';
+import { DEFAULT_BRIEFING_RECENT_SESSIONS, clampSummary } from 'tim-hooks';
 import { resolveEntryTaskStatus } from './task-status.js';
 import {
   BRIEFING_PRIORITY,
@@ -660,7 +660,12 @@ function formatProjectOutputWithTokenBudget(
   if (tags) headerLines.push(`Tags: ${tags}`);
   headerLines.push(`Access: ${project.metadata.access_count ?? 0}`);
   if (parsed.description) headerLines.push('', parsed.description);
-  if (projectSummary) headerLines.push('', '── Project Summary ──', '', projectSummary);
+  if (projectSummary) {
+    const summaryBody = options.tokenBudget != null
+      ? clampSummary(projectSummary, 2000)
+      : projectSummary;
+    headerLines.push('', '── Project Summary ──', '', summaryBody);
+  }
   if (ctx?.nowBlockLines?.length) headerLines.push(...ctx.nowBlockLines);
 
   const blocks: BriefingBlock[] = [{
