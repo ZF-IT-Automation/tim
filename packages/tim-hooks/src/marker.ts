@@ -496,6 +496,11 @@ export interface DirectiveBriefing {
   previousSessionSummary?: string;
   /** Raw turns of the previous session that no batch summary covers, oldest first. */
   recentExchanges?: string[];
+  /** When the newest session was trivial and a substantive one was shown instead. */
+  trivialSessionNote?: string;
+  /** Date label for a handoff from a different session than the one shown above. */
+  latestHandoffLabel?: string;
+  latestHandoffNote?: string;
   /** Open work lines (tasks, next steps), already formatted and bounded. */
   openWork?: string[];
 }
@@ -519,6 +524,15 @@ function briefingBlock(briefing?: DirectiveBriefing): string[] {
       ? '── Since the last summary ──'
       : `── Previous session${label ? ` (${label})` : ''}, not yet summarized ──`;
     out.push('', heading, ...recent);
+  }
+
+  const trivial = briefing.trivialSessionNote?.trim();
+  if (trivial) out.push('', trivial);
+
+  const handoffLabel = briefing.latestHandoffLabel?.trim();
+  const handoffNote = briefing.latestHandoffNote?.trim();
+  if (handoffLabel && handoffNote) {
+    out.push('', `── Latest handoff (${handoffLabel}) ──`, handoffNote);
   }
 
   const openWork = (briefing.openWork ?? []).map(l => l.trimEnd()).filter(l => l.trim());

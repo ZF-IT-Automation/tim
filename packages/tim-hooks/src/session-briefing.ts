@@ -33,6 +33,14 @@ const RECENT_EXCHANGE_SIDE_MAX_CHARS = 400;
 // clampSummary keeps the tail: an unbounded note would evict the whole summary.
 const HANDOFF_NOTE_BUDGET_SHARE = 0.4;
 
+/** Substantive = enough exchanges or an explicit handoff note (G5). */
+export const SUBSTANTIVE_MIN_EXCHANGES = 3;
+const HANDOFF_LOOKBACK_MS = 30 * 86400_000;
+
+export function isSubstantiveSession(exchangeCount: number, hasHandoffNote: boolean): boolean {
+  return exchangeCount >= SUBSTANTIVE_MIN_EXCHANGES || hasHandoffNote;
+}
+
 /**
  * Clamp a summary to a char budget without losing its end. The last lines of a
  * condensed rollup are the handoff ("next: …") — cutting from the front would drop
@@ -159,36 +167,18 @@ export async function recentExchanges(
   return blocks;
 }
 
-/** Most recent session of the project, with its condensed rollup summary. */
-async function previousSession(
+/** Build condensed summary + raw tail for one session. */
+async function sessionBriefingContent(
   store: TimStore,
-  projectLabel: string,
+  sessionId: string,
   maxChars: number,
   rawMaxChars: number,
-): Promise<{ label?: string; summary?: string; recent?: string[] }> {
-  const sessions = new SessionManager(store);
-  const [latest] = await sessions.listResumableSessions(projectLabel, 1);
-  if (!latest) return {};
-
-  const summaryNode = await findChildByKind(store, latest.sessionId, KIND_SUMMARY_ROOT);
+): Promise<{ summary?: string; recent?: string[] }> {
+  const summaryNode = await findChildByKind(store, sessionId, KIND_SUMMARY_ROOT);
   const { note, text } = summaryNode
     ? await latestCheckpoint(store, summaryNode).catch(() => ({ note: '', text: '' }))
     : { note: '', text: '' };
 
-  // Four sources, best first: the summarizer's rollup on the root, then the newest
-  // checkpoint's own text — a checkpoint never writes the root, so a session that only
-  // ever hit the session-end hook has nothing there — then the root's body, and
-  // finally the batch summaries themselves.
-  //
-  // The last one is not hypothetical. Measured across the 312 sessions that have
-  // batch summaries: 21 have no rollup, 13 of those have no usable checkpoint
-  // either, and for all 13 the raw tail is empty too, because every exchange is
-  // covered by a batch summary. Those 13 produced an empty briefing while
-  // carrying up to 3010 characters of batch summaries that nothing ever read.
-  //
-  // Counted by kind, not by tag: a batch summary carries #session-summary as well
-  // as #batch-summary, so a tag query returns the roots and the batches together
-  // and inflates every count derived from it.
   const stored = typeof summaryNode?.metadata.summary === 'string'
     ? summaryNode.metadata.summary
     : '';
@@ -203,8 +193,6 @@ async function previousSession(
       .join('\n\n');
   }
 
-  // The handoff note is what the previous session wrote *for this one*, so it goes
-  // last: clampSummary drops from the front, which makes the tail the safe slot.
   const clampedNote = note
     ? clampSummary(note, Math.floor(maxChars * HANDOFF_NOTE_BUDGET_SHARE))
     : '';
@@ -213,19 +201,89 @@ async function previousSession(
     [body, clampedNote && `handoff: ${clampedNote}`].filter(Boolean).join('\n'),
     maxChars,
   );
-  // Read the raw tail before giving up on the summary: a session the summarizer never
-  // reached has no rollup, no checkpoint text and no note — exactly the case the raw
-  // turns exist for.
-  const recent = await recentExchanges(store, latest.sessionId, rawMaxChars).catch(() => []);
+  const recent = await recentExchanges(store, sessionId, rawMaxChars).catch(() => []);
   if (!summary && recent.length === 0) return {};
-
-  const date = (latest.date ?? latest.lastActivity).slice(0, 10);
-  const bits = [date, `${latest.exchangeCount} exchanges`];
-  if (latest.tool) bits.push(latest.tool);
   return {
-    label: bits.join(' · '),
     ...(summary ? { summary } : {}),
     ...(recent.length > 0 ? { recent } : {}),
+  };
+}
+
+async function sessionHandoffNote(store: TimStore, sessionId: string): Promise<string> {
+  const summaryNode = await findChildByKind(store, sessionId, KIND_SUMMARY_ROOT);
+  if (!summaryNode) return '';
+  const { note } = await latestCheckpoint(store, summaryNode).catch(() => ({ note: '' }));
+  return note;
+}
+
+interface PreviousSessionResult {
+  label?: string;
+  summary?: string;
+  recent?: string[];
+  sessionId?: string;
+  trivialSessionNote?: string;
+  latestHandoffLabel?: string;
+  latestHandoffNote?: string;
+}
+
+/** Newest substantive session; trivial newest is noted, not shown as previous work. */
+async function previousSession(
+  store: TimStore,
+  projectLabel: string,
+  maxChars: number,
+  rawMaxChars: number,
+): Promise<PreviousSessionResult> {
+  const sessions = new SessionManager(store);
+  const listed = await sessions.listResumableSessions(projectLabel, 50);
+  if (listed.length === 0) return {};
+
+  const newest = listed[0];
+  const cutoff = Date.now() - HANDOFF_LOOKBACK_MS;
+
+  let chosen = newest;
+  for (const candidate of listed) {
+    const note = await sessionHandoffNote(store, candidate.sessionId);
+    if (isSubstantiveSession(candidate.exchangeCount, Boolean(note))) {
+      chosen = candidate;
+      break;
+    }
+  }
+
+  const content = await sessionBriefingContent(store, chosen.sessionId, maxChars, rawMaxChars);
+  if (!content.summary && !content.recent?.length) return {};
+
+  const date = (chosen.date ?? chosen.lastActivity).slice(0, 10);
+  const bits = [date, `${chosen.exchangeCount} exchanges`];
+  if (chosen.tool) bits.push(chosen.tool);
+
+  let trivialSessionNote: string | undefined;
+  if (newest.sessionId !== chosen.sessionId) {
+    const skipDate = (newest.date ?? newest.lastActivity).slice(0, 10);
+    trivialSessionNote =
+      `Newest session ${skipDate} (${newest.exchangeCount} exchanges) skipped as trivial`;
+  }
+
+  let latestHandoffLabel: string | undefined;
+  let latestHandoffNote: string | undefined;
+  for (const candidate of listed) {
+    const activityMs = Date.parse(candidate.lastActivity);
+    if (!Number.isFinite(activityMs) || activityMs < cutoff) break;
+    const note = await sessionHandoffNote(store, candidate.sessionId);
+    if (!note) continue;
+    if (candidate.sessionId === chosen.sessionId) break;
+    latestHandoffLabel = (candidate.date ?? candidate.lastActivity).slice(0, 10);
+    latestHandoffNote = clampSummary(note, Math.floor(maxChars * HANDOFF_NOTE_BUDGET_SHARE));
+    break;
+  }
+
+  return {
+    sessionId: chosen.sessionId,
+    label: bits.join(' · '),
+    ...content,
+    ...(trivialSessionNote ? { trivialSessionNote } : {}),
+    ...(latestHandoffLabel && latestHandoffNote
+      ? { latestHandoffLabel, latestHandoffNote }
+      : {}),
   };
 }
 
@@ -278,19 +336,28 @@ export async function collectDirectiveBriefing(
   const summaryBudget = Math.floor(maxChars * PREVIOUS_SESSION_BUDGET_SHARE);
   const rawBudget = Math.floor(maxChars * RECENT_EXCHANGE_BUDGET_SHARE);
 
-  const previous: { label?: string; summary?: string; recent?: string[] } = includePastWork
+  const previous: PreviousSessionResult = includePastWork
     ? await previousSession(store, projectLabel, summaryBudget, rawBudget).catch(() => ({}))
     : {};
   const recent = previous.recent ?? [];
   const spent = (previous.summary?.length ?? 0)
+    + (previous.latestHandoffNote?.length ?? 0)
+    + (previous.trivialSessionNote?.length ?? 0)
     + recent.reduce((n, block) => n + block.length + 1, 0);
   const work = await openWork(store, projectLabel, Math.max(0, maxChars - spent)).catch(() => []);
 
-  if (!previous.summary && recent.length === 0 && work.length === 0) return undefined;
+  if (!previous.summary && recent.length === 0 && work.length === 0
+    && !previous.trivialSessionNote && !previous.latestHandoffNote) {
+    return undefined;
+  }
   return {
     ...(previous.label ? { previousSessionLabel: previous.label } : {}),
     ...(previous.summary ? { previousSessionSummary: previous.summary } : {}),
     ...(recent.length > 0 ? { recentExchanges: recent } : {}),
+    ...(previous.trivialSessionNote ? { trivialSessionNote: previous.trivialSessionNote } : {}),
+    ...(previous.latestHandoffLabel && previous.latestHandoffNote
+      ? { latestHandoffLabel: previous.latestHandoffLabel, latestHandoffNote: previous.latestHandoffNote }
+      : {}),
     ...(work.length > 0 ? { openWork: work } : {}),
   };
 }
