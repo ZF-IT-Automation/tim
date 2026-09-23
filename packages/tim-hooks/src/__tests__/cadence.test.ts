@@ -21,7 +21,7 @@ describe('checkpoint cadence', () => {
   it('config defaults for everyN and maxTokens', () => {
     const base = { dbPath: '/tmp/t.db', deviceId: 'd1' };
     expect(getCheckpointEveryN(base)).toBe(20);
-    expect(getBriefingMaxTokens(base)).toBe(9000);
+    expect(getBriefingMaxTokens(base)).toBe(12288);
     expect(getCheckpointEveryN({ ...base, checkpoint: { everyN: 10 } })).toBe(10);
   });
 
