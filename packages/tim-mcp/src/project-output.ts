@@ -28,6 +28,8 @@ export interface BriefingRenderContext {
   recentSessions?: RecentSessionLine[];
   totalSessionCount?: number;
   hiddenShortSessionCount?: number;
+  /** Open-task counts from store.getTasks — same source as the Now block. */
+  openTaskCounts?: { open: number; stale: number };
 }
 
 export interface FormatProjectOutputOptions {
@@ -38,6 +40,8 @@ export interface FormatProjectOutputOptions {
   /** Appended before whole-response bounding (e.g. load NEXT hint). */
   trailingSuffix?: string;
   briefingContext?: BriefingRenderContext;
+  /** Explicit section filter from tim_load_project / tim_read_project. */
+  requestedSections?: string[] | null;
 }
 
 // The schema shape and its traversal live in tim-core — the same definition the
@@ -185,6 +189,16 @@ function rootBodyFirstParagraph(content: string, maxLines = 5): string {
   return overviewPreviewLines(firstParagraph, maxLines);
 }
 
+function overviewNeedsReadPointer(section: Entry, childMap: Map<string, Entry[]>): boolean {
+  const subkids = childMap.get(section.id) ?? [];
+  if (subkids.length > 0) return true;
+  const lineCount = sectionPreview(section)
+    .split('\n')
+    .filter(line => line.trim().length > 0)
+    .length;
+  return lineCount > 5;
+}
+
 function resolveProjectPreview(
   project: Entry,
   sections: Entry[],
@@ -196,6 +210,46 @@ function resolveProjectPreview(
   const body = project.content.split(PROJECT_SUMMARY_MARKER)[0]?.trimEnd() ?? '';
   if (!body) return '';
   return rootBodyFirstParagraph(body);
+}
+
+/** Keep the head of a long project summary — the coverage line and first bullets matter most. */
+function clampSummaryHead(text: string, maxChars: number): string {
+  const lines = text.split('\n').map(l => l.trimEnd()).filter(l => l.trim().length > 0);
+  if (lines.length === 0) return '';
+  const cost = (ls: string[]) => ls.reduce((n, l) => n + l.length + 1, -1);
+  if (cost(lines) <= maxChars) return lines.join('\n');
+  const kept: string[] = [];
+  let used = 0;
+  for (const line of lines) {
+    const next = line.length + 1;
+    if (used + next > maxChars) break;
+    used += next;
+    kept.push(line);
+  }
+  return kept.length > 0 ? [...kept, '…'].join('\n') : '…';
+}
+
+function isNoEntriesOnlyBody(bodyLines: string[]): boolean {
+  const nonEmpty = bodyLines.map(l => l.trim()).filter(Boolean);
+  return nonEmpty.length === 1 && nonEmpty[0] === 'No entries';
+}
+
+function normalizeSectionFilterName(name: string): string {
+  return name.trim().toLowerCase();
+}
+
+function sectionExplicitlyRequested(
+  section: Entry,
+  name: string,
+  requested: Set<string>,
+): boolean {
+  if (requested.size === 0) return false;
+  const lower = normalizeSectionFilterName(name);
+  if (requested.has(lower)) return true;
+  const label = typeof section.metadata.label === 'string'
+    ? normalizeSectionFilterName(section.metadata.label)
+    : '';
+  return label.length > 0 && requested.has(label);
 }
 
 function sectionPreview(entry: Entry): string {
@@ -682,7 +736,6 @@ function renderSectionBody(
   } else {
     const content = sectionContentBody(section);
     if (content) body.push(`    ${content}`);
-    else if (subkids.length === 0 && prepared.collapsedCount === 0) body.push(`    No entries`);
     if ((subkids.length > 0 || prepared.collapsedCount > 0) && shouldRenderChildren(renderDepth)) {
       const nextDepth = maxChildDepth(renderDepth);
       if (nextDepth > 0) {
@@ -745,6 +798,12 @@ function formatProjectOutputWithTokenBudget(
   const seenBodies = new Map<string, string>();
 
   const ctx = options.briefingContext;
+  const requestedSectionNames = new Set(
+    (options.requestedSections ?? [])
+      .filter((name): name is string => typeof name === 'string' && name.trim().length > 0)
+      .map(normalizeSectionFilterName),
+  );
+  const useLoadIndexLayout = renderMode === 'load' && ctx != null;
 
   const sections = children
     .filter(c =>
@@ -768,7 +827,7 @@ function formatProjectOutputWithTokenBudget(
   if (projectPreview) headerLines.push('', projectPreview);
   if (projectSummary) {
     const summaryBody = options.tokenBudget != null
-      ? clampSummary(projectSummary, 2000)
+      ? clampSummaryHead(projectSummary, 2000)
       : projectSummary;
     headerLines.push('', '── Project Summary ──', '', summaryBody);
   }
@@ -778,17 +837,22 @@ function formatProjectOutputWithTokenBudget(
     headerLines.push('', `── Sections (${sections.length}) ──`, '');
     for (const section of sections) {
       const name = entryTitle(section);
-      if (isOverviewSection(section)) {
-        const subkids = childMap.get(section.id) ?? [];
-        if (subkids.length > 0) {
+      if (useLoadIndexLayout && isOverviewSection(section)
+        && !sectionExplicitlyRequested(section, name, requestedSectionNames)) {
+        if (overviewNeedsReadPointer(section, childMap)) {
+          const subkids = childMap.get(section.id) ?? [];
+          const hint = subkids.length > 0
+            ? `${subkids.length} more`
+            : 'full body';
           headerLines.push(
-            `  Overview: ${subkids.length} more — tim_read("${section.id}")`,
+            `  Overview (${hint}) — tim_read("${section.id}")`,
           );
         }
         continue;
       }
-      if (isTasksSection(section)) {
-        const counts = countOpenTasks(childMap.get(section.id) ?? []);
+      if (useLoadIndexLayout && isTasksSection(section)
+        && !sectionExplicitlyRequested(section, name, requestedSectionNames)) {
+        const counts = ctx?.openTaskCounts ?? countOpenTasks(childMap.get(section.id) ?? []);
         headerLines.push(
           `  Tasks (${counts.open} open, ${counts.stale} stale) — tim_read("${section.id}")`,
         );
@@ -835,18 +899,22 @@ function formatProjectOutputWithTokenBudget(
   if (sections.length > 0) {
     for (const section of sections) {
       const name = entryTitle(section);
-      if (isOverviewSection(section) || isTasksSection(section) || isRulesSection(section)) {
-        continue;
+      const explicit = sectionExplicitlyRequested(section, name, requestedSectionNames);
+      if (useLoadIndexLayout && !explicit) {
+        if (isOverviewSection(section) || isTasksSection(section) || isRulesSection(section)) {
+          continue;
+        }
       }
       const rendered = renderSectionBody(
         section, name, childMap, budgetState, schema, renderMode, seenBodies, true,
       );
       if (!rendered || rendered.bodyLines.length === 0) continue;
+      if (isNoEntriesOnlyBody(rendered.bodyLines)) continue;
       blocks.push({
         id: `section:${section.id}`,
         priority: sectionPriority(name, false),
         order: 10 + rendered.order,
-        lines: rendered.bodyLines,
+        lines: ['', rendered.header, ...rendered.bodyLines],
       });
     }
   }
@@ -865,7 +933,7 @@ function formatProjectOutputWithTokenBudget(
     }
     if (ctx.hiddenShortSessionCount && ctx.hiddenShortSessionCount > 0) {
       sessionLines.push(
-        `  + ${ctx.hiddenShortSessionCount} short sessions hidden (< 3 turns)`,
+        `  + ${ctx.hiddenShortSessionCount} sessions hidden (short or no substance)`,
       );
     }
     if (total > ctx.recentSessions.length) {

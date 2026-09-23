@@ -462,12 +462,15 @@ describe('formatProjectOutput overview preview', () => {
       undefined,
       'load',
       3,
-      { tokenBudget: 12000 },
+      {
+        tokenBudget: 12000,
+        briefingContext: { lastActivityDate: '2026-06-01' },
+      },
     );
     expect(out).toContain('Line one from overview.');
     expect(out).toContain('Line two from overview.');
     expect(out).not.toMatch(/\n\nSquashed root body/);
-    expect(out).toContain('Overview: 1 more — tim_read("overview-id")');
+    expect(out).toContain('Overview (1 more) — tim_read("overview-id")');
     expect(out).not.toMatch(/  Overview\n    Line one/);
   });
 });
