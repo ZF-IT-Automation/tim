@@ -1107,6 +1107,29 @@ describe('SessionManager', () => {
       expect(batch.exchanges.map(e => e.seq)).toEqual([3]);
       expect(batch.hasMore).toBe(false);
     });
+
+    it('folds harness-only agent replies into the previous countable exchange', async () => {
+      await store.createProject('P0098');
+      await sessions.startProjectSession({
+        sessionId: 'su-harness',
+        projectId: 'P0098',
+        agentName: 'a',
+        cwd: '/',
+        harness: 't',
+        batchSize: 5,
+      });
+      await sessions.logExchange('su-harness', [
+        { role: 'user', content: 'Q1' },
+        { role: 'agent', content: 'A1' },
+        { role: 'user', content: '<task-notification>done</task-notification>' },
+        { role: 'agent', content: 'Worker results here' },
+      ]);
+      const batch = await sessions.showUnsummarized('su-harness');
+      expect(batch.exchanges).toHaveLength(1);
+      expect(batch.exchanges[0]?.userContent).toBe('Q1');
+      expect(batch.exchanges[0]?.agentContent).toContain('A1');
+      expect(batch.exchanges[0]?.agentContent).toContain('Worker results here');
+    });
   });
 
   describe('showUnsummarized re-sweep', () => {

@@ -591,19 +591,32 @@ export class SessionManager {
       const users = (await this.store.getChildrenBySeq(batchNode.id)).filter(
         u => u.metadata.role === 'user',
       );
+      let lastCountable: UnsummarizedExchange | null = null;
       for (const u of users) {
-        if (!isCountableUserExchange(u)) continue;
         const seq = Number(u.metadata.seq);
         if (seq <= seqFloor) continue;
         const replies = await this.store.getChildren(u.id);
         const agent = replies.find(r => r.metadata.role === 'agent') ?? null;
-        exchanges.push({
+        if (!isCountableUserExchange(u)) {
+          // Harness-only user turn: skip counting it, but fold its agent reply
+          // into the previous countable exchange so summarizer sees the work.
+          if (lastCountable && agent) {
+            const extra = exchangeText(agent);
+            lastCountable.agentContent = lastCountable.agentContent
+              ? `${lastCountable.agentContent}\n${extra}`
+              : extra;
+          }
+          continue;
+        }
+        const entry: UnsummarizedExchange = {
           seq,
           userId: u.id,
           userContent: exchangeText(u),
           agentId: agent?.id ?? null,
           agentContent: agent ? exchangeText(agent) : null,
-        });
+        };
+        lastCountable = entry;
+        exchanges.push(entry);
       }
     }
 
