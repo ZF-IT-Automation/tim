@@ -54,3 +54,13 @@ export function isCountableUserExchange(entry: Entry): boolean {
   if (!text.trim()) return false;
   return !isHarnessOnlyPrompt(text);
 }
+
+/** Skip prompt-submit recall and topic hits from harness plumbing or flagged turns. */
+export function shouldSkipPromptRecall(entry: Entry): boolean {
+  if (entry.metadata.system_turn === true) return true;
+  if (entry.metadata.kind === 'exchange' && entry.metadata.role === 'user') {
+    const text = entryText(entry);
+    if (text.trim() && isHarnessOnlyPrompt(text)) return true;
+  }
+  return false;
+}

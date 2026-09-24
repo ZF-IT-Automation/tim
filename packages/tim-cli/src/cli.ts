@@ -45,7 +45,7 @@ import {
 } from 'tim-hooks';
 import { buildTimMcpEntry, installMcpEntryForHosts } from './install.js';
 import { cmdUserInit, cmdUserProfile, cmdUpdateSkills } from './user.js';
-import { tim_export, tim_import, repairImportFlags, repairProjectKind, exportToMarkdown, migrateTagsToTypes, migrateRetireDeprecatedTags } from 'tim-migrate';
+import { tim_export, tim_import, repairImportFlags, repairProjectKind, exportToMarkdown, migrateTagsToTypes, migrateRetireDeprecatedTags, migrateSystemTurn } from 'tim-migrate';
 import { cmdSync } from './sync-cli.js';
 import { cmdSnapshot } from './snapshot.js';
 import { cmdRestore } from './restore.js';
@@ -171,12 +171,13 @@ const COMMAND_HELP: Record<string, string> = {
   'migrate-from-hmem':
     'Usage: tim migrate-from-hmem <path.hmem> [--deduplicate] [--no-deduplicate] [--dry-run]',
   'migrate-schema': 'Usage: tim migrate-schema',
-  migrate: 'Usage: tim migrate <tags-to-types|project-kind|retire-deprecated-tags> [options]',
+  migrate: 'Usage: tim migrate <tags-to-types|project-kind|retire-deprecated-tags|system-turn> [options]',
   'migrate tags-to-types':
     'Usage: tim migrate tags-to-types [--dry-run] [--sample-limit <count>]',
   'migrate project-kind': 'Usage: tim migrate project-kind [--dry-run]',
   'migrate retire-deprecated-tags':
     'Usage: tim migrate retire-deprecated-tags [--dry-run] [--sample-limit <count>]',
+  'migrate system-turn': 'Usage: tim migrate system-turn [--dry-run]',
   'reap-checkpoints': 'Usage: tim reap-checkpoints',
   snapshot:
     'Usage: tim snapshot [--db <path>] [--out <path>] [--prune-hours <hours>] [--max-bytes <n>] [--no-symlink] [--quiet]',
@@ -1095,6 +1096,33 @@ async function cmdMigrateProjectKind(args: string[]) {
   }
 }
 
+async function cmdMigrateSystemTurn(args: string[]) {
+  const { flags } = parseArgs(args);
+  const dryRun = flags['dry-run'] === 'true';
+
+  const config = loadConfig();
+  const store = new TimStore(getDbPath(config));
+
+  try {
+    const report = await migrateSystemTurn(store, { dryRun });
+    console.log(JSON.stringify(report, null, 2));
+    if (dryRun) {
+      console.error(
+        `\n[tim] migrate system-turn — DRY RUN. ${report.flagged} exchange(s) would be flagged across ${report.byProject.length} project(s).`,
+      );
+    } else {
+      console.error(
+        `\n[tim] migrate system-turn — ${report.flagged} flagged, ${report.skippedAlreadyFlagged} already flagged, ${report.skippedNotHarness} not harness-only.`,
+      );
+      for (const row of report.byProject) {
+        console.error(`  ${row.label}: ${row.flagged}`);
+      }
+    }
+  } finally {
+    store.close();
+  }
+}
+
 async function cmdMigrateRetireDeprecatedTags(args: string[]) {
   const { flags } = parseArgs(args, {
     valueOptions: valueOptionsFor('migrate', 'retire-deprecated-tags'),
@@ -1320,12 +1348,15 @@ async function main() {
         await cmdMigrateProjectKind(rest.slice(1));
       } else if (sub === 'retire-deprecated-tags') {
         await cmdMigrateRetireDeprecatedTags(rest.slice(1));
+      } else if (sub === 'system-turn') {
+        await cmdMigrateSystemTurn(rest.slice(1));
       } else {
         console.error(
           `Usage: tim migrate <subcommand>\n` +
             `  tags-to-types           Convert legacy #rule / #human tags to metadata.type [--dry-run] [--sample-limit N]\n` +
             `  project-kind            Backfill metadata.kind=project on imported P-prefix roots [--dry-run]\n` +
-            `  retire-deprecated-tags  Strip every deprecated tag (structural, status, priority) from existing rows [--dry-run]`,
+            `  retire-deprecated-tags  Strip every deprecated tag (structural, status, priority) from existing rows [--dry-run]\n` +
+            `  system-turn             Flag legacy harness-only user exchanges with metadata.system_turn [--dry-run]`,
         );
         process.exit(1);
       }

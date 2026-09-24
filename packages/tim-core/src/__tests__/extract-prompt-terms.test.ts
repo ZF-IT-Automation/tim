@@ -26,6 +26,12 @@ describe('extractPromptTerms', () => {
     expect(PROMPT_STOP_WORDS.has('der')).toBe(true);
     expect(PROMPT_STOP_WORDS.has('the')).toBe(true);
   });
+
+  it('returns no terms for harness-only prompts', () => {
+    const harness = '<task-notification><status>done</status></task-notification>';
+    expect(extractPromptTerms(harness)).toEqual([]);
+    expect(buildPromptSearchQuery(harness)).toBe('');
+  });
 });
 
 describe('buildPromptSearchQuery', () => {

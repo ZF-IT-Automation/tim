@@ -10,6 +10,7 @@ import {
   isHarnessOnlyPrompt,
   stripHarnessBlocks,
   sanitizeUserExchangeContent,
+  shouldSkipPromptRecall,
 } from '../index.js';
 
 /** Shape copied from live preview.txt "Since the last summary" block. */
@@ -33,6 +34,66 @@ describe('harness-prompt', () => {
   it('treats system-reminder-only prompts as harness-only', () => {
     const raw = '<system-reminder>hooks are installed</system-reminder>';
     expect(sanitizeUserExchangeContent(raw)).toEqual({ content: '', systemTurn: true });
+  });
+
+  it('shouldSkipPromptRecall flags system_turn and harness-only exchanges', () => {
+    expect(shouldSkipPromptRecall({
+      id: 'x',
+      title: '',
+      content: LIVE_TASK_NOTIFICATION,
+      parentId: null,
+      contentType: 'text',
+      depth: 1,
+      confidence: 1,
+      createdAt: '',
+      updatedAt: '',
+      accessedAt: '',
+      decayRate: 0,
+      visibility: 1,
+      tags: [],
+      irrelevant: false,
+      favorite: false,
+      tombstonedAt: null,
+      metadata: { kind: 'exchange', role: 'user', system_turn: true },
+    })).toBe(true);
+    expect(shouldSkipPromptRecall({
+      id: 'y',
+      title: LIVE_TASK_NOTIFICATION,
+      content: '',
+      parentId: null,
+      contentType: 'text',
+      depth: 1,
+      confidence: 1,
+      createdAt: '',
+      updatedAt: '',
+      accessedAt: '',
+      decayRate: 0,
+      visibility: 1,
+      tags: [],
+      irrelevant: false,
+      favorite: false,
+      tombstonedAt: null,
+      metadata: { kind: 'exchange', role: 'user' },
+    })).toBe(true);
+    expect(shouldSkipPromptRecall({
+      id: 'z',
+      title: 'Real question',
+      content: 'about sqlite',
+      parentId: null,
+      contentType: 'text',
+      depth: 1,
+      confidence: 1,
+      createdAt: '',
+      updatedAt: '',
+      accessedAt: '',
+      decayRate: 0,
+      visibility: 1,
+      tags: [],
+      irrelevant: false,
+      favorite: false,
+      tombstonedAt: null,
+      metadata: { kind: 'lesson' },
+    })).toBe(false);
   });
 });
 

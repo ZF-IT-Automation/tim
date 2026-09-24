@@ -1,5 +1,5 @@
 import { loadConfig, buildPromptSearchQuery } from 'tim-core';
-import type { TimStore } from 'tim-store';
+import { isHarnessOnlyPrompt, shouldSkipPromptRecall, type TimStore } from 'tim-store';
 
 const DEFAULT_TIMEOUT_MS = 1000;
 const RETRIEVAL_TOP_K = 3;
@@ -40,11 +40,13 @@ async function computePromptContext(
   params: PromptSubmitParams,
 ): Promise<PromptSubmitResult | null> {
   const query = params.prompt.trim();
-  if (!query) return null;
+  if (!query || isHarnessOnlyPrompt(query)) return null;
 
   const lines: string[] = [];
 
   const searchQuery = buildPromptSearchQuery(query);
+  if (!searchQuery.trim()) return null;
+
   let hits = await store.search({
     query: searchQuery,
     topK: RETRIEVAL_TOP_K,
@@ -52,6 +54,7 @@ async function computePromptContext(
     project: params.projectLabel,
     ftsQueryMode: searchQuery.includes(' OR ') ? 'or-terms' : 'literal',
   });
+  hits = hits.filter(hit => !shouldSkipPromptRecall(hit));
 
   for (const hit of hits) {
     const label = hit.title?.trim() || hit.id;
