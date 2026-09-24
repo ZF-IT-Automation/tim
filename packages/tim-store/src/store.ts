@@ -3178,7 +3178,7 @@ ${zeroExchangeFilter}
     }
     params.push(limit);
 
-    const rows = this.db.prepare(`
+    const sql = `
       SELECT e.* FROM entries e
       INNER JOIN fts_entries f ON e.rowid = f.rowid
       WHERE fts_entries MATCH ?
@@ -3187,7 +3187,19 @@ ${zeroExchangeFilter}
       ${scopeSql}
       ORDER BY rank
       LIMIT ?
-    `).all(...params) as RowEntry[];
+    `;
+    let rows: RowEntry[];
+    try {
+      rows = this.db.prepare(sql).all(...params) as RowEntry[];
+    } catch (err) {
+      // Seen once, not reproducible: "vtable constructor failed: fts_entries" while
+      // other processes were writing. Log what is needed to diagnose it, retry once.
+      const e = err as { code?: string; message?: string };
+      if (e.code !== 'SQLITE_SCHEMA' && !/vtable constructor failed/.test(e.message ?? '')) throw err;
+      const schemaVersion = this.db.pragma('schema_version', { simple: true });
+      console.error(`[tim-store] searchFts: ${e.code ?? 'no code'} "${e.message}" schema_version=${schemaVersion} — retrying once`);
+      rows = this.db.prepare(sql).all(...params) as RowEntry[];
+    }
 
     return rows.map(rowToEntry);
   }
