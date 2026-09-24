@@ -1,0 +1,10 @@
+P0000  hard 7/9  soft 3/4
+P0054  hard 9/9  soft 4/4
+P0062  hard 9/9  soft 4/4
+P0063  hard 9/9  soft 4/4
+P0072  hard 7/9  soft 4/4
+P0073  hard 8/9  soft 4/4
+P0075  hard 9/9  soft 4/4
+P0076  hard 9/9  soft 4/4
+P0077  hard 9/9  soft 4/4
+P0078  hard 8/9  soft 4/4
