@@ -126,6 +126,23 @@ describe('runPromptSubmit', () => {
     expect(result!.lines.some(l => l.includes('task-notification'))).toBe(false);
   });
 
+  it('drops transcript turns and duplicate lines', async () => {
+    const oldPrompt = await store.write('Ja, mach mal. Nodes per SQL weghauen, wir sind fertig.', {
+      metadata: { kind: 'exchange', role: 'user' },
+    });
+    const echo = await store.write('Session checkpoint\nTopics: PDCA loop', {
+      metadata: { kind: 'checkpoint' },
+    });
+    const rule = await store.write('PDCA loop rules\nEach loop iteration rescored.', {
+      metadata: { kind: 'decision' },
+    });
+    vi.spyOn(store, 'search').mockResolvedValue([oldPrompt, echo, rule, rule]);
+
+    const result = await runPromptSubmit(store, { prompt: 'Wir sind in einem PDCA loop' });
+    expect(result!.lines).toHaveLength(1);
+    expect(result!.lines[0]).toContain('PDCA loop rules');
+  });
+
   it('returns null when disabled via config', async () => {
     vi.spyOn(await import('tim-core'), 'loadConfig').mockReturnValue({
       dbPath: ':memory:',

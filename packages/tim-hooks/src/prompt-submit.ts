@@ -5,6 +5,8 @@ const DEFAULT_TIMEOUT_MS = 1000;
 const RETRIEVAL_TOP_K = 3;
 /** Fetch extra hits so harness rows filtered by shouldSkipPromptRecall still leave real matches. */
 const SEARCH_TOP_K = RETRIEVAL_TOP_K * 4;
+/** Session transcript and bookkeeping: an old prompt replayed here reads as a current instruction. */
+const TRANSCRIPT_KINDS = new Set(['exchange', 'checkpoint']);
 
 /** Prompt looks like a planned action — run tim_guard-style failure lookup. */
 const ACTION_PATTERN =
@@ -56,11 +58,15 @@ async function computePromptContext(
     project: params.projectLabel,
     ftsQueryMode: searchQuery.includes(' OR ') ? 'or-terms' : 'literal',
   });
-  hits = hits.filter(hit => !shouldSkipPromptRecall(hit)).slice(0, RETRIEVAL_TOP_K);
+  // Past turns stay reachable via tim_resume_topic / tim_search.
+  hits = hits.filter(hit =>
+    !shouldSkipPromptRecall(hit) && !TRANSCRIPT_KINDS.has(String(hit.metadata.kind)));
 
   for (const hit of hits) {
     const label = hit.title?.trim() || hit.id;
-    lines.push(`TIM erinnert: ${label} — ${excerpt(hit.content || hit.title)}`);
+    const line = `TIM erinnert: ${label} — ${excerpt(hit.content || hit.title)}`;
+    if (!lines.includes(line)) lines.push(line);
+    if (lines.length === RETRIEVAL_TOP_K) break;
   }
 
   if (looksLikeAction(query)) {
