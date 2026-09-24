@@ -2207,7 +2207,8 @@ ${zeroExchangeFilter}
               : {};
 
           // 1. Start from the migrated (history-seeded) existing task — never patch.task.history.
-          let taskObj = migrateTaskHistory(existingTaskObj, now);
+          //    A seeded first event is dated to the entry's last change, not to this update.
+          let taskObj = migrateTaskHistory(existingTaskObj, existing.updated_at ?? now);
 
           // 2. Merge non-status fields from patch (priority, commits, subtype, vcs, etc.).
           const rawPatchTask = patchMeta.task as Record<string, unknown>;
