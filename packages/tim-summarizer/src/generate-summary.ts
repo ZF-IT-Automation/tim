@@ -260,6 +260,8 @@ function appendSummarizerLog(line: string): void {
   }
 }
 
+const KILL_GRACE_MS = 5_000;
+
 function runCliProcess(
   command: string,
   args: string[],
@@ -289,9 +291,30 @@ function runCliProcess(
     }
     child.stdin.end();
 
+    let settled = false;
+    let graceTimer: NodeJS.Timeout | undefined;
+    const settle = (code: number | null, signal: NodeJS.Signals | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      clearTimeout(graceTimer);
+      // A leftover grandchild may still hold the pipes; don't let them keep us alive.
+      child.stdout.destroy();
+      child.stderr.destroy();
+      resolve({ stdout, stderr, code, signal, timedOut });
+    };
+
+    // After a timeout, settle on 'exit': 'close' waits for every holder of the
+    // pipes, and a grandchild the CLI left behind can keep them open for hours.
+    // ponytail: such grandchildren are not killed here, only orphaned; the
+    // summarizer's supervisor kills its whole process group.
     const timer = setTimeout(() => {
       timedOut = true;
       child.kill('SIGTERM');
+      graceTimer = setTimeout(() => {
+        child.kill('SIGKILL');
+        settle(null, 'SIGKILL');
+      }, KILL_GRACE_MS);
     }, timeoutSec * 1000);
 
     child.on('error', err => {
@@ -299,10 +322,11 @@ function runCliProcess(
       reject(err);
     });
 
-    child.on('close', (code, signal) => {
-      clearTimeout(timer);
-      resolve({ stdout, stderr, code, signal, timedOut });
+    child.on('exit', (code, signal) => {
+      if (timedOut) settle(code, signal);
     });
+
+    child.on('close', (code, signal) => settle(code, signal));
   });
 }
 
