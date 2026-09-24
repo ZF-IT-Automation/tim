@@ -23,6 +23,7 @@ Raw scorecards: `runs/`.
 | 2026-09-24 | iteration 5 | df088b2 | live copy after P0063 task triage | 9/9 in all 8 (hook now scored per project) | 4/4 | — | stale tasks sit under a triage instruction (done → status, obsolete → irrelevant, valid → tim_verify); tim_show lines carry date + id; P0063: 3 tasks closed, 12 verified, 1 carried over |
 | 2026-09-24 | review 4 + iteration 6 | 6be8bc4 | live copy | 9/9 in all 8 | 4/4 | — | review 4: 0 blocker, 0 major, 7 minor — all fixed. Staleness now counts days of project work (a paused project does not age); stale previews rotate oldest-first so forgotten tasks resurface; fresh overflow is counted instead of dropped; recall excludes transcript kinds in SQL and dates every line; legacy handoffs count via the summary root's note |
 | 2026-09-24 | iteration 7 | 1107a29 | live copy | 9/9 in all 8 | 4/4 | — | log records with a task-id back-reference in metadata.task no longer count as open tasks (4 in P0062); P0–P3 and critical/high/medium/low ranked on one scale (P0 had sorted below medium) via one shared taskPriorityRank; load's Now-block compaction kept only '- [' lines and dropped the triage and overflow lines |
+| 2026-09-24 | review 5 + iteration 8 | (this commit) | live copy | 9/9 in all 8 (G8 now also checks coverage) | 4/4 | — | review 5: 0 blocker, 3 major, 8 minor — all fixed except m5 (design call). Stale window rotates per work day; staleness clock = touched_at (title/body/status change) or tim_verify, not updated_at (reorders no longer refresh the backlog); stale lines carry ids; stale block reserved before fresh lines fill the budget; tasks in a merged-away tree belong to the merge target (17 in P0062 surfaced) |
 
 ## Goal changes
 - S1: sessions-root and commits-root are legitimate non-section roots (scorer counted them as loose).
@@ -35,6 +36,7 @@ Raw scorecards: `runs/`.
 - G4: Recent Sessions is ordered by activity; the scorer compared its first line against the newest session *start* date, so a long session that began earlier failed. Now both sides use the last exchange (the renderer shows `start – last`).
 - Hook texts: the scorer ran the start hook from a fixed cwd (`~/projects/tim`), so every project was scored against P0063's hook; G8 only passed elsewhere because P0063's open work was all stale. Each project now gets its own marker dir.
 - G8: "updated in the last 14 days" aged every task of a paused project. Now: touched within the project's last 7 days of work (days with a logged exchange).
+- G8: stale lines are recognised by the ` · stale since` suffix (the word matched titles like "Stale Cache Alert"); task rows use the product's marker and touch rules; new coverage check: named + counted lines = open tasks in the DB.
 - Scope: P0000 Inbox exempt (no sections/sessions/summary by design).
 - G5: scorer dated handoffs by the summary root's `updated_at`, which metadata writes bump; now by the owning session's date.
 

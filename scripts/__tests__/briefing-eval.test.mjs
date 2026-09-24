@@ -120,6 +120,10 @@ describe('briefing-eval goals', () => {
       activeDays: ['2026-05-30'],
     });
     assert.equal(dormantG8.pass, true, 'a paused project does not age its tasks');
+    const covered = ['── Open work ──', '- [todo] Old task', '+ 2 more open tasks — tim_show'].join('\n');
+    const coverDb = { openTasksByTitle: new Map([['old task', { updated_at: '2026-06-01T00:00:00Z' }]]), activeDays: [] };
+    assert.equal(evalG8(covered, '', { ...coverDb, openTaskCount: 3 }).pass, true, 'named + counted = open');
+    assert.equal(evalG8(covered, '', { ...coverDb, openTaskCount: 5 }).pass, false, 'two open tasks neither named nor counted');
 
     const score = formatScorecard([
       { id: 'G1', hard: true, pass: true, value: true, detail: 'ok' },

@@ -82,13 +82,10 @@ describe('tim hook prompt-submit', () => {
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stderr).toBe('');
-    expect(JSON.parse(result.stdout)).toEqual({
-      hookSpecificOutput: {
-        hookEventName: 'UserPromptSubmit',
-        additionalContext:
-          'TIM erinnert (' + new Date().toISOString().slice(0, 10) + '): SQLite WAL Größe — Unicode retrieval context.',
-      },
-    });
+    const out = JSON.parse(result.stdout);
+    expect(out.hookSpecificOutput.hookEventName).toBe('UserPromptSubmit');
+    expect(out.hookSpecificOutput.additionalContext)
+      .toMatch(/^TIM erinnert \(\d{4}-\d{2}-\d{2}\): SQLite WAL Größe — Unicode retrieval context\.$/);
   });
 
   it('passes only the cwd-local marker project to prompt retrieval', async () => {

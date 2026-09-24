@@ -40,6 +40,14 @@ function parseRecentSessions(text) {
   return { shown: Number(m[1]), total: Number(m[2]), dates };
 }
 
+/** Sum of "+ N more open tasks" / "+ N stale open tasks" in the Open work block. */
+function parseCountLines(text) {
+  const block = extractBlock(text, 'Open work') ?? '';
+  let n = 0;
+  for (const m of block.matchAll(/^\+ (\d+) (?:more|stale) open tasks?/gm)) n += Number(m[1]);
+  return n;
+}
+
 function parseOpenWorkLines(text) {
   const block = extractBlock(text, 'Open work');
   if (!block) return [];
@@ -261,8 +269,16 @@ export function evalG8(hookText, loadText, dbCtx, now = new Date()) {
     return result('G8', true, true, true, 'no open work lines');
   }
   const stale = [];
+  // Coverage: every open task is named or inside a count line ("+ N more …", "+ N stale …").
+  if (dbCtx.openTaskCount != null && openLines.length > 0) {
+    const named = openLines.filter((l) => l.startsWith('- [')).length;
+    const counted = parseCountLines(hookText);
+    if (named + counted !== dbCtx.openTaskCount) {
+      stale.push(`coverage: ${named} named + ${counted} counted != ${dbCtx.openTaskCount} open in db`);
+    }
+  }
   for (const line of lines) {
-    if (/\bstale\b/i.test(line)) continue;
+    if (/ · stale since \d{4}-\d{2}-\d{2}/.test(line)) continue;
     const titleM = line.match(/\]\s+(.+?)(?:\s*$|…)/);
     const title = titleM?.[1]?.trim();
     const norm = title

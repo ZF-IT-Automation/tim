@@ -29,7 +29,7 @@ import {
 } from './schema.js';
 import { CurateManager } from './curate.js';
 import { ConsolidationManager } from './consolidate.js';
-import { metadataNeedsCoercion, parseAndCoerceMetadata, isIdeaMarker, normalizeTaskValue } from './metadata-coerce.js';
+import { metadataNeedsCoercion, parseAndCoerceMetadata, isIdeaMarker, isTaskMarker, normalizeTaskValue } from './metadata-coerce.js';
 import { applyIdeaPromote, type PromoteResult } from './idea-promote.js';
 import { isCodingNeedsReview, migrateTaskHistory, appendTaskStatus } from './task-status-history.js';
 import { detectProjectVcs } from './vcs.js';
@@ -952,8 +952,9 @@ export class TimStore implements MemoryInterface {
   }
 
   /** Sessions under a project's sessions-root, newest activity first.
-   *  Activity = session start, logged exchanges and checkpoints of a session that carries a
-   *  handoff note. Summaries and plain repeat checkpoints do not count. */
+   *  Activity = session start, logged exchanges and handoff checkpoints (flagged handoff: true;
+   *  for legacy sessions without a flag, checkpoints under a noted summary root).
+   *  Summaries and plain repeat checkpoints do not count. */
   listProjectSessionsByActivity(
     projectId: string,
     limit = 10,
@@ -991,8 +992,12 @@ ${zeroExchangeFilter}
         SELECT e.id, sub.root, e.created_at, e.rowid,
           json_extract(e.metadata, '$.kind') = 'exchange'
             OR (json_extract(e.metadata, '$.kind') = 'checkpoint'
-              AND json_extract((SELECT p.metadata FROM entries p WHERE p.id = e.parent_id),
-                '$.handoff_note') IS NOT NULL)
+              AND (json_extract(e.metadata, '$.handoff') = 1
+                -- Legacy sessions (no flagged checkpoint yet): any checkpoint under a noted root.
+                OR (json_extract((SELECT p.metadata FROM entries p WHERE p.id = e.parent_id),
+                      '$.handoff_note') IS NOT NULL
+                  AND NOT EXISTS (SELECT 1 FROM entries f WHERE f.parent_id = e.parent_id
+                    AND json_extract(f.metadata, '$.handoff') = 1))))
         FROM entries e
         INNER JOIN sub ON e.parent_id = sub.id
         WHERE e.tombstoned_at IS NULL
@@ -1299,15 +1304,15 @@ ${zeroExchangeFilter}
           WHEN 'todo' THEN 1
           ELSE 2
         END,
-        CASE COALESCE(
+        -- SQL twin of taskPriorityRank (tim-core); keep both in step.
+        CASE lower(trim(CAST(COALESCE(
           json_extract(e.metadata, '$.task.priority'),
           json_extract(e.metadata, '$.priority')
-        )
-          -- Two vocabularies are in use; rank them on one scale.
-          WHEN 'critical' THEN 0 WHEN 'P0' THEN 0
-          WHEN 'high' THEN 1 WHEN 'P1' THEN 1
-          WHEN 'medium' THEN 2 WHEN 'P2' THEN 2
-          WHEN 'low' THEN 3 WHEN 'P3' THEN 3
+        ) AS TEXT)))
+          WHEN 'critical' THEN 0 WHEN 'p0' THEN 0 WHEN '0' THEN 0
+          WHEN 'high' THEN 1 WHEN 'p1' THEN 1 WHEN '1' THEN 1
+          WHEN 'medium' THEN 2 WHEN 'p2' THEN 2 WHEN '2' THEN 2
+          WHEN 'low' THEN 3 WHEN 'p3' THEN 3 WHEN '3' THEN 3
           ELSE 4
         END,
         CASE WHEN COALESCE(
@@ -1723,6 +1728,9 @@ ${zeroExchangeFilter}
       if (meta.kind === 'project') {
         return (meta.label as string | undefined) ?? null;
       }
+      // A tree retired by a project merge keeps its entries; they belong to the merge target.
+      // Without this, its open tasks belonged to no project and no briefing ever showed them.
+      if (typeof meta.merged_into === 'string' && !row.parent_id) return meta.merged_into;
       currentId = row.parent_id;
     }
     return null;
@@ -2289,6 +2297,21 @@ ${zeroExchangeFilter}
       updated_at: now,
       lww_device: this.deviceId,
     };
+
+    // Task staleness needs a clock that reorders, bulk migrations and sync bookkeeping do not
+    // move (updated_at does). touched_at moves only when title, body or task status change.
+    {
+      const nextMeta = JSON.parse(updated.metadata || '{}') as Record<string, unknown>;
+      if (isTaskMarker(nextMeta.task)) {
+        const prevMeta = JSON.parse(existing.metadata || '{}') as Record<string, unknown>;
+        const touched = updated.title !== existing.title
+          || updated.content !== existing.content
+          || this.extractTaskStatus(prevMeta) !== this.extractTaskStatus(nextMeta);
+        if (touched) nextMeta.touched_at = now;
+        else if (nextMeta.touched_at === undefined) nextMeta.touched_at = existing.updated_at;
+        updated.metadata = JSON.stringify(nextMeta);
+      }
+    }
 
     if (didPromote) {
       const retarget = this.retargetToTasksSection(id, existing.parent_id);
