@@ -160,6 +160,8 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<number> {
         ...process.env,
         TIM_SESSION_ID: opts.sessionId,
         [SUMMARIZER_ENV_FLAG]: '1',
+        // The summarizer splits this across its chain so a hung slot 1 still leaves room for slot 2.
+        TIM_SUMMARIZER_BUDGET_SEC: String(opts.timeoutSec),
       },
       detached: true,
       stdio: ['ignore', 'pipe', 'pipe'],

@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { tryCli } from '../generate-summary.js';
+import { perCliTimeoutSec, tryCli } from '../generate-summary.js';
 
 // The summarizer's own LLM calls must run as team-up workers, or each CLI's TIM
 // hooks log the call as a new project session (97 junk sessions in one backfill).
@@ -43,4 +43,19 @@ describe('summarizer CLI spawn', () => {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   }, 20_000);
+
+  it('splits the supervisor budget so the last chain slot still runs', () => {
+    const old = process.env.TIM_SUMMARIZER_BUDGET_SEC;
+    try {
+      delete process.env.TIM_SUMMARIZER_BUDGET_SEC;
+      expect(perCliTimeoutSec(600, 2)).toBe(600);
+      process.env.TIM_SUMMARIZER_BUDGET_SEC = '600';
+      const perCli = perCliTimeoutSec(600, 2);
+      expect(2 * (perCli + 5)).toBeLessThan(600);
+      expect(perCliTimeoutSec(60, 2)).toBe(60);
+    } finally {
+      if (old === undefined) delete process.env.TIM_SUMMARIZER_BUDGET_SEC;
+      else process.env.TIM_SUMMARIZER_BUDGET_SEC = old;
+    }
+  });
 });
