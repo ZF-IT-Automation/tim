@@ -492,8 +492,8 @@ describe('TimStore', () => {
     it('dates a seeded first history event to the last change, not to the status update', async () => {
       const { task } = await seedTaskProject('P0205', 'Eps', 'Old task', {});
       await store.update(task.id, { metadata: { task: { status: 'todo', priority: 'P1' } } });
-      store.getDb().prepare('UPDATE entries SET metadata = json_remove(metadata, \'$.task.history\'), updated_at = ? WHERE id = ?')
-        .run('2026-01-02T03:04:05.000Z', task.id);
+      store.getDb().prepare('UPDATE entries SET metadata = json_set(json_remove(metadata, \'$.task.history\'), \'$.touched_at\', ?), updated_at = ? WHERE id = ?')
+        .run('2026-01-02T03:04:05.000Z', '2026-09-01T00:00:00.000Z', task.id);
       await store.update(task.id, { metadata: { task: { status: 'done', priority: 'P1' } } });
       const history = ((await store.read(task.id))!.metadata.task as { history: Array<{ status: string; at: string }> }).history;
       expect(history[0]).toEqual({ status: 'todo', at: '2026-01-02T03:04:05.000Z' });
@@ -506,6 +506,37 @@ describe('TimStore', () => {
       await store.write('Forgotten task', { parentId: retired.id, metadata: { task: { status: 'todo' } } });
       const forgotten = (await store.getTasks()).find(t => t.title === 'Forgotten task');
       expect(forgotten?.project_label).toBe('P0206');
+    });
+
+    it('a reorder keeps a legacy flag task\'s status and priority and does not touch it', async () => {
+      const { task } = await seedTaskProject('P0207', 'Legacy', 'Legacy task', { status: 'in_progress', priority: 'P1' });
+      const before = (await store.read(task.id))!;
+      await store.setTaskOrder(task.id);
+      const after = (await store.read(task.id))!;
+      const t = after.metadata.task as { status?: string; priority?: string; order?: number };
+      expect([t.status, t.priority, typeof t.order]).toEqual(['in_progress', 'P1', 'number']);
+      expect(after.metadata.touched_at).toBe(before.updatedAt);
+      expect((await store.getTasks()).find(x => x.id === task.id)?.status).toBe('in_progress');
+    });
+
+    it('ignores caller-supplied staleness clocks', async () => {
+      const { task } = await seedTaskProject('P0208', 'Clock', 'Clock task', { status: 'todo' });
+      await store.update(task.id, { metadata: { task: { status: 'todo' }, touched_at: '2099-01-01T00:00:00.000Z', verified_at: '2099-01-01T00:00:00.000Z' } });
+      const meta = (await store.read(task.id))!.metadata;
+      expect(meta.touched_at).not.toBe('2099-01-01T00:00:00.000Z');
+      expect(meta.verified_at).toBeUndefined();
+    });
+
+    it('follows merge chains to a live project and drops dead targets', async () => {
+      await seedTaskProject('P0209', 'Final', 'Anchor', { status: 'todo' });
+      const hop = await store.write('[MERGED → P0210]', { metadata: { kind: 'merged-into-P0210', label: 'P0211', merged_into: 'P0210' } });
+      await store.write('[MERGED → P0209]', { metadata: { kind: 'merged-into-P0209', label: 'P0210', merged_into: 'P0209' } });
+      const dead = await store.write('[MERGED → P0299]', { metadata: { kind: 'merged-into-P0299', merged_into: 'P0299' } });
+      await store.write('Chained task', { parentId: hop.id, metadata: { task: { status: 'todo' } } });
+      await store.write('Orphan task', { parentId: dead.id, metadata: { task: { status: 'todo' } } });
+      const byTitle = new Map((await store.getTasks()).map(t => [t.title, t.project_label]));
+      expect(byTitle.get('Chained task')).toBe('P0209');
+      expect(byTitle.get('Orphan task')).toBeNull();
     });
 
     it('ranks P0–P3 on the same scale as critical/high/medium/low', async () => {

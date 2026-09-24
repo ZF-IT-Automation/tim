@@ -482,7 +482,9 @@ function loadDbContext(dbPath, projectLabel) {
     FROM entries e
     JOIN tree t ON e.id = t.id
     WHERE e.irrelevant = 0 AND e.tombstoned_at IS NULL
-      AND COALESCE(json_extract(e.metadata, '$.task.status'), json_extract(e.metadata, '$.status'), 'todo')
+      -- getTasks' status rule: the object form reads task.status only; the legacy flag the top level.
+      AND COALESCE(CASE WHEN json_type(e.metadata, '$.task') = 'object'
+            THEN json_extract(e.metadata, '$.task.status') ELSE json_extract(e.metadata, '$.status') END, 'todo')
           NOT IN ('done', 'cancelled', 'closed', 'wontfix')
       AND (json_type(e.metadata, '$.task') IN ('object', 'true')
         OR json_extract(e.metadata, '$.task') IN (1, 'true'))

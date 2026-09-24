@@ -1328,10 +1328,14 @@ ${zeroExchangeFilter}
           ELSE 2
         END,
         -- SQL twin of taskPriorityRank (tim-core); keep both in step.
-        CASE lower(trim(CAST(COALESCE(
-          json_extract(e.metadata, '$.task.priority'),
-          json_extract(e.metadata, '$.priority')
-        ) AS TEXT)))
+        -- Same source as the mapped record: task.priority for the object form, else top level;
+        -- text values only.
+        CASE (SELECT lower(trim(p.value, ' ' || char(9) || char(10) || char(13)))
+          FROM (SELECT CASE WHEN json_type(e.metadata, '$.task') = 'object'
+                  THEN json_extract(e.metadata, '$.task.priority') ELSE json_extract(e.metadata, '$.priority') END AS value,
+                CASE WHEN json_type(e.metadata, '$.task') = 'object'
+                  THEN json_type(e.metadata, '$.task.priority') ELSE json_type(e.metadata, '$.priority') END AS t) p
+          WHERE p.t = 'text')
           WHEN 'critical' THEN 0 WHEN 'p0' THEN 0 WHEN '0' THEN 0
           WHEN 'high' THEN 1 WHEN 'p1' THEN 1 WHEN '1' THEN 1
           WHEN 'medium' THEN 2 WHEN 'p2' THEN 2 WHEN '2' THEN 2
@@ -1404,7 +1408,7 @@ ${zeroExchangeFilter}
     if (typeof task === 'object' && task !== null && !Array.isArray(task)) {
       const st = (task as Record<string, unknown>).status;
       if (typeof st === 'string') return st;
-    } else if (task === true) {
+    } else if (normalizeTaskValue(task) === true) {
       const st = meta.status;
       if (typeof st === 'string') return st;
     }
@@ -1739,6 +1743,27 @@ ${zeroExchangeFilter}
     return this.findProjectLabelForParent(entryId);
   }
 
+  /** Follow merged_into to a live project root (chains included); null if none is left. */
+  private resolveMergeTarget(label: string): string | null {
+    const seen = new Set<string>();
+    let current: string | undefined = label;
+    while (current && !seen.has(current)) {
+      seen.add(current);
+      const live = this.db.prepare(`
+        SELECT 1 FROM entries WHERE parent_id IS NULL AND tombstoned_at IS NULL
+          AND json_extract(metadata, '$.kind') = 'project' AND json_extract(metadata, '$.label') = ?
+      `).get(current);
+      if (live) return current;
+      const next = this.db.prepare(`
+        SELECT json_extract(metadata, '$.merged_into') AS target FROM entries
+        WHERE parent_id IS NULL AND json_extract(metadata, '$.label') = ?
+          AND json_extract(metadata, '$.merged_into') IS NOT NULL LIMIT 1
+      `).get(current) as { target: string } | undefined;
+      current = next?.target;
+    }
+    return null;
+  }
+
   private findProjectLabelForParent(startParentId: string | null): string | null {
     let currentId = startParentId;
     while (currentId) {
@@ -1753,7 +1778,9 @@ ${zeroExchangeFilter}
       }
       // A tree retired by a project merge keeps its entries; they belong to the merge target.
       // Without this, its open tasks belonged to no project and no briefing ever showed them.
-      if (typeof meta.merged_into === 'string' && !row.parent_id) return meta.merged_into;
+      if (typeof meta.merged_into === 'string' && !row.parent_id) {
+        return this.resolveMergeTarget(meta.merged_into);
+      }
       currentId = row.parent_id;
     }
     return null;
@@ -2229,17 +2256,31 @@ ${zeroExchangeFilter}
             patchMeta[f] = existingMeta[f];
           }
         }
+        // Staleness clocks are system-owned: tim_verify sets verified_at, updateSync touched_at.
+        // A caller-supplied value (e.g. far in the future) would keep a task fresh forever.
+        for (const f of ['touched_at', 'verified_at'] as const) {
+          if (existingMeta[f] !== undefined) patchMeta[f] = existingMeta[f];
+          else delete patchMeta[f];
+        }
         if (
           typeof patchMeta.task === 'object' && patchMeta.task !== null && !Array.isArray(patchMeta.task)
         ) {
-          const existingTaskObj =
+          // A legacy flag (task: true / 1 / "true") keeps status, priority and due at the top
+          // level. Converting it to the object form must carry them over, or a reorder turns an
+          // in_progress or done task into an open one without priority.
+          const existingTaskObj: Record<string, unknown> =
             typeof existingMeta.task === 'object' && existingMeta.task !== null && !Array.isArray(existingMeta.task)
               ? (existingMeta.task as Record<string, unknown>)
-              : {};
+              : normalizeTaskValue(existingMeta.task) === true
+                ? Object.fromEntries(Object.entries({
+                  status: existingMeta.status, priority: existingMeta.priority, due_date: existingMeta.due,
+                }).filter(([, v]) => v !== undefined))
+                : {};
 
           // 1. Start from the migrated (history-seeded) existing task — never patch.task.history.
           //    A seeded first event is dated to the entry's last change, not to this update.
-          let taskObj = migrateTaskHistory(existingTaskObj, existing.updated_at ?? now);
+          const seedAt = typeof existingMeta.touched_at === 'string' ? existingMeta.touched_at : existing.updated_at;
+          let taskObj = migrateTaskHistory(existingTaskObj, seedAt ?? now);
 
           // 2. Merge non-status fields from patch (priority, commits, subtype, vcs, etc.).
           const rawPatchTask = patchMeta.task as Record<string, unknown>;

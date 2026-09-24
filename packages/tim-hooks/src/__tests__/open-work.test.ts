@@ -63,7 +63,22 @@ describe('formatOpenWorkLines stale handling', () => {
 
   it('rotates the preview each work day, so untriaged stale tasks all surface', async () => {
     const seen = new Set<string>();
-    for (let day = 0; day < 5; day++) {
+    for (let day = 0; day < 10; day++) {
+      const lines = await formatOpenWorkLines(store, 'P0099', 12, 4000);
+      for (const id of staleIds) if (lines.some(l => l.endsWith(id))) seen.add(id);
+      await addWorkDay();
+    }
+    expect([...seen].sort()).toEqual([...staleIds].sort());
+  });
+
+  it('keeps rotating while the stale backlog grows by one task per work day', async () => {
+    const tasksSection = (await store.read(staleIds[0]))!.parentId!;
+    const seen = new Set<string>();
+    for (let day = 0; day < 30; day++) {
+      const extra = await store.write(`Late stale ${day}`, {
+        parentId: tasksSection, metadata: { task: { status: 'todo', priority: 'low' } },
+      });
+      setTouch(extra.id, '2026-01-01T00:00:00.000Z');
       const lines = await formatOpenWorkLines(store, 'P0099', 12, 4000);
       for (const id of staleIds) if (lines.some(l => l.endsWith(id))) seen.add(id);
       await addWorkDay();

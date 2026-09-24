@@ -753,7 +753,7 @@ export const TOOL_DEFS: Array<{
     description: 'Update an existing entry. Only provided fields are changed — but a provided ' +
       'field REPLACES its old value entirely: content replaces the whole body (it does NOT ' +
       'append — tim_read first, merge, then update), metadata replaces the whole metadata ' +
-      'object except system-managed fields (verified_at, provenance), which are preserved. ' +
+      'object except system-managed fields (verified_at, touched_at, provenance), which are preserved. ' +
       'For short flips (status, priority) send only the metadata patch, keep content out.',
     schema: TimUpdateSchema,
   },

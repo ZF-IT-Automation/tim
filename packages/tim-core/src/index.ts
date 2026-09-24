@@ -502,8 +502,10 @@ const TASK_PRIORITY_RANK: Record<string, number> = {
 };
 
 /** Sort key for a task priority; unknown or missing sorts last. Case-insensitive; "0"–"3" = P0–P3. */
-export function taskPriorityRank(priority: string | number | undefined | null): number {
-  const raw = String(priority ?? '').trim();
+export function taskPriorityRank(priority: unknown): number {
+  // Strings only (the vocabulary in use); the SQL twin in getTasks applies the same rule.
+  if (typeof priority !== 'string') return 4;
+  const raw = priority.trim();
   const key = /^[0-3]$/.test(raw) ? `P${raw}` : /^p[0-3]$/i.test(raw) ? raw.toUpperCase() : raw.toLowerCase();
   return TASK_PRIORITY_RANK[key] ?? 4;
 }
