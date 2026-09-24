@@ -1338,7 +1338,20 @@ export async function resolveCurrentSession(
   candidates.sort(
     (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
   );
-  return candidates[0] ?? null;
+  const newest = candidates[0] ?? null;
+  // Two sessions running in one cwd: an older one still logging exchanges after the
+  // newest started. Guessing the newest would attribute to the wrong one — no answer
+  // is better. A session that simply ended before the next began is not ambiguous.
+  if (newest && cwd !== undefined && candidates.length > 1) {
+    const newestStart = new Date(newest.createdAt).getTime();
+    const manager = new SessionManager(store);
+    for (const older of candidates.slice(1)) {
+      if (new Date(older.updatedAt).getTime() <= newestStart) continue;
+      const exchanges = await manager.getSessionExchanges(older.id);
+      if (exchanges.some(e => new Date(e.createdAt).getTime() > newestStart)) return null;
+    }
+  }
+  return newest;
 }
 
 export async function ensureProjectForPath(
