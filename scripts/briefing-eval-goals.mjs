@@ -292,7 +292,7 @@ export function evalG9Load(loadText) {
 
 /** S1 — no loose root children. */
 export function evalS1(structure) {
-  const loose = (structure?.looseDirectChildren ?? null)?.filter?.(c => !['sessions-root', 'commits-root'].includes(c?.kind)).length ?? -1;
+  const loose = (structure?.looseDirectChildren ?? null)?.filter?.(c => !['sessions-root', 'commits-root', 'project-path'].includes(c?.kind)).length ?? -1;
   const pass = loose === 0;
   return result('S1', false, pass, loose, `looseDirectChildren=${loose}`);
 }
