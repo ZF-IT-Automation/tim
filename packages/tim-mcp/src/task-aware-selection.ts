@@ -159,27 +159,29 @@ export function selectBriefingBlocks(
   const nowSource = sorted.find(
     block => block.id === 'now' && block.lines.some(line => line.trim().startsWith('- [')),
   );
+  const rulesSource = sorted.find(block => block.id === 'rules');
+  const rulesLines = rulesSource?.lines.filter(
+    line => line.includes('── Rules ──')
+      || (line.trim().length > 0 && line.trim() !== 'Rules'),
+  ) ?? [];
+
   let pinnedNow: BriefingBlock | null = null;
   if (nowSource) {
     // Drop only blank lines: an allowlist lost the triage instruction and the overflow count.
-    const compactLines = nowSource.lines.filter(line => line.trim().length > 0);
-    const compactText = compactLines.join('\n');
-    if (tryChargeTokens(ledger, compactText)) {
+    let compactLines = nowSource.lines.filter(line => line.trim().length > 0);
+    // Under a tight budget the task ids go before the rules do (tim_show recovers ids).
+    const both = estimateTextTokens(compactLines.join('\n')) + estimateTextTokens(rulesLines.join('\n'));
+    if (rulesSource && both > ledger.remaining) {
+      compactLines = compactLines.map(line => line.replace(/ · [A-Za-z0-9_-]{10,}$/, ''));
+    }
+    if (tryChargeTokens(ledger, compactLines.join('\n'))) {
       pinnedNow = { ...nowSource, lines: compactLines };
     }
   }
 
-  const rulesSource = sorted.find(block => block.id === 'rules');
   let pinnedRules: BriefingBlock | null = null;
-  if (rulesSource) {
-    const compactLines = rulesSource.lines.filter(
-      line => line.includes('── Rules ──')
-        || (line.trim().length > 0 && line.trim() !== 'Rules'),
-    );
-    const compactText = compactLines.join('\n');
-    if (tryChargeTokens(ledger, compactText)) {
-      pinnedRules = { ...rulesSource, lines: compactLines };
-    }
+  if (rulesSource && tryChargeTokens(ledger, rulesLines.join('\n'))) {
+    pinnedRules = { ...rulesSource, lines: rulesLines };
   }
 
   const included: BriefingBlock[] = [];
@@ -205,7 +207,10 @@ export function selectBriefingBlocks(
       if (partial.omission) omissions.push(partial.omission);
       continue;
     }
-    const titleOnly = sectionTitleOnlyLine(block);
+    // The sections index already names every section with its drill-down; a title-only
+    // fallback would repeat that line.
+    const indexed = included.some(b => b.id === 'sections-index');
+    const titleOnly = indexed ? null : sectionTitleOnlyLine(block);
     if (titleOnly && tryChargeTokens(ledger, separator + titleOnly)) {
       included.push({ ...block, lines: [titleOnly] });
       const drillDown = blockDrillDown(block);

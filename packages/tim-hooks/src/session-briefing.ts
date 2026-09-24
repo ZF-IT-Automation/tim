@@ -44,21 +44,43 @@ const HANDOFF_NOTE_BUDGET_SHARE = 0.4;
 async function findLatestProjectHandoff(
   store: TimStore,
   projectLabel: string,
-): Promise<{ sessionId: string; date: string; note: string } | null> {
+): Promise<{ sessionId: string; date: string; note: string; newerSessions: number } | null> {
   const project = await store.requireProject(projectLabel);
   const rows = store.listProjectSessionsByActivity(project.id, 1000, {
     includeZeroExchange: true,
   });
-  for (const { id } of rows) {
+  let newerSessions = 0;
+  for (const { id, lastActivity } of rows) {
     const note = await sessionHandoffNote(store, id);
-    if (!note) continue;
     const session = await store.read(id);
-    const date = typeof session?.metadata.date === 'string'
-      ? session.metadata.date.slice(0, 10)
-      : (session?.createdAt ?? '').slice(0, 10);
-    return { sessionId: id, date, note };
+    if (!note) {
+      // A newer session with real work but no handoff makes the note's "next" possibly outdated.
+      const summaryNode = await findChildByKind(store, id, KIND_SUMMARY_ROOT);
+      const exchanges = Number(session?.metadata.exchange_count) || 0;
+      if (isSubstantiveSession(exchanges, false, parseSessionSubstance(summaryNode?.metadata.substance))) {
+        newerSessions += 1;
+      }
+      continue;
+    }
+    // Date the note by when it was written (its checkpoint), not by when a long session began.
+    const summaryNode = await findChildByKind(store, id, KIND_SUMMARY_ROOT);
+    const checkpoints = summaryNode
+      ? (await store.getChildren(summaryNode.id)).filter(c => c.metadata.kind === 'checkpoint')
+      : [];
+    // Legacy notes have no flagged checkpoint; a note is written at the end of the work, so the
+    // session's last activity (exchanges and handoffs) is the closest date.
+    const written = checkpoints.filter(c => c.metadata.handoff === true).map(c => c.createdAt).sort().pop();
+    const date = (written ?? lastActivity ?? session?.createdAt ?? '').slice(0, 10);
+    return { sessionId: id, date, note, newerSessions };
   }
   return null;
+}
+
+function handoffLabel(handoff: { date: string; newerSessions: number }): string {
+  const newer = handoff.newerSessions > 0
+    ? ` · ${handoff.newerSessions} newer session${handoff.newerSessions === 1 ? '' : 's'} without handoff — its next step may be outdated`
+    : '';
+  return `${handoffAgeLabel(handoff.date)}${newer}`;
 }
 
 /** Open-task counts from store.getTasks — shared by load header and Now block. */
@@ -321,7 +343,7 @@ async function previousSession(
   const handoffOnly = (excludeSessionId?: string): PreviousSessionResult =>
     projectHandoff && projectHandoff.sessionId !== excludeSessionId
       ? {
-          latestHandoffLabel: handoffAgeLabel(projectHandoff.date),
+          latestHandoffLabel: handoffLabel(projectHandoff),
           latestHandoffNote: clampSummary(
             projectHandoff.note,
             Math.floor(maxChars * HANDOFF_NOTE_BUDGET_SHARE),
@@ -370,22 +392,25 @@ function rotationKey(id: string): number {
   return h;
 }
 
-/** Stale lines carry the id: the triage instruction is only actionable with it. */
+/** Marks a stale line; the id follows on every line (formatOpenWorkLine). */
 function taskStaleSuffix(entry: OpenWorkEntry): string {
-  return entry.stale ? ` · stale since ${entry.updatedAt.slice(0, 10)} · ${entry.task.id}` : '';
+  return entry.stale ? ` · stale since ${entry.updatedAt.slice(0, 10)}` : '';
 }
 
 function staleTasksDrillDown(projectLabel: string): string {
   return `tim_show({what:"tasks", root:"${projectLabel}"})`;
 }
 
+/** Every line ends with the id, so acting on it needs no second lookup. */
 function formatOpenWorkLine(
-  task: { status?: string | null; priority?: string | null; title: string },
+  task: { id: string; status?: string | null; priority?: string | null; title: string },
   staleSuffix: string,
 ): string {
   const status = task.status ?? 'todo';
   const priority = task.priority ? `, ${task.priority}` : '';
-  return `- [${status}${priority}] ${oneLine(task.title, OPEN_WORK_ITEM_MAX_CHARS)}${staleSuffix}`;
+  // Titles copied from markdown bodies start with "# " / "## TASK:" — noise in a list line.
+  const title = task.title.replace(/^\s*#+\s*/, '');
+  return `- [${status}${priority}] ${oneLine(title, OPEN_WORK_ITEM_MAX_CHARS)}${staleSuffix} · ${task.id}`;
 }
 
 interface OpenWorkEntry {
@@ -410,7 +435,9 @@ async function collectOpenWork(
     const row = await store.read(task.id, { includeChildren: false });
     const touched = row ? taskLastTouch(row) : '';
     const logged = workLogged.get(task.id) ?? '';
-    const updatedAt = logged > touched ? logged : touched;
+    // A future creation time (skewed peer) is not work done; see taskLastTouch.
+    const loggedAt = logged <= new Date().toISOString() ? logged : '';
+    const updatedAt = loggedAt > touched ? loggedAt : touched;
     entries.push({
       task,
       updatedAt,
@@ -521,7 +548,7 @@ export async function buildNowBlock(
       .filter(Boolean)
       .slice(0, NOW_HANDOFF_MAX_LINES)
       .join(' ');
-    lines.push(`Handoff (${handoffAgeLabel(handoff.date)}): ${oneLine(clipped, 240)}`);
+    lines.push(`Handoff (${handoffLabel(handoff)}): ${oneLine(clipped, 240)}`);
   }
 
   const tasks = await formatOpenWorkLines(store, projectLabel, NOW_OPEN_WORK_ITEMS, 4000);

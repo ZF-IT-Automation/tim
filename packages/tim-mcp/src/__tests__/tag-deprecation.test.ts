@@ -109,6 +109,7 @@ describe('tag deprecation (Schema v3 Phase 3)', () => {
     if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath);
     client = new McpClient(dbPath);
     await client.init();
+    await client.callTool('tim_create_project', { label: 'P0900', content: 'Task fixture', memoryOnly: true });
   });
 
   afterEach(() => {
@@ -118,6 +119,7 @@ describe('tag deprecation (Schema v3 Phase 3)', () => {
 
   it('tim_write with status tags strips them and returns warnings', async () => {
     const resp = await client.callTool('tim_write', {
+      where: 'P0900/Tasks',
       content: 'Status tag test',
       tags: ['#todo', '#done', '#tim', '#security'],
       metadata: { type: 'task', task: { status: 'todo', priority: 'medium' } },
@@ -134,6 +136,7 @@ describe('tag deprecation (Schema v3 Phase 3)', () => {
 
   it('tim_write with only topic tags stores them normally', async () => {
     const resp = await client.callTool('tim_write', {
+      where: 'P0900/Tasks',
       content: 'Topic only',
       tags: ['#tim', '#security'],
       metadata: { type: 'task', task: { status: 'todo' } },
@@ -146,6 +149,7 @@ describe('tag deprecation (Schema v3 Phase 3)', () => {
 
   it('tim_write with mixed tags keeps only topic tags', async () => {
     const resp = await client.callTool('tim_write', {
+      where: 'P0900/Tasks',
       content: 'Mixed tags',
       tags: ['#in_progress', '#priority-high', '#tim', '#feature'],
       metadata: { type: 'task', task: { status: 'in_progress', priority: 'high' } },
@@ -159,6 +163,7 @@ describe('tag deprecation (Schema v3 Phase 3)', () => {
 
   it('tim_tag_add with status tag skips it and returns warning', async () => {
     const writeResp = await client.callTool('tim_write', {
+      where: 'P0900/Tasks',
       content: 'For tag add',
       tags: ['#tim', '#test'],
       metadata: { type: 'task', task: { status: 'todo' } },
@@ -178,6 +183,7 @@ describe('tag deprecation (Schema v3 Phase 3)', () => {
 
   it('tim_tag_add with topic tag adds normally', async () => {
     const writeResp = await client.callTool('tim_write', {
+      where: 'P0900/Tasks',
       content: 'For topic add',
       tags: ['#tim', '#test'],
       metadata: { type: 'task', task: { status: 'todo' } },
@@ -197,6 +203,7 @@ describe('tag deprecation (Schema v3 Phase 3)', () => {
 
   it('tim_update strips deprecated tags from patch', async () => {
     const writeResp = await client.callTool('tim_write', {
+      where: 'P0900/Tasks',
       content: 'For update',
       tags: ['#tim', '#test'],
       metadata: { type: 'task', task: { status: 'todo' } },

@@ -103,6 +103,7 @@ describe('metadata boolean roundtrip', () => {
     if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath);
     client = new McpClient(dbPath);
     await client.init();
+    await client.callTool('tim_create_project', { label: 'P0900', content: 'Task fixture', memoryOnly: true });
   });
 
   afterEach(() => {
@@ -112,6 +113,7 @@ describe('metadata boolean roundtrip', () => {
 
   it('tim_write + tim_read returns boolean task metadata', async () => {
     const writeResp = await client.callTool('tim_write', {
+      where: 'P0900/Tasks',
       content: 'Task entry',
       tags: ['#task', '#test'],
       metadata: { task: true, status: 'todo' },
@@ -148,6 +150,7 @@ describe('metadata boolean roundtrip', () => {
 
   it('round-trips task false and nested metadata', async () => {
     const writeResp = await client.callTool('tim_write', {
+      where: 'P0900/Tasks',
       content: 'Nested meta',
       tags: ['#task', '#nested'],
       metadata: {

@@ -279,7 +279,8 @@ export function evalG8(hookText, loadText, dbCtx, now = new Date()) {
   }
   for (const line of lines) {
     if (/ · stale since \d{4}-\d{2}-\d{2}/.test(line)) continue;
-    const titleM = line.match(/\]\s+(.+?)(?:\s*$|…)/);
+    // Lines end with " · <id>"; titles lose a leading markdown heading marker.
+    const titleM = line.replace(/ · \S+$/, '').match(/\]\s+(.+?)(?:\s*$|…)/);
     const title = titleM?.[1]?.trim();
     const norm = title
       ? title.normalize('NFKC').replace(/\u2013|\u2014/g, '-').replace(/\s+/g, ' ').trim().toLowerCase()

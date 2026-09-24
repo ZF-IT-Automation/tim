@@ -520,10 +520,10 @@ describe('TimStore', () => {
       expect((await store.getTasks()).find(x => x.id === task.id)?.status).toBe('in_progress');
     });
 
-    it('caps a future staleness clock at now', async () => {
+    it('drops a future staleness clock instead of clamping it', async () => {
       const { taskLastTouch } = await import('../task-touch.js');
-      const t = taskLastTouch({ createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z', metadata: { verified_at: '2099-01-01T00:00:00.000Z' } });
-      expect(t <= new Date().toISOString()).toBe(true);
+      const t = taskLastTouch({ createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z', metadata: { verified_at: '2099-01-01T00:00:00.000Z', touched_at: '2026-01-02T00:00:00.000Z' } });
+      expect(t).toBe('2026-01-02T00:00:00.000Z');
     });
 
     it('ignores caller-supplied staleness clocks', async () => {

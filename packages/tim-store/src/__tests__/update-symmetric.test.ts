@@ -57,9 +57,11 @@ describe('update() symmetric flags', () => {
       metadata: {
         task: { status: 'todo' },
         provenance: { commit: 'abc', branch: 'main' },
-        verified_at: '2026-01-01T00:00:00.000Z',
       },
     });
+    // verified_at is system-owned: only tim_verify (touchVerified) sets it.
+    await store.touchVerified([entry.id]);
+    const verifiedAt = (await store.read(entry.id))!.metadata.verified_at;
 
     await store.update(entry.id, { metadata: { task: { status: 'done' } } });
     const updated = await store.read(entry.id);
@@ -67,6 +69,6 @@ describe('update() symmetric flags', () => {
     expect(task.status).toBe('done');
     expect(task.history.map((e) => e.status)).toEqual(['todo', 'done']);
     expect(updated!.metadata.provenance).toEqual({ commit: 'abc', branch: 'main' });
-    expect(updated!.metadata.verified_at).toBe('2026-01-01T00:00:00.000Z');
+    expect(updated!.metadata.verified_at).toBe(verifiedAt);
   });
 });

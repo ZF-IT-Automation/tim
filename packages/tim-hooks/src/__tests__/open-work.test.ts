@@ -100,10 +100,19 @@ describe('formatOpenWorkLines stale handling', () => {
     const child = await store.write('Subtask note', { parentId: staleIds[1] });
     store.getDb().prepare('UPDATE entries SET created_at = ? WHERE id = ?').run('2026-02-07T12:00:00.000Z', child.id);
     const lines = await formatOpenWorkLines(store, 'P0099', 12, 4000);
-    expect(lines).toContain('- [todo, medium] Stale task 0');
-    expect(lines).toContain('- [todo, medium] Stale task 1');
-    expect(lines.filter(l => / · stale since /.test(l)).length + 0).toBeGreaterThan(0);
+    expect(lines).toContain(`- [todo, medium] Stale task 0 · ${staleIds[0]}`);
+    expect(lines).toContain(`- [todo, medium] Stale task 1 · ${staleIds[1]}`);
+    expect(lines.filter(l => / · stale since /.test(l)).length).toBeGreaterThan(0);
     expect(lines.join('\n')).not.toMatch(/Stale task [01] · stale since/);
+  });
+
+  it('a planted future clock does not keep a stale task fresh', async () => {
+    store.getDb().prepare("UPDATE entries SET metadata = json_set(metadata, '$.verified_at', '2099-01-01T00:00:00.000Z') WHERE id = ?").run(staleIds[0]);
+    const future = await store.write('Skewed log', { metadata: { task: staleIds[1] } });
+    store.getDb().prepare('UPDATE entries SET created_at = ? WHERE id = ?').run('2099-01-01T00:00:00.000Z', future.id);
+    const lines = await formatOpenWorkLines(store, 'P0099', 12, 4000);
+    const fresh = lines.filter(l => l.startsWith('- [') && !l.includes(' · stale since '));
+    expect(fresh.map(l => l.replace(/ · \S+$/, ''))).toEqual(['- [todo, high] Fresh task']);
   });
 
   it('keeps stale work visible when the budget is tight', async () => {
