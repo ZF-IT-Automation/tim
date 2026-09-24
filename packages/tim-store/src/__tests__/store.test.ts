@@ -489,6 +489,17 @@ describe('TimStore', () => {
       expect((await store.getTasks()).find(t => t.title === 'Legacy string flag')?.status).toBe('todo');
     });
 
+    it('dates a seeded first history event to the last change, not to the status update', async () => {
+      const { task } = await seedTaskProject('P0205', 'Eps', 'Old task', {});
+      await store.update(task.id, { metadata: { task: { status: 'todo', priority: 'P1' } } });
+      store.getDb().prepare('UPDATE entries SET metadata = json_remove(metadata, \'$.task.history\'), updated_at = ? WHERE id = ?')
+        .run('2026-01-02T03:04:05.000Z', task.id);
+      await store.update(task.id, { metadata: { task: { status: 'done', priority: 'P1' } } });
+      const history = ((await store.read(task.id))!.metadata.task as { history: Array<{ status: string; at: string }> }).history;
+      expect(history[0]).toEqual({ status: 'todo', at: '2026-01-02T03:04:05.000Z' });
+      expect(history[1].status).toBe('done');
+    });
+
     it('ranks P0–P3 on the same scale as critical/high/medium/low', async () => {
       const { section } = await seedTaskProject('P0204', 'Delta', 'medium one', { status: 'todo' });
       const at = (title: string, priority: string) => store.write(title, {
