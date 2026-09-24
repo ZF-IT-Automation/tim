@@ -24,7 +24,7 @@ cannot apply.
 | G5 | **Continue finds the real handoff.** A trivial newest session (< 3 exchanges, no handoff) does not mask the last substantive one. | `tim_preview_briefing` shows the newest handoff note (if any exists in the last 30 days) and the newest substantive session. |
 | G6 | **Directive does not contradict itself.** | The directive never says both "already loaded / do NOT re-fetch" and "call tim_load_project". |
 | G7 | **Delta is news, not bookkeeping.** | `[Since last session]` bullets list no session/exchange/batch/checkpoint/summary nodes. |
-| G8 | **Open work is trustworthy.** | Every task in "Open work" either was updated in the last 14 days or is visibly marked stale. |
+| G8 | **Open work is trustworthy.** | Every task in "Open work" either was touched (update or `tim_verify`) within the project's last 7 days of work — days with a logged exchange, so a paused project does not age — or is visibly marked stale. |
 | G9 | **Budget.** | Directive ≤ 4 KB; `tim_load_project` default ≤ 12 KB. |
 
 ## Soft goals (no regression; improve when cheap)

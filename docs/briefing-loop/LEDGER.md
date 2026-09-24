@@ -21,6 +21,7 @@ Raw scorecards: `runs/`.
 | 2026-09-24 | iteration 3 | 7586ea8 | live copy, all active projects | 9/9 in all 8 active projects (P0054, P0062, P0063, P0073, P0075, P0076, P0077, P0078) | 4/4 | — | multi-day sessions render `start – last exchange`; empty Now block says "no open work"; Sections count excludes the header-rendered Overview; Inbox exempt |
 | 2026-09-24 | iteration 4 | 0bd3e78 | live copy, all active projects | 9/9 in all 8 | 4/4 | — | session activity = exchanges + handoff checkpoints (summaries/repeat checkpoints no longer reorder sessions); prompt recall drops transcript turns (exchange, checkpoint) and duplicate lines — it had replayed old user prompts as instructions |
 | 2026-09-24 | iteration 5 | df088b2 | live copy after P0063 task triage | 9/9 in all 8 (hook now scored per project) | 4/4 | — | stale tasks sit under a triage instruction (done → status, obsolete → irrelevant, valid → tim_verify); tim_show lines carry date + id; P0063: 3 tasks closed, 12 verified, 1 carried over |
+| 2026-09-24 | review 4 + iteration 6 | (this commit) | live copy | 9/9 in all 8 | 4/4 | — | review 4: 0 blocker, 0 major, 7 minor — all fixed. Staleness now counts days of project work (a paused project does not age); stale previews rotate oldest-first so forgotten tasks resurface; fresh overflow is counted instead of dropped; recall excludes transcript kinds in SQL and dates every line; legacy handoffs count via the summary root's note |
 
 ## Goal changes
 - S1: sessions-root and commits-root are legitimate non-section roots (scorer counted them as loose).
@@ -32,6 +33,7 @@ Raw scorecards: `runs/`.
 - G2: scorer resolves the project and last activity like the renderer (it had read a stale `merged-into` row for P0062).
 - G4: Recent Sessions is ordered by activity; the scorer compared its first line against the newest session *start* date, so a long session that began earlier failed. Now both sides use the last exchange (the renderer shows `start – last`).
 - Hook texts: the scorer ran the start hook from a fixed cwd (`~/projects/tim`), so every project was scored against P0063's hook; G8 only passed elsewhere because P0063's open work was all stale. Each project now gets its own marker dir.
+- G8: "updated in the last 14 days" aged every task of a paused project. Now: touched within the project's last 7 days of work (days with a logged exchange).
 - Scope: P0000 Inbox exempt (no sections/sessions/summary by design).
 - G5: scorer dated handoffs by the summary root's `updated_at`, which metadata writes bump; now by the owning session's date.
 

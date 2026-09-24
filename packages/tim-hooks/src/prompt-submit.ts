@@ -57,14 +57,15 @@ async function computePromptContext(
     searchType: 'fts',
     project: params.projectLabel,
     ftsQueryMode: searchQuery.includes(' OR ') ? 'or-terms' : 'literal',
+    excludeKinds: [...TRANSCRIPT_KINDS],
   });
   // Past turns stay reachable via tim_resume_topic / tim_search.
-  hits = hits.filter(hit =>
-    !shouldSkipPromptRecall(hit) && !TRANSCRIPT_KINDS.has(String(hit.metadata.kind)));
+  hits = hits.filter(hit => !shouldSkipPromptRecall(hit));
 
   for (const hit of hits) {
     const label = hit.title?.trim() || hit.id;
-    const line = `TIM erinnert: ${label} — ${excerpt(hit.content || hit.title)}`;
+    // Dated, so a recalled summary reads as history, not as a current instruction.
+    const line = `TIM erinnert (${hit.createdAt.slice(0, 10)}): ${label} — ${excerpt(hit.content || hit.title)}`;
     if (!lines.includes(line)) lines.push(line);
     if (lines.length === RETRIEVAL_TOP_K) break;
   }

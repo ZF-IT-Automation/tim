@@ -5,6 +5,7 @@
 
 const ISO_DATE = /\d{4}-\d{2}-\d{2}/;
 const STALE_DAYS = 14;
+const STALE_ACTIVE_DAYS = 7;
 const DIRECTIVE_BUDGET = 4 * 1024;
 const LOAD_BUDGET = 12 * 1024;
 
@@ -272,8 +273,10 @@ export function evalG8(hookText, loadText, dbCtx, now = new Date()) {
       stale.push(`${title ?? line}: no db match`);
       continue;
     }
-    const ageDays = daysBetween(task.updated_at, now.toISOString());
-    if (ageDays >= STALE_DAYS) stale.push(`${title}: updated ${task.updated_at.slice(0, 10)} (${ageDays.toFixed(0)}d)`);
+    // Staleness counts days of project work since the last touch, not calendar days.
+    const touched = task.updated_at.slice(0, 10);
+    const workDays = (dbCtx.activeDays ?? []).filter((d) => d > touched).length;
+    if (workDays >= STALE_ACTIVE_DAYS) stale.push(`${title}: updated ${touched} (${workDays} work days)`);
   }
   const pass = stale.length === 0;
   return result('G8', true, pass, pass, pass ? `checked ${lines.length} items` : stale.join('; '));

@@ -952,7 +952,8 @@ export class TimStore implements MemoryInterface {
   }
 
   /** Sessions under a project's sessions-root, newest activity first.
-   *  Activity = latest insert (rowid) anywhere in the session subtree. */
+   *  Activity = session start, logged exchanges and checkpoints of a session that carries a
+   *  handoff note. Summaries and plain repeat checkpoints do not count. */
   listProjectSessionsByActivity(
     projectId: string,
     limit = 10,
@@ -977,7 +978,8 @@ export class TimStore implements MemoryInterface {
 
     const rows = this.db.prepare(`
       WITH RECURSIVE sub AS (
-        SELECT id, id AS root, created_at, rowid AS rid, 1 AS active FROM entries
+        SELECT id, id AS root, MIN(COALESCE(json_extract(metadata, '$.date'), created_at), created_at) AS created_at, rowid AS rid,
+          1 AS active FROM entries
         WHERE parent_id = ?
           AND json_extract(metadata, '$.kind') = 'session'
           AND tombstoned_at IS NULL
@@ -988,7 +990,9 @@ ${zeroExchangeFilter}
         -- bookkeeping; counting them let a backfill or idle sweep reorder old sessions.
         SELECT e.id, sub.root, e.created_at, e.rowid,
           json_extract(e.metadata, '$.kind') = 'exchange'
-            OR json_extract(e.metadata, '$.handoff') = 1
+            OR (json_extract(e.metadata, '$.kind') = 'checkpoint'
+              AND json_extract((SELECT p.metadata FROM entries p WHERE p.id = e.parent_id),
+                '$.handoff_note') IS NOT NULL)
         FROM entries e
         INNER JOIN sub ON e.parent_id = sub.id
         WHERE e.tombstoned_at IS NULL
@@ -1002,6 +1006,29 @@ ${zeroExchangeFilter}
     `).all(sessionsRoot.id, limit) as Array<{ root: string; last: string; lastRid: number }>;
 
     return rows.map(r => ({ id: r.root, lastActivity: r.last }));
+  }
+
+  /**
+   * Distinct UTC days (YYYY-MM-DD, ascending) on which the project logged a real exchange.
+   * The clock for task staleness: a dormant project does not age its backlog.
+   */
+  getProjectActiveDays(projectId: string): string[] {
+    const rows = this.db.prepare(`
+      WITH RECURSIVE sub AS (
+        SELECT id FROM entries
+        WHERE parent_id = ? AND json_extract(metadata, '$.kind') = 'sessions-root'
+          AND tombstoned_at IS NULL
+        UNION ALL
+        SELECT e.id FROM entries e INNER JOIN sub ON e.parent_id = sub.id
+        WHERE e.tombstoned_at IS NULL
+      )
+      SELECT DISTINCT substr(e.created_at, 1, 10) AS day
+      FROM entries e INNER JOIN sub ON e.id = sub.id
+      WHERE json_extract(e.metadata, '$.kind') = 'exchange'
+        AND COALESCE(json_extract(e.metadata, '$.system_turn'), 0) != 1
+      ORDER BY day
+    `).all(projectId) as Array<{ day: string }>;
+    return rows.map(r => r.day);
   }
 
   /** Count live descendants of a project node + latest created_at. */
@@ -2665,6 +2692,7 @@ ${zeroExchangeFilter}
         tag: options.tag,
         status: options.status,
         ftsQueryMode: options.ftsQueryMode,
+        excludeKinds: options.excludeKinds,
         confidenceAbove: options.confidenceAbove,
         visibilityMask: options.visibilityMask,
         asOfEpochMs: asOf?.getTime(),

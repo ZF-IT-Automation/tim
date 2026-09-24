@@ -86,7 +86,7 @@ describe('tim hook prompt-submit', () => {
       hookSpecificOutput: {
         hookEventName: 'UserPromptSubmit',
         additionalContext:
-          'TIM erinnert: SQLite WAL Größe — Unicode retrieval context.',
+          'TIM erinnert (' + new Date().toISOString().slice(0, 10) + '): SQLite WAL Größe — Unicode retrieval context.',
       },
     });
   });

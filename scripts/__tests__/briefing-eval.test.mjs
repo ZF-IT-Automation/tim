@@ -110,10 +110,16 @@ describe('briefing-eval goals', () => {
         openTasksByTitle: new Map([
           ['old task', { updated_at: '2026-09-01T00:00:00Z' }],
         ]),
+        activeDays: ['2026-09-02', '2026-09-03', '2026-09-05', '2026-09-08', '2026-09-10', '2026-09-15', '2026-09-20'],
       },
       new Date('2026-09-23T12:00:00Z'),
     );
     assert.equal(staleG8.pass, false, 'G8 should fail stale open work');
+    const dormantG8 = evalG8(hookOpen, '', {
+      openTasksByTitle: new Map([['old task', { updated_at: '2026-06-01T00:00:00Z' }]]),
+      activeDays: ['2026-05-30'],
+    });
+    assert.equal(dormantG8.pass, true, 'a paused project does not age its tasks');
 
     const score = formatScorecard([
       { id: 'G1', hard: true, pass: true, value: true, detail: 'ok' },
