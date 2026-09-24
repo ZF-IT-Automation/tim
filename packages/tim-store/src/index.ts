@@ -251,3 +251,5 @@ export {
   listProjectPathRows,
   isStalePathRow,
 } from './project-path-inventory.js';
+
+export { taskLastTouch } from './task-touch.js';

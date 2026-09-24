@@ -2342,7 +2342,9 @@ export async function createMcpServer(
                   presentReadEntry(s, child, include_body, cwd)));
               if (depth === 1) {
                 // children:[] alone reads as "empty section"; say what depth:1 left out.
-                const hidden = (await s.getChildren(sec.id)).length;
+                // Same reader and options as a depth:2 read, so the count matches what it returns.
+                const hidden = ((await s.read(sec.id, { ...readOpts, depth: 2 })) as EntryWithChildren | null)
+                  ?.children?.length ?? 0;
                 if (hidden > 0) payload.childrenOmitted = `${hidden} child${hidden === 1 ? "" : "ren"} not loaded at depth:1 — use depth:2`;
               }
             }

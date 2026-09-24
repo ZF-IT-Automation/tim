@@ -12,6 +12,7 @@ import {
   isSubstantiveSession,
   parseSessionSubstance,
   isCountableUserExchange,
+  taskLastTouch,
   type TimStore,
 } from 'tim-store';
 import { isClosedBugStatus, type Entry } from 'tim-core';
@@ -362,8 +363,9 @@ function activeDaysSince(updatedAt: string, activeDays: string[]): number {
   return activeDays.filter(d => d > day).length;
 }
 
+/** Stale lines carry the id: the triage instruction is only actionable with it. */
 function taskStaleSuffix(entry: OpenWorkEntry): string {
-  return entry.stale ? ` · stale since ${entry.updatedAt.slice(0, 10)}` : '';
+  return entry.stale ? ` · stale since ${entry.updatedAt.slice(0, 10)} · ${entry.task.id}` : '';
 }
 
 function staleTasksDrillDown(projectLabel: string): string {
@@ -388,7 +390,7 @@ interface OpenWorkEntry {
 async function collectOpenWork(
   store: TimStore,
   projectLabel: string,
-): Promise<OpenWorkEntry[]> {
+): Promise<OpenWorkEntry[] & { activeDayCount?: number }> {
   const tasks = await store.getTasks();
   const project = await store.requireProject(projectLabel);
   const activeDays = store.getProjectActiveDays(project.id);
@@ -397,14 +399,14 @@ async function collectOpenWork(
     if (task.project_label !== projectLabel) continue;
     if (task.status && CLOSED_TASK_STATUSES.has(task.status)) continue;
     const row = await store.read(task.id, { includeChildren: false });
-    const updatedAt = row?.updatedAt ?? '';
+    const updatedAt = row ? taskLastTouch(row) : '';
     entries.push({
       task,
       updatedAt,
       stale: updatedAt ? activeDaysSince(updatedAt, activeDays) >= STALE_ACTIVE_DAYS : false,
     });
   }
-  return entries;
+  return Object.assign(entries, { activeDayCount: activeDays.length });
 }
 
 /** Staleness cannot be resolved automatically — only the agent can tell done from obsolete. */
@@ -444,32 +446,45 @@ export async function formatOpenWorkLines(
     lines.push(line);
     return true;
   };
-  let triaged = false;
-  const pushStale = (line: string): boolean => {
-    if (!triaged) triaged = tryPush(STALE_TRIAGE_LINE);
-    return tryPush(line);
-  };
 
+  // Oldest first, then rotated by the project's work-day count: the preview window moves every
+  // work day, so a task nobody triages cannot pin its slot and every stale task surfaces in turn.
+  stale.sort((a, b) => a.updatedAt.localeCompare(b.updatedAt));
+  const offset = stale.length > 0 ? (all.activeDayCount ?? 0) % stale.length : 0;
+  const rotated = [...stale.slice(offset), ...stale.slice(0, offset)];
+  const previewCount = Math.min(fresh.length > 0 ? 2 : 3, rotated.length);
+  const staleLines: string[] = [];
+  if (rotated.length > 0) {
+    staleLines.push(STALE_TRIAGE_LINE);
+    for (const entry of rotated.slice(0, previewCount)) {
+      staleLines.push(formatOpenWorkLine(entry.task, taskStaleSuffix(entry)));
+    }
+    const hidden = rotated.slice(previewCount);
+    if (hidden.length > 0) {
+      staleLines.push(staleCollapseLine(hidden.length, oldestStaleDate(hidden), projectLabel));
+    }
+  }
+
+  // Reserve room for the stale block and the overflow count before fresh lines fill the budget,
+  // so a tight budget never drops stale work or the counts without a trace.
+  const overflowReserve = 80;
+  const staleReserve = staleLines.reduce((n, l) => n + l.length + 1, 0);
+  const freshBudget = maxChars - staleReserve - overflowReserve;
   let shownFresh = 0;
   for (const entry of fresh) {
-    if (shownFresh >= maxItems || !tryPush(formatOpenWorkLine(entry.task, ''))) break;
+    const line = formatOpenWorkLine(entry.task, '');
+    if (shownFresh >= maxItems || used + line.length + 1 > freshBudget) break;
+    tryPush(line);
     shownFresh += 1;
   }
   if (shownFresh < fresh.length) {
     tryPush(`+ ${fresh.length - shownFresh} more open task${fresh.length - shownFresh === 1 ? '' : 's'} — ${staleTasksDrillDown(projectLabel)}`);
   }
-  if (stale.length === 0) return lines;
-
-  // Oldest first: each triaged task (verified, closed or dropped) leaves the preview and the
-  // next-oldest moves up, so every forgotten task surfaces eventually instead of sitting in a count.
-  stale.sort((a, b) => a.updatedAt.localeCompare(b.updatedAt));
-  const previewCount = Math.min(fresh.length > 0 ? 2 : 3, stale.length);
-  for (const entry of stale.slice(0, previewCount)) {
-    pushStale(formatOpenWorkLine(entry.task, taskStaleSuffix(entry)));
-  }
-  const hidden = stale.slice(previewCount);
-  if (hidden.length > 0) {
-    pushStale(staleCollapseLine(hidden.length, oldestStaleDate(hidden), projectLabel));
+  if (rotated.length === 0) return lines;
+  if (used + staleReserve <= maxChars) {
+    for (const line of staleLines) tryPush(line);
+  } else {
+    tryPush(staleCollapseLine(rotated.length, oldestStaleDate(rotated), projectLabel));
   }
   return lines;
 }

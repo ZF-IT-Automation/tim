@@ -464,17 +464,24 @@ function loadDbContext(dbPath, projectLabel) {
   // Open tasks (any non-closed status, new or legacy metadata shape) in project subtree for G8 title lookup.
   const taskRows = db.prepare(`
     WITH RECURSIVE tree(id) AS (
+      -- The project root plus root-level trees a merge retired into this project.
       SELECT id FROM entries WHERE id = ?
+        OR (parent_id IS NULL AND json_extract(metadata, '$.merged_into') = ?)
       UNION ALL
       SELECT e.id FROM entries e JOIN tree t ON e.parent_id = t.id WHERE e.tombstoned_at IS NULL
     )
-    SELECT e.title, e.updated_at
+    -- Product rules: task marker = getTasks (object / true / 1 / "true"); last touch = taskLastTouch.
+    SELECT e.title,
+      MAX(COALESCE(json_extract(e.metadata, '$.touched_at'), e.updated_at),
+          COALESCE(json_extract(e.metadata, '$.verified_at'), ''), e.created_at) AS updated_at
     FROM entries e
     JOIN tree t ON e.id = t.id
-    WHERE COALESCE(json_extract(e.metadata, '$.task.status'), json_extract(e.metadata, '$.status'))
+    WHERE e.irrelevant = 0 AND e.tombstoned_at IS NULL
+      AND COALESCE(json_extract(e.metadata, '$.task.status'), json_extract(e.metadata, '$.status'), 'todo')
           NOT IN ('done', 'cancelled', 'closed', 'wontfix')
-      AND (json_type(e.metadata, '$.task') IS NOT NULL OR json_extract(e.metadata, '$.type') = 'task')
-  `).all(project.id);
+      AND (json_type(e.metadata, '$.task') IN ('object', 'true')
+        OR json_extract(e.metadata, '$.task') IN (1, 'true'))
+  `).all(project.id, projectLabel);
   const openTasksByTitle = new Map(
     taskRows.map((r) => [normalizeTitle(r.title), r]),
   );
@@ -495,6 +502,7 @@ function loadDbContext(dbPath, projectLabel) {
 
   db.close();
   return {
+    openTaskCount: taskRows.length,
     activeDays,
     lastActivity,
     liveTestCount,

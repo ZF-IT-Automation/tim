@@ -150,7 +150,8 @@ export interface SearchOptions {
    * `or-terms` preserves OR between quoted prompt-recall terms.
    */
   ftsQueryMode?: 'literal' | 'or-terms';
-  /** Drop these metadata.kind values in SQL, before the limit (post-filtering starves real hits). */
+  /** FTS/lexical path only: drop these metadata.kind values in SQL, before the limit
+   *  (post-filtering starves real hits). The vector path does not apply it. */
   excludeKinds?: string[];
   /** Reconstruct validity at this timezone-qualified ISO timestamp (default: now). */
   asOf?: string;
@@ -500,7 +501,9 @@ const TASK_PRIORITY_RANK: Record<string, number> = {
   low: 3, P3: 3,
 };
 
-/** Sort key for a task priority; unknown or missing sorts last. */
-export function taskPriorityRank(priority: string | undefined | null): number {
-  return TASK_PRIORITY_RANK[priority ?? ''] ?? 4;
+/** Sort key for a task priority; unknown or missing sorts last. Case-insensitive; "0"–"3" = P0–P3. */
+export function taskPriorityRank(priority: string | number | undefined | null): number {
+  const raw = String(priority ?? '').trim();
+  const key = /^[0-3]$/.test(raw) ? `P${raw}` : /^p[0-3]$/i.test(raw) ? raw.toUpperCase() : raw.toLowerCase();
+  return TASK_PRIORITY_RANK[key] ?? 4;
 }

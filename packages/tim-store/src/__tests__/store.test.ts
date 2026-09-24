@@ -500,6 +500,14 @@ describe('TimStore', () => {
       expect(history[1].status).toBe('done');
     });
 
+    it('assigns tasks in a tree retired by a merge to the merge target', async () => {
+      await seedTaskProject('P0206', 'Target', 'Live task', { status: 'todo' });
+      const retired = await store.write('[MERGED → P0206] old tree', { metadata: { kind: 'merged-into-P0206', merged_into: 'P0206' } });
+      await store.write('Forgotten task', { parentId: retired.id, metadata: { task: { status: 'todo' } } });
+      const forgotten = (await store.getTasks()).find(t => t.title === 'Forgotten task');
+      expect(forgotten?.project_label).toBe('P0206');
+    });
+
     it('ranks P0–P3 on the same scale as critical/high/medium/low', async () => {
       const { section } = await seedTaskProject('P0204', 'Delta', 'medium one', { status: 'todo' });
       const at = (title: string, priority: string) => store.write(title, {
