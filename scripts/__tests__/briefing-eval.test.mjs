@@ -41,6 +41,13 @@ describe('briefing-eval goals', () => {
       'G2 should parse renderer header with last activity and packages',
     );
 
+    const noStatusHeader = ['P0073 — team-up', 'last activity 2026-09-23 · 12 packages'].join('\n');
+    assert.equal(
+      evalG2(noStatusHeader, { lastActivity: '2026-09-23T12:00:00Z' }).pass,
+      true,
+      'G2 should parse header without Status when project has no pipe status segment',
+    );
+
     assert.equal(
       evalG4('no recent sessions block', { sessionCount: 0 }).na,
       true,

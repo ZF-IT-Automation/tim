@@ -279,6 +279,7 @@ function sessionHasHandoffNote(db, sessionId) {
   return Boolean(row);
 }
 
+/** Same SQL as TimStore.getProjectEntryStats (packages/tim-store/src/store.ts). */
 function projectLastActivity(db, projectId) {
   const row = db.prepare(`
     WITH RECURSIVE descendants AS (
@@ -294,6 +295,34 @@ function projectLastActivity(db, projectId) {
     SELECT MAX(created_at) AS last FROM descendants
   `).get(projectId);
   return row?.last ?? null;
+}
+
+/** Mirror TimStore.resolveProjectLabel + read(label) — ignore non-project rows sharing a label. */
+function resolveProjectRow(db, projectLabel) {
+  const q = projectLabel.trim();
+  const roots = db.prepare(`
+    SELECT id, updated_at, content, metadata, created_at
+    FROM entries
+    WHERE tombstoned_at IS NULL
+      AND irrelevant = 0
+      AND json_extract(metadata, '$.kind') = 'project'
+      AND json_extract(metadata, '$.label') = ?
+    ORDER BY created_at ASC
+  `).all(q);
+  if (roots.length === 1) return roots[0];
+  const byId = db.prepare(`
+    SELECT id, updated_at, content, metadata, created_at
+    FROM entries
+    WHERE tombstoned_at IS NULL
+      AND irrelevant = 0
+      AND id = ?
+      AND json_extract(metadata, '$.kind') = 'project'
+  `).get(q);
+  if (byId) return byId;
+  if (roots.length > 1) {
+    throw new Error(`Ambiguous project label ${q}: ${roots.map((r) => r.id).join(', ')}`);
+  }
+  return null;
 }
 
 function listActiveProjects(db, days) {
@@ -321,14 +350,7 @@ function listActiveProjects(db, days) {
 function loadDbContext(dbPath, projectLabel) {
   const db = new Database(dbPath, { readonly: true });
 
-  // Project row by metadata.label (canonical) or id fallback.
-  const project = db.prepare(`
-    SELECT id, updated_at, content, metadata
-    FROM entries
-    WHERE tombstoned_at IS NULL
-      AND (json_extract(metadata, '$.label') = ? OR id = ?)
-    LIMIT 1
-  `).get(projectLabel, projectLabel);
+  const project = resolveProjectRow(db, projectLabel);
   if (!project) {
     db.close();
     throw new Error(`Project not found in DB: ${projectLabel}`);
