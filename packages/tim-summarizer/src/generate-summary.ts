@@ -262,6 +262,19 @@ function appendSummarizerLog(line: string): void {
 
 const KILL_GRACE_MS = 5_000;
 
+/**
+ * Per-CLI timeout. Under the supervisor (TIM_SUMMARIZER_BUDGET_SEC) the whole run
+ * is killed at that budget, so each slot gets its share — otherwise a slot 1 that
+ * hangs for the full configured timeout means slot 2 is never tried.
+ */
+export function perCliTimeoutSec(configured: number | undefined, chainLength: number): number {
+  const timeout = configured ?? 600;
+  const budget = Number(process.env.TIM_SUMMARIZER_BUDGET_SEC);
+  if (!(budget > 0) || chainLength < 1) return timeout;
+  const share = Math.floor(budget / chainLength) - KILL_GRACE_MS / 1000 - 5;
+  return Math.max(30, Math.min(timeout, share));
+}
+
 function runCliProcess(
   command: string,
   args: string[],
@@ -506,7 +519,7 @@ export async function generateSessionRollup(
   if (batchSummaries.length === 0) return null;
 
   const prompt = buildSessionRollupPrompt(batchSummaries);
-  const timeoutSec = config.summarizer?.timeout_sec ?? 600;
+  const timeoutSec = perCliTimeoutSec(config.summarizer?.timeout_sec, chain.length);
 
   for (const entry of chain) {
     const result = await tryCli(entry.cli, entry.model, entry.provider, prompt, timeoutSec, onError, entry.args);
@@ -555,7 +568,7 @@ export async function generateProjectSummary(
   if (sessionSummaries.length === 0) return null;
 
   const prompt = buildProjectSummaryPrompt(sessionSummaries);
-  const timeoutSec = config.summarizer?.timeout_sec ?? 600;
+  const timeoutSec = perCliTimeoutSec(config.summarizer?.timeout_sec, chain.length);
 
   for (const entry of chain) {
     const result = await tryCli(entry.cli, entry.model, entry.provider, prompt, timeoutSec, onError, entry.args);
@@ -589,7 +602,7 @@ export async function generateSummaryDetailed(
   }
 
   const prompt = buildPrompt(batch);
-  const timeoutSec = config.summarizer?.timeout_sec ?? 600;
+  const timeoutSec = perCliTimeoutSec(config.summarizer?.timeout_sec, chain.length);
 
   for (const entry of chain) {
     const result = await tryCli(entry.cli, entry.model, entry.provider, prompt, timeoutSec, onError, entry.args);
@@ -657,7 +670,7 @@ export async function generateSubstanceVerdict(
   if (!chain || chain.length === 0) return undefined;
 
   const prompt = buildSubstanceVerdictPrompt(summaryText, project);
-  const timeoutSec = config.summarizer?.timeout_sec ?? 600;
+  const timeoutSec = perCliTimeoutSec(config.summarizer?.timeout_sec, chain.length);
 
   for (const entry of chain) {
     const result = await tryCli(
