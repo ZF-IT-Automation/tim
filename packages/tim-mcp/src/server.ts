@@ -1858,7 +1858,8 @@ async function bindUnboundSession(s: TimStore, parentId: string | null | undefin
     const sessionId = await resolveHarnessSessionId(s, { cwd, useSessionCache: true, useEnv: true });
     if (!sessionId) return;
     const existing = await s.read(sessionId);
-    if (existing?.metadata.kind === 'session') return;
+    const ref = existing?.metadata.project_ref;
+    if (existing?.metadata.kind === 'session' && typeof ref === 'string' && ref && ref !== 'P0000') return;
     await getSessions().startProjectSession({
       sessionId,
       projectId: projectLabel,

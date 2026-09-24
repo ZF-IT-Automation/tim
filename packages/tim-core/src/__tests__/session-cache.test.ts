@@ -119,6 +119,19 @@ describe('session-cache', () => {
     delete process.env.TIM_SESSION_ID;
   });
 
+  it('falls back to CLAUDE_CODE_SESSION_ID, after TIM_SESSION_ID', () => {
+    process.env.CLAUDE_CODE_SESSION_ID = 'from-claude';
+    try {
+      expect(resolveActiveSessionId({ markerSession: 'from-marker' })).toBe('from-claude');
+      process.env.TIM_SESSION_ID = 'from-tim';
+      expect(resolveActiveSessionId({})).toBe('from-tim');
+      expect(resolveActiveSessionId({ useEnv: false, markerSession: 'from-marker' })).toBe('from-marker');
+    } finally {
+      delete process.env.CLAUDE_CODE_SESSION_ID;
+      delete process.env.TIM_SESSION_ID;
+    }
+  });
+
   it('useEnv:false skips TIM_SESSION_ID env var', () => {
     process.env.TIM_SESSION_ID = 'FROM-ENV';
     // No cache file, no arg — env would normally win, but useEnv:false skips it
