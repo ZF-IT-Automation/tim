@@ -35,6 +35,7 @@ describe('MCP wires projectPath for coding-task vcs detection', () => {
       clientInfo: { name: 'vcs-wiring', version: '0.0.1' },
     });
     await client.init();
+    await client.callTool('tim_create_project', { label: 'P0900', content: 'Task fixture', memoryOnly: true });
   });
 
   afterEach(() => {
@@ -44,6 +45,7 @@ describe('MCP wires projectPath for coding-task vcs detection', () => {
 
   it('tim_write sets task.vcs=git for coding tasks when server cwd is a git repo', async () => {
     const writeResp = await client.callTool('tim_write', {
+      where: 'P0900/Tasks',
       content: 'Implement the feature',
       tags: ['#task', '#coding'],
       metadata: { type: 'task', task: { status: 'todo', subtype: 'coding' } },

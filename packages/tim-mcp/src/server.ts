@@ -31,6 +31,8 @@ import {
   formatMemoryHealthLines,
   type TaskRecord,
   isCodingNeedsReview,
+  isTaskMarker,
+  taskLastTouch,
 } from 'tim-store';
 import { formatProjectOutput, type ProjectSchema, type FormatProjectOutputOptions } from './project-output.js';
 import { collectTopicResume, formatTopicResume } from './topic-resume.js';
@@ -1659,7 +1661,10 @@ function formatShowLine(entry: Entry): string {
   const title = entry.title.padEnd(44, ' ');
   const tagStr = entry.tags.join(' ');
   // id + last touch: the caller must be able to act on a line (tim_update / tim_verify).
-  const ref = ` · ${entry.updatedAt.slice(0, 10)} · ${entry.id}`;
+  // Tasks show their touch clock (the briefing's "stale since"), not updated_at, which reorders
+  // and sync bookkeeping move.
+  const shown = isTaskMarker(entry.metadata.task) ? taskLastTouch(entry) : entry.updatedAt;
+  const ref = ` · ${shown.slice(0, 10)} · ${entry.id}`;
   return `  ${icon} ${orderPrefix}${title}${tagStr ? ' ' + tagStr : ''}${ref}`;
 }
 
@@ -1922,6 +1927,15 @@ async function writeEntry(
   // see entry_type in the project schema.
   writeOpts.metadata =
     applySectionEntryType(writeOpts.metadata, parentEntryTitle, parentKind) ?? writeOpts.metadata;
+
+  // A task outside every project is shown by no briefing and counted by nothing.
+  if (isTaskMarker(writeOpts.metadata.task)
+    && (!writeOpts.parentId || !s.getProjectLabel(writeOpts.parentId))) {
+    return {
+      ok: false,
+      message: 'a task must live in a project — pass where:"<Pxxxx>/Tasks" (or a parentId inside a project)',
+    };
+  }
 
   const bugValidation = validateBugStatus(writeOpts.metadata);
   if (!bugValidation.ok) {

@@ -159,6 +159,14 @@ describe('tim_read extended', () => {
     expect(parsed.entry.metadata.kind).toBe('project');
   });
 
+  it('refuses a task that would live outside every project', async () => {
+    const resp = await client.callTool('tim_write', {
+      content: 'Orphan task', tags: ['#task', '#test'], metadata: { task: { status: 'todo' } },
+    });
+    expect(resp.result?.isError).toBe(true);
+    expect(resp.result!.content[0].text).toContain('a task must live in a project');
+  });
+
   it('section returns section and children', async () => {
     await client.callTool('tim_create_project', { label: 'P0501', content: 'Section Proj', memoryOnly: true });
     // Tasks is one of the standard sections tim_create_project now materializes.

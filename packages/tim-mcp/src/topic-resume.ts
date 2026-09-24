@@ -10,7 +10,7 @@
 // their bodies. Full text is forgiving but bm25-ranked and truncating, so it
 // cannot promise completeness the way the tag scan does.
 import type { Entry } from 'tim-core';
-import { truncateSummary } from 'tim-core';
+import { resolveEntrySearchStatus, truncateSummary } from 'tim-core';
 import type { TimStore } from 'tim-store';
 import { KIND_BATCH, KIND_SESSION, KIND_SUMMARY_ROOT } from 'tim-store';
 import { recentExchanges } from 'tim-hooks';
@@ -282,7 +282,9 @@ export function formatTopicResume(r: TopicResume): string {
   if (r.work.length > 0) {
     out.push('', `── Tasks, bugs and ideas on this topic (${r.work.length}) ──`);
     for (const w of r.work) {
-      const status = typeof w.metadata.status === 'string' ? ` [${w.metadata.status}]` : '';
+      // Object-form tasks keep their status in task.status (and bugs in bug.status).
+      const resolved = resolveEntrySearchStatus(w.metadata);
+      const status = resolved ? ` [${resolved}]` : '';
       out.push(`- ${w.title}${status}`);
     }
   }

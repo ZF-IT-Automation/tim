@@ -470,6 +470,7 @@ function loadDbContext(dbPath, projectLabel) {
   const mergedRoots = db.prepare(`
     SELECT id, json_extract(metadata, '$.label') AS label, json_extract(metadata, '$.merged_into') AS target
     FROM entries WHERE parent_id IS NULL AND json_extract(metadata, '$.merged_into') IS NOT NULL
+      AND COALESCE(json_extract(metadata, '$.kind'), '') != 'project'
   `).all();
   const resolveMerge = (label) => {
     const seen = new Set();
@@ -491,11 +492,15 @@ function loadDbContext(dbPath, projectLabel) {
     )
     -- Product rules: task marker = getTasks (object / true / 1 / "true"); last touch = taskLastTouch.
     SELECT e.title,
-      MAX(COALESCE(json_extract(e.metadata, '$.touched_at'), e.updated_at),
-          COALESCE(json_extract(e.metadata, '$.verified_at'), ''), e.created_at,
+      -- Future clocks are dropped, not clamped (taskLastTouch).
+      MAX(COALESCE((SELECT v FROM (SELECT COALESCE(json_extract(e.metadata, '$.touched_at'), e.updated_at) AS v)
+                    WHERE v <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now')), ''),
+          COALESCE((SELECT v FROM (SELECT json_extract(e.metadata, '$.verified_at') AS v)
+                    WHERE v <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now')), ''),
+          e.created_at,
           -- Work logged under the task or pointing at it (getTaskWorkLoggedAt).
           COALESCE((SELECT MAX(c.created_at) FROM entries c
-            WHERE c.tombstoned_at IS NULL AND (c.parent_id = e.id
+            WHERE c.tombstoned_at IS NULL AND c.created_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now') AND (c.parent_id = e.id
               OR (json_type(c.metadata, '$.task') = 'text' AND json_extract(c.metadata, '$.task') = e.id))), '')
       ) AS raw_touch
     FROM entries e
@@ -508,10 +513,8 @@ function loadDbContext(dbPath, projectLabel) {
       AND (json_type(e.metadata, '$.task') IN ('object', 'true')
         OR json_extract(e.metadata, '$.task') IN (1, 'true'))
   `).all(project.id, JSON.stringify(mergedIntoHere));
-  // taskLastTouch caps a future clock at now.
-  const nowIso = new Date().toISOString();
   const openTasksByTitle = new Map(
-    taskRows.map((r) => [normalizeTitle(r.title), { ...r, updated_at: r.raw_touch > nowIso ? nowIso : r.raw_touch }]),
+    taskRows.map((r) => [normalizeTitle(String(r.title).replace(/^\s*#+\s*/, '')), { ...r, updated_at: r.raw_touch }]),
   );
 
   // Same clock as the renderer (getProjectActiveDays): days with a real exchange.

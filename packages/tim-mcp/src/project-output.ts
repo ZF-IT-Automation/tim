@@ -188,10 +188,12 @@ function ruleCompactLine(entry: Entry): string {
     .split('\n')
     .map(line => line.replace(/^#{1,6}\s+/, '').trim())
     .filter(line => line.length > 0);
-  const firstBody = bodyLines.find(line => line !== title) ?? bodyLines[0] ?? '';
+  // A body that only restates the title ("X" / "X." / "X:") adds nothing.
+  const same = (a: string, b: string) => a.replace(/[.:\s]+$/, '') === b.replace(/[.:\s]+$/, '');
+  const firstBody = bodyLines.find(line => !same(line, title)) ?? '';
 
   let text: string;
-  if (title !== 'Untitled' && firstBody && firstBody !== title) {
+  if (title !== 'Untitled' && firstBody) {
     text = `${title}: ${firstBody}`;
   } else if (firstBody) {
     text = firstBody;
@@ -218,9 +220,18 @@ function renderRulesBlock(section: Entry, childMap: Map<string, Entry[]>): strin
   const sectionLine = ruleCompactLine(section);
   if (sectionLine) lines.push(sectionLine);
   const children = childMap.get(section.id) ?? [];
+  let superseded = 0;
   for (const child of children) {
+    // Rules kept for history ("[superseded …]") are not binding; list them as a count only.
+    if (/^\[superseded/i.test(entryTitle(child).trim())) {
+      superseded += 1;
+      continue;
+    }
     const line = ruleCompactLine(child);
     if (line) lines.push(line);
+  }
+  if (superseded > 0) {
+    lines.push(`(+ ${superseded} superseded rule${superseded === 1 ? '' : 's'} kept for history — tim_read("${section.id}"))`);
   }
   return lines;
 }

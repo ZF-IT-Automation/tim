@@ -330,6 +330,10 @@ describe('session-start directive carries content', () => {
         },
       });
     }
+    // The label dates a handoff by when it was written: its flagged checkpoint.
+    store.getDb().prepare(
+      "UPDATE entries SET created_at = '2026-09-09T12:00:00.000Z' WHERE json_extract(metadata, '$.kind') = 'checkpoint' AND json_extract(metadata, '$.sessionId') = 'sess-old-handoff'",
+    ).run();
 
     await sessions.startProjectSession({
       sessionId: 'sess-new-substantive',
@@ -350,7 +354,7 @@ describe('session-start directive carries content', () => {
     const briefing = await pastWorkBriefing('P0072');
     expect(briefing?.previousSessionSummary).toContain('newest substantive, no handoff');
     expect(briefing?.latestHandoffNote).toContain('September handoff');
-    expect(briefing?.latestHandoffLabel).toMatch(/2026-09-09 · \d+d ago/);
+    expect(briefing?.latestHandoffLabel).toMatch(/2026-09-09 · \d+d ago · 1 newer session without handoff/);
   });
 
   it('falls back to the checkpoint text when nothing rolled it up into the summary root', async () => {

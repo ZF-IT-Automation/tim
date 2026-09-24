@@ -62,6 +62,26 @@ describe('tim_load_project layout (C6)', () => {
     return text.slice(0, idx).split('\n').length;
   }
 
+  it('hides superseded rules behind a count and drops a body that repeats the title', () => {
+    const mk = (id: string, title: string, content: string) => ({
+      id, parentId: 'rules', title, metadata: { type: 'rule' }, tags: ['#rule'], content,
+      createdAt: '2026-06-01T00:00:00Z',
+    }) as any;
+    const out = formatProjectOutput(
+      { project, children: [overview, rules,
+        mk('r1', '[superseded by team-up roster] Opus for planning', 'old model choice'),
+        mk('r2', 'Patch skills immediately', 'Patch skills immediately.'),
+        mk('r3', 'Never raw SQL', 'Use tim_* tools only.'),
+      ], truncated: false },
+      200, undefined, 'load', 3,
+      { tokenBudget: 12000, briefingContext: { lastActivityDate: '2026-06-01', nowBlockLines: [], openTaskCounts: { open: 0, stale: 0 } } },
+    );
+    expect(out).not.toContain('Opus for planning');
+    expect(out).toContain('(+ 1 superseded rule kept for history');
+    expect(out).toMatch(/^Patch skills immediately$/m);
+    expect(out).toContain('Never raw SQL: Use tim_* tools only.');
+  });
+
   it('orders header → overview → Now → Rules → Project Summary → Sections index', () => {
     const ruleChild = {
       id: 'rule-1',

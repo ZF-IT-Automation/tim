@@ -2474,6 +2474,10 @@ ${zeroExchangeFilter}
     }
 
     const metadata: Record<string, unknown> = { ...(options.metadata ?? {}) };
+    // Staleness clocks are system-owned; a new entry starts without them (copied metadata
+    // must not carry an old or future verification).
+    delete metadata.touched_at;
+    delete metadata.verified_at;
     rejectForgedTemporalSupersession(metadata);
     assertValidEvidenceMetadata(metadata);
     assertValidCallerTemporalMetadata(metadata);

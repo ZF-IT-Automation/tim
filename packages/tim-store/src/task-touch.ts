@@ -9,9 +9,10 @@ export function taskLastTouch(entry: Pick<Entry, 'createdAt' | 'updatedAt' | 'me
   const meta = entry.metadata ?? {};
   const touched = typeof meta.touched_at === 'string' ? meta.touched_at : entry.updatedAt;
   const verified = typeof meta.verified_at === 'string' ? meta.verified_at : '';
-  const latest = [touched, verified, entry.createdAt].reduce((a, b) => (b > a ? b : a), '');
-  // A clock in the future (planted on write, copied metadata, a bad client) must not keep a
-  // task fresh forever; no touch can be later than now.
+  // A clock in the future (copied metadata, a skewed peer) is not a touch: drop it. Clamping it
+  // to now would keep the task fresh forever instead.
   const now = new Date().toISOString();
-  return latest > now ? now : latest;
+  return [touched, verified, entry.createdAt]
+    .filter(t => t <= now)
+    .reduce((a, b) => (b > a ? b : a), '');
 }
