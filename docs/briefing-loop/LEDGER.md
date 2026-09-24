@@ -16,6 +16,8 @@ Raw scorecards: `runs/`.
 | 2026-09-24 | C8 deployed | 649d04c | live + backfill | 8/9 | 4/4 | 9,000 | backfill's own LLM calls created 97 junk sessions → previous session hidden; fixed in 795341f (summarizer CLIs run as workers, scan past bursts) |
 | 2026-09-24 | review 2 | — | — | — | — | — | 11 findings, 2 blockers in C8 logging (whitespace collapse, text loss after unclosed tag) — live ~40 min; hotfix 08cb814 stores prompts verbatim |
 | 2026-09-24 | C9 deployed | dc413fc | live | 9/9 | 4/4 | 9,000 | review-2 fixes; scorer dates handoffs by session |
+| 2026-09-24 | review 3 + C10–C12 | 50b5c33 | live, all projects | 9/9 (P0063) | 4/4 | 9,000 | 2 summarizer blockers (coverage loop/stall on harness-only turns) fixed in C11; English summaries; legacy harness turns flagged (140); pushed, CI green |
+| 2026-09-24 | iteration 2 | 50b5c33 | live, all active projects, substance backfill + summaries regenerated | 9/9 in P0054, P0062, P0063, P0075, P0076, P0077; P0073 8/9 (G4); P0078 8/9 (G1: no open work at all); P0072 archived 7/9; P0000 Inbox 7/9 | 4/4 (Inbox 3/4) | — | removed dead summarizer tier opencode/deepseek-v4-flash-free |
 
 ## Goal changes
 - S1: sessions-root and commits-root are legitimate non-section roots (scorer counted them as loose).
@@ -23,6 +25,8 @@ Raw scorecards: `runs/`.
 - G8: scorer matched only `in_progress`; now all open statuses incl. the legacy metadata shape.
 - G1: scorer accepted only an `Open work`/`Next` heading; now also `── Now ──` (the new first-screen block).
 - G2: header regex now accepts `last activity <date>` (the new header wording).
+- S1: `project-path` entries are legitimate root children.
+- G2: scorer resolves the project and last activity like the renderer (it had read a stale `merged-into` row for P0062).
 - G5: scorer dated handoffs by the summary root's `updated_at`, which metadata writes bump; now by the owning session's date.
 
 ## Session filter — measurement behind the decision (2026-09-23, 591 sessions)
