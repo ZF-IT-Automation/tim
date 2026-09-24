@@ -480,6 +480,28 @@ describe('TimStore', () => {
       expect(tasks).toEqual([]);
     });
 
+    it('ignores a string id in metadata.task (a log record pointing at its task)', async () => {
+      const { section, task } = await seedTaskProject('P0203', 'Gamma', 'Real task', { status: 'todo' });
+      await store.write('Worker log: outcome done', { parentId: section.id, metadata: { task: task.id } });
+      await store.write('Legacy string flag', { parentId: section.id, metadata: { task: 'true', status: 'todo' } });
+      const titles = (await store.getTasks()).map(t => t.title).sort();
+      expect(titles).toEqual(['Legacy string flag', 'Real task']);
+    });
+
+    it('ranks P0–P3 on the same scale as critical/high/medium/low', async () => {
+      const { section } = await seedTaskProject('P0204', 'Delta', 'medium one', { status: 'todo' });
+      const at = (title: string, priority: string) => store.write(title, {
+        parentId: section.id, metadata: { task: { status: 'todo', priority } },
+      });
+      await at('P3 one', 'P3');
+      await at('medium two', 'medium');
+      await at('P0 one', 'P0');
+      await at('high one', 'high');
+      const order = (await store.getTasks({ status: 'todo' }))
+        .filter(t => t.title !== 'medium one').map(t => t.title);
+      expect(order).toEqual(['P0 one', 'high one', 'medium two', 'P3 one']);
+    });
+
     it('returns tasks filtered by status', async () => {
       await seedTaskProject('P0201', 'Alpha', 'Todo task', { status: 'todo' });
       await seedTaskProject('P0202', 'Beta', 'Done task', { status: 'done' });

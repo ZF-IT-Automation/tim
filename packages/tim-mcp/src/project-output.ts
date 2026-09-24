@@ -1,5 +1,5 @@
 import type { Entry, ProjectSchema } from 'tim-core';
-import { findSchemaSection, isClosedBugMetadata, resolveBugStatusFromMetadata } from 'tim-core';
+import { findSchemaSection, isClosedBugMetadata, resolveBugStatusFromMetadata, taskPriorityRank } from 'tim-core';
 import type { LoadProjectResult } from 'tim-store';
 import { isTaskMarker, SUMMARY_NODE_TITLE } from 'tim-store';
 import { DEFAULT_BRIEFING_RECENT_SESSIONS, clampSummary } from 'tim-hooks';
@@ -493,11 +493,6 @@ const TASK_STATUS_SORT: Record<string, number> = {
   reviewed: 1,
   todo: 2,
 };
-const TASK_PRIORITY_SORT: Record<string, number> = {
-  high: 0,
-  medium: 1,
-  low: 2,
-};
 const BUG_SEVERITY_SORT: Record<string, number> = {
   P0: 0,
   P1: 1,
@@ -542,8 +537,8 @@ function compareTaskEntries(a: Entry, b: Entry): number {
   const statusB = TASK_STATUS_SORT[resolveEntryTaskStatus(b.metadata)] ?? 3;
   if (statusA !== statusB) return statusA - statusB;
 
-  const priorityA = TASK_PRIORITY_SORT[metaA.priority ?? ''] ?? 3;
-  const priorityB = TASK_PRIORITY_SORT[metaB.priority ?? ''] ?? 3;
+  const priorityA = taskPriorityRank(metaA.priority);
+  const priorityB = taskPriorityRank(metaB.priority);
   if (priorityA !== priorityB) return priorityA - priorityB;
 
   if (!metaA.due && !metaB.due) return compareEntryOrder(a, b);

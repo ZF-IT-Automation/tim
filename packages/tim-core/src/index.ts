@@ -491,3 +491,16 @@ export {
   type TemporalMetadata,
   type TemporalValidationResult,
 } from './temporal.js';
+
+/** One scale for both priority vocabularies in use (critical/high/medium/low and P0–P3). */
+const TASK_PRIORITY_RANK: Record<string, number> = {
+  critical: 0, P0: 0,
+  high: 1, P1: 1,
+  medium: 2, P2: 2,
+  low: 3, P3: 3,
+};
+
+/** Sort key for a task priority; unknown or missing sorts last. */
+export function taskPriorityRank(priority: string | undefined | null): number {
+  return TASK_PRIORITY_RANK[priority ?? ''] ?? 4;
+}
