@@ -3305,6 +3305,10 @@ export async function createMcpServer(
             const guidance = await buildInboxFallbackGuidance(s);
             if (guidance) text = `${guidance}\n\n${text}`;
           }
+          if (sessionId !== agentSessionId) {
+            text = `NOTE: started the harness session ${sessionId}, not "${agentSessionId}" — ` +
+              `pass ${sessionId} wherever a later call takes a sessionId.\n\n${text}`;
+          }
           return {
             content: [{ type: 'text', text }],
           };

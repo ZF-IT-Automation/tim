@@ -123,7 +123,8 @@ describe('marker session resolution via store', () => {
       env: { TIM_SESSION_ID: harnessId, TIM_PROVENANCE: '0', TIM_DEDUP_CHECK: '0' },
     });
     await client.init();
-    await client.callTool('tim_session_start', { sessionId: 'agent-made-up', projectId: 'P8201', cwd });
+    const started = await client.callTool('tim_session_start', { sessionId: 'agent-made-up', projectId: 'P8201', cwd });
+    expect(started.result!.content[0].text).toContain(`NOTE: started the harness session ${harnessId}`);
 
     const real = await client.callTool('tim_read', { id: harnessId, includeChildren: false });
     expect(real.result!.content[0].text).toContain('"project_ref": "P8201"');
