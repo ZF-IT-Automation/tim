@@ -71,4 +71,15 @@ describe('update() symmetric flags', () => {
     expect(updated!.metadata.provenance).toEqual({ commit: 'abc', branch: 'main' });
     expect(updated!.metadata.verified_at).toBe(verifiedAt);
   });
+
+  it('a null metadata value unsets the key, omitted keys stay', async () => {
+    const entry = await store.write('Retype me\nbody', {
+      metadata: { type: 'task', task: { status: 'todo' }, label: 'keep' },
+    });
+    await store.update(entry.id, { metadata: { type: 'idea', task: null } });
+    const meta = (await store.read(entry.id))!.metadata;
+    expect(meta.type).toBe('idea');
+    expect(meta).not.toHaveProperty('task');
+    expect(meta.label).toBe('keep');
+  });
 });
