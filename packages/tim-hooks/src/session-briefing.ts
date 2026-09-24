@@ -142,12 +142,17 @@ async function latestCheckpoint(
   const children = await store.getChildren(summaryNode.id);
   let note = rootNote;
   let text = '';
+  let newestChildNoteAt = '';
   for (const child of children) {
-    if (!note) {
-      const childNote = typeof child.metadata.handoff_note === 'string'
-        ? child.metadata.handoff_note.trim()
-        : '';
-      if (childNote) note = childNote;
+    const childNote = typeof child.metadata.handoff_note === 'string'
+      ? child.metadata.handoff_note.trim()
+      : '';
+    if (!rootNote && childNote) {
+      const at = child.updatedAt || child.createdAt;
+      if (!note || at.localeCompare(newestChildNoteAt) >= 0) {
+        note = childNote;
+        newestChildNoteAt = at;
+      }
     }
     if (child.metadata.kind === 'checkpoint' && child.content.trim()) {
       text = child.content.trim();
@@ -191,17 +196,39 @@ export async function recentExchanges(
   );
 
   const batches = await store.getChildByKind(exNode.id, KIND_EXCHANGE_BATCH);
-  const users: Entry[] = [];
+  const turns: { user: Entry; agentLine: string | null }[] = [];
+  let pendingAgent: string | null = null;
   for (const batch of batches) {
-    users.push(
-      ...(await store.getChildrenBySeq(batch.id)).filter(
-        u => u.metadata.role === 'user' && isCountableUserExchange(u),
-      ),
+    const batchUsers = (await store.getChildrenBySeq(batch.id)).filter(
+      u => u.metadata.role === 'user',
     );
+    for (const u of batchUsers) {
+      const agent = (await store.getChildren(u.id)).find(r => r.metadata.role === 'agent');
+      const agentText = agent
+        ? oneLine(entryText(agent), RECENT_EXCHANGE_SIDE_MAX_CHARS)
+        : null;
+      if (!isCountableUserExchange(u)) {
+        if (agentText) {
+          if (turns.length > 0) {
+            const last = turns[turns.length - 1]!;
+            last.agentLine = last.agentLine ? `${last.agentLine}\n${agentText}` : agentText;
+          } else {
+            pendingAgent = pendingAgent ? `${pendingAgent}\n${agentText}` : agentText;
+          }
+        }
+        continue;
+      }
+      let agentLine = agentText;
+      if (pendingAgent) {
+        agentLine = agentLine ? `${agentLine}\n${pendingAgent}` : pendingAgent;
+        pendingAgent = null;
+      }
+      turns.push({ user: u, agentLine });
+    }
   }
-  const tail = users
-    .filter(u => Number(u.metadata.seq) > seqFloor)
-    .sort((a, b) => Number(a.metadata.seq) - Number(b.metadata.seq))
+  const tail = turns
+    .filter(t => Number(t.user.metadata.seq) > seqFloor)
+    .sort((a, b) => Number(a.user.metadata.seq) - Number(b.user.metadata.seq))
     .slice(-MAX_RECENT_EXCHANGES);
 
   // Budgeted newest-first so a tight budget drops the oldest turn, then flipped back
@@ -209,10 +236,9 @@ export async function recentExchanges(
   // pasted stack trace or code block from eating the whole block.
   const blocks: string[] = [];
   let used = 0;
-  for (const user of [...tail].reverse()) {
-    const agent = (await store.getChildren(user.id)).find(r => r.metadata.role === 'agent');
+  for (const { user, agentLine } of [...tail].reverse()) {
     const lines = [`▸ ${oneLine(entryText(user), RECENT_EXCHANGE_SIDE_MAX_CHARS)}`];
-    if (agent) lines.push(`  ↳ ${oneLine(entryText(agent), RECENT_EXCHANGE_SIDE_MAX_CHARS)}`);
+    if (agentLine) lines.push(`  ↳ ${agentLine}`);
     const block = lines.join('\n');
     if (used + block.length + 1 > maxChars) break;
     used += block.length + 1;
