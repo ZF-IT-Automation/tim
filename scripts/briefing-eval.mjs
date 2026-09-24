@@ -462,11 +462,30 @@ function loadDbContext(dbPath, projectLabel) {
   const newestHandoffNote = handoffRow?.note ?? null;
 
   // Open tasks (any non-closed status, new or legacy metadata shape) in project subtree for G8 title lookup.
+  // Root-level trees a merge retired into this project, following chains like resolveMergeTarget.
+  const liveLabels = new Set(db.prepare(`
+    SELECT json_extract(metadata, '$.label') AS l FROM entries
+    WHERE parent_id IS NULL AND tombstoned_at IS NULL AND json_extract(metadata, '$.kind') = 'project'
+  `).all().map((r) => r.l));
+  const mergedRoots = db.prepare(`
+    SELECT id, json_extract(metadata, '$.label') AS label, json_extract(metadata, '$.merged_into') AS target
+    FROM entries WHERE parent_id IS NULL AND json_extract(metadata, '$.merged_into') IS NOT NULL
+  `).all();
+  const resolveMerge = (label) => {
+    const seen = new Set();
+    let cur = label;
+    while (cur && !seen.has(cur)) {
+      seen.add(cur);
+      if (liveLabels.has(cur)) return cur;
+      cur = mergedRoots.find((m) => m.label === cur)?.target;
+    }
+    return null;
+  };
+  const mergedIntoHere = mergedRoots.filter((m) => resolveMerge(m.target) === projectLabel).map((m) => m.id);
+
   const taskRows = db.prepare(`
     WITH RECURSIVE tree(id) AS (
-      -- The project root plus root-level trees a merge retired into this project.
-      SELECT id FROM entries WHERE id = ?
-        OR (parent_id IS NULL AND json_extract(metadata, '$.merged_into') = ?)
+      SELECT id FROM entries WHERE id = ? OR id IN (SELECT value FROM json_each(?))
       UNION ALL
       SELECT e.id FROM entries e JOIN tree t ON e.parent_id = t.id WHERE e.tombstoned_at IS NULL
     )
@@ -478,7 +497,7 @@ function loadDbContext(dbPath, projectLabel) {
           COALESCE((SELECT MAX(c.created_at) FROM entries c
             WHERE c.tombstoned_at IS NULL AND (c.parent_id = e.id
               OR (json_type(c.metadata, '$.task') = 'text' AND json_extract(c.metadata, '$.task') = e.id))), '')
-      ) AS updated_at
+      ) AS raw_touch
     FROM entries e
     JOIN tree t ON e.id = t.id
     WHERE e.irrelevant = 0 AND e.tombstoned_at IS NULL
@@ -488,9 +507,11 @@ function loadDbContext(dbPath, projectLabel) {
           NOT IN ('done', 'cancelled', 'closed', 'wontfix')
       AND (json_type(e.metadata, '$.task') IN ('object', 'true')
         OR json_extract(e.metadata, '$.task') IN (1, 'true'))
-  `).all(project.id, projectLabel);
+  `).all(project.id, JSON.stringify(mergedIntoHere));
+  // taskLastTouch caps a future clock at now.
+  const nowIso = new Date().toISOString();
   const openTasksByTitle = new Map(
-    taskRows.map((r) => [normalizeTitle(r.title), r]),
+    taskRows.map((r) => [normalizeTitle(r.title), { ...r, updated_at: r.raw_touch > nowIso ? nowIso : r.raw_touch }]),
   );
 
   // Same clock as the renderer (getProjectActiveDays): days with a real exchange.
