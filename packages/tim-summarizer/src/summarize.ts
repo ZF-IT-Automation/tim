@@ -129,7 +129,6 @@ export async function runProjectSummary(label: string): Promise<boolean> {
 
     const sessions = new SessionManager(store);
     await sessions.updateProjectSummary(label);
-    await processCurationQueue(store, label);
     return true;
   } finally {
     store.close();
@@ -316,7 +315,8 @@ function batchHasOnlyEmptyUserTurns(batch: UnsummarizedBatch): boolean {
     && batch.exchanges.every(e => !e.userContent.trim());
 }
 
-/** Process pending curation-queue entries via LLM (duplicates merge, decay confirm). */
+/** Process pending curation-queue entries via LLM (duplicates merge, decay confirm).
+ *  Manual only (`tim consolidate run`) — never called from the summarizer (Benni 2026-09-24). */
 export async function processCurationQueue(store: TimStore, projectLabel: string): Promise<number> {
   const mgr = store.consolidate();
   const pending = await mgr.getCurationQueue(projectLabel, 'pending');
@@ -463,7 +463,6 @@ async function postSummarizerHandoff(sessionId: string): Promise<void> {
       typeof session.metadata.project_ref === 'string' ? session.metadata.project_ref : null;
     if (projectRef) {
       await sessions.updateProjectSummary(projectRef);
-      await processCurationQueue(store, projectRef);
     }
   } finally {
     store.close();
