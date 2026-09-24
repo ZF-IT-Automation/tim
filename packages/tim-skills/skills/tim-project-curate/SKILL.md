@@ -31,7 +31,8 @@ Fix order — each step assumes the ones above it are done:
 - Loose direct child (R3) → move it into the section it belongs to. No body and no
   children (C2) → delete it instead of finding it a home.
 - Wrong content/metadata → `tim_read`, merge, then `tim_update`. `tim_update` replaces
-  the body: read it first or you erase what you meant to extend.
+  the body: read it first or you erase what you meant to extend. Metadata merges
+  key by key; send a key as `null` to remove it (e.g. `task: null` when retyping).
 - Duplicate content (C3) → merge into the older node, delete the newer.
 - Broken relation → recreate with `tim_link` only when source and target are clear.
 

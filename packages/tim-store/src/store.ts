@@ -2335,6 +2335,10 @@ ${zeroExchangeFilter}
           assertValidCallerTemporalMetadata(patchMeta);
         }
         const merged = { ...existingMeta, ...patchMeta };
+        // Metadata merges; a null value in the patch unsets that key.
+        for (const [k, v] of Object.entries(patchMeta)) {
+          if (v === null && k !== 'provenance') delete merged[k];
+        }
         // Legacy/peer metadata remains readable and editable until explicitly replaced.
         assertValidEvidenceMetadata(patchMeta);
 
