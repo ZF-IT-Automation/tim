@@ -304,6 +304,13 @@ function clipBriefingLines(text: string, maxBytes: number): string {
 
 function formatOmissionsLine(omissions: string[], maxTokens: number): string {
   if (omissions.length === 0) return '';
+  // Section bodies are all reachable from the Sections index; list only the other blocks.
+  const sectionCount = omissions.filter(o => o.startsWith('section:')).length;
+  const others = omissions.filter(o => !o.startsWith('section:'));
+  if (sectionCount > 0) {
+    others.push(`${sectionCount} section bod${sectionCount === 1 ? 'y' : 'ies'} not inlined (token budget) — open them from the Sections index`);
+  }
+  omissions = others;
   const full = `… briefing omissions: ${omissions.join('; ')}`;
   if (estimateTextTokens(full) <= maxTokens) return full;
   const summary = omissions.length === 1

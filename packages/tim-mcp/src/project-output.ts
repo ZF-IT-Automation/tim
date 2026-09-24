@@ -188,9 +188,11 @@ function ruleCompactLine(entry: Entry): string {
     .split('\n')
     .map(line => line.replace(/^#{1,6}\s+/, '').trim())
     .filter(line => line.length > 0);
-  // A body that only restates the title ("X" / "X." / "X:") adds nothing.
+  // A body that only restates the title ("X" / "X." / "X:") adds nothing, nor does
+  // curation provenance ("Split from <id> on <date>.").
   const same = (a: string, b: string) => a.replace(/[.:\s]+$/, '') === b.replace(/[.:\s]+$/, '');
-  const firstBody = bodyLines.find(line => !same(line, title)) ?? '';
+  const provenance = (line: string) => /^Split from \S+ on \d{4}-\d{2}-\d{2}\.?$/.test(line);
+  const firstBody = bodyLines.find(line => !same(line, title) && !provenance(line)) ?? '';
 
   let text: string;
   if (title !== 'Untitled' && firstBody) {
@@ -999,15 +1001,16 @@ function formatProjectOutputWithTokenBudget(
       for (const line of session.summary) sessionLines.push(`    ${line}`);
       if (session.summary.length === 0) sessionLines.push('    (no summary yet)');
     }
-    if (ctx.hiddenShortSessionCount && ctx.hiddenShortSessionCount > 0) {
-      sessionLines.push(
-        `  + ${ctx.hiddenShortSessionCount} sessions hidden (short or no substance)`,
-      );
-    }
+    // x/y above counts substantive sessions; say so, and keep the short ones apart.
     if (total > ctx.recentSessions.length) {
       const hidden = total - ctx.recentSessions.length;
       sessionLines.push(
-        `  … ${hidden} older sessions — tim_resume_list({projectId:"${label}"})`,
+        `  … ${hidden} older substantive sessions — tim_resume_list({projectId:"${label}"})`,
+      );
+    }
+    if (ctx.hiddenShortSessionCount && ctx.hiddenShortSessionCount > 0) {
+      sessionLines.push(
+        `  (${ctx.hiddenShortSessionCount} short or empty sessions not counted)`,
       );
     }
     blocks.push({
