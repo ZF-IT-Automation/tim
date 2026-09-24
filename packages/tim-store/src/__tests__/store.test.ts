@@ -509,14 +509,21 @@ describe('TimStore', () => {
     });
 
     it('a reorder keeps a legacy flag task\'s status and priority and does not touch it', async () => {
-      const { task } = await seedTaskProject('P0207', 'Legacy', 'Legacy task', { status: 'in_progress', priority: 'P1' });
+      const { task } = await seedTaskProject('P0207', 'Legacy', 'Legacy task', { status: 'in_progress', priority: 'P1', due: '2026-12-01' });
       const before = (await store.read(task.id))!;
       await store.setTaskOrder(task.id);
       const after = (await store.read(task.id))!;
-      const t = after.metadata.task as { status?: string; priority?: string; order?: number };
-      expect([t.status, t.priority, typeof t.order]).toEqual(['in_progress', 'P1', 'number']);
+      const t = after.metadata.task as { status?: string; priority?: string; due_date?: string; order?: number };
+      expect([t.status, t.priority, t.due_date, typeof t.order]).toEqual(['in_progress', 'P1', '2026-12-01', 'number']);
+      expect([after.metadata.status, after.metadata.priority, after.metadata.due]).toEqual([undefined, undefined, undefined]);
       expect(after.metadata.touched_at).toBe(before.updatedAt);
       expect((await store.getTasks()).find(x => x.id === task.id)?.status).toBe('in_progress');
+    });
+
+    it('caps a future staleness clock at now', async () => {
+      const { taskLastTouch } = await import('../task-touch.js');
+      const t = taskLastTouch({ createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z', metadata: { verified_at: '2099-01-01T00:00:00.000Z' } });
+      expect(t <= new Date().toISOString()).toBe(true);
     });
 
     it('ignores caller-supplied staleness clocks', async () => {

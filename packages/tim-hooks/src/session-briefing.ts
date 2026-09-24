@@ -460,8 +460,9 @@ export async function formatOpenWorkLines(
 
   // Stable ring order (hash of the id), window start = floor(frac(day × golden ratio) × n).
   // The golden-ratio sequence spreads evenly whatever n is, so the window never freezes while
-  // the backlog grows (an index offset d % n did), and with a steady backlog every stale task
-  // shows within about 1.3 × n work days (three-gap theorem), triaged or not.
+  // the backlog grows (an index offset d % n did). Steady backlog: every stale task shows within
+  // n work days (simulated worst 0.95·n with a window of 2). A backlog that grows by about the
+  // window size per day has no bound; its tasks stay in the collapse count meanwhile.
   const previewCount = Math.min(fresh.length > 0 ? 2 : 3, stale.length);
   const ring = [...stale].sort((a, b) => rotationKey(a.task.id) - rotationKey(b.task.id));
   const start = Math.floor((((all.activeDayCount ?? 0) * 0.6180339887498949) % 1) * ring.length);

@@ -1303,10 +1303,9 @@ ${zeroExchangeFilter}
     const params: unknown[] = [];
 
     if (opts?.status) {
-      sql += ` AND COALESCE(
-        json_extract(e.metadata, '$.task.status'),
-        json_extract(e.metadata, '$.status')
-      ) = ?`;
+      // Same source as the mapped record: task.status for the object form, else top level.
+      sql += ` AND CASE WHEN json_type(e.metadata, '$.task') = 'object'
+          THEN json_extract(e.metadata, '$.task.status') ELSE json_extract(e.metadata, '$.status') END = ?`;
       params.push(opts.status);
     }
 
@@ -1318,10 +1317,8 @@ ${zeroExchangeFilter}
     sql += `
       ORDER BY
         COALESCE(CAST(json_extract(e.metadata, '$.task.order') AS INTEGER), 999999),
-        CASE COALESCE(
-          json_extract(e.metadata, '$.task.status'),
-          json_extract(e.metadata, '$.status')
-        )
+        CASE CASE WHEN json_type(e.metadata, '$.task') = 'object'
+          THEN json_extract(e.metadata, '$.task.status') ELSE json_extract(e.metadata, '$.status') END
           WHEN 'in_progress' THEN 0
           WHEN 'changes_pending' THEN 0
           WHEN 'todo' THEN 1
@@ -1342,14 +1339,10 @@ ${zeroExchangeFilter}
           WHEN 'low' THEN 3 WHEN 'p3' THEN 3 WHEN '3' THEN 3
           ELSE 4
         END,
-        CASE WHEN COALESCE(
-          json_extract(e.metadata, '$.task.due_date'),
-          json_extract(e.metadata, '$.due')
-        ) IS NULL THEN 1 ELSE 0 END,
-        COALESCE(
-          json_extract(e.metadata, '$.task.due_date'),
-          json_extract(e.metadata, '$.due')
-        ) ASC
+        CASE WHEN (CASE WHEN json_type(e.metadata, '$.task') = 'object'
+          THEN json_extract(e.metadata, '$.task.due_date') ELSE json_extract(e.metadata, '$.due') END) IS NULL THEN 1 ELSE 0 END,
+        (CASE WHEN json_type(e.metadata, '$.task') = 'object'
+          THEN json_extract(e.metadata, '$.task.due_date') ELSE json_extract(e.metadata, '$.due') END) ASC
     `;
 
     const rows = this.db.prepare(sql).all(...params) as RowEntry[];
@@ -2250,7 +2243,7 @@ ${zeroExchangeFilter}
         if (!patch.metadata) return existing.metadata;
         const existingMeta = JSON.parse(existing.metadata || '{}') as Record<string, unknown>;
         const patchMeta = JSON.parse(JSON.stringify(patch.metadata)) as Record<string, unknown>;
-        const SYSTEM_FIELDS = ['verified_at', 'provenance'] as const;
+        const SYSTEM_FIELDS = ['provenance'] as const;
         for (const f of SYSTEM_FIELDS) {
           if (existingMeta[f] !== undefined && patchMeta[f] === undefined) {
             patchMeta[f] = existingMeta[f];
@@ -2302,6 +2295,14 @@ ${zeroExchangeFilter}
           }
 
           patchMeta.task = taskObj;
+          // The object form is now authoritative; stale top-level twins would turn later
+          // legacy-style patches into silent no-ops.
+          if (normalizeTaskValue(existingMeta.task) === true) {
+            for (const f of ['status', 'priority', 'due'] as const) {
+              delete existingMeta[f];
+              delete patchMeta[f];
+            }
+          }
         }
         if (
           typeof existingMeta.idea === 'object' && existingMeta.idea !== null &&

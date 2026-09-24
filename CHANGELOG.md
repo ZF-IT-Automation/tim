@@ -4,6 +4,16 @@ All notable changes to TIM are documented in this file.
 
 ## [Unreleased]
 
+### Changed — session-start briefing and open work (briefing loop, 2026-09-24)
+
+- **Stale open work** — a task is stale after 7 days *of project work* (days with a logged exchange) without a touch, so a paused project does not age its backlog. A touch is a title/body/status change (`metadata.touched_at`), `tim_verify`, or new work logged under the task or pointing at it; reorders and bulk writes are not. Future clocks are capped at now; `touched_at`/`verified_at` are system-owned.
+- **Nothing is hidden** — stale tasks sit under one triage instruction (done → status, still valid → `tim_verify`, obsolete only with evidence, unsure → ask the user); the preview rotates every work day so every stale task comes up; tasks that do not fit are counted; stale lines and `tim_show` lines carry the entry id.
+- **Task detection** — a string id in `metadata.task` is a back-reference, not a task; legacy flags (`true`/`1`/`"true"`) map their top-level status. Converting a legacy flag to the object form carries status, priority and due over and removes the top-level copies; legacy tasks are then subject to the normal status-transition rules (e.g. `done` → `in_progress` is refused).
+- **One priority scale** — `critical`=P0 > `high`=P1 > `medium`=P2 > `low`=P3 (`taskPriorityRank`), case-insensitive.
+- **Merged projects** — entries in a tree retired by a project merge belong to the live merge target (chains followed).
+- **Recall hook** — `TIM erinnert` no longer replays old chat turns or checkpoint echoes, and each line carries its date.
+- **Session lists** — ordered by exchanges and handoffs only; multi-day sessions show `start – last`.
+
 ### Added
 
 - **Memory quality evaluation** — bilingual, agent-authored fixtures compare no-memory, fixed-handoff and TIM against the same expected evidence and 4096-byte context budget. Reports expose misses, irrelevant evidence, costs and limitations; synthetic default runs do not claim real-model or agent-task quality. The optional real-provider path reports an explicit skip when unavailable.

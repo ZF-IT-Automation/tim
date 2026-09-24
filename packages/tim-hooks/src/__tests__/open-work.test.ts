@@ -102,7 +102,8 @@ describe('formatOpenWorkLines stale handling', () => {
     const lines = await formatOpenWorkLines(store, 'P0099', 12, 4000);
     expect(lines).toContain('- [todo, medium] Stale task 0');
     expect(lines).toContain('- [todo, medium] Stale task 1');
-    expect(lines.some(l => l.startsWith('+ 1 stale open task') || l.includes('Stale task 2 ·'))).toBe(true);
+    expect(lines.filter(l => / · stale since /.test(l)).length + 0).toBeGreaterThan(0);
+    expect(lines.join('\n')).not.toMatch(/Stale task [01] · stale since/);
   });
 
   it('keeps stale work visible when the budget is tight', async () => {
