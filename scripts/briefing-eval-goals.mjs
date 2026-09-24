@@ -220,7 +220,7 @@ export function evalG7(hookText, previewText = '') {
       blocks++;
       for (let j = i + 1; j < lines.length && /^\s*•/.test(lines[j]); j++) {
         const b = lines[j].replace(/^\s*•\s*/, '').trim();
-        if (/checkpoint|\bbatch\b|\bexchanges?\b/i.test(b) || /^\d{4}-\d{2}-\d{2}-\d{4}$/.test(b) || turns.has(b.slice(0, 40))) bad.push(b.slice(0, 40));
+        if (/^Session checkpoint:|^Batch \d+$|^\d+ exchanges?\b/i.test(b) || /^\d{4}-\d{2}-\d{2}-\d{4}$/.test(b) || turns.has(b.slice(0, 40))) bad.push(b.slice(0, 40));
       }
     });
   }
