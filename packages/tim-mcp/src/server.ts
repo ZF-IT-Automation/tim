@@ -149,6 +149,27 @@ async function resolveHarnessSessionId(
   });
 }
 
+/**
+ * The project this session works in: TIM_PROJECT / ~/.tim/active-project if set,
+ * else the harness session's project_ref (what tim_load_project and the first
+ * write bind), else the cwd marker.
+ */
+async function resolveBoundProjectLabel(store: TimStore, isHttp: boolean): Promise<string | undefined> {
+  const explicit = getActiveProjectLabel();
+  if (explicit) return explicit;
+  if (isHttp) return undefined;
+  const cwd = process.cwd();
+  const sessionId = await resolveHarnessSessionId(store, { cwd, useSessionCache: true, useEnv: true });
+  if (sessionId) {
+    const session = await store.read(sessionId);
+    const ref = session?.metadata.project_ref;
+    if (session?.metadata.kind === 'session' && typeof ref === 'string' && ref && ref !== INBOX_PROJECT_LABEL) {
+      return ref;
+    }
+  }
+  return findConfiguredMarker(cwd)?.marker.project;
+}
+
 // ─── CLI ────────────────────────────────────────────────
 
 function parseCliArgs(): { http: boolean; port: number; host: string } {
@@ -3250,10 +3271,13 @@ export async function createMcpServer(
         }
 
         case 'tim_session_start': {
-          const { sessionId, projectId, agentName, cwd, harness, batchSize, tool, model, taskSummary } =
+          const { sessionId: agentSessionId, projectId, agentName, cwd, harness, batchSize, tool, model, taskSummary } =
             TimSessionStartSchema.parse(args);
+          // The harness id is what the turn-end hooks log under; an agent-invented id
+          // would become a second node beside it.
+          const sessionId = (isHttp ? undefined : resolveActiveSessionId({ useSessionCache: false })) ?? agentSessionId;
           const cwdResolved = cwd ?? (isHttp ? '' : process.cwd());
-          let boundProjectId = projectId ?? getActiveProjectLabel() ?? undefined;
+          let boundProjectId = projectId ?? await resolveBoundProjectLabel(s, isHttp);
           let inboxFallback = false;
           if (!boundProjectId) {
             await ensureInboxProject(s);
@@ -3286,7 +3310,7 @@ export async function createMcpServer(
 
         case 'tim_resume_list': {
           const { projectId, limit } = TimResumeListSchema.parse(args);
-          const label = projectId ?? getActiveProjectLabel();
+          const label = projectId ?? await resolveBoundProjectLabel(s, isHttp);
           if (!label) {
             const guidance = await buildInboxFallbackGuidance(s);
             return {
@@ -3302,15 +3326,7 @@ export async function createMcpServer(
 
         case 'tim_resume_topic': {
           const { topic: wanted, project, limit } = TimResumeTopicSchema.parse(args);
-          // getActiveProjectLabel reads TIM_PROJECT or ~/.tim/active-project, and
-          // neither is set on a host whose sessions bind through a .tim-project
-          // marker — which is the normal setup. So the marker is a fallback, not
-          // an afterthought: without it the tool is unreachable exactly where it
-          // is meant to be used.
-          const markerLabel = isHttp
-            ? undefined
-            : findConfiguredMarker(process.cwd())?.marker.project;
-          const projectLabel = project ?? getActiveProjectLabel() ?? markerLabel;
+          const projectLabel = project ?? await resolveBoundProjectLabel(s, isHttp);
           if (!projectLabel) {
             return {
               content: [{

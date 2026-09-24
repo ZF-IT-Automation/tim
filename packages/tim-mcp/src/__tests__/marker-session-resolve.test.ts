@@ -112,4 +112,41 @@ describe('marker session resolution via store', () => {
     const marker = JSON.parse(fs.readFileSync(path.join(cwd, '.tim-project'), 'utf8'));
     expect(marker).not.toHaveProperty('session');
   });
+
+  it('tim_session_start prefers the harness id over an agent-invented one', async () => {
+    await client.callTool('tim_create_project', { label: 'P8201', content: 'Harness id', memoryOnly: true });
+    const harnessId = `harness-${Date.now()}`;
+    client.kill();
+    client = new McpClient({
+      dbPath,
+      cwd,
+      env: { TIM_SESSION_ID: harnessId, TIM_PROVENANCE: '0', TIM_DEDUP_CHECK: '0' },
+    });
+    await client.init();
+    await client.callTool('tim_session_start', { sessionId: 'agent-made-up', projectId: 'P8201', cwd });
+
+    const real = await client.callTool('tim_read', { id: harnessId, includeChildren: false });
+    expect(real.result!.content[0].text).toContain('"project_ref": "P8201"');
+    const phantom = await client.callTool('tim_read', { id: 'agent-made-up', includeChildren: false });
+    expect(phantom.result!.content[0].text).not.toContain('"kind": "session"');
+  });
+
+  it('tim_resume_list follows the session binding, not only the marker', async () => {
+    await client.callTool('tim_create_project', { label: 'P8201', content: 'Marker', memoryOnly: true });
+    await client.callTool('tim_create_project', { label: 'P8202', content: 'Bound', memoryOnly: true });
+    const harnessId = `harness-${Date.now()}`;
+    client.kill();
+    client = new McpClient({
+      dbPath,
+      cwd,
+      env: { TIM_SESSION_ID: harnessId, TIM_PROVENANCE: '0', TIM_DEDUP_CHECK: '0' },
+    });
+    await client.init();
+    await client.callTool('tim_load_project', { label: 'P8202', bind: true });
+
+    const list = await client.callTool('tim_resume_list', {});
+    const text = list.result!.content[0].text;
+    expect(text).toContain('P8202');
+    expect(text).not.toContain('No project binding');
+  });
 });
