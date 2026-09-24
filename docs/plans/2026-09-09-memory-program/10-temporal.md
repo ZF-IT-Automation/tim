@@ -6,8 +6,8 @@ Users can explicitly supersede a decision while keeping historical evidence. Cur
 
 ## Blocked by
 
-- https://github.com/Bumblebiber/tim/issues/35
-- https://github.com/Bumblebiber/tim/issues/32
+- https://github.com/ZF-IT-Automation/tim/issues/35
+- https://github.com/ZF-IT-Automation/tim/issues/32
 
 ## Seam
 

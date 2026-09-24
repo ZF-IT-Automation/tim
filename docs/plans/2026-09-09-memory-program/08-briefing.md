@@ -6,7 +6,7 @@ A project briefing always prioritizes active rules, open work and recent handoff
 
 ## Blocked by
 
-- https://github.com/Bumblebiber/tim/issues/32
+- https://github.com/ZF-IT-Automation/tim/issues/32
 - GitHub #31
 
 ## Seam
