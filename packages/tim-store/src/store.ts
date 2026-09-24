@@ -29,7 +29,7 @@ import {
 } from './schema.js';
 import { CurateManager } from './curate.js';
 import { ConsolidationManager } from './consolidate.js';
-import { metadataNeedsCoercion, parseAndCoerceMetadata, isIdeaMarker } from './metadata-coerce.js';
+import { metadataNeedsCoercion, parseAndCoerceMetadata, isIdeaMarker, normalizeTaskValue } from './metadata-coerce.js';
 import { applyIdeaPromote, type PromoteResult } from './idea-promote.js';
 import { isCodingNeedsReview, migrateTaskHistory, appendTaskStatus } from './task-status-history.js';
 import { detectProjectVcs } from './vcs.js';
@@ -1333,7 +1333,8 @@ ${zeroExchangeFilter}
         status = (tm.status as string | undefined) ?? null;
         priority = (tm.priority as string | undefined) ?? null;
         due = (tm.due_date as string | undefined) ?? null;
-      } else if (task === true) {
+      } else if (normalizeTaskValue(task) === true) {
+        // Legacy flag (true / 1 / "true"): status and priority live at the top level.
         status = (meta.status as string | undefined) ?? null;
         priority = (meta.priority as string | undefined) ?? null;
         due = (meta.due as string | undefined) ?? null;
