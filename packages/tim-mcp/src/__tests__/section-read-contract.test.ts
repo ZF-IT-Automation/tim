@@ -171,9 +171,10 @@ describe('tim_read section read contract (#31)', () => {
     const { section } = await readTasksSection();
     await writeTask('Depth one child\nbody', section.id as string);
 
-    const parsed = await readTasksSection({ depth: 1 });
+    const parsed = await readTasksSection({ depth: 1 }) as { section: Record<string, unknown>; children?: unknown[]; childrenOmitted?: string };
     expect(parsed.section.id).toBe(section.id);
     expect(parsed.children).toEqual([]);
+    expect(parsed.childrenOmitted).toBe('1 child not loaded at depth:1 — use depth:2');
   });
 
   it('includeChildren=false returns section only (no child payloads)', async () => {
