@@ -66,8 +66,12 @@ export function resolveActiveSessionId(options: {
   if (fromArg) return fromArg;
 
   if (options.useEnv !== false) {
+    // CLAUDE_CODE_SESSION_ID is the id Claude Code's hooks log under — without it a
+    // session in a cwd without marker has no id at all and can never bind.
     const fromEnv =
-      options.envSessionId?.trim() || process.env.TIM_SESSION_ID?.trim();
+      options.envSessionId?.trim()
+      || process.env.TIM_SESSION_ID?.trim()
+      || process.env.CLAUDE_CODE_SESSION_ID?.trim();
     if (fromEnv) return fromEnv;
   }
 
