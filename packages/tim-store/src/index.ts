@@ -82,6 +82,7 @@ export {
 export {
   stripHarnessBlocks,
   isHarnessOnlyPrompt,
+  shouldSkipPromptRecall,
   sanitizeUserExchangeContent,
   isCountableUserExchange,
 } from './harness-prompt.js';

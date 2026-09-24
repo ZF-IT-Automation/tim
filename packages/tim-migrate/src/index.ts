@@ -17,3 +17,6 @@ export type {
   RetireDeprecatedTagsReport,
   RetireDeprecatedTagsEntryResult,
 } from './retire-deprecated-tags.js';
+
+export { migrateSystemTurn } from './system-turn.js';
+export type { SystemTurnMigrationReport, SystemTurnProjectCount } from './system-turn.js';

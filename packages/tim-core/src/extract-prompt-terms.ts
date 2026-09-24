@@ -1,3 +1,25 @@
+/** Harness XML blocks that are not human user turns (mirrors tim-store/harness-prompt). */
+const HARNESS_BLOCK_TAGS = [
+  'task-notification',
+  'system-reminder',
+  'local-command-caveat',
+  'command-name',
+] as const;
+
+function stripHarnessBlocks(text: string): string {
+  let out = text;
+  for (const tag of HARNESS_BLOCK_TAGS) {
+    out = out.replace(new RegExp(`<${tag}\\b[^>]*>[\\s\\S]*?</${tag}>`, 'gi'), '');
+  }
+  return out.trim();
+}
+
+function isHarnessOnlyPrompt(text: string): boolean {
+  const raw = text.trim();
+  if (!raw) return false;
+  return stripHarnessBlocks(raw).length === 0;
+}
+
 /** German and English function words stripped from natural-language prompts. */
 export const PROMPT_STOP_WORDS = new Set([
   'the', 'and', 'for', 'with', 'from', 'this', 'that', 'via', 'into', 'your',
@@ -15,6 +37,7 @@ export const PROMPT_STOP_WORDS = new Set([
  * Strips DE/EN function words; keeps Unicode letters and digits.
  */
 export function extractPromptTerms(prompt: string, minLength = 3): string[] {
+  if (isHarnessOnlyPrompt(prompt)) return [];
   return prompt
     .toLowerCase()
     .split(/[^\p{L}\p{N}]+/u)
@@ -26,6 +49,7 @@ export function extractPromptTerms(prompt: string, minLength = 3): string[] {
  * prompt when no content terms survive stop-word removal.
  */
 export function buildPromptSearchQuery(prompt: string): string {
+  if (isHarnessOnlyPrompt(prompt)) return '';
   const terms = extractPromptTerms(prompt);
   if (terms.length === 0) return prompt.trim();
   return terms.map(t => `"${t.replace(/"/g, '""')}"`).join(' OR ');

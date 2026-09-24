@@ -5,6 +5,9 @@ import path from 'node:path';
 import { TimStore } from 'tim-store';
 import { runPromptSubmit } from '../prompt-submit.js';
 
+const LIVE_TASK_NOTIFICATION =
+  '<task-notification><status>completed</status></task-notification>';
+
 describe('runPromptSubmit', () => {
   let dir: string;
   let store: TimStore;
@@ -77,6 +80,28 @@ describe('runPromptSubmit', () => {
       timeoutMs: 50,
     });
     expect(result).toBeNull();
+  });
+
+  it('skips harness-only prompts and flagged exchange hits', async () => {
+    const harness = await store.write(LIVE_TASK_NOTIFICATION, {
+      metadata: { kind: 'exchange', role: 'user', system_turn: true },
+    });
+    const lesson = await store.write('SQLite tips\nEnable WAL.', {
+      tags: ['#sqlite'],
+      metadata: { kind: 'lesson' },
+    });
+
+    vi.spyOn(store, 'search').mockResolvedValue([harness, lesson]);
+
+    const harnessOnly = await runPromptSubmit(store, {
+      prompt: '<task-notification><status>done</status></task-notification>',
+    });
+    expect(harnessOnly).toBeNull();
+
+    const result = await runPromptSubmit(store, { prompt: 'sqlite WAL tuning' });
+    expect(result).not.toBeNull();
+    expect(result!.lines.some(l => l.includes('TIM erinnert: SQLite tips'))).toBe(true);
+    expect(result!.lines.some(l => l.includes('task-notification'))).toBe(false);
   });
 
   it('returns null when disabled via config', async () => {
