@@ -957,7 +957,7 @@ export class TimStore implements MemoryInterface {
     projectId: string,
     limit = 10,
     opts?: { includeZeroExchange?: boolean },
-  ): Array<{ id: string; lastActivity: string; lastExchange: string | null }> {
+  ): Array<{ id: string; lastActivity: string }> {
     const sessionsRoot = this.db.prepare(`
       SELECT id FROM entries
       WHERE parent_id = ?
@@ -977,28 +977,31 @@ export class TimStore implements MemoryInterface {
 
     const rows = this.db.prepare(`
       WITH RECURSIVE sub AS (
-        SELECT id, id AS root, created_at, rowid AS rid, 'session' AS kind FROM entries
+        SELECT id, id AS root, created_at, rowid AS rid, 1 AS active FROM entries
         WHERE parent_id = ?
           AND json_extract(metadata, '$.kind') = 'session'
           AND tombstoned_at IS NULL
           AND irrelevant = 0
 ${zeroExchangeFilter}
         UNION ALL
-        SELECT e.id, sub.root, e.created_at, e.rowid, json_extract(e.metadata, '$.kind') FROM entries e
+        -- Activity = a logged exchange or a handoff. Summaries and repeat checkpoints are
+        -- bookkeeping; counting them let a backfill or idle sweep reorder old sessions.
+        SELECT e.id, sub.root, e.created_at, e.rowid,
+          json_extract(e.metadata, '$.kind') = 'exchange'
+            OR json_extract(e.metadata, '$.handoff') = 1
+        FROM entries e
         INNER JOIN sub ON e.parent_id = sub.id
         WHERE e.tombstoned_at IS NULL
       )
-      SELECT root, MAX(created_at) AS last, MAX(rid) AS lastRid,
-        MAX(CASE WHEN kind = 'exchange' THEN created_at END) AS lastExchange
+      SELECT root, MAX(CASE WHEN active THEN created_at END) AS last,
+        MAX(CASE WHEN active THEN rid END) AS lastRid
       FROM sub
       GROUP BY root
       ORDER BY lastRid DESC
       LIMIT ?
-    `).all(sessionsRoot.id, limit) as Array<{
-      root: string; last: string; lastRid: number; lastExchange: string | null;
-    }>;
+    `).all(sessionsRoot.id, limit) as Array<{ root: string; last: string; lastRid: number }>;
 
-    return rows.map(r => ({ id: r.root, lastActivity: r.last, lastExchange: r.lastExchange }));
+    return rows.map(r => ({ id: r.root, lastActivity: r.last }));
   }
 
   /** Count live descendants of a project node + latest created_at. */

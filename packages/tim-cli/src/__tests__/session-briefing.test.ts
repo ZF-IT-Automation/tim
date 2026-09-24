@@ -612,6 +612,24 @@ describe('handoff lookup (review #5)', () => {
     fs.rmSync(root, { recursive: true, force: true });
   });
 
+  it('orders sessions by exchanges and handoffs, not repeat checkpoints', async () => {
+    const store = new TimStore(dbPath);
+    const sessions = new SessionManager(store);
+    const project = await store.createProject('P0096', { content: 'activity order' });
+    for (const id of ['sess-old', 'sess-new']) {
+      await sessions.startProjectSession({ sessionId: id, projectId: 'P0096', agentName: 'test', cwd, harness: 'test' });
+      await sessions.logExchange(id, [{ role: 'user', content: `work in ${id}` }, { role: 'agent', content: 'ok' }]);
+    }
+    const order = () => store.listProjectSessionsByActivity(project.id, 10).map(r => r.id);
+
+    await sessions.checkpoint('sess-old', {});
+    expect(order()).toEqual(['sess-new', 'sess-old']);
+
+    await sessions.checkpoint('sess-old', { handoffNote: 'next: resume here' });
+    expect(order()).toEqual(['sess-old', 'sess-new']);
+    store.close();
+  });
+
   it('says so when a project has no open work and no handoff', async () => {
     const store = new TimStore(dbPath);
     await store.createProject('P0097', { content: 'empty project' });
