@@ -284,9 +284,11 @@ function runCliProcess(
   return new Promise((resolve, reject) => {
     // The summarizer's own LLM calls are workers: without the flag, each CLI's TIM
     // hooks log the call as a new session (97 junk sessions from one backfill run).
+    // TIM_SUMMARIZER also keeps the session-start briefing out of the prompt — set
+    // here, not only by the supervisor, since the classifier runs outside it.
     const child = spawn(command, args, {
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env, TEAMUP_WORKER: '1' },
+      env: { ...process.env, TEAMUP_WORKER: '1', TIM_SUMMARIZER: '1' },
     });
     let stdout = '';
     let stderr = '';

@@ -10,7 +10,7 @@ describe('summarizer CLI spawn', () => {
   it('marks the spawned CLI as a worker', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tim-worker-env-'));
     const fake = path.join(dir, 'codex');
-    fs.writeFileSync(fake, '#!/bin/sh\ncat >/dev/null\necho "- worker flag: [$TEAMUP_WORKER]"\n', { mode: 0o755 });
+    fs.writeFileSync(fake, '#!/bin/sh\ncat >/dev/null\necho "- worker flag: [$TEAMUP_WORKER] summarizer flag: [$TIM_SUMMARIZER]"\n', { mode: 0o755 });
     const oldPath = process.env.PATH;
     const oldFlag = process.env.TEAMUP_WORKER;
     process.env.PATH = `${dir}:${oldPath}`;
@@ -18,6 +18,7 @@ describe('summarizer CLI spawn', () => {
     try {
       const out = await tryCli('codex', 'any-model', undefined, 'prompt', 10);
       expect(out).toContain('worker flag: [1]');
+      expect(out).toContain('summarizer flag: [1]');
     } finally {
       process.env.PATH = oldPath;
       if (oldFlag === undefined) delete process.env.TEAMUP_WORKER;
