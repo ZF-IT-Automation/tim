@@ -47,17 +47,37 @@ function parseOpenWorkLines(text) {
     .filter((l) => l.startsWith('- '));
 }
 
+/** Matches tim_load_project meta line grammar in project-output.ts `projectMetaLine`. */
 function parseHeaderMeta(line) {
-  const m = line.match(
-    /^Status:\s*(.+?)\s*·\s*(?:last activity\s+)?(\d{4}-\d{2}-\d{2})(?:\s*·\s*(?:(\d+)\s+packages|(\d+)\s+tests?))?/i,
+  const withStatus = line.match(
+    /^Status:\s*(.+?)\s*·\s*(?:last activity\s+)?(\d{4}-\d{2}-\d{2})(?:\s*·\s*(?:(\d+)\s+packages)?)?(?:\s*·\s*(?:(\d+)\s+tests?)?)?/i,
   );
-  if (!m) return null;
-  return {
-    status: m[1].trim(),
-    date: m[2],
-    packages: m[3] ? Number(m[3]) : undefined,
-    tests: m[4] ? Number(m[4]) : undefined,
-  };
+  if (withStatus) {
+    return {
+      status: withStatus[1].trim(),
+      date: withStatus[2],
+      packages: withStatus[3] ? Number(withStatus[3]) : undefined,
+      tests: withStatus[4] ? Number(withStatus[4]) : undefined,
+    };
+  }
+  const activityOnly = line.match(
+    /^last activity\s+(\d{4}-\d{2}-\d{2})(?:\s*·\s*(?:(\d+)\s+packages)?)?(?:\s*·\s*(?:(\d+)\s+tests?)?)?/i,
+  );
+  if (activityOnly) {
+    return {
+      status: undefined,
+      date: activityOnly[1],
+      packages: activityOnly[2] ? Number(activityOnly[2]) : undefined,
+      tests: activityOnly[3] ? Number(activityOnly[3]) : undefined,
+    };
+  }
+  return null;
+}
+
+function findHeaderMetaLine(lines) {
+  return lines.find(
+    (l) => l.startsWith('Status:') || /^last activity\s+\d{4}-\d{2}-\d{2}/i.test(l),
+  );
 }
 
 function daysBetween(a, b) {
@@ -103,7 +123,7 @@ export function evalG1(loadText) {
 /** G2 — header counts/dates not stale vs project last activity. */
 export function evalG2(loadText, dbCtx) {
   const header = firstLines(loadText, 10).join('\n');
-  const metaLine = firstLines(loadText, 10).find((l) => l.startsWith('Status:'));
+  const metaLine = findHeaderMetaLine(firstLines(loadText, 10));
   const meta = metaLine ? parseHeaderMeta(metaLine) : null;
   const lastActivity = dbCtx.lastActivity?.slice(0, 10);
   if (!meta || !lastActivity) {
