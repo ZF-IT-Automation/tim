@@ -394,12 +394,16 @@ async function collectOpenWork(
   const tasks = await store.getTasks();
   const project = await store.requireProject(projectLabel);
   const activeDays = store.getProjectActiveDays(project.id);
+  const open = tasks.filter(task =>
+    task.project_label === projectLabel && !(task.status && CLOSED_TASK_STATUSES.has(task.status)));
+  // Work logged under a task or pointing at it keeps the task fresh, like editing it would.
+  const workLogged = store.getTaskWorkLoggedAt(open.map(t => t.id));
   const entries: OpenWorkEntry[] = [];
-  for (const task of tasks) {
-    if (task.project_label !== projectLabel) continue;
-    if (task.status && CLOSED_TASK_STATUSES.has(task.status)) continue;
+  for (const task of open) {
     const row = await store.read(task.id, { includeChildren: false });
-    const updatedAt = row ? taskLastTouch(row) : '';
+    const touched = row ? taskLastTouch(row) : '';
+    const logged = workLogged.get(task.id) ?? '';
+    const updatedAt = logged > touched ? logged : touched;
     entries.push({
       task,
       updatedAt,
