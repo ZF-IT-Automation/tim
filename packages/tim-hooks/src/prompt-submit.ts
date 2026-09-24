@@ -3,6 +3,8 @@ import { isHarnessOnlyPrompt, shouldSkipPromptRecall, type TimStore } from 'tim-
 
 const DEFAULT_TIMEOUT_MS = 1000;
 const RETRIEVAL_TOP_K = 3;
+/** Fetch extra hits so harness rows filtered by shouldSkipPromptRecall still leave real matches. */
+const SEARCH_TOP_K = RETRIEVAL_TOP_K * 4;
 
 /** Prompt looks like a planned action — run tim_guard-style failure lookup. */
 const ACTION_PATTERN =
@@ -49,12 +51,12 @@ async function computePromptContext(
 
   let hits = await store.search({
     query: searchQuery,
-    topK: RETRIEVAL_TOP_K,
+    topK: SEARCH_TOP_K,
     searchType: 'fts',
     project: params.projectLabel,
     ftsQueryMode: searchQuery.includes(' OR ') ? 'or-terms' : 'literal',
   });
-  hits = hits.filter(hit => !shouldSkipPromptRecall(hit));
+  hits = hits.filter(hit => !shouldSkipPromptRecall(hit)).slice(0, RETRIEVAL_TOP_K);
 
   for (const hit of hits) {
     const label = hit.title?.trim() || hit.id;

@@ -82,6 +82,28 @@ describe('runPromptSubmit', () => {
     expect(result).toBeNull();
   });
 
+  it('filters harness hits before applying top-K (m6)', async () => {
+    const harnessHits = await Promise.all(
+      Array.from({ length: 3 }, (_, i) => store.write(`harness ${i}`, {
+        metadata: { kind: 'exchange', role: 'user', system_turn: true },
+        content: '<task-notification>background task completed output</task-notification>',
+      })),
+    );
+    const lesson = await store.write('Real match\nWorker output paths documented.', {
+      tags: ['#worker'],
+      metadata: { kind: 'lesson' },
+    });
+    const searchSpy = vi.spyOn(store, 'search').mockResolvedValue([...harnessHits, lesson]);
+
+    const result = await runPromptSubmit(store, {
+      prompt: 'background task completed output paths',
+    });
+    expect(searchSpy).toHaveBeenCalledWith(expect.objectContaining({ topK: 12 }));
+    expect(result).not.toBeNull();
+    expect(result!.lines.some(l => l.includes('Real match'))).toBe(true);
+    expect(result!.lines.length).toBeLessThanOrEqual(3);
+  });
+
   it('skips harness-only prompts and flagged exchange hits', async () => {
     const harness = await store.write(LIVE_TASK_NOTIFICATION, {
       metadata: { kind: 'exchange', role: 'user', system_turn: true },
