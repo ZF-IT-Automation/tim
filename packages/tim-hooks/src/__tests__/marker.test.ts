@@ -13,7 +13,6 @@ import {
   findMarker,
   CWD_ONLY_MARKER_DISCOVERY_POLICY,
   DEFAULT_MARKER_DISCOVERY_POLICY,
-  syncNearestProjectMarker,
   buildLoadDirective,
   buildSessionDirective,
   acquireLock,
@@ -368,21 +367,6 @@ describe('marker', () => {
     expect(d).toContain('tim_load_project(label="P0063")');
   });
 
-  it('syncNearestProjectMarker overwrites project on nearest marker', () => {
-    writeMarker(dir, { project: 'P0062' });
-    const sub = path.join(dir, 'repo');
-    fs.mkdirSync(sub, { recursive: true });
-    writeMarker(sub, { project: 'P0062' });
-
-    expect(
-      syncNearestProjectMarker(sub, 'P0063', {
-        findOptions: { maxRoot: dir },
-      }),
-    ).toBe(true);
-    expect(readMarker(sub)).toEqual({ version: 3, project: 'P0063' });
-    expect(readMarker(dir)).toEqual({ version: 3, project: 'P0062' });
-  });
-
   it('writeMarker refuses to write P9999 (invalid label — 5 digits)', () => {
     expect(validateProjectLabel('P9999')).toBe(false);
     writeMarker(dir, { project: 'P9999' });
@@ -394,14 +378,6 @@ describe('marker', () => {
     }
   });
 
-  it('syncNearestProjectMarker with P9999 returns false and does not write', () => {
-    writeMarker(dir, { project: 'P0062' });
-    const result = syncNearestProjectMarker(dir, 'P9999', {
-      findOptions: { maxRoot: dir },
-    });
-    expect(result).toBe(false);
-    expect(readMarker(dir)?.project).toBe('P0062');
-  });
 });
 
 describe('marker v3 schema', () => {
@@ -579,7 +555,7 @@ describe('discoverMarker policy', () => {
       .toBe('P0002');
   });
 
-  it('default policy walks up like syncNearestProjectMarker', () => {
+  it('default policy walks up', () => {
     writeMarker(dir, { project: 'P0002' });
     const sub = path.join(dir, 'sub');
     fs.mkdirSync(sub, { recursive: true });

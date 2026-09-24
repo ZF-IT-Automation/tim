@@ -75,7 +75,7 @@ describe('sweepIdleSessions (criteria 5–9, 13)', () => {
     store.close();
   });
 
-  it('criterion 5–8: spawns only for idle session with valid cwd and marker', async () => {
+  it('criterion 5–8: spawns for idle sessions with an existing cwd, marker or not', async () => {
     const idleDir = fs.mkdtempSync(path.join(TEST_ROOT, 'idle-'));
     const freshDir = fs.mkdtempSync(path.join(TEST_ROOT, 'fresh-'));
     const noMarkerDir = fs.mkdtempSync(path.join(TEST_ROOT, 'nomarker-'));
@@ -116,19 +116,16 @@ describe('sweepIdleSessions (criteria 5–9, 13)', () => {
     const spawn = vi.fn();
     const results = await sweepIdleSessions(store, { spawn, now, idleMinutes: 15 });
 
-    expect(spawn).toHaveBeenCalledOnce();
-    expect(spawn.mock.calls[0][0]).toMatchObject({ sessionId: 'idle-s', cwd: idleDir });
-
-    const spawned = results.filter(r => r.reason === 'spawned');
-    expect(spawned).toHaveLength(1);
-    expect(spawned[0]!.sessionId).toBe('idle-s');
+    // A bound session needs no marker in its cwd (follow the work).
+    expect(spawn).toHaveBeenCalledTimes(2);
+    const spawned = results.filter(r => r.reason === 'spawned').map(r => r.sessionId).sort();
+    expect(spawned).toEqual(['idle-s', 'nomarker-s']);
 
     const errors = store.getDb().prepare(
       `SELECT error FROM error_log WHERE tool = 'idle_sweep'`,
     ).all() as Array<{ error: string }>;
-    expect(errors).toHaveLength(2);
-    expect(errors.some(e => e.error.includes('does not exist'))).toBe(true);
-    expect(errors.some(e => e.error.includes('no .tim-project'))).toBe(true);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]!.error).toContain('does not exist');
   });
 
   it('criterion 9: caps spawns at maxSpawnsPerPass across distinct cwds', async () => {

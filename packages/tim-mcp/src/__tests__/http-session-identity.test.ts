@@ -154,19 +154,13 @@ describe('HTTP session identity', () => {
     expect((loadB.content[0] as { text: string }).text).toContain(labelB);
     expect((loadB.content[0] as { text: string }).text).not.toContain(labelA);
 
+    // Follow the work: loading the other project re-binds, it no longer rejects
     const crossLoadA = await clientA.callTool({
       name: 'tim_load_project',
       arguments: { label: labelB, sessionId: sessionA, bind: true },
     });
-    expect(crossLoadA.isError).toBe(true);
-    expect((crossLoadA.content[0] as { text: string }).text).toContain(`already bound to ${labelA}`);
-
-    const crossLoadB = await clientB.callTool({
-      name: 'tim_load_project',
-      arguments: { label: labelA, sessionId: sessionB, bind: true },
-    });
-    expect(crossLoadB.isError).toBe(true);
-    expect((crossLoadB.content[0] as { text: string }).text).toContain(`already bound to ${labelB}`);
+    expect(crossLoadA.isError).toBeFalsy();
+    expect((crossLoadA.content[0] as { text: string }).text).toContain(labelB);
 
     // No .tim-project marker was created in the scratch dir
     const markerAfter = fs.existsSync(path.join(scratchDir, '.tim-project'));

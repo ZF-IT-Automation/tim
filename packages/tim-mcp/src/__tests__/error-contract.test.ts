@@ -134,7 +134,7 @@ describe('error contract', () => {
     expect(res.result!.isError).toBe(true);
   });
 
-  it('load-gate rejection returns isError when binding a second project', async () => {
+  it('loading a second project re-binds the session and leaves markers alone', async () => {
     const sessionId = `error-contract-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
     // Create two projects.
@@ -158,11 +158,12 @@ describe('error contract', () => {
     expect(first.error).toBeUndefined();
     expect(first.result!.isError).toBeFalsy();
 
-    // Second load to a different project is rejected with isError.
+    // Second load to a different project re-binds the session (follow the work).
     const second = await client.callTool('tim_load_project', { label: 'P8002', sessionId });
     expect(second.error).toBeUndefined();
-    expect(second.result!.isError).toBe(true);
-    expect(getText(second)).toContain('P8001');
+    expect(second.result!.isError).toBeFalsy();
+    const session = await client.callTool('tim_read', { id: sessionId, includeChildren: false });
+    expect(getText(session)).toContain('"project_ref": "P8002"');
     expect(fs.readFileSync(externalMarker)).toEqual(before);
   });
 

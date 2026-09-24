@@ -39,7 +39,6 @@ import { collectTopicResume, formatTopicResume } from './topic-resume.js';
 import {
   loadConfig,
   resolveActiveSessionId,
-  evaluateLoadGate,
   stripDeprecatedTags,
   SCHEMA_KINDS,
   PROJECT_SCHEMA,
@@ -66,7 +65,6 @@ import {
   maybeSpawnSummarizer,
   previewSessionStart,
   runPromptSubmit,
-  syncNearestProjectMarker,
 } from 'tim-hooks';
 import { startIdleSweepTimer, stopIdleSweepTimer } from './idle-sweep-timer.js';
 import { handleUncaughtException, handleStdioStreamError, isBrokenPipeError } from './process-error-guards.js';
@@ -597,7 +595,7 @@ const TimLoadProjectSchema = z.object({
   sections: z.array(z.string()).nullable().optional().default(null)
     .describe('Optional section IDs/labels to filter direct children'),
   sessionId: z.string().optional().describe(
-    'Harness session id; when omitted, resolved from env/cache or the current session for the marker-bound project (stdio only). Binds TIM session project_ref on first load only.',
+    'Harness session id; when omitted, resolved from env/cache or the current session for the marker-bound project (stdio only). Binds (or re-binds) the TIM session project_ref.',
   ),
   bind: z.boolean().optional().default(true)
     .describe('false = cross-project read without binding the session (replaces tim_read_project)'),
@@ -984,7 +982,7 @@ export const TOOL_DEFS: Array<{
   {
     name: 'tim_load_project',
     description:
-      'Load a project by label or alias and bind the session once. Rejects a different project if the session is already bound — pass bind:false for cross-project reads (replaces tim_read_project).',
+      'Load a project by label or alias and bind the session to it. Loading a different project re-binds the session there (follow the work) — pass bind:false for a cross-project read that leaves the binding alone (replaces tim_read_project).',
     schema: TimLoadProjectSchema,
   },
   {
@@ -1827,7 +1825,7 @@ function getSessions(): SessionManager {
         const session = await getStore().read(sessionId);
         const cwd = typeof session?.metadata.cwd === 'string' ? session.metadata.cwd : undefined;
         if (!cwd) return;
-        await maybeSpawnSummarizer(getStore(), cwd, { batchFull: true });
+        await maybeSpawnSummarizer(getStore(), cwd, { batchFull: true, sessionId });
       })();
     });
     sessions = mgr;
@@ -1846,6 +1844,33 @@ type WriteOutcome =
  * going after one entry is rejected — the failure paths here (unresolvable
  * placement, deprecated tags, duplicate_suspected) are per-entry, not per-call.
  */
+/**
+ * Follow the work: a session no project has claimed yet (no marker in its cwd,
+ * no tim_load_project) binds to the project of its first write. A session that
+ * is already bound stays put — a cross-project note does not move it; an
+ * explicit tim_load_project does.
+ */
+async function bindUnboundSession(s: TimStore, parentId: string | null | undefined): Promise<void> {
+  const projectLabel = parentId ? s.getProjectLabel(parentId) : null;
+  if (!projectLabel) return;
+  try {
+    const cwd = process.cwd();
+    const sessionId = await resolveHarnessSessionId(s, { cwd, useSessionCache: true, useEnv: true });
+    if (!sessionId) return;
+    const existing = await s.read(sessionId);
+    if (existing?.metadata.kind === 'session') return;
+    await getSessions().startProjectSession({
+      sessionId,
+      projectId: projectLabel,
+      agentName: 'mcp',
+      cwd,
+      harness: 'mcp',
+    });
+  } catch {
+    // Non-critical — the write itself succeeded
+  }
+}
+
 async function writeEntry(
   s: TimStore,
   opts: z.infer<typeof TimWriteSchema>,
@@ -2456,6 +2481,7 @@ export async function createMcpServer(
             callerProjectPath,
           });
           if (!outcome.ok) return errorResult(outcome.message);
+          if (!isHttp) await bindUnboundSession(s, outcome.entry.parentId);
           const payload = outcome.warnings.length > 0
             ? { entry: outcome.entry, warnings: outcome.warnings }
             : outcome.entry;
@@ -2497,6 +2523,7 @@ export async function createMcpServer(
                 message: err instanceof Error ? err.message : String(err),
               }));
             if (outcome.ok) {
+              if (!isHttp) await bindUnboundSession(s, outcome.entry.parentId);
               created.push({
                 id: outcome.entry.id,
                 title: outcome.entry.title,
@@ -3643,22 +3670,6 @@ export async function createMcpServer(
             useEnv: !isHttp,
           });
 
-          if (bind && sessionId) {
-            const existing = await s.read(sessionId);
-            if (existing?.metadata.kind === 'session') {
-              const existingRef =
-                typeof existing.metadata.project_ref === 'string'
-                  ? existing.metadata.project_ref
-                  : undefined;
-              if (evaluateLoadGate(existingRef, projectLabel) === 'reject') {
-                return errorResult(
-                  `Session already bound to ${existingRef}. tim_load_project binds once per session. ` +
-                    'Use tim_load_project with bind:false for cross-project access.'
-                );
-              }
-            }
-          }
-
           const result = await loadProjectForBriefing(s, projectLabel, {
             depth,
             budget,
@@ -3708,18 +3719,6 @@ export async function createMcpServer(
               });
             } catch {
               // Non-critical — project brief still returned
-            }
-          }
-
-          // Only a real bind may touch the marker — bind:false is a read-only
-          // cross-project load and must never rewrite .tim-project.
-          if (bind && cwd) {
-            try {
-              syncNearestProjectMarker(cwd, projectLabel, {
-                findOptions: findMarkerOptionsFromEnv(),
-              });
-            } catch {
-              // Non-critical — brief still returned
             }
           }
 

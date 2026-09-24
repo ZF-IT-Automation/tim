@@ -285,27 +285,6 @@ export function writeMarker(cwd: string, marker: ProjectMarkerInput): void {
 /**
  * Update the nearest `.tim-project` (walk-up from cwd) after tim_load_project.
  */
-export function syncNearestProjectMarker(
-  startCwd: string,
-  projectLabel: string,
-  options?: { findOptions?: FindMarkerOptions },
-): boolean {
-  if (!validateProjectLabel(projectLabel)) {
-    console.warn(
-      `[tim-hooks] syncNearestProjectMarker: refusing to sync invalid project label ` +
-        `"${projectLabel}" — expected ^[PLEN]\\d{4}$. Returning false.`,
-    );
-    return false;
-  }
-  const located = discoverMarker(startCwd, {
-    ...DEFAULT_MARKER_DISCOVERY_POLICY,
-    ...options?.findOptions,
-  });
-  if (!located) return false;
-  writeMarker(located.dir, { project: projectLabel });
-  return true;
-}
-
 /** Project detection — cwd-only marker (no walk-up). */
 export function detectProject(cwd: string): ProjectMarker | null {
   return discoverMarker(cwd, CWD_ONLY_MARKER_DISCOVERY_POLICY)?.marker ?? null;

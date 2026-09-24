@@ -22,13 +22,13 @@ class McpClient {
   private buffer = '';
   private ready = false;
 
-  constructor(dbPath: string) {
+  constructor(dbPath: string, env: Record<string, string> = {}) {
     if (!fs.existsSync(SERVER_PATH)) {
       throw new Error(`Server dist not found: ${SERVER_PATH}. Run "npm run build" first.`);
     }
     this.proc = spawn('node', [SERVER_PATH], {
       cwd: childServerCwd(),
-      env: { ...process.env, TIM_DB_PATH: dbPath },
+      env: { ...process.env, TIM_DB_PATH: dbPath, ...env },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     this.proc.stdout!.on('data', (chunk) => this.onData(chunk.toString('utf8')));
@@ -172,7 +172,7 @@ describe('tim_load_project bind:false', () => {
     expect(fs.statSync(markerPath, { bigint: true }).mtimeNs).toBe(beforeMtime);
   });
 
-  it('bind:false then bind:true works — read does not consume the gate', async () => {
+  it('bind:false then bind:true binds only on the real bind', async () => {
     const sessionId = 'bind-after-read-session';
     const read = await client.callTool('tim_load_project', {
       label: 'P8101', bind: false, sessionId,
@@ -185,9 +185,8 @@ describe('tim_load_project bind:false', () => {
     expect(bind.error).toBeUndefined();
     expect(bind.result!.isError).toBeFalsy();
 
-    const rejected = await client.callTool('tim_load_project', { label: 'P8101', sessionId });
-    expect(rejected.result!.isError).toBe(true);
-    expect(rejected.result!.content[0].text).toContain('P8102');
+    const session = await client.callTool('tim_read', { id: sessionId, includeChildren: false });
+    expect(session.result!.content[0].text).toContain('"project_ref": "P8102"');
   });
 
   it('bind:false creates no .tim-project when the cwd has none', async () => {
@@ -197,7 +196,7 @@ describe('tim_load_project bind:false', () => {
     expect(fs.existsSync(markerPath)).toBe(false);
   });
 
-  it('bind:true syncs the cwd marker to the loaded project', async () => {
+  it('bind:true leaves the cwd marker alone — the session follows the work, not the directory', async () => {
     const markerPath = path.join(childServerCwd(), '.tim-project');
     fs.writeFileSync(markerPath, JSON.stringify({
       version: 2,
@@ -212,7 +211,7 @@ describe('tim_load_project bind:false', () => {
     });
     expect(bind.result!.isError).toBeFalsy();
     const marker = JSON.parse(fs.readFileSync(markerPath, 'utf8')) as { project: string };
-    expect(marker.project).toBe('P8102');
+    expect(marker.project).toBe('P8101');
   });
 
   it('tim_read_project still works as a deprecated alias for bind:false', async () => {
@@ -221,13 +220,32 @@ describe('tim_load_project bind:false', () => {
     expect(resp.error).toBeUndefined();
     expect(resp.result!.isError).toBeFalsy();
 
-    // And the gate is still free — we can bind afterward to a different project.
+    // The alias read did not bind; the later load does.
     const bind = await client.callTool('tim_load_project', { label: 'P8102', sessionId });
     expect(bind.error).toBeUndefined();
     expect(bind.result!.isError).toBeFalsy();
 
-    const rejected = await client.callTool('tim_load_project', { label: 'P8101', sessionId });
-    expect(rejected.result!.isError).toBe(true);
-    expect(rejected.result!.content[0].text).toContain('P8102');
+    const session = await client.callTool('tim_read', { id: sessionId, includeChildren: false });
+    expect(session.result!.content[0].text).toContain('"project_ref": "P8102"');
+  });
+
+  it('first tim_write binds an unbound session; a later cross-project write does not move it', async () => {
+    client.kill();
+    const sessionId = 'write-binds-session';
+    client = new McpClient(dbPath, { TIM_SESSION_ID: sessionId });
+    await client.init();
+
+    const first = await client.callTool('tim_write', {
+      where: 'P8102/Log', title: 'first note', content: 'x', tags: ['#a', '#b'],
+    });
+    expect(first.result!.isError).toBeFalsy();
+    const bound = await client.callTool('tim_read', { id: sessionId, includeChildren: false });
+    expect(bound.result!.content[0].text).toContain('"project_ref": "P8102"');
+
+    await client.callTool('tim_write', {
+      where: 'P8101/Log', title: 'cross note', content: 'y', tags: ['#a', '#b'],
+    });
+    const still = await client.callTool('tim_read', { id: sessionId, includeChildren: false });
+    expect(still.result!.content[0].text).toContain('"project_ref": "P8102"');
   });
 });

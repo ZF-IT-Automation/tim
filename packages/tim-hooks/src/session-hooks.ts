@@ -111,12 +111,16 @@ export async function maybeSpawnSummarizer(
 ): Promise<SessionStopResult> {
   const spawn = opts.spawn ?? spawnSummarizer;
 
-  const marker = detectProject(cwd);
-  if (!marker) return { spawned: false, reason: 'no-marker' };
-
-  const sessionEntry = opts.sessionId
-    ? await store.read(opts.sessionId)
-    : await resolveCurrentSession(store, marker.project, cwd);
+  // A known session id needs no marker: a session can be bound by tim_load_project
+  // or tim_write in a cwd whose marker names another project, or none at all.
+  let sessionEntry;
+  if (opts.sessionId) {
+    sessionEntry = await store.read(opts.sessionId);
+  } else {
+    const marker = detectProject(cwd);
+    if (!marker) return { spawned: false, reason: 'no-marker' };
+    sessionEntry = await resolveCurrentSession(store, marker.project, cwd);
+  }
   if (!sessionEntry) return { spawned: false, reason: 'no-session' };
 
   const sessionId = sessionEntry.id;
@@ -307,20 +311,6 @@ export async function sweepIdleSessions(
         sweepSkipLogged.add(key);
       }
       results.push({ sessionId, reason: 'no-cwd' });
-      continue;
-    }
-
-    if (!detectProject(cwd)) {
-      const key = `${sessionId}:no-marker`;
-      if (!sweepSkipLogged.has(key)) {
-        errorLogger.logError({
-          tool: 'idle_sweep',
-          error: `session cwd has no .tim-project marker: ${cwd}`,
-          sessionId,
-        });
-        sweepSkipLogged.add(key);
-      }
-      results.push({ sessionId, reason: 'no-marker' });
       continue;
     }
 

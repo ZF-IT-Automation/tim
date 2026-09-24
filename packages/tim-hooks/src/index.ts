@@ -78,7 +78,6 @@ export {
   buildLoadDirective,
   buildSessionDirective,
   type DirectiveBriefing,
-  syncNearestProjectMarker,
   validateMarkerAgainstStore,
   validateProjectLabel,
   isUnsafeMarkerDir,
