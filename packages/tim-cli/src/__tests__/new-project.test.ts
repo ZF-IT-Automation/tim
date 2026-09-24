@@ -452,6 +452,16 @@ describe('tim new-project', () => {
     expect(result.stdout).toContain('P0001');
   });
 
+  it('skips the reserved P9xxx range', async () => {
+    await seedProject(dbPath, 'P0007', 'Regular');
+    await seedProject(dbPath, 'P9001', 'Project 1 for test');
+
+    const target = path.join(workDir, 'after-test-project');
+    const result = run(['new-project', '-p', target, '-n', 'After Test Project'], env);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('P0008');
+  });
+
   it('creates_full_project_schema', async () => {
     const target = path.join(workDir, 'full-schema');
     const result = run(['new-project', '-p', target, '-n', 'Schema Test'], env);

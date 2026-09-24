@@ -22,6 +22,8 @@ delete process.env.TEAMUP_RUN_ID;
 // Running the suite inside Claude Code: its session id would resolve as the harness session.
 delete process.env.CLAUDE_CODE_SESSION_ID;
 delete process.env.TIM_SESSION_ID;
+// A developer's TIM_DB_PATH would point tests that forget their own at the live DB.
+delete process.env.TIM_DB_PATH;
 // A machine with TIM installed has this directory; code that opens
 // ~/.tim/tim.db without creating it first would otherwise fail here for a
 // reason no production run has.
