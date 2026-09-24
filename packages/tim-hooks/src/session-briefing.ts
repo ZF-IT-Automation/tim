@@ -15,13 +15,16 @@ import {
   taskLastTouch,
   type TimStore,
 } from 'tim-store';
-import { isClosedBugStatus, type Entry } from 'tim-core';
+import { isClosedBugStatus, taskPriorityRank, type Entry } from 'tim-core';
 import type { DirectiveBriefing } from './marker.js';
 
 const CLOSED_TASK_STATUSES = new Set(['done', 'cancelled', 'closed', 'wontfix']);
 const MAX_OPEN_WORK_ITEMS = 12;
 const NOW_OPEN_WORK_ITEMS = 5;
 const OPEN_WORK_ITEM_MAX_CHARS = 160;
+/** Newer substantive sessions without a handoff after which the last handoff is history. */
+const STALE_HANDOFF_SESSIONS = 3;
+
 /** Days of project work (not calendar days) a task may sit untouched before it needs triage. */
 const STALE_ACTIVE_DAYS = 7;
 const NOW_HANDOFF_MAX_LINES = 3;
@@ -407,7 +410,9 @@ function formatOpenWorkLine(
   staleSuffix: string,
 ): string {
   const status = task.status ?? 'todo';
-  const priority = task.priority ? `, ${task.priority}` : '';
+  // One scale on screen: high/medium/… and P0–P3 are the same ranks (taskPriorityRank).
+  const rank = taskPriorityRank(task.priority);
+  const priority = rank < 4 ? `, P${rank}` : task.priority ? `, ${task.priority}` : '';
   // Titles copied from markdown bodies start with "# " / "## TASK:" — noise in a list line.
   const title = task.title.replace(/^\s*#+\s*/, '');
   return `- [${status}${priority}] ${oneLine(title, OPEN_WORK_ITEM_MAX_CHARS)}${staleSuffix} · ${task.id}`;
@@ -541,7 +546,10 @@ export async function buildNowBlock(
 ): Promise<string[]> {
   const lines: string[] = ['', '── Now ──', ''];
   const handoff = await findLatestProjectHandoff(store, projectLabel);
-  if (handoff) {
+  if (handoff && handoff.newerSessions >= STALE_HANDOFF_SESSIONS) {
+    // Several sessions of work since: the note is history, not the current next step.
+    lines.push(`Last handoff is ${handoff.newerSessions} sessions old (${handoff.date}) — not shown; tim_resume_list({projectId:"${projectLabel}"})`);
+  } else if (handoff) {
     const clipped = handoff.note
       .split('\n')
       .map(l => l.trim())

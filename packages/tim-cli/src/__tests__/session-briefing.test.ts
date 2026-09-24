@@ -658,7 +658,7 @@ describe('handoff lookup (review #5)', () => {
         await sessions.logExchange('s-work', [{ role: 'user', content: `day ${i}` }, { role: 'agent', content: 'ok' }]);
       }
       const stale = (await buildNowBlock(store, 'P0095')).join('\n');
-      expect(stale).toMatch(/Stale = untouched over 7\+ days of project work[^\n]*\n- \[todo, high\] Old plan · stale since/);
+      expect(stale).toMatch(/Stale = untouched over 7\+ days of project work[^\n]*\n- \[todo, P1\] Old plan · stale since/);
       expect(stale).toContain('tim_verify');
 
       await store.touchVerified([task.id]);
@@ -667,6 +667,23 @@ describe('handoff lookup (review #5)', () => {
       vi.useRealTimers();
       store.close();
     }
+  });
+
+  it('replaces a handoff that several newer sessions have outgrown with a pointer', async () => {
+    const store = new TimStore(dbPath);
+    const sessions = new SessionManager(store);
+    await store.createProject('P0094', { content: 'old handoff' });
+    const start = (id: string) => sessions.startProjectSession({ sessionId: id, projectId: 'P0094', agentName: 'test', cwd, harness: 'test' });
+    const work = async (id: string) => {
+      for (let i = 0; i < 3; i++) await sessions.logExchange(id, [{ role: 'user', content: `${id} q${i}` }, { role: 'agent', content: 'ok' }]);
+    };
+    await start('s-handoff'); await work('s-handoff');
+    await sessions.checkpoint('s-handoff', { handoffNote: 'next: very old plan' });
+    for (const id of ['s-a', 's-b', 's-c']) { await start(id); await work(id); }
+    const now = (await buildNowBlock(store, 'P0094')).join('\n');
+    expect(now).not.toContain('very old plan');
+    expect(now).toMatch(/Last handoff is 3 sessions old/);
+    store.close();
   });
 
   it('says so when a project has no open work and no handoff', async () => {

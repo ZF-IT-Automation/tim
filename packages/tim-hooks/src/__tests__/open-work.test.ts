@@ -100,8 +100,8 @@ describe('formatOpenWorkLines stale handling', () => {
     const child = await store.write('Subtask note', { parentId: staleIds[1] });
     store.getDb().prepare('UPDATE entries SET created_at = ? WHERE id = ?').run('2026-02-07T12:00:00.000Z', child.id);
     const lines = await formatOpenWorkLines(store, 'P0099', 12, 4000);
-    expect(lines).toContain(`- [todo, medium] Stale task 0 · ${staleIds[0]}`);
-    expect(lines).toContain(`- [todo, medium] Stale task 1 · ${staleIds[1]}`);
+    expect(lines).toContain(`- [todo, P2] Stale task 0 · ${staleIds[0]}`);
+    expect(lines).toContain(`- [todo, P2] Stale task 1 · ${staleIds[1]}`);
     expect(lines.filter(l => / · stale since /.test(l)).length).toBeGreaterThan(0);
     expect(lines.join('\n')).not.toMatch(/Stale task [01] · stale since/);
   });
@@ -112,7 +112,7 @@ describe('formatOpenWorkLines stale handling', () => {
     store.getDb().prepare('UPDATE entries SET created_at = ? WHERE id = ?').run('2099-01-01T00:00:00.000Z', future.id);
     const lines = await formatOpenWorkLines(store, 'P0099', 12, 4000);
     const fresh = lines.filter(l => l.startsWith('- [') && !l.includes(' · stale since '));
-    expect(fresh.map(l => l.replace(/ · \S+$/, ''))).toEqual(['- [todo, high] Fresh task']);
+    expect(fresh.map(l => l.replace(/ · \S+$/, ''))).toEqual(['- [todo, P1] Fresh task']);
   });
 
   it('keeps stale work visible when the budget is tight', async () => {
