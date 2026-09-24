@@ -57,6 +57,11 @@ export function generateSummaryHeuristic(batch: UnsummarizedBatch): string {
   return summary;
 }
 
+/** Summaries are always English; quoted identifiers/commands stay verbatim. */
+export const ENGLISH_SUMMARY_INSTRUCTION =
+  'Write your entire response in English, regardless of the conversation language. ' +
+  'Keep quoted identifiers, commands, file paths, and code verbatim.';
+
 export function buildPrompt(batch: UnsummarizedBatch): string {
   // Only tags the project reused, frequency-ordered (the caller drops
   // singletons and the machine-stamped commit tags). "Verbatim" is the load
@@ -81,6 +86,7 @@ export function buildPrompt(batch: UnsummarizedBatch): string {
     : '';
 
   return (
+    `${ENGLISH_SUMMARY_INSTRUCTION} ` +
     `Summarize this agent session batch thematically (bullet themes, decisions, open items). ` +
     // Without a stated budget the model has none, and the summaries drifted with
     // it: across the 445 in this database the median is 915 characters while the
@@ -445,6 +451,7 @@ export function buildSessionRollupPrompt(batchSummaries: string[]): string {
   const budget = rollupInputBudget(batchSummaries.length);
   const joined = batchSummaries.map(s => clampForPrompt(s, budget)).join('\n\n---\n\n');
   return (
+    `${ENGLISH_SUMMARY_INSTRUCTION} ` +
     `You are condensing the batch summaries of ONE agent session into a handoff ` +
     `for the next session on the same work.\n\n` +
     `Cover, in this order:\n` +
@@ -492,6 +499,7 @@ export async function generateSessionRollup(
 function buildProjectSummaryPrompt(sessionSummaries: string[]): string {
   const joined = sessionSummaries.join('\n\n---\n\n');
   return (
+    `${ENGLISH_SUMMARY_INSTRUCTION} ` +
     `You are summarizing a project's progress across multiple sessions.\n` +
     `Below are summaries of the last N sessions. Produce a concise project-level summary.\n\n` +
     `Focus on:\n` +

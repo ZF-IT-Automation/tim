@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildPrompt, buildSessionRollupPrompt } from '../generate-summary.js';
+import { buildPrompt, buildSessionRollupPrompt, ENGLISH_SUMMARY_INSTRUCTION } from '../generate-summary.js';
 import { BATCH_SUMMARY_MAX_CHARS, ROLLUP_INPUT_MAX_CHARS } from 'tim-core';
 import type { UnsummarizedBatch } from '../mcp-client.js';
 
@@ -127,5 +127,12 @@ describe('session rollup input budget', () => {
     const prompt = buildSessionRollupPrompt(['- did a thing', '- did another']);
     expect(prompt).toContain('- did a thing');
     expect(prompt).not.toContain('[…]');
+  });
+});
+
+describe('English summary instruction (C10)', () => {
+  it('requires English output in batch, rollup, and project prompts', () => {
+    expect(buildPrompt(base)).toContain(ENGLISH_SUMMARY_INSTRUCTION);
+    expect(buildSessionRollupPrompt(['- one'])).toContain(ENGLISH_SUMMARY_INSTRUCTION);
   });
 });
