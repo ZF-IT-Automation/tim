@@ -27,7 +27,6 @@ const Database = require('better-sqlite3');
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_DIST = resolve(__dirname, '..');
-const HOOK_CWD = '/home/bbbee/projects/tim';
 
 class McpStdioClient {
   constructor({ serverPath, cwd, env, timeoutMs = 120_000 }) {
@@ -189,6 +188,10 @@ async function captureTexts({ dist, dbPath, home, project }) {
     throw new Error(`MCP server not built at ${serverPath} — run npm run build in ${dist}`);
   }
   const env = cleanEnv(home, dbPath);
+  // Each project gets its own marker dir; a fixed cwd rendered P0063's hook for every project.
+  const HOOK_CWD = join(home, 'work', project);
+  mkdirSync(HOOK_CWD, { recursive: true });
+  writeFileSync(join(HOOK_CWD, '.tim-project'), JSON.stringify({ version: 3, project }));
   const client = new McpStdioClient({ serverPath, cwd: HOOK_CWD, env });
 
   try {

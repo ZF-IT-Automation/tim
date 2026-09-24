@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { spawnSync, type SpawnSyncReturns } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -628,6 +628,28 @@ describe('handoff lookup (review #5)', () => {
     await sessions.checkpoint('sess-old', { handoffNote: 'next: resume here' });
     expect(order()).toEqual(['sess-old', 'sess-new']);
     store.close();
+  });
+
+  it('puts a triage instruction above stale tasks, and tim_verify clears it', async () => {
+    const store = new TimStore(dbPath);
+    const project = await store.createProject('P0095', { content: 'stale triage' });
+    const task = await store.write('Old plan', {
+      parentId: project.id,
+      metadata: { task: { status: 'todo', priority: 'high' } },
+    });
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(Date.now() + 30 * 86400_000);
+      const stale = (await buildNowBlock(store, 'P0095')).join('\n');
+      expect(stale).toMatch(/Stale = untouched[^\n]*\n- \[todo, high\] Old plan · stale since/);
+      expect(stale).toContain('tim_verify');
+
+      await store.touchVerified([task.id]);
+      expect((await buildNowBlock(store, 'P0095')).join('\n')).not.toContain('Stale =');
+    } finally {
+      vi.useRealTimers();
+      store.close();
+    }
   });
 
   it('says so when a project has no open work and no handoff', async () => {

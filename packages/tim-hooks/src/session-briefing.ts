@@ -407,6 +407,11 @@ async function collectOpenWork(
   return entries;
 }
 
+/** Staleness cannot be resolved automatically — only the agent can tell done from obsolete. */
+const STALE_TRIAGE_LINE =
+  'Stale = untouched >14 d. Check before relying on it: done → tim_update metadata.task.status "done"; '
+  + 'obsolete → tim_update irrelevant:true; still valid → tim_verify(id).';
+
 function staleCollapseLine(count: number, oldestDate: string, projectLabel: string): string {
   return `+ ${count} stale open task${count === 1 ? '' : 's'} (untouched since ${oldestDate}) — ${staleTasksDrillDown(projectLabel)}`;
 }
@@ -438,6 +443,11 @@ export async function formatOpenWorkLines(
     lines.push(line);
     return true;
   };
+  let triaged = false;
+  const pushStale = (line: string): boolean => {
+    if (!triaged) triaged = tryPush(STALE_TRIAGE_LINE);
+    return tryPush(line);
+  };
 
   if (fresh.length > 0) {
     for (const entry of fresh) {
@@ -451,13 +461,13 @@ export async function formatOpenWorkLines(
     for (const entry of staleHigh) {
       if (lines.length >= maxItems) break;
       const suffix = entry.updatedAt ? taskStaleSuffix(entry.updatedAt) : '';
-      if (!tryPush(formatOpenWorkLine(entry.task, suffix))) break;
+      if (!pushStale(formatOpenWorkLine(entry.task, suffix))) break;
     }
     const staleRest = stale.filter(entry =>
       !HIGH_PRIORITY_STATUSES.has((entry.task.priority ?? '').toLowerCase()),
     );
     if (staleRest.length > 0) {
-      tryPush(staleCollapseLine(staleRest.length, oldestStaleDate(staleRest), projectLabel));
+      pushStale(staleCollapseLine(staleRest.length, oldestStaleDate(staleRest), projectLabel));
     }
     return lines;
   }
@@ -467,11 +477,11 @@ export async function formatOpenWorkLines(
   const previewCount = Math.min(3, stale.length);
   for (const entry of stale.slice(0, previewCount)) {
     const suffix = entry.updatedAt ? taskStaleSuffix(entry.updatedAt) : '';
-    tryPush(formatOpenWorkLine(entry.task, suffix));
+    pushStale(formatOpenWorkLine(entry.task, suffix));
   }
   const hidden = stale.length - previewCount;
   if (hidden > 0) {
-    tryPush(staleCollapseLine(hidden, oldestStaleDate(stale), projectLabel));
+    pushStale(staleCollapseLine(hidden, oldestStaleDate(stale), projectLabel));
   }
   return lines;
 }
