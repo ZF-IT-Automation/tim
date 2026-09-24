@@ -360,6 +360,9 @@ function mergeMissingTopLevelJson(
   return merged;
 }
 
+/** Project labels from P9000 up are reserved for tests and sentinels. */
+const RESERVED_LABEL_FLOOR = 9000;
+
 export class TimStore implements MemoryInterface {
   private db: Database.Database;
   private readonly databasePath: string;
@@ -496,7 +499,8 @@ export class TimStore implements MemoryInterface {
 
   /**
    * Allocate the next P-label under an immediate SQLite transaction lock.
-   * Skips reserved labels P0000 and P9999.
+   * P0000 (Inbox) and P9000–P9999 are reserved: tests and sentinels live up
+   * there, and one stray P9001 in a live DB used to push every new project to P9002+.
    */
   allocateNextProjectLabel(): string {
     const tx = this.db.transaction(() => {
@@ -510,16 +514,12 @@ export class TimStore implements MemoryInterface {
         const match = /^P(\d{4})$/.exec(row.label);
         if (!match) continue;
         const num = parseInt(match[1]!, 10);
-        if (row.label === 'P0000' || row.label === 'P9999') continue;
+        if (num >= RESERVED_LABEL_FLOOR) continue;
         if (num > maxNum) maxNum = num;
       }
       let candidateNum = maxNum + 1;
-      while (candidateNum < 9999) {
+      while (candidateNum < RESERVED_LABEL_FLOOR) {
         const candidate = `P${String(candidateNum).padStart(4, '0')}`;
-        if (candidate === 'P0000' || candidate === 'P9999') {
-          candidateNum++;
-          continue;
-        }
         const dup = this.db.prepare(`
           SELECT id FROM entries
           WHERE json_extract(metadata, '$.kind') = 'project'
