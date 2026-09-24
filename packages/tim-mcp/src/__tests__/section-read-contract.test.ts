@@ -141,6 +141,16 @@ describe('tim_read section read contract (#31)', () => {
     return JSON.parse(w.result!.content[0].text) as { id: string };
   }
 
+  it('id names the project when given with section', async () => {
+    await client.callTool('tim_create_project', { label: 'P3101', content: 'Bound project', memoryOnly: true });
+    await client.callTool('tim_load_project', { label: 'P3101', bind: true });
+    const bySection = await readTasksSection();
+    const resp = await client.callTool('tim_read', { id: 'P3100', section: 'Tasks' });
+    expect(resp.result?.isError).toBeFalsy();
+    const parsed = JSON.parse(resp.result!.content[0].text) as { section: Record<string, unknown> };
+    expect(parsed.section.id).toBe(bySection.section.id);
+  });
+
   it('summary-first by default: section and children omit content', async () => {
     const longBody = 'B'.repeat(2000);
     const { section } = await readTasksSection();

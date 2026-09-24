@@ -2335,7 +2335,8 @@ export async function createMcpServer(
           }
 
           if (section) {
-            let projectLabel = project;
+            // id names the project here (tim_read({ id: 'P0054', section: 'Bugs' })).
+            let projectLabel = project ?? (typeof id === 'string' ? id : undefined);
             if (!projectLabel) {
               const roots = await resolveRoots(s, undefined);
               if (roots.error) {
