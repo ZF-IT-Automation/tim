@@ -1,6 +1,6 @@
 # Issue tracker
 
-Implementation work is tracked in GitHub Issues at `Bumblebiber/tim`, using `gh`. This follows the repository remote and the user's request to publish and implement the review work on GitHub.
+Implementation work is tracked in GitHub Issues at `ZF-IT-Automation/tim`, using `gh`. This follows the repository remote and the user's request to publish and implement the review work on GitHub.
 
 Use one issue per independently verifiable slice. Apply `ready-for-agent` when acceptance criteria and blockers are explicit. Use native blocking dependencies when available, and include `Blocked by` references in each issue body. Existing issues 27–31 belong to the 2026-09-09 review program; reuse them.
 

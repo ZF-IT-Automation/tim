@@ -43,7 +43,7 @@ Real-provider opt-out was checked separately: `TIM_EMBEDDING_REAL_MODEL=1 TIM_EM
 ## Limits and remaining risk
 
 - Two existing associative-recall tests are skipped: chain timeout and database-lock handling. They are not passing checks.
-- Known dependency advisories remain in [#40](https://github.com/Bumblebiber/tim/issues/40), including a critical archive-parser advisory. See the [separate audit](2026-09-11-dependency-audit.md). No forced major upgrade was performed.
+- Known dependency advisories remain in [#40](https://github.com/ZF-IT-Automation/tim/issues/40), including a critical archive-parser advisory. See the [separate audit](2026-09-11-dependency-audit.md). No forced major upgrade was performed.
 - Local sync tests do not establish live multi-device recovery or hosted deployment safety. Evidence authority remains a declaration, not authentication.
 - TIM MCP transport was closed during closeout. Durable Git/issue/ledger records remain available; memory task updates are not claimed as completed.
 

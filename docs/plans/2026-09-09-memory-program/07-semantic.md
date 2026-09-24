@@ -6,7 +6,7 @@ Vector search can retrieve memories with no lexical overlap, hybrid merges indep
 
 ## Blocked by
 
-- https://github.com/Bumblebiber/tim/issues/32
+- https://github.com/ZF-IT-Automation/tim/issues/32
 
 ## Seam
 

@@ -1,0 +1,96 @@
+[
+  {
+    "id": "G1",
+    "hard": true,
+    "pass": false,
+    "value": false,
+    "detail": "overview=true date=true openOrTasks=false"
+  },
+  {
+    "id": "G2",
+    "hard": true,
+    "pass": false,
+    "value": false,
+    "detail": "headerDate=2026-05-30 lastActivity=2026-09-23 tests=101 liveTests=101 staleDate=true staleTests=false"
+  },
+  {
+    "id": "G3",
+    "hard": true,
+    "pass": false,
+    "value": false,
+    "detail": "window=false newestSource=none lastActivity=2026-09-23 freshWithin14d=false"
+  },
+  {
+    "id": "G4",
+    "hard": true,
+    "pass": false,
+    "value": false,
+    "detail": "shown=1/1 pluralOk=true newestListed=2026-08-12 newestDb=2026-09-23"
+  },
+  {
+    "id": "G5",
+    "hard": true,
+    "pass": false,
+    "value": false,
+    "detail": "needsHandoff=true showsHandoff=false previousSessionBlock=true trivialNewest=true masksSubstantive=true showsSubstantive=false"
+  },
+  {
+    "id": "G6",
+    "hard": true,
+    "pass": false,
+    "value": false,
+    "detail": "alreadyLoaded=true callTimLoadProject=true"
+  },
+  {
+    "id": "G7",
+    "hard": true,
+    "pass": false,
+    "value": 4,
+    "detail": "blocks=1 bookkeeping=[\"2026-09-23-1819\",\"Dein Gefühl stimmt zum Teil. Das meiste \",\"Review das Projekt. Oberstes Ziel ist es\",\"Batch 1\"]"
+  },
+  {
+    "id": "G8",
+    "hard": true,
+    "pass": false,
+    "value": false,
+    "detail": "Independent merged review of memory correctness fixes #27–#31: updated 2026-09-09 (14d); Integration hardening: legacy secret queue and merged regressions: updated 2026-09-09 (14d)"
+  },
+  {
+    "id": "G9",
+    "hard": true,
+    "pass": false,
+    "value": {
+      "directive": 1451,
+      "load": 19474
+    },
+    "detail": "directiveBytes=1451 limit=4096; loadBytes=19474 limit=12288"
+  },
+  {
+    "id": "S1",
+    "hard": false,
+    "pass": false,
+    "value": 19,
+    "detail": "looseDirectChildren=19"
+  },
+  {
+    "id": "S2",
+    "hard": false,
+    "pass": true,
+    "value": true,
+    "detail": "fixedBeforeOpen=false"
+  },
+  {
+    "id": "S3",
+    "hard": false,
+    "pass": false,
+    "value": 0.047619047619047616,
+    "detail": "1/21 titles >100 chars"
+  },
+  {
+    "id": "S4",
+    "hard": false,
+    "pass": false,
+    "value": false,
+    "detail": "missing tool hint:     … 37 more (older)"
+  }
+]
