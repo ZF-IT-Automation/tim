@@ -1,6 +1,7 @@
 import { parseEvidenceMetadata } from 'tim-core';
 import type { Entry } from 'tim-core';
 import type { TimStore } from './store.js';
+import { isCountableUserExchange } from './harness-prompt.js';
 import {
   deriveCounters,
   findChildByKind,
@@ -59,7 +60,7 @@ function sessionEvidenceRange(
 /** User exchanges not covered by a batch summary interval (once per batch). */
 export function uncoveredUserSeqs(users: Entry[], summary?: Entry): number[] {
   const userSeqs = users
-    .filter(u => u.metadata.role === 'user')
+    .filter(u => u.metadata.role === 'user' && isCountableUserExchange(u))
     .map(u => Number(u.metadata.seq))
     .filter(n => isValidUserSeq(n))
     .sort((a, b) => a - b);
@@ -127,6 +128,7 @@ async function deriveFlatSessionCoverage(
   const validUsers: Entry[] = [];
 
   for (const user of users) {
+    if (!isCountableUserExchange(user)) continue;
     const seq = Number(user.metadata.seq);
     if (isValidUserSeq(seq)) {
       validUsers.push(user);
@@ -215,6 +217,8 @@ export async function deriveSessionCoverage(
       u => u.metadata.role === 'user',
     );
     if (users.length === 0) continue;
+    const countableUsers = users.filter(isCountableUserExchange);
+    if (countableUsers.length === 0) continue;
 
     if (summary) {
       coveredRanges.push({
@@ -225,9 +229,9 @@ export async function deriveSessionCoverage(
       });
     }
 
-    const validUsers = users.filter(u => isValidUserSeq(Number(u.metadata.seq)));
-    unknownSequenceExchangeCount += users.length - validUsers.length;
-    for (const user of users) {
+    const validUsers = countableUsers.filter(u => isValidUserSeq(Number(u.metadata.seq)));
+    unknownSequenceExchangeCount += countableUsers.length - validUsers.length;
+    for (const user of countableUsers) {
       const seq = Number(user.metadata.seq);
       if (!isValidUserSeq(seq)) {
         uncovered.push({ seq: Number.isFinite(seq) ? seq : 0, userId: user.id, batchIndex: batchIdx });

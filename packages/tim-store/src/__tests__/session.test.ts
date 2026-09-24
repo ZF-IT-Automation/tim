@@ -1130,6 +1130,59 @@ describe('SessionManager', () => {
       expect(batch.exchanges[0]?.agentContent).toContain('A1');
       expect(batch.exchanges[0]?.agentContent).toContain('Worker results here');
     });
+
+    it('does not re-target a batch when only a trailing harness user is past seq_to (B1)', async () => {
+      await store.createProject('P0099');
+      await sessions.startProjectSession({
+        sessionId: 'su-trail-harness',
+        projectId: 'P0099',
+        agentName: 'a',
+        cwd: '/',
+        harness: 't',
+        batchSize: 2,
+      });
+      await sessions.logExchange('su-trail-harness', [
+        { role: 'user', content: 'Q1' },
+        { role: 'agent', content: 'A1' },
+        { role: 'user', content: '<task-notification>done</task-notification>' },
+        { role: 'agent', content: 'W' },
+        { role: 'user', content: 'Q3' },
+        { role: 'agent', content: 'A3' },
+      ]);
+      await sessions.writeBatchSummary('su-trail-harness', 1, 'batch one', { seqFrom: 1, seqTo: 1 });
+
+      const batch = await sessions.showUnsummarized('su-trail-harness');
+      expect(batch.batchIndex).toBe(2);
+      expect(batch.exchanges.map(e => e.seq)).toEqual([3]);
+      expect(batch.hasMore).toBe(false);
+    });
+
+    it('skips all-harness batches and summarizes later countable work (B2)', async () => {
+      await store.createProject('P0101');
+      await sessions.startProjectSession({
+        sessionId: 'su-all-harness',
+        projectId: 'P0101',
+        agentName: 'a',
+        cwd: '/',
+        harness: 't',
+        batchSize: 2,
+      });
+      await sessions.logExchange('su-all-harness', [
+        { role: 'user', content: '<task-notification>a</task-notification>' },
+        { role: 'agent', content: 'x' },
+        { role: 'user', content: '<task-notification>b</task-notification>' },
+        { role: 'agent', content: 'y' },
+        { role: 'user', content: 'real question' },
+        { role: 'agent', content: 'real answer' },
+      ]);
+
+      const batch = await sessions.showUnsummarized('su-all-harness');
+      expect(batch.batchIndex).toBe(2);
+      expect(batch.exchanges).toHaveLength(1);
+      expect(batch.exchanges[0]?.userContent).toBe('real question');
+      expect(batch.exchanges[0]?.agentContent).toBe('real answer');
+      expect(batch.hasMore).toBe(false);
+    });
   });
 
   describe('showUnsummarized re-sweep', () => {

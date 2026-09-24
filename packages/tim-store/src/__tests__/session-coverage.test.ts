@@ -160,6 +160,31 @@ describe('deriveSessionCoverage', () => {
     expect(coverage.uncovered.map(u => u.seq)).toEqual([3]);
   });
 
+  it('ignores harness-only users when deciding pending summarization (B1)', async () => {
+    await sessions.startProjectSession({
+      sessionId: 'harness-tail',
+      projectId: 'P0100',
+      agentName: 'a',
+      cwd: '/',
+      harness: 't',
+      batchSize: 2,
+    });
+    await sessions.logExchange('harness-tail', [
+      { role: 'user', content: 'Q1' },
+      { role: 'agent', content: 'A1' },
+      { role: 'user', content: '<task-notification>done</task-notification>' },
+      { role: 'agent', content: 'W' },
+      { role: 'user', content: 'Q3' },
+      { role: 'agent', content: 'A3' },
+    ]);
+    await sessions.writeBatchSummary('harness-tail', 1, 'partial', { seqFrom: 1, seqTo: 1 });
+    await sessions.writeBatchSummary('harness-tail', 2, 'done', { seqFrom: 3, seqTo: 3 });
+
+    const coverage = await deriveSessionCoverage(store, 'harness-tail');
+    expect(coverage.hasPendingSummarization).toBe(false);
+    expect(coverage.uncovered).toEqual([]);
+  });
+
   it('handles huge imported ranges without enumerating their sequence numbers', async () => {
     await sessions.startProjectSession({
       sessionId: 'huge-range', projectId: 'P0100', agentName: 'a', cwd: '/', harness: 't', batchSize: 5,

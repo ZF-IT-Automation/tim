@@ -564,12 +564,14 @@ export class SessionManager {
         u => u.metadata.role === 'user',
       );
       if (users.length === 0) continue;
+      const countableUsers = users.filter(isCountableUserExchange);
+      if (countableUsers.length === 0) continue;
       if (!summary) {
         targetBatchIndex = batchIdx;
         seqFloor = 0;
         break;
       }
-      const maxSeq = Math.max(...users.map(u => Number(u.metadata.seq)));
+      const maxSeq = Math.max(...countableUsers.map(u => Number(u.metadata.seq)));
       const seqTo = Number(summary.metadata.seq_to);
       if (maxSeq > seqTo) {
         targetBatchIndex = batchIdx;
@@ -592,6 +594,7 @@ export class SessionManager {
         u => u.metadata.role === 'user',
       );
       let lastCountable: UnsummarizedExchange | null = null;
+      let pendingAgent: string | null = null;
       for (const u of users) {
         const seq = Number(u.metadata.seq);
         if (seq <= seqFloor) continue;
@@ -600,11 +603,15 @@ export class SessionManager {
         if (!isCountableUserExchange(u)) {
           // Harness-only user turn: skip counting it, but fold its agent reply
           // into the previous countable exchange so summarizer sees the work.
-          if (lastCountable && agent) {
+          if (agent) {
             const extra = exchangeText(agent);
-            lastCountable.agentContent = lastCountable.agentContent
-              ? `${lastCountable.agentContent}\n${extra}`
-              : extra;
+            if (lastCountable) {
+              lastCountable.agentContent = lastCountable.agentContent
+                ? `${lastCountable.agentContent}\n${extra}`
+                : extra;
+            } else {
+              pendingAgent = pendingAgent ? `${pendingAgent}\n${extra}` : extra;
+            }
           }
           continue;
         }
@@ -615,6 +622,12 @@ export class SessionManager {
           agentId: agent?.id ?? null,
           agentContent: agent ? exchangeText(agent) : null,
         };
+        if (pendingAgent) {
+          entry.agentContent = entry.agentContent
+            ? `${entry.agentContent}\n${pendingAgent}`
+            : pendingAgent;
+          pendingAgent = null;
+        }
         lastCountable = entry;
         exchanges.push(entry);
       }
