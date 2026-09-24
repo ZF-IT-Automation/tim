@@ -1,24 +1,4 @@
-/** Harness XML blocks that are not human user turns (mirrors tim-store/harness-prompt). */
-const HARNESS_BLOCK_TAGS = [
-  'task-notification',
-  'system-reminder',
-  'local-command-caveat',
-  'command-name',
-] as const;
-
-function stripHarnessBlocks(text: string): string {
-  let out = text;
-  for (const tag of HARNESS_BLOCK_TAGS) {
-    out = out.replace(new RegExp(`<${tag}\\b[^>]*>[\\s\\S]*?</${tag}>`, 'gi'), '');
-  }
-  return out.trim();
-}
-
-function isHarnessOnlyPrompt(text: string): boolean {
-  const raw = text.trim();
-  if (!raw) return false;
-  return stripHarnessBlocks(raw).length === 0;
-}
+import { isHarnessOnlyPrompt } from './harness-prompt.js';
 
 /** German and English function words stripped from natural-language prompts. */
 export const PROMPT_STOP_WORDS = new Set([

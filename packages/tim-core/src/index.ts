@@ -437,6 +437,13 @@ export {
   buildPromptSearchQuery,
 } from './extract-prompt-terms.js';
 export {
+  HARNESS_BLOCK_TAGS,
+  stripHarnessBlocks,
+  isHarnessOnlyPrompt,
+  sanitizeUserExchangeContent,
+  type SanitizedUserContent,
+} from './harness-prompt.js';
+export {
   acquireMaintenanceLock,
   assertMaintenanceClear,
   isMaintenanceActive,
