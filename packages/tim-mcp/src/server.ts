@@ -2332,7 +2332,7 @@ export async function createMcpServer(
               return errorResult(`section not found: ${section}`);
             }
             const { children: rawChildren, ...sectionOnly } = rawSection as EntryWithChildren;
-            const payload: { section: unknown; children?: unknown[] } = {
+            const payload: { section: unknown; children?: unknown[]; childrenOmitted?: string } = {
               section: await presentReadEntry(s, sectionOnly as Entry, include_body, cwd),
             };
             if (includeChildren) {
@@ -2340,6 +2340,11 @@ export async function createMcpServer(
                 ? []
                 : await Promise.all((rawChildren ?? []).map(child =>
                   presentReadEntry(s, child, include_body, cwd)));
+              if (depth === 1) {
+                // children:[] alone reads as "empty section"; say what depth:1 left out.
+                const hidden = (await s.getChildren(sec.id)).length;
+                if (hidden > 0) payload.childrenOmitted = `${hidden} child${hidden === 1 ? "" : "ren"} not loaded at depth:1 — use depth:2`;
+              }
             }
             const returnedIds = !includeChildren
               ? [rawSection.id]
