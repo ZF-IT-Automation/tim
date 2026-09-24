@@ -27,7 +27,7 @@ Always against a DB copy, never the live `~/.tim/tim.db`.
 
 | ID | Goal | Check |
 |----|------|-------|
-| S1 | Every direct child of the project root is a section with `metadata.kind` (no loose root nodes; sessions-root and commits-root are allowed). | `looseDirectChildren` minus those two kinds = 0 |
+| S1 | Every direct child of the project root is a section with `metadata.kind` (no loose root nodes; sessions-root, commits-root and project-path are allowed). | `looseDirectChildren` minus those two kinds = 0 |
 | S2 | Bugs render open-first; fixed bugs collapse to a count. | No `[fixed]`/`[done]` bug line before the last open bug line. |
 | S3 | One language per entry title; titles ≤ 100 chars. | share of section-child titles > 100 chars |
 | S4 | Drill-down paths are named: every collapsed block tells the agent which call expands it. | "… N more" lines carry a tool hint |
