@@ -125,3 +125,35 @@ describe('formatOpenWorkLines stale handling', () => {
     expect(lines[0]).toBe('+ 1 more open task — tim_show({what:"tasks", root:"P0099"})');
   });
 });
+
+describe('formatOpenWorkLines retention series', () => {
+  let root: string;
+  let store: TimStore;
+
+  beforeEach(async () => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'tim-open-work-series-'));
+    store = new TimStore(path.join(root, 'tim.db'));
+    const project = await store.createProject('P0098', { content: 'test' });
+    const section = await store.write('Tasks', { parentId: project.id, metadata: { kind: 'section', order: 12 } });
+    for (let day = 1; day <= 3; day++) {
+      const report = await store.write(`Alert day ${day}`, {
+        parentId: section.id,
+        metadata: { series: 'cache-alert', task: { status: 'todo', priority: 'high' } },
+      });
+      store.getDb().prepare('UPDATE entries SET created_at = ? WHERE id = ?')
+        .run(`2026-03-0${day}T00:00:00.000Z`, report.id);
+    }
+    await store.write('Unrelated task', { parentId: section.id, metadata: { task: { status: 'todo' } } });
+  });
+
+  afterEach(() => {
+    store.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it('shows only the newest member of a series, and leaves other tasks alone', async () => {
+    const lines = await formatOpenWorkLines(store, 'P0098', 12, 4000);
+    expect(lines.filter(l => l.includes('Alert day'))).toEqual([expect.stringContaining('Alert day 3')]);
+    expect(lines.some(l => l.includes('Unrelated task'))).toBe(true);
+  });
+});

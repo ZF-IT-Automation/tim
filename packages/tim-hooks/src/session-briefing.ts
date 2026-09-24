@@ -436,8 +436,18 @@ async function collectOpenWork(
   // Work logged under a task or pointing at it keeps the task fresh, like editing it would.
   const workLogged = store.getTaskWorkLoggedAt(open.map(t => t.id));
   const entries: OpenWorkEntry[] = [];
+  const series = new Map<string, Array<{ id: string; createdAt: string; keep: number }>>();
   for (const task of open) {
     const row = await store.read(task.id, { includeChildren: false });
+    // Retention "latest-wins": entries sharing metadata.series show only the newest
+    // metadata.series_keep (default 1) in briefings. Nothing is closed or deleted.
+    const key = typeof row?.metadata.series === 'string' ? row.metadata.series.trim() : '';
+    if (row && key) {
+      const keep = Number(row.metadata.series_keep);
+      const members = series.get(key) ?? [];
+      members.push({ id: task.id, createdAt: row.createdAt, keep: keep >= 1 ? Math.floor(keep) : 1 });
+      series.set(key, members);
+    }
     const touched = row ? taskLastTouch(row) : '';
     const logged = workLogged.get(task.id) ?? '';
     // A future creation time (skewed peer) is not work done; see taskLastTouch.
@@ -449,7 +459,13 @@ async function collectOpenWork(
       stale: updatedAt ? activeDaysSince(updatedAt, activeDays) >= STALE_ACTIVE_DAYS : false,
     });
   }
-  return Object.assign(entries, { activeDayCount: activeDays.length });
+  const superseded = new Set<string>();
+  for (const members of series.values()) {
+    members.sort((x, y) => y.createdAt.localeCompare(x.createdAt));
+    for (const m of members.slice(members[0]!.keep)) superseded.add(m.id);
+  }
+  const kept = entries.filter(e => !superseded.has(e.task.id));
+  return Object.assign(kept, { activeDayCount: activeDays.length });
 }
 
 /** Staleness cannot be resolved automatically — only the agent can tell done from obsolete. */
