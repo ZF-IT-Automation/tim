@@ -57,12 +57,15 @@ describe('marker session resolution via store', () => {
       content: 'Other',
       memoryOnly: true,
     });
-    const rejected = await client.callTool('tim_load_project', { label: 'P8202', bind: true });
-    expect(rejected.result?.isError).toBe(true);
-    expect(rejected.result!.content[0].text).toContain('P8201');
+    // Re-binds the resolved harness session; the cwd marker stays as it was.
+    const rebound = await client.callTool('tim_load_project', { label: 'P8202', bind: true });
+    expect(rebound.result?.isError).toBeFalsy();
+    const session = await client.callTool('tim_read', { id: harnessId, includeChildren: false });
+    expect(session.result!.content[0].text).toContain('"project_ref": "P8202"');
 
     const marker = JSON.parse(fs.readFileSync(path.join(cwd, '.tim-project'), 'utf8'));
     expect(marker.version).toBe(3);
+    expect(marker.project).toBe('P8201');
     expect(marker).not.toHaveProperty('session');
   });
 
