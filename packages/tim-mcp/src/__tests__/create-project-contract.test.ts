@@ -185,6 +185,19 @@ describe('tim_create_project explicit mode contract', () => {
     expect(readMarker(serverCwd)?.project).toBe('P1200');
   });
 
+  it('title names the project and content stays the body', async () => {
+    const payload = payloadOf(await client.createProject({
+      label: 'P1201',
+      title: 'Named Project',
+      content: 'A longer description of what the project is for.',
+      memoryOnly: true,
+    }));
+    expect(payload).toMatchObject({
+      title: 'Named Project',
+      content: 'A longer description of what the project is for.',
+    });
+  });
+
   it('retries with a fresh label when the requested label already exists', async () => {
     const preload = path.join(root, 'tim.db');
     const seedStore = new TimStore(preload);

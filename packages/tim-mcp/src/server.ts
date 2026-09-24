@@ -592,7 +592,9 @@ const TimTagRenameSchema = z.object({
 const TimCreateProjectSchema = z.object({
   label: z.string().describe('Project label, e.g. P0062'),
   metadata: z.record(z.unknown()).optional().default({}),
-  content: z.string().optional(),
+  title: z.string().optional()
+    .describe('Project name, e.g. "TIM — Theoretically Infinite Memory". Without it, the first line of content becomes the title.'),
+  content: z.string().optional().describe('Project description (the body)'),
   aliases: z.array(z.string()).optional(),
   path: z.string().optional()
     .describe('Absolute directory for every project representing files on disk'),
@@ -3627,7 +3629,10 @@ export async function createMcpServer(
         }
 
         case 'tim_create_project': {
-          let input = TimCreateProjectSchema.parse(args);
+          let { title, ...input } = TimCreateProjectSchema.parse(args);
+          if (title?.trim()) {
+            input = { ...input, content: input.content ? `${title.trim()}\n${input.content}` : title.trim() };
+          }
           if (!isHttp && !input.path && input.memoryOnly == null) {
             const cwd = process.cwd();
             const resolved = path.resolve(cwd);
