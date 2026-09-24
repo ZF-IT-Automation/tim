@@ -905,6 +905,7 @@ function formatProjectOutputWithTokenBudget(
     }
     // Count what is listed: the Overview renders in the header and is skipped here.
     sectionsIndexLines[1] = `── Sections (${sectionsIndexLines.length - 3}) ──`;
+    if (sectionsIndexLines.length === 3) sectionsIndexLines.length = 0;
   }
 
   const blocks: BriefingBlock[] = [{

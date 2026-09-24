@@ -1000,7 +1000,6 @@ export class SessionManager {
         kind: 'checkpoint',
         sessionId,
         count: exchanges.length,
-        ...(opts.handoffNote ? { handoff: true } : {}),
         ...(seqRange
           ? { evidence: buildAgentDerivedSessionEvidence(sessionId, seqRange.seqFrom, seqRange.seqTo) }
           : {}),

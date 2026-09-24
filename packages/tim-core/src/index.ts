@@ -150,6 +150,8 @@ export interface SearchOptions {
    * `or-terms` preserves OR between quoted prompt-recall terms.
    */
   ftsQueryMode?: 'literal' | 'or-terms';
+  /** Drop these metadata.kind values in SQL, before the limit (post-filtering starves real hits). */
+  excludeKinds?: string[];
   /** Reconstruct validity at this timezone-qualified ISO timestamp (default: now). */
   asOf?: string;
 }

@@ -21,7 +21,8 @@ const CLOSED_TASK_STATUSES = new Set(['done', 'cancelled', 'closed', 'wontfix'])
 const MAX_OPEN_WORK_ITEMS = 12;
 const NOW_OPEN_WORK_ITEMS = 5;
 const OPEN_WORK_ITEM_MAX_CHARS = 160;
-const STALE_TASK_DAYS = 14;
+/** Days of project work (not calendar days) a task may sit untouched before it needs triage. */
+const STALE_ACTIVE_DAYS = 7;
 const NOW_HANDOFF_MAX_LINES = 3;
 
 // Split of briefing.maxTokens: the previous session is the reason the briefing
@@ -38,7 +39,6 @@ const RECENT_EXCHANGE_SIDE_MAX_CHARS = 400;
 // Share of the previous-session budget a handoff note may take. Bounded because
 // clampSummary keeps the tail: an unbounded note would evict the whole summary.
 const HANDOFF_NOTE_BUDGET_SHARE = 0.4;
-const HIGH_PRIORITY_STATUSES = new Set(['high', 'critical']);
 
 async function findLatestProjectHandoff(
   store: TimStore,
@@ -356,16 +356,14 @@ async function previousSession(
   };
 }
 
-function taskStaleSuffix(updatedAt: string): string {
-  const updatedMs = Date.parse(updatedAt);
-  if (!Number.isFinite(updatedMs)) return '';
-  const ageDays = (Date.now() - updatedMs) / 86400_000;
-  if (ageDays <= STALE_TASK_DAYS) return '';
-  return ` · stale since ${updatedAt.slice(0, 10)}`;
+/** Project work days after the last touch. A paused project stops the clock. */
+function activeDaysSince(updatedAt: string, activeDays: string[]): number {
+  const day = updatedAt.slice(0, 10);
+  return activeDays.filter(d => d > day).length;
 }
 
-function isTaskStale(updatedAt: string): boolean {
-  return taskStaleSuffix(updatedAt).length > 0;
+function taskStaleSuffix(entry: OpenWorkEntry): string {
+  return entry.stale ? ` · stale since ${entry.updatedAt.slice(0, 10)}` : '';
 }
 
 function staleTasksDrillDown(projectLabel: string): string {
@@ -392,6 +390,8 @@ async function collectOpenWork(
   projectLabel: string,
 ): Promise<OpenWorkEntry[]> {
   const tasks = await store.getTasks();
+  const project = await store.requireProject(projectLabel);
+  const activeDays = store.getProjectActiveDays(project.id);
   const entries: OpenWorkEntry[] = [];
   for (const task of tasks) {
     if (task.project_label !== projectLabel) continue;
@@ -401,7 +401,7 @@ async function collectOpenWork(
     entries.push({
       task,
       updatedAt,
-      stale: updatedAt ? isTaskStale(updatedAt) : false,
+      stale: updatedAt ? activeDaysSince(updatedAt, activeDays) >= STALE_ACTIVE_DAYS : false,
     });
   }
   return entries;
@@ -409,8 +409,9 @@ async function collectOpenWork(
 
 /** Staleness cannot be resolved automatically — only the agent can tell done from obsolete. */
 const STALE_TRIAGE_LINE =
-  'Stale = untouched >14 d. Check before relying on it: done → tim_update metadata.task.status "done"; '
-  + 'obsolete → tim_update irrelevant:true; still valid → tim_verify(id).';
+  `Stale = untouched over ${STALE_ACTIVE_DAYS}+ days of project work. Check before relying on it:`
+  + ' done → tim_update metadata.task.status "done"; still valid → tim_verify(id);'
+  + ' obsolete (code or log shows it) → tim_update irrelevant:true. Unsure → leave it and ask the user.';
 
 function staleCollapseLine(count: number, oldestDate: string, projectLabel: string): string {
   return `+ ${count} stale open task${count === 1 ? '' : 's'} (untouched since ${oldestDate}) — ${staleTasksDrillDown(projectLabel)}`;
@@ -449,39 +450,26 @@ export async function formatOpenWorkLines(
     return tryPush(line);
   };
 
-  if (fresh.length > 0) {
-    for (const entry of fresh) {
-      if (lines.length >= maxItems) break;
-      const line = formatOpenWorkLine(entry.task, '');
-      if (!tryPush(line)) break;
-    }
-    const staleHigh = stale.filter(entry =>
-      HIGH_PRIORITY_STATUSES.has((entry.task.priority ?? '').toLowerCase()),
-    );
-    for (const entry of staleHigh) {
-      if (lines.length >= maxItems) break;
-      const suffix = entry.updatedAt ? taskStaleSuffix(entry.updatedAt) : '';
-      if (!pushStale(formatOpenWorkLine(entry.task, suffix))) break;
-    }
-    const staleRest = stale.filter(entry =>
-      !HIGH_PRIORITY_STATUSES.has((entry.task.priority ?? '').toLowerCase()),
-    );
-    if (staleRest.length > 0) {
-      pushStale(staleCollapseLine(staleRest.length, oldestStaleDate(staleRest), projectLabel));
-    }
-    return lines;
+  let shownFresh = 0;
+  for (const entry of fresh) {
+    if (shownFresh >= maxItems || !tryPush(formatOpenWorkLine(entry.task, ''))) break;
+    shownFresh += 1;
   }
-
+  if (shownFresh < fresh.length) {
+    tryPush(`+ ${fresh.length - shownFresh} more open task${fresh.length - shownFresh === 1 ? '' : 's'} — ${staleTasksDrillDown(projectLabel)}`);
+  }
   if (stale.length === 0) return lines;
 
-  const previewCount = Math.min(3, stale.length);
+  // Oldest first: each triaged task (verified, closed or dropped) leaves the preview and the
+  // next-oldest moves up, so every forgotten task surfaces eventually instead of sitting in a count.
+  stale.sort((a, b) => a.updatedAt.localeCompare(b.updatedAt));
+  const previewCount = Math.min(fresh.length > 0 ? 2 : 3, stale.length);
   for (const entry of stale.slice(0, previewCount)) {
-    const suffix = entry.updatedAt ? taskStaleSuffix(entry.updatedAt) : '';
-    pushStale(formatOpenWorkLine(entry.task, suffix));
+    pushStale(formatOpenWorkLine(entry.task, taskStaleSuffix(entry)));
   }
-  const hidden = stale.length - previewCount;
-  if (hidden > 0) {
-    pushStale(staleCollapseLine(hidden, oldestStaleDate(stale), projectLabel));
+  const hidden = stale.slice(previewCount);
+  if (hidden.length > 0) {
+    pushStale(staleCollapseLine(hidden.length, oldestStaleDate(hidden), projectLabel));
   }
   return lines;
 }

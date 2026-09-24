@@ -403,7 +403,11 @@ function loadDbContext(dbPath, projectLabel) {
       SELECT e.id, e.created_at, e.metadata FROM entries e
       INNER JOIN sub ON e.parent_id = sub.id WHERE e.tombstoned_at IS NULL
     )
-    SELECT MAX(created_at) AS last FROM sub WHERE json_extract(metadata, '$.kind') = 'exchange'
+    SELECT MAX(created_at) AS last FROM sub
+    WHERE json_extract(metadata, '$.kind') = 'exchange'
+      OR (json_extract(metadata, '$.kind') = 'checkpoint'
+        AND json_extract((SELECT p.metadata FROM entries p WHERE p.id =
+          (SELECT parent_id FROM entries c WHERE c.id = sub.id)), '$.handoff_note') IS NOT NULL)
   `);
   for (const s of sessions) {
     const meta = parseMeta(s.metadata);
@@ -475,8 +479,23 @@ function loadDbContext(dbPath, projectLabel) {
     taskRows.map((r) => [normalizeTitle(r.title), r]),
   );
 
+  // Same clock as the renderer (getProjectActiveDays): days with a real exchange.
+  const activeDays = db.prepare(`
+    WITH RECURSIVE sub AS (
+      SELECT id FROM entries
+      WHERE parent_id = ? AND json_extract(metadata, '$.kind') = 'sessions-root' AND tombstoned_at IS NULL
+      UNION ALL
+      SELECT e.id FROM entries e INNER JOIN sub ON e.parent_id = sub.id WHERE e.tombstoned_at IS NULL
+    )
+    SELECT DISTINCT substr(e.created_at, 1, 10) AS day
+    FROM entries e INNER JOIN sub ON e.id = sub.id
+    WHERE json_extract(e.metadata, '$.kind') = 'exchange'
+      AND COALESCE(json_extract(e.metadata, '$.system_turn'), 0) != 1
+  `).all(project.id).map((r) => r.day);
+
   db.close();
   return {
+    activeDays,
     lastActivity,
     liveTestCount,
     sessionCount: sessions.length,

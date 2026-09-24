@@ -33,7 +33,7 @@ describe('runPromptSubmit', () => {
 
     const result = await runPromptSubmit(store, { prompt: 'sqlite WAL database' });
     expect(result).not.toBeNull();
-    expect(result!.lines.some(l => l.startsWith('TIM erinnert:'))).toBe(true);
+    expect(result!.lines.some(l => l.startsWith('TIM erinnert ('))).toBe(true);
     expect(result!.context).toMatch(/sqlite|WAL/i);
   });
 
@@ -122,25 +122,24 @@ describe('runPromptSubmit', () => {
 
     const result = await runPromptSubmit(store, { prompt: 'sqlite WAL tuning' });
     expect(result).not.toBeNull();
-    expect(result!.lines.some(l => l.includes('TIM erinnert: SQLite tips'))).toBe(true);
+    expect(result!.lines.some(l => /TIM erinnert \(\d{4}-\d{2}-\d{2}\): SQLite tips/.test(l))).toBe(true);
     expect(result!.lines.some(l => l.includes('task-notification'))).toBe(false);
   });
 
-  it('drops transcript turns and duplicate lines', async () => {
-    const oldPrompt = await store.write('Ja, mach mal. Nodes per SQL weghauen, wir sind fertig.', {
+  it('keeps transcript turns out of recall and drops duplicate lines', async () => {
+    await store.write('Ja, mach mal. Nodes per SQL weghauen, PDCA loop.', {
       metadata: { kind: 'exchange', role: 'user' },
     });
-    const echo = await store.write('Session checkpoint\nTopics: PDCA loop', {
-      metadata: { kind: 'checkpoint' },
-    });
-    const rule = await store.write('PDCA loop rules\nEach loop iteration rescored.', {
-      metadata: { kind: 'decision' },
-    });
-    vi.spyOn(store, 'search').mockResolvedValue([oldPrompt, echo, rule, rule]);
+    await store.write('Session checkpoint\nTopics: PDCA loop', { metadata: { kind: 'checkpoint' } });
+    await store.write('PDCA loop rules\nEach loop iteration rescored.', { metadata: { kind: 'decision' } });
 
-    const result = await runPromptSubmit(store, { prompt: 'Wir sind in einem PDCA loop' });
+    const result = await runPromptSubmit(store, { prompt: 'Wir sind in einem PDCA loop', timeoutMs: 5000 });
     expect(result!.lines).toHaveLength(1);
     expect(result!.lines[0]).toContain('PDCA loop rules');
+
+    const rule = (await store.search({ query: 'PDCA', topK: 5 })).find(e => e.title.startsWith('PDCA loop rules'))!;
+    vi.spyOn(store, 'search').mockResolvedValue([rule, rule]);
+    expect((await runPromptSubmit(store, { prompt: 'PDCA loop' }))!.lines).toHaveLength(1);
   });
 
   it('returns null when disabled via config', async () => {

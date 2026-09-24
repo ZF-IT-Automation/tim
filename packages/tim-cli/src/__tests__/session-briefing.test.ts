@@ -630,18 +630,31 @@ describe('handoff lookup (review #5)', () => {
     store.close();
   });
 
-  it('puts a triage instruction above stale tasks, and tim_verify clears it', async () => {
+  it('ages tasks by days of project work, not calendar days', async () => {
     const store = new TimStore(dbPath);
-    const project = await store.createProject('P0095', { content: 'stale triage' });
+    const sessions = new SessionManager(store);
+    await store.createProject('P0095', { content: 'stale triage' });
+    const project = (await store.read('P0095'))!;
     const task = await store.write('Old plan', {
       parentId: project.id,
       metadata: { task: { status: 'todo', priority: 'high' } },
     });
+    const day = 86400_000;
+    const t0 = Date.now();
     vi.useFakeTimers({ toFake: ['Date'] });
     try {
-      vi.setSystemTime(Date.now() + 30 * 86400_000);
+      // Paused for 90 days: nothing happened in the project, so nothing aged.
+      vi.setSystemTime(t0 + 90 * day);
+      expect((await buildNowBlock(store, 'P0095')).join('\n')).not.toContain('stale');
+
+      // Seven days of work that never touch the task make it stale.
+      await sessions.startProjectSession({ sessionId: 's-work', projectId: 'P0095', agentName: 'test', cwd, harness: 'test' });
+      for (let i = 1; i <= 7; i++) {
+        vi.setSystemTime(t0 + (90 + i) * day);
+        await sessions.logExchange('s-work', [{ role: 'user', content: `day ${i}` }, { role: 'agent', content: 'ok' }]);
+      }
       const stale = (await buildNowBlock(store, 'P0095')).join('\n');
-      expect(stale).toMatch(/Stale = untouched[^\n]*\n- \[todo, high\] Old plan · stale since/);
+      expect(stale).toMatch(/Stale = untouched over 7\+ days of project work[^\n]*\n- \[todo, high\] Old plan · stale since/);
       expect(stale).toContain('tim_verify');
 
       await store.touchVerified([task.id]);

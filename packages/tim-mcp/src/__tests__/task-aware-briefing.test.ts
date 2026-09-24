@@ -537,9 +537,13 @@ describe('recent session dates', () => {
         parentId: sessionsRoot.id,
         metadata: { kind: 'session', date: '2020-01-01T10:00:00.000Z', exchange_count: 5 },
       });
-      await store.write('late exchange', { parentId: session.id, metadata: { kind: 'exchange' } });
+      const one = await buildBriefingRenderContext(store, 'P3499', project.id, 3);
+      expect(one.recentSessions?.[0]?.date).toBe('2020-01-01');
+
+      const late = await store.write('late exchange', { parentId: session.id, metadata: { kind: 'exchange' } });
+      store.getDb().prepare('UPDATE entries SET created_at = ? WHERE id = ?').run('2020-01-03T09:00:00.000Z', late.id);
       const ctx = await buildBriefingRenderContext(store, 'P3499', project.id, 3);
-      expect(ctx.recentSessions?.[0]?.date).toMatch(/^2020-01-01 – \d{4}-\d{2}-\d{2}$/);
+      expect(ctx.recentSessions?.[0]?.date).toBe('2020-01-01 – 2020-01-03');
     } finally {
       store.close();
       fs.rmSync(dir, { recursive: true, force: true });
