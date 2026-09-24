@@ -270,7 +270,7 @@ export function evalG8(hookText, loadText, dbCtx, now = new Date()) {
   }
   const stale = [];
   // Coverage: every open task is named or inside a count line ("+ N more …", "+ N stale …").
-  if (dbCtx.openTaskCount != null && openLines.length > 0) {
+  if (dbCtx.openTaskCount != null && extractBlock(hookText, 'Open work') != null) {
     const named = openLines.filter((l) => l.startsWith('- [')).length;
     const counted = parseCountLines(hookText);
     if (named + counted !== dbCtx.openTaskCount) {

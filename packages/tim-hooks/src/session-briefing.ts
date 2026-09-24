@@ -363,6 +363,13 @@ function activeDaysSince(updatedAt: string, activeDays: string[]): number {
   return activeDays.filter(d => d > day).length;
 }
 
+/** FNV-1a of the task id: a stable ring position that does not depend on age or backlog size. */
+function rotationKey(id: string): number {
+  let h = 0x811c9dc5;
+  for (const ch of id) h = Math.imul(h ^ ch.charCodeAt(0), 0x01000193) >>> 0;
+  return h;
+}
+
 /** Stale lines carry the id: the triage instruction is only actionable with it. */
 function taskStaleSuffix(entry: OpenWorkEntry): string {
   return entry.stale ? ` · stale since ${entry.updatedAt.slice(0, 10)} · ${entry.task.id}` : '';
@@ -451,12 +458,14 @@ export async function formatOpenWorkLines(
     return true;
   };
 
-  // Oldest first, then rotated by the project's work-day count: the preview window moves every
-  // work day, so a task nobody triages cannot pin its slot and every stale task surfaces in turn.
-  stale.sort((a, b) => a.updatedAt.localeCompare(b.updatedAt));
-  const offset = stale.length > 0 ? (all.activeDayCount ?? 0) % stale.length : 0;
-  const rotated = [...stale.slice(offset), ...stale.slice(0, offset)];
-  const previewCount = Math.min(fresh.length > 0 ? 2 : 3, rotated.length);
+  // Stable ring order (hash of the id), window start = floor(frac(day × golden ratio) × n).
+  // The golden-ratio sequence spreads evenly whatever n is, so the window never freezes while
+  // the backlog grows (an index offset d % n did), and with a steady backlog every stale task
+  // shows within about 1.3 × n work days (three-gap theorem), triaged or not.
+  const previewCount = Math.min(fresh.length > 0 ? 2 : 3, stale.length);
+  const ring = [...stale].sort((a, b) => rotationKey(a.task.id) - rotationKey(b.task.id));
+  const start = Math.floor((((all.activeDayCount ?? 0) * 0.6180339887498949) % 1) * ring.length);
+  const rotated = [...ring.slice(start), ...ring.slice(0, start)];
   const staleLines: string[] = [];
   if (rotated.length > 0) {
     staleLines.push(STALE_TRIAGE_LINE);
@@ -469,10 +478,14 @@ export async function formatOpenWorkLines(
     }
   }
 
-  // Reserve room for the stale block and the overflow count before fresh lines fill the budget,
-  // so a tight budget never drops stale work or the counts without a trace.
+  // Reserve room for the stale block (or, if it can never fit, its one-line count) and the
+  // overflow count before fresh lines fill the budget: nothing disappears without a trace.
   const overflowReserve = 80;
-  const staleReserve = staleLines.reduce((n, l) => n + l.length + 1, 0);
+  const fullStale = staleLines.reduce((n, l) => n + l.length + 1, 0);
+  const collapseAll = rotated.length > 0
+    ? staleCollapseLine(rotated.length, oldestStaleDate(rotated), projectLabel) : '';
+  const staleFits = fullStale + overflowReserve <= maxChars;
+  const staleReserve = staleFits ? fullStale : collapseAll.length + (collapseAll ? 1 : 0);
   const freshBudget = maxChars - staleReserve - overflowReserve;
   let shownFresh = 0;
   for (const entry of fresh) {
@@ -485,10 +498,10 @@ export async function formatOpenWorkLines(
     tryPush(`+ ${fresh.length - shownFresh} more open task${fresh.length - shownFresh === 1 ? '' : 's'} — ${staleTasksDrillDown(projectLabel)}`);
   }
   if (rotated.length === 0) return lines;
-  if (used + staleReserve <= maxChars) {
+  if (staleFits && used + fullStale <= maxChars) {
     for (const line of staleLines) tryPush(line);
   } else {
-    tryPush(staleCollapseLine(rotated.length, oldestStaleDate(rotated), projectLabel));
+    tryPush(collapseAll);
   }
   return lines;
 }
