@@ -80,6 +80,17 @@ describe('formatProjectOutput task elevation (B4)', () => {
     expect(out).toMatch(/2 completed tasks \(done\/cancelled\)/);
   });
 
+  it('still prints the collapsed line when every task is closed', () => {
+    const children = [
+      section('tasks', 'Tasks', 0),
+      child('t1', 'tasks', 'Done task', { order: 0, task: { status: 'done' } }),
+      child('t2', 'tasks', 'Cancelled task', { order: 1, task: { status: 'cancelled' } }),
+    ];
+
+    const out = formatProjectOutput({ project, children, truncated: false }, 200);
+    expect(out).toMatch(/2 completed tasks \(done\/cancelled\)/);
+  });
+
   it('keeps non-task children visible below the tasks', () => {
     const children = [
       section('tasks', 'Tasks', 0),

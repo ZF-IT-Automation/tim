@@ -687,7 +687,7 @@ function formatChildrenTree(
   collapsed?: Pick<PreparedSectionChildren, 'collapsedCount' | 'collapsedLabel'>,
   taskAware = false,
 ): string[] {
-  if (children.length === 0 || budget.remaining <= 0) return [];
+  if ((children.length === 0 && !collapsed?.collapsedCount) || budget.remaining <= 0) return [];
 
   const lines: string[] = [];
   const indent = ' '.repeat(4 + depth * 2);
