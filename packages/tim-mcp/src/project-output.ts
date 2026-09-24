@@ -80,16 +80,20 @@ function truncText(s: string, max: number): string {
 interface ParsedProjectHeader {
   title: string;
   status: string;
+  /** True when the project title uses the `Title | Status | …` pipe segment. */
+  hasKnownStatus: boolean;
   description: string;
   packages?: number;
   tests?: number;
 }
 
 function parseProjectContent(title: string, content: string): ParsedProjectHeader {
+  const titleParts = title.split('|').map(p => p.trim());
+  const hasKnownStatus = titleParts.length >= 2 && Boolean(titleParts[1]);
   const combined = content ? `${title}\n${content}` : title;
   const parts = combined.split('|').map(p => p.trim());
-  const headerTitle = parts[0] || title;
-  const status = parts[1] || 'Unknown';
+  const headerTitle = titleParts[0] || parts[0] || title;
+  const status = hasKnownStatus ? titleParts[1]! : 'Unknown';
   const rest = parts.length > 3 ? parts.slice(3).join(' | ') : parts.slice(1).join(' | ');
   const packagesMatch = combined.match(/(\d+)[-\s]Package/i);
   const testsMatch =
@@ -97,20 +101,29 @@ function parseProjectContent(title: string, content: string): ParsedProjectHeade
   return {
     title: headerTitle,
     status,
+    hasKnownStatus,
     description: truncText(rest || combined, 300),
     packages: packagesMatch ? parseInt(packagesMatch[1], 10) : undefined,
     tests: testsMatch ? parseInt(testsMatch[1], 10) : undefined,
   };
 }
 
+/**
+ * tim_load_project header meta line grammar (stable prefix for parsers):
+ * - Known status:  `Status: <status> · last activity <YYYY-MM-DD>[ · <n> packages][ · <n> tests]`
+ * - Unknown status: `last activity <YYYY-MM-DD>[ · <n> packages][ · <n> tests]` (no Status segment)
+ */
 function projectMetaLine(
   project: Entry,
   parsed: ParsedProjectHeader,
   lastActivity?: string,
 ): string {
   const date = (lastActivity ?? String(project.metadata.updated_at ?? project.createdAt)).slice(0, 10);
-  const bits = [`Status: ${parsed.status}`, `last activity ${date}`];
+  const bits: string[] = [];
+  if (parsed.hasKnownStatus) bits.push(`Status: ${parsed.status}`);
+  bits.push(`last activity ${date}`);
   if (parsed.packages != null) bits.push(`${parsed.packages} packages`);
+  if (parsed.tests != null) bits.push(`${parsed.tests} tests`);
   return bits.join(' · ');
 }
 

@@ -475,6 +475,57 @@ describe('formatProjectOutput overview preview', () => {
   });
 });
 
+describe('formatProjectOutput header meta line', () => {
+  it('omits Status when title has no pipe status segment', () => {
+    const project = {
+      id: 'P0073',
+      metadata: { label: 'P0073', kind: 'project', access_count: 0 },
+      title: 'team-up',
+      content: 'team-up — Multi-CLI Agent-Roster',
+      tags: [],
+      createdAt: '2026-06-01T00:00:00Z',
+      updatedAt: '2026-09-23T00:00:00Z',
+    } as any;
+    const out = formatProjectOutput(
+      { project, children: [], truncated: false },
+      200,
+      undefined,
+      'load',
+      3,
+      {
+        tokenBudget: 12000,
+        briefingContext: { lastActivityDate: '2026-09-23T12:00:00Z' },
+      },
+    );
+    expect(out).toMatch(/last activity 2026-09-23/);
+    expect(out).not.toMatch(/Status: Unknown/);
+    expect(out).not.toMatch(/^Status:/m);
+  });
+
+  it('keeps Status when title uses pipe segment', () => {
+    const project = {
+      id: 'P1',
+      metadata: { label: 'P1', kind: 'project', access_count: 0 },
+      title: 'P1 — Demo | Active',
+      content: '',
+      tags: [],
+      createdAt: '2026-06-01T00:00:00Z',
+    } as any;
+    const out = formatProjectOutput(
+      { project, children: [], truncated: false },
+      200,
+      undefined,
+      'load',
+      3,
+      {
+        tokenBudget: 12000,
+        briefingContext: { lastActivityDate: '2026-06-01T00:00:00Z' },
+      },
+    );
+    expect(out).toMatch(/Status: Active · last activity 2026-06-01/);
+  });
+});
+
 describe('formatProjectOutput project summary', () => {
   it('renders Project Summary block and keeps it out of the description', () => {
     const project = {
