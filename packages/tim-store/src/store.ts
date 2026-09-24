@@ -1036,6 +1036,29 @@ ${zeroExchangeFilter}
     return rows.map(r => r.day);
   }
 
+  /**
+   * Newest creation of an entry that records work on each task: a direct child of the task, or
+   * a log record pointing at it (metadata.task = "<task id>"). Creation only — later bulk
+   * updates of those records are not work on the task.
+   */
+  getTaskWorkLoggedAt(taskIds: string[]): Map<string, string> {
+    const out = new Map<string, string>();
+    if (taskIds.length === 0) return out;
+    const holes = taskIds.map(() => '?').join(', ');
+    const rows = this.db.prepare(`
+      SELECT task_id, MAX(created_at) AS at FROM (
+        SELECT parent_id AS task_id, created_at FROM entries
+        WHERE parent_id IN (${holes}) AND tombstoned_at IS NULL
+        UNION ALL
+        SELECT json_extract(metadata, '$.task') AS task_id, created_at FROM entries
+        WHERE json_type(metadata, '$.task') = 'text'
+          AND json_extract(metadata, '$.task') IN (${holes}) AND tombstoned_at IS NULL
+      ) GROUP BY task_id
+    `).all(...taskIds, ...taskIds) as Array<{ task_id: string; at: string }>;
+    for (const r of rows) out.set(r.task_id, r.at);
+    return out;
+  }
+
   /** Count live descendants of a project node + latest created_at. */
   getProjectEntryStats(projectId: string): { count: number; lastActivity: string } {
     const row = this.db.prepare(`

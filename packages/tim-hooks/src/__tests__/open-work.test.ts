@@ -79,6 +79,17 @@ describe('formatOpenWorkLines stale handling', () => {
     expect(lines.join('\n')).not.toMatch(/- \[todo, medium\] Stale task 0$/m);
   });
 
+  it('a log record pointing at a task, or a child under it, keeps the task fresh', async () => {
+    const log = await store.write('Worker log: progress on task 0', { metadata: { task: staleIds[0] } });
+    store.getDb().prepare('UPDATE entries SET created_at = ? WHERE id = ?').run('2026-02-07T12:00:00.000Z', log.id);
+    const child = await store.write('Subtask note', { parentId: staleIds[1] });
+    store.getDb().prepare('UPDATE entries SET created_at = ? WHERE id = ?').run('2026-02-07T12:00:00.000Z', child.id);
+    const lines = await formatOpenWorkLines(store, 'P0099', 12, 4000);
+    expect(lines).toContain('- [todo, medium] Stale task 0');
+    expect(lines).toContain('- [todo, medium] Stale task 1');
+    expect(lines.some(l => l.startsWith('+ 1 stale open task') || l.includes('Stale task 2 ·'))).toBe(true);
+  });
+
   it('keeps stale work visible when the budget is tight', async () => {
     const lines = await formatOpenWorkLines(store, 'P0099', 12, 700);
     expect(lines.join('\n')).toMatch(/Stale = |\+ 5 stale open tasks/);

@@ -473,7 +473,12 @@ function loadDbContext(dbPath, projectLabel) {
     -- Product rules: task marker = getTasks (object / true / 1 / "true"); last touch = taskLastTouch.
     SELECT e.title,
       MAX(COALESCE(json_extract(e.metadata, '$.touched_at'), e.updated_at),
-          COALESCE(json_extract(e.metadata, '$.verified_at'), ''), e.created_at) AS updated_at
+          COALESCE(json_extract(e.metadata, '$.verified_at'), ''), e.created_at,
+          -- Work logged under the task or pointing at it (getTaskWorkLoggedAt).
+          COALESCE((SELECT MAX(c.created_at) FROM entries c
+            WHERE c.tombstoned_at IS NULL AND (c.parent_id = e.id
+              OR (json_type(c.metadata, '$.task') = 'text' AND json_extract(c.metadata, '$.task') = e.id))), '')
+      ) AS updated_at
     FROM entries e
     JOIN tree t ON e.id = t.id
     WHERE e.irrelevant = 0 AND e.tombstoned_at IS NULL
