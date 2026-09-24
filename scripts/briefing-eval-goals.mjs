@@ -32,8 +32,9 @@ function parseRecentSessions(text) {
   const block = m[3] ?? '';
   const dates = [];
   for (const line of block.split('\n')) {
-    const dm = line.match(/(\d+) exchanges · (\d{4}-\d{2}-\d{2})/);
-    if (dm) dates.push(dm[2]);
+    // "2026-09-22 – 2026-09-23" = multi-day session; its last day is what recency means.
+    const dm = line.match(/(\d+) exchanges · (\d{4}-\d{2}-\d{2})(?: – (\d{4}-\d{2}-\d{2}))?/);
+    if (dm) dates.push(dm[3] ?? dm[2]);
   }
   return { shown: Number(m[1]), total: Number(m[2]), dates };
 }
@@ -173,7 +174,8 @@ export function evalG4(loadText, dbCtx) {
   }
   const pluralOk = rs.total < 3 ? true : rs.shown >= 3;
   const newestListed = rs.dates[0];
-  const newestDb = dbCtx.newestSubstantiveSessionDate?.slice(0, 10)
+  const newestDb = dbCtx.newestSubstantiveActivityDate?.slice(0, 10)
+    ?? dbCtx.newestSubstantiveSessionDate?.slice(0, 10)
     ?? dbCtx.newestSessionDate?.slice(0, 10);
   const dateOk = newestListed && newestDb ? newestListed === newestDb : false;
   const pass = pluralOk && dateOk;

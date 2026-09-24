@@ -36,7 +36,7 @@ export async function buildBriefingRenderContext(
   const substantiveSessions: RecentSessionLine[] = [];
   let hiddenShortCount = 0;
 
-  for (const { id } of rows) {
+  for (const { id, lastExchange } of rows) {
     const session = await store.read(id);
     if (!session) continue;
     const summaryNode = await findChildByKind(store, id, KIND_SUMMARY_ROOT);
@@ -48,9 +48,13 @@ export async function buildBriefingRenderContext(
       continue;
     }
 
-    const date = typeof session.metadata.date === 'string'
+    const started = typeof session.metadata.date === 'string'
       ? session.metadata.date.slice(0, 10)
       : session.createdAt.slice(0, 10);
+    // Rows are ordered by last activity; a start date alone makes a long session look
+    // out of order. The range ends at the last exchange — checkpoints and summaries are bookkeeping.
+    const last = lastExchange?.slice(0, 10) ?? started;
+    const date = last > started ? `${started} – ${last}` : started;
 
     const stored = typeof summaryNode?.metadata.summary === 'string'
       ? summaryNode.metadata.summary.trim()

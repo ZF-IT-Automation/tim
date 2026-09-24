@@ -391,6 +391,17 @@ function loadDbContext(dbPath, projectLabel) {
   // Substantive predicate matches product (handoff / substance real / ≥3 exchanges).
   let newestSubstantiveSession = null;
   let newestSubstantiveSessionDate = null;
+  // G4: Recent Sessions is ordered by activity, so recency = a substantive session's last exchange.
+  let newestSubstantiveActivityDate = null;
+  const lastExchangeStmt = db.prepare(`
+    WITH RECURSIVE sub AS (
+      SELECT id, created_at, metadata FROM entries WHERE parent_id = ? AND tombstoned_at IS NULL
+      UNION ALL
+      SELECT e.id, e.created_at, e.metadata FROM entries e
+      INNER JOIN sub ON e.parent_id = sub.id WHERE e.tombstoned_at IS NULL
+    )
+    SELECT MAX(created_at) AS last FROM sub WHERE json_extract(metadata, '$.kind') = 'exchange'
+  `);
   for (const s of sessions) {
     const meta = parseMeta(s.metadata);
     const exchanges = Number(meta.exchange_count ?? meta.exchanges ?? 0);
@@ -406,13 +417,18 @@ function loadDbContext(dbPath, projectLabel) {
     );
     if (isSubstantiveSession(exchanges, hasHandoff, substance)) {
       const date = String(meta.date ?? s.created_at).slice(0, 10);
+      const active = (lastExchangeStmt.get(s.id)?.last ?? date).slice(0, 10);
+      if (!newestSubstantiveActivityDate || active > newestSubstantiveActivityDate) {
+        newestSubstantiveActivityDate = active;
+      }
+      if (newestSubstantiveSession) continue;
       newestSubstantiveSessionDate = date;
       newestSubstantiveSession = {
         sessionId: s.id,
         label: date,
         summarySnippet: s.title ?? s.content?.slice(0, 80),
       };
-      break;
+      continue;
     }
   }
 
@@ -463,6 +479,7 @@ function loadDbContext(dbPath, projectLabel) {
     sessionCount: sessions.length,
     newestSessionDate,
     newestSubstantiveSessionDate,
+    newestSubstantiveActivityDate,
     newestSessionId,
     newestSessionExchangeCount,
     newestSessionHasHandoff,

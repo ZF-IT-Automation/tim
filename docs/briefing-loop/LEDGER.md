@@ -18,6 +18,7 @@ Raw scorecards: `runs/`.
 | 2026-09-24 | C9 deployed | dc413fc | live | 9/9 | 4/4 | 9,000 | review-2 fixes; scorer dates handoffs by session |
 | 2026-09-24 | review 3 + C10–C12 | 50b5c33 | live, all projects | 9/9 (P0063) | 4/4 | 9,000 | 2 summarizer blockers (coverage loop/stall on harness-only turns) fixed in C11; English summaries; legacy harness turns flagged (140); pushed, CI green |
 | 2026-09-24 | iteration 2 | 50b5c33 | live, all active projects, substance backfill + summaries regenerated | 9/9 in P0054, P0062, P0063, P0075, P0076, P0077; P0073 8/9 (G4); P0078 8/9 (G1: no open work at all); P0072 archived 7/9; P0000 Inbox 7/9 | 4/4 (Inbox 3/4) | — | removed dead summarizer tier opencode/deepseek-v4-flash-free |
+| 2026-09-24 | iteration 3 | (this commit) | live copy, all active projects | 9/9 in all 8 active projects (P0054, P0062, P0063, P0073, P0075, P0076, P0077, P0078) | 4/4 | — | multi-day sessions render `start – last exchange`; empty Now block says "no open work"; Sections count excludes the header-rendered Overview; Inbox exempt |
 
 ## Goal changes
 - S1: sessions-root and commits-root are legitimate non-section roots (scorer counted them as loose).
@@ -27,6 +28,8 @@ Raw scorecards: `runs/`.
 - G2: header regex now accepts `last activity <date>` (the new header wording).
 - S1: `project-path` entries are legitimate root children.
 - G2: scorer resolves the project and last activity like the renderer (it had read a stale `merged-into` row for P0062).
+- G4: Recent Sessions is ordered by activity; the scorer compared its first line against the newest session *start* date, so a long session that began earlier failed. Now both sides use the last exchange (the renderer shows `start – last`).
+- Scope: P0000 Inbox exempt (no sections/sessions/summary by design).
 - G5: scorer dated handoffs by the summary root's `updated_at`, which metadata writes bump; now by the owning session's date.
 
 ## Session filter — measurement behind the decision (2026-09-23, 591 sessions)

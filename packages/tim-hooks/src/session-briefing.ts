@@ -499,7 +499,11 @@ export async function buildNowBlock(
     lines.push(...tasks);
   }
 
-  return lines.length > 3 ? lines : [];
+  // An empty project still gets the block: "nothing open" is an answer, silence is not.
+  if (lines.length === 3) {
+    lines.push(`No open work or handoff recorded — add tasks with tim_write where:"${projectLabel}/Tasks".`);
+  }
+  return lines;
 }
 
 /** Open tasks of the project, highest-priority first (store already orders them). */

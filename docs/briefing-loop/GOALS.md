@@ -9,6 +9,10 @@ when every **hard** goal passes on P0063 and no **soft** goal regressed.
 Run: `node scripts/briefing-eval.mjs --db <copy-of-tim.db> --project P0063 [--dist <repo-root>] [--json]`
 Always against a DB copy, never the live `~/.tim/tim.db`.
 
+Scope: every active project. **P0000 (Inbox)** is exempt — it is a drop zone for
+unsorted entries with no sections, sessions or project summary by design, so G3 and S1
+cannot apply.
+
 ## Hard goals
 
 | ID | Goal | Check |
@@ -16,7 +20,7 @@ Always against a DB copy, never the live `~/.tim/tim.db`.
 | G1 | **First screen answers the essentials.** The first 40 lines of `tim_load_project` contain: what the project is (≥1 non-empty Overview/summary line), current state with a date, and the next step or open work. | Overview/summary text present in lines 1–40; an ISO date in lines 1–40; an "Open work"/"Next" block starts before line 40. |
 | G2 | **No stale facts in the header.** Header counts/dates come from live data, not frozen text. | Header does not contain a test count or date older than the project's last activity unless labelled historical. |
 | G3 | **Project summary covers the project, not one session.** | The summary block states which window it covers (date range or session count ≥ 3), and its newest source date is ≤ 14 days before the project's last activity. |
-| G4 | **Recent sessions are recent and plural.** | `Recent Sessions (x/y)`: x ≥ 3 when y ≥ 3; the newest listed date equals the newest session date. |
+| G4 | **Recent sessions are recent and plural.** | `Recent Sessions (x/y)`: x ≥ 3 when y ≥ 3; the newest listed date (end of a `start – last` range) equals the newest last-exchange date of a substantive session. |
 | G5 | **Continue finds the real handoff.** A trivial newest session (< 3 exchanges, no handoff) does not mask the last substantive one. | `tim_preview_briefing` shows the newest handoff note (if any exists in the last 30 days) and the newest substantive session. |
 | G6 | **Directive does not contradict itself.** | The directive never says both "already loaded / do NOT re-fetch" and "call tim_load_project". |
 | G7 | **Delta is news, not bookkeeping.** | `[Since last session]` bullets list no session/exchange/batch/checkpoint/summary nodes. |

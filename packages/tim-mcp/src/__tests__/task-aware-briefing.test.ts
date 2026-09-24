@@ -4,6 +4,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { spawn, type ChildProcess } from 'node:child_process';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import { TimStore } from 'tim-store';
 import { formatProjectOutput } from '../project-output.js';
 import { buildBriefingRenderContext } from '../briefing-context.js';
@@ -520,5 +521,28 @@ describe('formatProjectOutput task-aware unit seam', () => {
       queryExtras: hits,
     });
     expect(out).not.toContain('SecretSuppressedNeedle');
+  });
+});
+
+describe('recent session dates', () => {
+  it('shows a start–last range for a session active past its start day', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tim-range-'));
+    const store = new TimStore(path.join(dir, 'tim.db'));
+    try {
+      const project = await store.createProject('P3499', { content: 'range', memoryOnly: true });
+      const sessionsRoot = await store.write('Sessions', {
+        parentId: project.id, metadata: { kind: 'sessions-root' },
+      });
+      const session = await store.write('Long session', {
+        parentId: sessionsRoot.id,
+        metadata: { kind: 'session', date: '2020-01-01T10:00:00.000Z', exchange_count: 5 },
+      });
+      await store.write('late exchange', { parentId: session.id, metadata: { kind: 'exchange' } });
+      const ctx = await buildBriefingRenderContext(store, 'P3499', project.id, 3);
+      expect(ctx.recentSessions?.[0]?.date).toMatch(/^2020-01-01 – \d{4}-\d{2}-\d{2}$/);
+    } finally {
+      store.close();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

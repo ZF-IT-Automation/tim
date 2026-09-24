@@ -612,6 +612,15 @@ describe('handoff lookup (review #5)', () => {
     fs.rmSync(root, { recursive: true, force: true });
   });
 
+  it('says so when a project has no open work and no handoff', async () => {
+    const store = new TimStore(dbPath);
+    await store.createProject('P0097', { content: 'empty project' });
+    const now = (await buildNowBlock(store, 'P0097')).join('\n');
+    expect(now).toContain('── Now ──');
+    expect(now).toContain('No open work or handoff recorded');
+    store.close();
+  });
+
   it('finds handoff in a zero-exchange session via buildNowBlock', async () => {
     const store = new TimStore(dbPath);
     const sessions = new SessionManager(store);
