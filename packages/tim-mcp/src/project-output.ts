@@ -903,6 +903,8 @@ function formatProjectOutputWithTokenBudget(
       }
       sectionsIndexLines.push(`  ${name} — tim_read("${section.id}")`);
     }
+    // Count what is listed: the Overview renders in the header and is skipped here.
+    sectionsIndexLines[1] = `── Sections (${sectionsIndexLines.length - 3}) ──`;
   }
 
   const blocks: BriefingBlock[] = [{
