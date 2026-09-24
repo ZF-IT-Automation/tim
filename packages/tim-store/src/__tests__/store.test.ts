@@ -486,6 +486,7 @@ describe('TimStore', () => {
       await store.write('Legacy string flag', { parentId: section.id, metadata: { task: 'true', status: 'todo' } });
       const titles = (await store.getTasks()).map(t => t.title).sort();
       expect(titles).toEqual(['Legacy string flag', 'Real task']);
+      expect((await store.getTasks()).find(t => t.title === 'Legacy string flag')?.status).toBe('todo');
     });
 
     it('ranks P0–P3 on the same scale as critical/high/medium/low', async () => {
