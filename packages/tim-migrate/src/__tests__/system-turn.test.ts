@@ -45,10 +45,13 @@ describe('migrateSystemTurn', () => {
       parentId: exRoot!.id,
       metadata: { kind: KIND_EXCHANGE_BATCH, batch_index: 0, order: 0 },
     });
-    store.writeSync(LIVE_TASK_NOTIFICATION, {
+    const userRow = store.writeSync(LIVE_TASK_NOTIFICATION, {
       parentId: batch.id,
       metadata: { kind: KIND_EXCHANGE, role: 'user', seq: 1, sessionId: 'legacy-s' },
     });
+    const updatedAtBefore = (store.getDb() as any)
+      .prepare('SELECT updated_at FROM entries WHERE id = ?')
+      .get(userRow.id).updated_at;
 
     const dry = await migrateSystemTurn(store, { dryRun: true });
     expect(dry.flagged).toBe(1);
@@ -69,5 +72,10 @@ describe('migrateSystemTurn', () => {
     const again = await migrateSystemTurn(store, { dryRun: false });
     expect(again.flagged).toBe(0);
     expect(again.skippedAlreadyFlagged).toBe(1);
+
+    const updatedAtAfter = (store.getDb() as any)
+      .prepare('SELECT updated_at FROM entries WHERE id = ?')
+      .get(userRow.id).updated_at;
+    expect(updatedAtAfter).toBe(updatedAtBefore);
   });
 });

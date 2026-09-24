@@ -76,6 +76,8 @@ export async function migrateSystemTurn(
   let skippedAlreadyFlagged = 0;
   let skippedNotHarness = 0;
 
+  const toFlag: Array<{ id: string; projectId: string; label: string }> = [];
+
   for (const row of rows) {
     const meta = parseMeta(row.metadata);
     if (meta.system_turn === true) {
@@ -94,21 +96,32 @@ export async function migrateSystemTurn(
     const projectId = project?.projectId ?? '_unknown';
     const label = project?.label ?? '_unknown';
 
-    if (!dryRun) {
-      const nextMeta = { ...meta, system_turn: true };
-      db.prepare(`
-        UPDATE entries
-        SET metadata = ?, updated_at = ?
-        WHERE id = ?
-      `).run(JSON.stringify(nextMeta), new Date().toISOString(), row.id);
-    }
+    toFlag.push({ id: row.id, projectId, label });
+  }
 
+  if (!dryRun && toFlag.length > 0) {
+    const update = db.prepare(`
+      UPDATE entries
+      SET metadata = json_set(metadata, '$.system_turn', json('true'))
+      WHERE id = ?
+        AND json_extract(metadata, '$.system_turn') IS NOT 1
+    `);
+    store.runExclusive(() => {
+      db.transaction(() => {
+        for (const row of toFlag) {
+          update.run(row.id);
+        }
+      })();
+    });
+  }
+
+  for (const row of toFlag) {
     flagged += 1;
-    const known = byProject.get(projectId);
+    const known = byProject.get(row.projectId);
     if (known) {
       known.flagged += 1;
     } else {
-      byProject.set(projectId, { projectId, label, flagged: 1 });
+      byProject.set(row.projectId, { projectId: row.projectId, label: row.label, flagged: 1 });
     }
   }
 
