@@ -132,4 +132,23 @@ describe('resolveCurrentSession', () => {
     expect(await resolveCurrentSession(store, 'P0095', '/tmp/none')).toBeNull();
     expect(await resolveCurrentSession(store, 'P0095')).toBeNull();
   });
+
+  it('returns null while an older session in the same cwd is still logging', async () => {
+    await store.createProject('P0094');
+    const shared = path.resolve('/tmp/concurrent');
+    await sessions.startProjectSession({
+      sessionId: 'running-a', projectId: 'P0094', agentName: 'test', cwd: shared, harness: 'vitest',
+    });
+    await sessions.logExchange('running-a', [{ role: 'user', content: 'before' }, { role: 'agent', content: 'ok' }]);
+    await new Promise(r => setTimeout(r, 5));
+    await sessions.startProjectSession({
+      sessionId: 'running-b', projectId: 'P0094', agentName: 'test', cwd: shared, harness: 'vitest',
+    });
+    // Sequential so far: a stopped before b began.
+    expect((await resolveCurrentSession(store, 'P0094', shared))?.id).toBe('running-b');
+
+    await new Promise(r => setTimeout(r, 5));
+    await sessions.logExchange('running-a', [{ role: 'user', content: 'after b started' }, { role: 'agent', content: 'ok' }]);
+    expect(await resolveCurrentSession(store, 'P0094', shared)).toBeNull();
+  });
 });
