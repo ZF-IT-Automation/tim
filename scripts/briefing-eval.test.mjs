@@ -5,11 +5,14 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   evalG1,
+  evalG2,
   evalG3,
+  evalG4,
   evalG6,
   evalG8,
   evalS1,
   formatScorecard,
+  formatProjectSummaryLine,
 } from './briefing-eval-goals.mjs';
 
 const root = dirname(fileURLToPath(import.meta.url));
@@ -25,6 +28,40 @@ const passingLoad = [
 ].join('\n');
 
 assert.equal(evalG1(passingLoad).pass, true, 'G1 should pass fixture');
+
+const rendererHeader = [
+  'P0063 — Demo',
+  'Status: Active · last activity 2026-09-20 · 5 packages',
+].join('\n');
+assert.equal(
+  evalG2(rendererHeader, { lastActivity: '2026-09-20T12:00:00Z', liveTestCount: 88 }).pass,
+  true,
+  'G2 should parse renderer header with last activity and packages',
+);
+
+assert.equal(
+  evalG4('no recent sessions block', { sessionCount: 0 }).na,
+  true,
+  'G4 should be n/a when project has no sessions',
+);
+
+const recentSessionsLoad = [
+  'P — X',
+  'Status: Active · last activity 2026-09-23',
+  '',
+  '── Recent Sessions (3/5) ──',
+  '  4 exchanges · 2026-09-22 — did work',
+  '  3 exchanges · 2026-09-20 — earlier',
+  '  5 exchanges · 2026-09-18 — oldest shown',
+].join('\n');
+assert.equal(
+  evalG4(recentSessionsLoad, {
+    sessionCount: 5,
+    newestSubstantiveSessionDate: '2026-09-22',
+  }).pass,
+  true,
+  'G4 should compare against newest substantive session, not trivial newest',
+);
 
 const failingLoad = 'No header\nNo summary\n';
 assert.equal(evalG1(failingLoad).pass, false, 'G1 should fail sparse fixture');
@@ -75,6 +112,13 @@ const score = formatScorecard([
 ]);
 assert.match(score, /hard: 1\/1/);
 assert.match(score, /soft: 0\/1/);
+
+const summaryLine = formatProjectSummaryLine('P0063', [
+  { id: 'G4', hard: true, pass: true, value: true, detail: 'ok', na: true },
+  { id: 'G1', hard: true, pass: true, value: true, detail: 'ok', na: false },
+]);
+assert.match(summaryLine, /P0063  hard 1\/1/);
+assert.match(summaryLine, /G4 n\/a/);
 
 const self = spawnSync(process.execPath, [join(root, 'briefing-eval.mjs'), '--selftest'], {
   encoding: 'utf8',

@@ -8,8 +8,8 @@ const STALE_DAYS = 14;
 const DIRECTIVE_BUDGET = 4 * 1024;
 const LOAD_BUDGET = 12 * 1024;
 
-function result(id, hard, pass, value, detail) {
-  return { id, hard, pass, value, detail };
+function result(id, hard, pass, value, detail, na = false) {
+  return { id, hard, pass, value, detail, na };
 }
 
 function firstLines(text, n) {
@@ -48,9 +48,16 @@ function parseOpenWorkLines(text) {
 }
 
 function parseHeaderMeta(line) {
-  const m = line.match(/^Status:\s*(.+?) · (?:last activity )?(\d{4}-\d{2}-\d{2})(?: · (\d+) tests)?/);
+  const m = line.match(
+    /^Status:\s*(.+?)\s*·\s*(?:last activity\s+)?(\d{4}-\d{2}-\d{2})(?:\s*·\s*(?:(\d+)\s+packages|(\d+)\s+tests?))?/i,
+  );
   if (!m) return null;
-  return { status: m[1], date: m[2], tests: m[3] ? Number(m[3]) : undefined };
+  return {
+    status: m[1].trim(),
+    date: m[2],
+    packages: m[3] ? Number(m[3]) : undefined,
+    tests: m[4] ? Number(m[4]) : undefined,
+  };
 }
 
 function daysBetween(a, b) {
@@ -135,18 +142,22 @@ export function evalG3(loadText, dbCtx) {
   return result('G3', true, pass, pass, detail);
 }
 
-/** G4 — recent sessions recent and plural. */
+/** G4 — recent sessions recent and plural (newest substantive session, not any session). */
 export function evalG4(loadText, dbCtx) {
+  if ((dbCtx.sessionCount ?? 0) === 0) {
+    return result('G4', true, true, true, 'no sessions in project', true);
+  }
   const rs = parseRecentSessions(loadText);
   if (!rs) {
     return result('G4', true, false, false, 'no Recent Sessions block');
   }
   const pluralOk = rs.total < 3 ? true : rs.shown >= 3;
   const newestListed = rs.dates[0];
-  const newestDb = dbCtx.newestSessionDate?.slice(0, 10);
+  const newestDb = dbCtx.newestSubstantiveSessionDate?.slice(0, 10)
+    ?? dbCtx.newestSessionDate?.slice(0, 10);
   const dateOk = newestListed && newestDb ? newestListed === newestDb : false;
   const pass = pluralOk && dateOk;
-  const detail = `shown=${rs.shown}/${rs.total} pluralOk=${pluralOk} newestListed=${newestListed ?? 'none'} newestDb=${newestDb ?? 'none'}`;
+  const detail = `shown=${rs.shown}/${rs.total} pluralOk=${pluralOk} newestListed=${newestListed ?? 'none'} newestSubstantiveDb=${newestDb ?? 'none'}`;
   return result('G4', true, pass, pass, detail);
 }
 
@@ -342,11 +353,29 @@ export function evaluateAll(ctx) {
 }
 
 export function formatScorecard(results) {
-  const lines = results.map((r) => `${r.pass ? 'PASS' : 'FAIL'} ${r.id} ${r.detail}`);
-  const hardPass = results.filter((r) => r.hard && r.pass).length;
-  const hardTotal = results.filter((r) => r.hard).length;
+  const lines = results.map((r) => {
+    const tag = r.na ? 'n/a' : r.pass ? 'PASS' : 'FAIL';
+    return `${tag} ${r.id} ${r.detail}`;
+  });
+  const hardApplicable = results.filter((r) => r.hard && !r.na);
+  const hardPass = hardApplicable.filter((r) => r.pass).length;
+  const hardTotal = hardApplicable.length;
   const softPass = results.filter((r) => !r.hard && r.pass).length;
   const softTotal = results.filter((r) => !r.hard).length;
-  lines.push(`hard: ${hardPass}/${hardTotal}  soft: ${softPass}/${softTotal}`);
+  const naGoals = results.filter((r) => r.na).map((r) => r.id);
+  const naSuffix = naGoals.length > 0 ? `  n/a: ${naGoals.join(',')}` : '';
+  lines.push(`hard: ${hardPass}/${hardTotal}  soft: ${softPass}/${softTotal}${naSuffix}`);
   return lines.join('\n');
+}
+
+/** One-line summary for --all-active output. */
+export function formatProjectSummaryLine(projectLabel, results) {
+  const hardApplicable = results.filter((r) => r.hard && !r.na);
+  const hardPass = hardApplicable.filter((r) => r.pass).length;
+  const hardTotal = hardApplicable.length;
+  const softPass = results.filter((r) => !r.hard && r.pass).length;
+  const softTotal = results.filter((r) => !r.hard).length;
+  const naGoals = results.filter((r) => r.na).map((r) => r.id);
+  const naSuffix = naGoals.length > 0 ? ` (${naGoals.join(',')} n/a)` : '';
+  return `${projectLabel}  hard ${hardPass}/${hardTotal}  soft ${softPass}/${softTotal}${naSuffix}`;
 }

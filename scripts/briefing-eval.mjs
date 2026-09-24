@@ -20,7 +20,7 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { evaluateAll, formatScorecard } from './briefing-eval-goals.mjs';
+import { evaluateAll, formatScorecard, formatProjectSummaryLine } from './briefing-eval-goals.mjs';
 
 const require = createRequire(import.meta.url);
 const Database = require('better-sqlite3');
@@ -110,7 +110,16 @@ class McpStdioClient {
 }
 
 function parseArgs(argv) {
-  const out = { db: null, project: null, dist: DEFAULT_DIST, json: false, out: null, selftest: false };
+  const out = {
+    db: null,
+    project: null,
+    dist: DEFAULT_DIST,
+    json: false,
+    out: null,
+    selftest: false,
+    allActive: false,
+    days: 30,
+  };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--db') out.db = argv[++i];
@@ -119,13 +128,18 @@ function parseArgs(argv) {
     else if (a === '--json') out.json = true;
     else if (a === '--out') out.out = argv[++i];
     else if (a === '--selftest') out.selftest = true;
+    else if (a === '--all-active') out.allActive = true;
+    else if (a === '--days') out.days = Number(argv[++i]);
     else if (a === '--help' || a === '-h') out.help = true;
   }
   return out;
 }
 
 function usage() {
-  console.error(`Usage: node scripts/briefing-eval.mjs --db <path> --project <label> [--dist <repo-root>] [--json] [--out <dir>]`);
+  console.error(
+    `Usage: node scripts/briefing-eval.mjs --db <path> --project <label> [--dist <repo-root>] [--json] [--out <dir>]\n` +
+      `       node scripts/briefing-eval.mjs --db <path> --all-active [--days 30] [--dist <repo-root>]`,
+  );
 }
 
 function copyDbToTemp(srcDb) {
@@ -237,6 +251,73 @@ function normalizeTitle(s) {
     .toLowerCase();
 }
 
+const SUBSTANTIVE_MIN_EXCHANGES = 3;
+
+function parseSessionSubstance(raw) {
+  if (raw === 'none' || raw === 'low' || raw === 'real') return raw;
+  return undefined;
+}
+
+function isSubstantiveSession(exchangeCount, hasHandoffNote, substance) {
+  if (hasHandoffNote) return true;
+  if (substance === 'none') return false;
+  if (substance === 'real') return true;
+  return exchangeCount >= SUBSTANTIVE_MIN_EXCHANGES;
+}
+
+function sessionHasHandoffNote(db, sessionId) {
+  const row = db.prepare(`
+    SELECT 1
+    FROM entries
+    WHERE parent_id IN (
+      SELECT id FROM entries
+      WHERE parent_id = ? AND json_extract(metadata, '$.kind') = 'session-summary-root'
+    )
+    AND json_extract(metadata, '$.handoff_note') IS NOT NULL
+    LIMIT 1
+  `).get(sessionId);
+  return Boolean(row);
+}
+
+function projectLastActivity(db, projectId) {
+  const row = db.prepare(`
+    WITH RECURSIVE descendants AS (
+      SELECT id, created_at FROM entries
+      WHERE parent_id = ?
+        AND tombstoned_at IS NULL
+        AND irrelevant = 0
+      UNION ALL
+      SELECT e.id, e.created_at FROM entries e
+      INNER JOIN descendants d ON e.parent_id = d.id
+      WHERE e.tombstoned_at IS NULL AND e.irrelevant = 0
+    )
+    SELECT MAX(created_at) AS last FROM descendants
+  `).get(projectId);
+  return row?.last ?? null;
+}
+
+function listActiveProjects(db, days) {
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - days);
+  const cutoffIso = cutoff.toISOString();
+  const projects = db.prepare(`
+    SELECT id, json_extract(metadata, '$.label') AS label
+    FROM entries
+    WHERE tombstoned_at IS NULL
+      AND json_extract(metadata, '$.kind') = 'project'
+      AND json_extract(metadata, '$.label') IS NOT NULL
+    ORDER BY label
+  `).all();
+  const active = [];
+  for (const p of projects) {
+    const last = projectLastActivity(db, p.id);
+    if (last && last >= cutoffIso) {
+      active.push({ id: p.id, label: p.label });
+    }
+  }
+  return active;
+}
+
 function loadDbContext(dbPath, projectLabel) {
   const db = new Database(dbPath, { readonly: true });
 
@@ -253,19 +334,8 @@ function loadDbContext(dbPath, projectLabel) {
     throw new Error(`Project not found in DB: ${projectLabel}`);
   }
 
-  // Last activity anywhere in project subtree.
-  const lastActivity = db.prepare(`
-    WITH RECURSIVE tree(id) AS (
-      SELECT id FROM entries WHERE id = ?
-      UNION ALL
-      SELECT e.id FROM entries e
-      JOIN tree t ON e.parent_id = t.id
-      WHERE e.tombstoned_at IS NULL
-    )
-    SELECT MAX(e.updated_at) AS max_updated
-    FROM entries e
-    JOIN tree t ON e.id = t.id
-  `).get(project.id)?.max_updated;
+  // Match renderer: getProjectEntryStats uses MAX(created_at), not updated_at.
+  const lastActivity = projectLastActivity(db, project.id);
 
   // Live test count heuristic from project content "(N tests)" or "N tests".
   const testsMatch =
@@ -294,40 +364,30 @@ function loadDbContext(dbPath, projectLabel) {
   const newestSessionExchangeCount = Number(
     newestMeta.exchange_count ?? newestMeta.exchanges ?? 0,
   );
-  const newestSessionHasHandoff = Boolean(
-    db.prepare(`
-      SELECT 1
-      FROM entries
-      WHERE parent_id IN (
-        SELECT id FROM entries
-        WHERE parent_id = ? AND json_extract(metadata, '$.kind') = 'session-summary-root'
-      )
-      AND json_extract(metadata, '$.handoff_note') IS NOT NULL
-      LIMIT 1
-    `).get(newest?.id),
-  );
+  const newestSessionHasHandoff = newest ? sessionHasHandoffNote(db, newest.id) : false;
 
-  // Substantive = ≥3 exchanges OR has handoff_note under summary-root.
+  // Substantive predicate matches product (handoff / substance real / ≥3 exchanges).
   let newestSubstantiveSession = null;
+  let newestSubstantiveSessionDate = null;
   for (const s of sessions) {
     const meta = parseMeta(s.metadata);
     const exchanges = Number(meta.exchange_count ?? meta.exchanges ?? 0);
-    const handoffChild = db.prepare(`
-      SELECT json_extract(metadata, '$.handoff_note') AS note
+    const hasHandoff = sessionHasHandoffNote(db, s.id);
+    const summaryRoot = db.prepare(`
+      SELECT metadata
       FROM entries
-      WHERE parent_id IN (
-        SELECT id FROM entries
-        WHERE parent_id = ? AND json_extract(metadata, '$.kind') = 'session-summary-root'
-      )
-      AND json_extract(metadata, '$.handoff_note') IS NOT NULL
-      ORDER BY updated_at DESC
+      WHERE parent_id = ? AND json_extract(metadata, '$.kind') = 'session-summary-root'
       LIMIT 1
     `).get(s.id);
-    const hasHandoff = Boolean(handoffChild?.note);
-    if (exchanges >= 3 || hasHandoff) {
+    const substance = parseSessionSubstance(
+      summaryRoot ? parseMeta(summaryRoot.metadata).substance : undefined,
+    );
+    if (isSubstantiveSession(exchanges, hasHandoff, substance)) {
+      const date = String(meta.date ?? s.created_at).slice(0, 10);
+      newestSubstantiveSessionDate = date;
       newestSubstantiveSession = {
         sessionId: s.id,
-        label: String(meta.date ?? s.created_at).slice(0, 10),
+        label: date,
         summarySnippet: s.title ?? s.content?.slice(0, 80),
       };
       break;
@@ -378,7 +438,9 @@ function loadDbContext(dbPath, projectLabel) {
   return {
     lastActivity,
     liveTestCount,
+    sessionCount: sessions.length,
     newestSessionDate,
+    newestSubstantiveSessionDate,
     newestSessionId,
     newestSessionExchangeCount,
     newestSessionHasHandoff,
@@ -417,6 +479,20 @@ function runSelftest() {
   console.log('selftest: ok');
 }
 
+async function scoreProject({ dist, dbPath, home, project }) {
+  const texts = await captureTexts({ dist, dbPath, home, project });
+  const dbCtx = loadDbContext(dbPath, project);
+  const results = evaluateAll({
+    previewText: texts.previewText,
+    loadText: texts.loadText,
+    hookText: texts.hookText,
+    structure: texts.structure,
+    db: dbCtx,
+    now: new Date(),
+  });
+  return { texts, results };
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (args.help) {
@@ -427,7 +503,7 @@ async function main() {
     runSelftest();
     process.exit(0);
   }
-  if (!args.db || !args.project) {
+  if (!args.db || (!args.project && !args.allActive)) {
     usage();
     process.exit(1);
   }
@@ -442,7 +518,27 @@ async function main() {
     tmpDbDir = copied.dir;
     migrateTempDb(args.dist, copied.dbPath, home);
 
-    const texts = await captureTexts({
+    if (args.allActive) {
+      const db = new Database(copied.dbPath, { readonly: true });
+      const projects = listActiveProjects(db, args.days);
+      db.close();
+      for (const p of projects) {
+        try {
+          const { results } = await scoreProject({
+            dist: args.dist,
+            dbPath: copied.dbPath,
+            home,
+            project: p.label,
+          });
+          console.log(formatProjectSummaryLine(p.label, results));
+        } catch (err) {
+          console.log(`${p.label}  ERROR ${err instanceof Error ? err.message : err}`);
+        }
+      }
+      process.exit(0);
+    }
+
+    const { texts, results } = await scoreProject({
       dist: args.dist,
       dbPath: copied.dbPath,
       home,
@@ -456,16 +552,6 @@ async function main() {
       writeFileSync(join(args.out, 'hook.txt'), texts.hookText);
       writeFileSync(join(args.out, 'structure.json'), JSON.stringify(texts.structure, null, 2));
     }
-
-    const dbCtx = loadDbContext(copied.dbPath, args.project);
-    const results = evaluateAll({
-      previewText: texts.previewText,
-      loadText: texts.loadText,
-      hookText: texts.hookText,
-      structure: texts.structure,
-      db: dbCtx,
-      now: new Date(),
-    });
 
     if (args.json) {
       console.log(JSON.stringify(results, null, 2));
