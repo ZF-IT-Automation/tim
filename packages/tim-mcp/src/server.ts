@@ -1667,7 +1667,9 @@ function formatShowLine(entry: Entry): string {
     status !== 'done' && status !== 'cancelled' && order < 999999 ? `[${order}] ` : '';
   const title = entry.title.padEnd(44, ' ');
   const tagStr = entry.tags.join(' ');
-  return `  ${icon} ${orderPrefix}${title}${tagStr ? ' ' + tagStr : ''}`.trimEnd();
+  // id + last touch: the caller must be able to act on a line (tim_update / tim_verify).
+  const ref = ` · ${entry.updatedAt.slice(0, 10)} · ${entry.id}`;
+  return `  ${icon} ${orderPrefix}${title}${tagStr ? ' ' + tagStr : ''}${ref}`;
 }
 
 async function formatShowOutput(store: TimStore, entries: Entry[]): Promise<string> {
