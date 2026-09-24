@@ -46,6 +46,7 @@ import {
   assertMaintenanceClear,
   validateEvidenceMetadata,
   validateCallerTemporalMetadata,
+  taskPriorityRank,
 } from 'tim-core';
 import { annotateTrust } from './trust.js';
 import { projectEntryEvidence } from './evidence-presentation.js';
@@ -1314,11 +1315,6 @@ const TASK_STATUS_ORDER: Record<string, number> = {
   in_progress: 0,
   todo: 1,
 };
-const TASK_PRIORITY_ORDER: Record<string, number> = {
-  high: 0,
-  medium: 1,
-  low: 2,
-};
 
 function sortTaskRecords(tasks: TaskRecord[]): TaskRecord[] {
   return [...tasks].sort((a, b) => {
@@ -1326,8 +1322,8 @@ function sortTaskRecords(tasks: TaskRecord[]): TaskRecord[] {
     const statusB = TASK_STATUS_ORDER[b.status ?? ''] ?? 2;
     if (statusA !== statusB) return statusA - statusB;
 
-    const priorityA = TASK_PRIORITY_ORDER[a.priority ?? ''] ?? 3;
-    const priorityB = TASK_PRIORITY_ORDER[b.priority ?? ''] ?? 3;
+    const priorityA = taskPriorityRank(a.priority);
+    const priorityB = taskPriorityRank(b.priority);
     if (priorityA !== priorityB) return priorityA - priorityB;
 
     if (!a.due && !b.due) return 0;
@@ -1552,11 +1548,6 @@ const SHOW_STATUS_ORDER: Record<string, number> = {
   in_progress: 0,
   todo: 1,
 };
-const SHOW_PRIORITY_ORDER: Record<string, number> = {
-  high: 0,
-  medium: 1,
-  low: 2,
-};
 
 function resolveEntryTaskPriority(metadata: Record<string, unknown>): string | undefined {
   const task = metadata.task;
@@ -1651,8 +1642,8 @@ function sortForShow(entries: Entry[]): Entry[] {
     const statusB = SHOW_STATUS_ORDER[resolveEntryTaskStatus(b.metadata) ?? ''] ?? 2;
     if (statusA !== statusB) return statusA - statusB;
 
-    const priorityA = SHOW_PRIORITY_ORDER[resolveEntryTaskPriority(a.metadata) ?? ''] ?? 3;
-    const priorityB = SHOW_PRIORITY_ORDER[resolveEntryTaskPriority(b.metadata) ?? ''] ?? 3;
+    const priorityA = taskPriorityRank(resolveEntryTaskPriority(a.metadata));
+    const priorityB = taskPriorityRank(resolveEntryTaskPriority(b.metadata));
     if (priorityA !== priorityB) return priorityA - priorityB;
 
     return b.createdAt.localeCompare(a.createdAt);
@@ -3832,7 +3823,6 @@ export async function createMcpServer(
           }
 
           if (needsInit) {
-            const PRIORITY_ORDER: Record<string, number> = { high: 0, medium: 1, low: 2 };
             const withMeta = await Promise.all(projectTasks.map(async t => {
               const e = await s.read(t.id);
               return {
@@ -3842,8 +3832,8 @@ export async function createMcpServer(
               };
             }));
             withMeta.sort((a, b) => {
-              const pa = PRIORITY_ORDER[a.priority ?? ''] ?? 3;
-              const pb = PRIORITY_ORDER[b.priority ?? ''] ?? 3;
+              const pa = taskPriorityRank(a.priority);
+              const pb = taskPriorityRank(b.priority);
               if (pa !== pb) return pa - pb;
               return a.createdAt.localeCompare(b.createdAt);
             });

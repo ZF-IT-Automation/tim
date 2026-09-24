@@ -87,7 +87,10 @@ describe('tim_load_project layout (C6)', () => {
         tokenBudget: 12000,
         briefingContext: {
           lastActivityDate: '2026-06-01',
-          nowBlockLines: ['', '── Now ──', '', '- [todo, high] Fix the renderer'],
+          nowBlockLines: [
+            '', '── Now ──', '', '- [todo, high] Fix the renderer',
+            '+ 2 more open tasks — tim_show', 'Stale = untouched over 7+ days', '- [todo] Old · stale since 2026-01-01',
+          ],
           openTaskCounts: { open: 1, stale: 0 },
           openBugCount: 2,
         },
@@ -105,6 +108,8 @@ describe('tim_load_project layout (C6)', () => {
     expect(rulesLine).toBeLessThan(summaryLine);
     expect(summaryLine).toBeLessThan(sectionsLine);
     expect(nowLine).toBeLessThan(20);
+    expect(out).toContain('+ 2 more open tasks');
+    expect(out).toContain('Stale = untouched over 7+ days');
   });
 
   it('counts open bugs from briefingContext when section children are not loaded', () => {

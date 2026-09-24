@@ -161,11 +161,8 @@ export function selectBriefingBlocks(
   );
   let pinnedNow: BriefingBlock | null = null;
   if (nowSource) {
-    const compactLines = nowSource.lines.filter(
-      line => line.includes('── Now ──')
-        || line.trim().startsWith('- [')
-        || line.trim().startsWith('Handoff'),
-    );
+    // Drop only blank lines: an allowlist lost the triage instruction and the overflow count.
+    const compactLines = nowSource.lines.filter(line => line.trim().length > 0);
     const compactText = compactLines.join('\n');
     if (tryChargeTokens(ledger, compactText)) {
       pinnedNow = { ...nowSource, lines: compactLines };

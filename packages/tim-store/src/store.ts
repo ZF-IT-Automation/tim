@@ -1265,8 +1265,10 @@ ${zeroExchangeFilter}
   async getTasks(opts?: GetTasksOptions): Promise<TaskRecord[]> {
     let sql = `
       SELECT e.* FROM entries e
-      WHERE json_extract(e.metadata, '$.task') IS NOT NULL
-        AND json_extract(e.metadata, '$.task') != false
+      -- Same shapes as isTaskMarker: an object, or legacy true / 1 / "true". A string id in
+      -- metadata.task is a back-reference from a log record to its task, not a task.
+      WHERE (json_type(e.metadata, '$.task') IN ('object', 'true')
+        OR json_extract(e.metadata, '$.task') IN (1, 'true'))
         AND e.irrelevant = 0
         AND e.tombstoned_at IS NULL
     `;
@@ -1301,10 +1303,12 @@ ${zeroExchangeFilter}
           json_extract(e.metadata, '$.task.priority'),
           json_extract(e.metadata, '$.priority')
         )
-          WHEN 'high' THEN 0
-          WHEN 'medium' THEN 1
-          WHEN 'low' THEN 2
-          ELSE 3
+          -- Two vocabularies are in use; rank them on one scale.
+          WHEN 'critical' THEN 0 WHEN 'P0' THEN 0
+          WHEN 'high' THEN 1 WHEN 'P1' THEN 1
+          WHEN 'medium' THEN 2 WHEN 'P2' THEN 2
+          WHEN 'low' THEN 3 WHEN 'P3' THEN 3
+          ELSE 4
         END,
         CASE WHEN COALESCE(
           json_extract(e.metadata, '$.task.due_date'),
