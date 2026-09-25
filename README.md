@@ -27,7 +27,7 @@ TIM keeps that working knowledge in a SQLite database you control. Connect agent
 
 ## Why TIM
 
-- **Your memory, on your machine.** The core store and full-text search run locally. No hosted TIM account, remote vector database or sync service is required.
+- **Your memory, on your machine.** The core store and full-text search run locally. No hosted TIM account or sync service is required.
 - **Continuity across tools.** Claude Code, Codex, Cursor and Hermes have setup support; other MCP clients can use the same tools. Automatic capture depends on host hooks, not just an MCP connection.
 - **Projects are first-class.** Explicit binding, structured sections, tasks, bugs and decisions keep different bodies of work organized.
 - **Summaries with an escape hatch.** Batch summaries and rollups compress history, while recorded exchanges remain available for inspection and re-summarization.
@@ -100,7 +100,7 @@ TIM creates the project structure and a `.tim-project` marker. For an existing n
 | **Open work** | Tasks, priorities, bugs, ideas, status history and commit links. |
 | **Session history** | Recorded exchanges, batch summaries, rollups, handoff and resume workflows. |
 | **Topic recall** | Recover related session summaries and work items without opening every old chat. |
-| **Search** | Scoped SQLite FTS5, tag lookup and optional independent vector/hybrid retrieval with index-freshness checks and explicit provider diagnostics. |
+| **Search** | Scoped SQLite FTS5 and tag lookup. |
 | **Task-aware briefing** | Project-scoped query context, protected rules/tasks/session selection and explicit conservative text budgets. |
 | **Associative recall** | `tim_remember` expands vague queries and uses a configured CLI chain to rerank candidates. |
 | **Relationships** | Tags and explicit graph edges such as `implements`, `blocks` and `contradicts`. |
@@ -108,7 +108,7 @@ TIM creates the project structure and a `.tim-project` marker. For an existing n
 | **Changing decisions** | Half-open validity intervals, explicit `supersedes` links, guarded undo, historical `asOf` search and visible contradiction references. |
 | **Negative memory** | `tim_guard` searches recorded errors and learnings before an action. |
 | **Curation** | Duplicate/decay candidates, suppression, organization and reversible soft deletion. |
-| **Visibility** | CLI diagnostics, observed session coverage, embedding backlog, local sync telemetry, error statistics and a local browser-based viewer. |
+| **Visibility** | CLI diagnostics, observed session coverage, local sync telemetry, error statistics and a local browser-based viewer. |
 | **Portability** | hmem import/export, SQLite snapshots and optional encrypted device sync. |
 | **Repeatable evaluation** | Bilingual fixtures compare no-memory, fixed-handoff and TIM under one context budget, with explicit evidence misses and irrelevant results. |
 
@@ -240,15 +240,15 @@ Moving from hmem? Follow the [migration runbook](docs/hmem-to-tim-migration.md),
 
 Local project/store/MCP/CLI workflows are implemented and covered by automated tests. Public beta still means **check the behavior you depend on**. Capture varies by host; summary usefulness depends on the configured model chain.
 
-The current source includes the September correctness fixes and extensions: replicated deletion ordering, the extra secret boundary, supervised summarizer execution, partial-session coverage, consistent reads, scoped semantic retrieval, evidence, temporal validity, task-aware briefing and memory-health diagnostics. Integration acceptance and publication status are tracked separately in the [verification status](docs/plans/2026-09-09-memory-program/IMPLEMENTATION-STATUS.md); source availability alone is not release approval.
+The current source includes the September correctness fixes and extensions: replicated deletion ordering, the extra secret boundary, supervised summarizer execution, partial-session coverage, consistent reads, scoped full-text retrieval, evidence, temporal validity, task-aware briefing and memory-health diagnostics. Integration acceptance and publication status are tracked separately in the [verification status](docs/plans/2026-09-09-memory-program/IMPLEMENTATION-STATUS.md); source availability alone is not release approval.
 
 Know the boundaries:
 
-- FTS remains the default MCP search mode. Optional local embeddings need an available model and a populated, fresh index; no complete semantic-recall guarantee follows from the feature.
+- Search is full-text. See [the September 2026 evaluation](docs/research/2026-09-multilingual-embeddings.md).
 - Summaries and evidence labels are inspectable records, not automatic fact verification. Contradictions are shown, not silently adjudicated.
 - Health distinguishes observed work, pending work and unknown states. Local sync timestamps do not establish current server reachability.
-- Known dependency advisories, including an archive-parser issue in the existing embedding dependency chain, remain tracked separately in [#40](https://github.com/ZF-IT-Automation/tim/issues/40). See the [audit and upgrade contract](docs/reviews/2026-09-11-dependency-audit.md) before treating this beta as security-cleared.
-- The [bilingual quality benchmark](docs/memory-quality-benchmark.md) runs against temporary fixture databases. Synthetic vectors verify retrieval mechanics; they do not establish real-model understanding, agent task success or superiority over other memory products. Real-model checks are opt-in and report an explicit skip when unavailable.
+- Known dependency advisories remain tracked separately in [#40](https://github.com/ZF-IT-Automation/tim/issues/40). See the [audit and upgrade contract](docs/reviews/2026-09-11-dependency-audit.md) before treating this beta as security-cleared.
+- The [bilingual quality benchmark](docs/memory-quality-benchmark.md) runs full-text search against temporary fixture databases. It does not establish agent task success or superiority over other memory products.
 
 Follow the [implementation plan](docs/plans/2026-09-09-memory-program/README.md) and [GitHub Issues](https://github.com/ZF-IT-Automation/tim/issues). Hosted sharing and broader project-management automation are not prerequisites for local use.
 

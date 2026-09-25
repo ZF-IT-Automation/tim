@@ -16,23 +16,22 @@ SQLite is the local system of record. MCP exposes agent-facing tools. The CLI pr
 | Work tracking | Tasks, nested status/priority metadata, bugs, ideas, ordering and commit links. Recurring reports share `metadata.series`; briefings show only the newest (`metadata.series_keep`, default 1). | This is memory around work, not a replacement for a team's issue tracker. |
 | Sessions | Exchange logging, batch summaries, rollups, checkpoints, handoff, session resume and topic recall. | Automatic capture depends on host hooks. Summarizer availability and quality depend on the configured chain. |
 | Briefing | Project loading, section/depth controls, summary-first reads, task-scoped query context, protected section shares and explicitly bounded preview/load text. | UTF-8 byte budgets are conservative estimates, not exact model token counts. See [briefing contracts](task-aware-briefing.md) for default/legacy behavior and tiny-budget limits. |
-| Retrieval | SQLite FTS5, scoped search (`root`, `type`, `tag`, `status` before limits), independent vector/hybrid candidate pools, fingerprint-based index freshness and associative recall through a CLI model chain. `tim_search` defaults to `searchType: 'fts'`. | Vector retrieval needs a supported available provider and fresh index. Structural kinds are excluded from vectors; see [semantic retrieval](semantic-retrieval.md). User FTS queries: uppercase `AND` = intersection; lowercase `and`/`or` = literal. Generated prompt recall uses `or-terms` mode. |
+| Retrieval | SQLite FTS5, scoped search (`root`, `type`, `tag`, `status` before limits) and associative recall through a CLI model chain. | User FTS queries: uppercase `AND` = intersection; lowercase `and`/`or` = literal. Generated prompt recall uses `or-terms` mode. |
 | Relationships | Explicit edges and tracing, including relationships between decisions, tasks and commits. | An edge records an assertion, not proof of causality. |
 | Trust signals | Verification timestamps, staleness, best-effort Git provenance and typed declared entry/session/Git/document evidence. | [Evidence authority](memory-evidence.md) is a caller declaration, not authentication or fact verification. Source availability is not proof of truth. |
 | Temporal decisions | Explicit validity intervals, same-project supersession, current/historical search and visible contradiction references. | [Temporal memory](temporal-memory.md) filters recorded intervals; it does not reconstruct every past body revision or resolve contradictory claims automatically. |
 | Negative memory | Guard lookup for recorded failures/learnings, suppression and reversible irrelevant flags. | A clear guard result means no matching recorded warning, not permission to proceed. |
 | Curation | Duplicate discovery, structural inspection, import audit, moves, tags and bulk operations. | Preview and back up before material restructuring. |
-| Operations | Doctor, observed summary coverage, unknown/pending states, embedding backlog, local sync telemetry, error statistics, viewer, snapshots and restore. | [Memory health](memory-health.md) does not initialize models or contact sync servers. Database-opening migrations are a separate boundary. Verify recovery on an isolated copy; temporary snapshot storage is not durable backup. |
+| Operations | Doctor, observed summary coverage, unknown/pending states, local sync telemetry, error statistics, viewer, snapshots and restore. | [Memory health](memory-health.md) does not contact sync servers. Database-opening migrations are a separate boundary. Verify recovery on an isolated copy; temporary snapshot storage is not durable backup. |
 | Portability | hmem import/export and optional encrypted device sync. | Export policy and encryption are separate concerns; inspect secret-marked subtrees before sharing. |
 
 ## Storage and privacy
 
-The local store and FTS retrieval do not require a hosted TIM account or remote vector database. Raw recorded exchanges remain available alongside derived summaries; summaries are lossy and should not replace source inspection.
+The local store and FTS retrieval do not require a hosted TIM account. Raw recorded exchanges remain available alongside derived summaries; summaries are lossy and should not replace source inspection.
 
 Optional operations have different data flows:
 
 - A configured summarizer or associative-recall CLI can send memory to its model provider.
-- Embedding behavior depends on the configured provider and model. Local vectors are derived indexes, not portable source records.
 - Sync sends encrypted envelopes to the configured service. The ordinary sync key and the additional secret passphrase represent distinct boundaries.
 - Usage feedback is device-local ranking telemetry; it is not evidence that users on another device found an entry useful.
 

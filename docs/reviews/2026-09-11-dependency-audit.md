@@ -6,6 +6,8 @@ On 2026-09-11, a fresh isolated installation at `435150e` with Node22.23.2 repor
 
 `git diff acb738b -- package.json package-lock.json 'packages/*/package.json'` was empty before benchmark integration. The dependency manifests and lockfile were unchanged from the original review baseline; these findings were not introduced by the memory extension source changes. They remain unresolved by the #27–#39 program and must not be hidden behind passing functional tests.
 
+Update 2026-09-25: the embedding package in the first two rows was removed with the local index. This page records the 2026-09-11 audit. A fresh `npm audit` in the worktree that dropped that package reported 0 vulnerabilities.
+
 ## Verified package paths
 
 | Installed chain | Audit concern | Observed TIM boundary |

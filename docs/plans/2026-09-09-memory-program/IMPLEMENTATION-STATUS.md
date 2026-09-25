@@ -7,11 +7,11 @@ Updated: 2026-09-11. The original #27–#39 implementation program is integrated
 | Issues | Delivered behavior |
 |---|---|
 | #27–#32 | Replicated deletion ordering, enforced extra secret boundary and durable retries, supervised summarizer processes, actual partial-summary coverage, consistent section reads, and filters applied before retrieval limits. |
-| #33 | Independent semantic candidates, hybrid retrieval, provider identity and availability diagnostics, fingerprint/CAS index freshness, and concurrency-safe per-call search metadata. |
+| #33 | Independent semantic candidates and retrieval diagnostics were delivered, then removed on 2026-09-25. Search is full-text only. |
 | #34 | Task-aware project briefings, reserved rules/tasks/session selection, bounded previews, exact conservative UTF-8 accounting, protected continuation hints, and legacy unbounded-read compatibility. |
 | #35 | Typed evidence sources, declared authority, visibility-safe source projections, and editable legacy metadata. Authority is not authentication. |
 | #36 | Half-open validity, explicit supersession, historical search including tag-only lookup, robust imported metadata handling, and guarded atomic supersession undo. Historical body revisions are not reconstructed. |
-| #37 | Observed session coverage, pending/unknown work, successful-summary timestamps, semantic backlog, and local sync telemetry. Diagnostics do not establish live server reachability. |
+| #37 | Observed session coverage, pending/unknown work, successful-summary timestamps, and local sync telemetry. Diagnostics do not establish live server reachability. |
 | #38 | A standalone bilingual fixture benchmark with shared evidence expectations and a 4096-byte context budget, synthetic CI mode, optional real-provider execution or explicit skip, and packaged dataset assets. |
 | #39 | Rewritten README, dated primary-source comparisons, concrete workflows, feature references, benchmark instructions, and explicit beta/security limitations. |
 

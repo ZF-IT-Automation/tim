@@ -2,7 +2,7 @@
 
 ## What to build
 
-Scoped search and prompt recall find relevant memories even when unrelated projects dominate the global corpus. Explicit fts/vector/hybrid selection reaches the actual retrieval implementation.
+Scoped search and prompt recall find relevant memories even when unrelated projects dominate the global corpus. Explicit search-mode selection reaches the actual retrieval implementation. Search is full-text only as of 2026-09-25.
 
 ## Blocked by
 

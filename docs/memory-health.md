@@ -1,6 +1,6 @@
 # Memory health diagnostics (#37)
 
-Doctor and `tim_health` report whether conversations were logged, summarized, and embedded — not only whether the database is reachable.
+Doctor and `tim_health` report whether conversations were logged and summarized — not only whether the database is reachable.
 
 ## Where it appears
 
@@ -18,7 +18,6 @@ Opening a legacy database through `TimStore` may still run constructor migration
 ```typescript
 interface MemoryHealthReport {
   summaryCoverage: MemorySummaryCoverageReport;
-  semanticIndex: SemanticIndexHealthSnapshot;
   sync: MemorySyncTelemetryReport;
   guidance: string[];
 }
@@ -45,21 +44,6 @@ interface MemoryHealthReport {
 **Partial sessions:** A batch summary does not imply full coverage. Exchanges logged after a partial summary remain `pending` even when a summary node exists.
 
 **Legacy ranges:** Missing, nonnumeric, or reversed `seq_from`/`seq_to` do **not** establish coverage (`rangeKnown: false`). Associated exchanges stay pending.
-
-### `semanticIndex`
-
-Same contract as `store.getSemanticIndexHealth()` / `docs/semantic-retrieval.md`:
-
-| `providerState` | Meaning |
-|-----------------|---------|
-| `disabled` | `TIM_EMBEDDING_DISABLED=1` |
-| `unavailable` | Configured model ID unsupported |
-| `unknown` | Default provider not yet initialized (health never loads models) |
-| `enabled` | Injected or cached default provider ready |
-
-Counts: `vectorCount`, `unembeddedCount`, `staleVectorCount`, `wrongModelCount`.
-
-`unembeddedCount` is the total eligible rows needing (re)indexing — stale and wrong-model rows are subsets, not additive duplicates. Absence of vectors is **not** reported as success when the provider is `enabled`.
 
 ### `sync`
 
@@ -91,8 +75,6 @@ Local filesystem telemetry only — health does **not** probe the sync server.
 
 - Pending summarization → inspect idle sweep / `showUnsummarized`
 - Invalid summary range → resummarize; do not fabricate bounds
-- Embedding backlog when enabled → `unembeddedCount` total with optional stale/wrongModel breakdown
-- Provider `disabled` / `unavailable` / `unknown` → see `docs/semantic-retrieval.md`
 - Sync disconnected, invalid config/JSON/timestamps, unbound or mismatched identity, or unacked staging → see `tim sync audit --json`
 
 ## Severity interaction
@@ -100,13 +82,11 @@ Local filesystem telemetry only — health does **not** probe the sync server.
 Existing `status` / `blockers` / `warnings` semantics are unchanged. Memory findings add **warnings** when:
 
 - `pendingExchangeCount > 0`
-- Embedding provider is `enabled` and `unembeddedCount > 0`
 
 They do not upgrade to `BLOCKER` on their own.
 
 ## Limits
 
-- Semantic freshness checks materialize eligible entry text and hash it in JavaScript. Diagnostic time and transient memory grow with corpus size; read-only does not mean constant cost.
 - Range samples capped at 50 per pending/covered list; totals and truncation flags are always reported.
 - Latest batch summary / rollup selection is global (not limited to the newest 200 summary roots by `created_at`).
 - No secret or suppressed entry titles/bodies in output.

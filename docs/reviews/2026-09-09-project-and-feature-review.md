@@ -86,13 +86,13 @@ Der Section-Zweig in [server.ts](../../packages/tim-mcp/src/server.ts#L2165) lie
 
 [store.ts](../../packages/tim-store/src/store.ts#L2412) erzeugt für alle Suchmodi zunächst ausschließlich FTS-Kandidaten. Embeddings werden danach nur zur Neusortierung dieser Kandidaten verwendet. Ohne FTS-Treffer wird nicht einmal der Query-Vektor berechnet.
 
-Gegenprobe: Eintrag „Automobile maintenance procedure“ mit gespeichertem Vektor; Anfrage „vehicle servicing“. Sowohl `vector` als auch `hybrid` liefern null Treffer. Diese Gegenprobe prüft die fehlende Kandidatenroute, nicht die Qualität eines realen Modells. Unabhängig von dessen Qualität kann der vorhandene Algorithmus den Eintrag nicht erreichen.
+Gegenprobe: Eintrag „Automobile maintenance procedure“ mit gespeichertem Embedding; Anfrage „vehicle servicing“. Beide damaligen Suchmodi liefern null Treffer. Diese Gegenprobe prüft die fehlende Kandidatenroute, nicht die Qualität eines realen Modells. Unabhängig von dessen Qualität kann der vorhandene Algorithmus den Eintrag nicht erreichen.
 
-FTS und Vektorsuche brauchen unabhängige Kandidatenmengen, die anschließend zusammengeführt werden. Der aktuelle Hybrid-Abschnitt der Dokumentation beschreibt FTS als Kandidatengenerator korrekt; der öffentliche Modus `vector` und die weitergehende semantische Vision werden damit aber nicht eingelöst.
+FTS und Embedding-Suche brauchen unabhängige Kandidatenmengen, die anschließend zusammengeführt werden. Der damalige Dokumentationsabschnitt beschreibt FTS als Kandidatengenerator korrekt; der öffentliche Embedding-Modus und die weitergehende semantische Vision werden damit aber nicht eingelöst. Der Index wurde am 2026-09-25 entfernt.
 
 ### R2 — P2: Der öffentliche Suchmodus wird ignoriert
 
-Das Schema akzeptiert `searchType: 'fts' | 'vector' | 'hybrid'`. [server.ts](../../packages/tim-mcp/src/server.ts#L2318) reicht diesen Parameter nicht an `s.search` weiter. Deshalb landet auch eine explizite FTS-Anfrage im Hybrid-Default des Stores. Nutzer können die Rechenkosten und das Verhalten nicht verlässlich über den zugesagten Parameter steuern. Dies ist im aktuellen Quelltext direkt nachvollziehbar; es wurde keine gesonderte MCP-Gegenprobe ausgeführt.
+Das Schema akzeptierte damals mehrere Suchmodi. [server.ts](../../packages/tim-mcp/src/server.ts) reichte diesen Parameter nicht an `s.search` weiter. Deshalb landete auch eine explizite FTS-Anfrage im Store-Default. Nutzer konnten die Rechenkosten und das Verhalten nicht verlässlich über den zugesagten Parameter steuern. Dies war im damaligen Quelltext direkt nachvollziehbar; es wurde keine gesonderte MCP-Gegenprobe ausgeführt. Seit 2026-09-25 ist Suche nur noch Volltext.
 
 ### R3 — P2: Projektfilter greifen zu spät
 
