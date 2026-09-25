@@ -1,7 +1,8 @@
 // includeKinds is an allow-list in the FTS statement, before LIMIT.
-// A post-filter would throw away the page: commits outrank summaries on bm25
-// (short, dense hits), so LIMIT 1 with the filter applied afterwards is empty
+// A post-filter would throw away the page: short notes outrank a long summary
+// on bm25, so LIMIT 1 with the filter applied afterwards is empty
 // and the summary the caller asked for never comes back.
+// Commits are omitted from default search, so they cannot be the noise here.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { TimStore, KIND_BATCH, KIND_SUMMARY_ROOT } from '../index.js';
 
@@ -34,7 +35,7 @@ describe('searchFts includeKinds', () => {
       // One token, nothing else: bm25 ranks these above a long summary that
       // merely mentions the word. If the allow-list ran after LIMIT 1, the
       // page would be one of these and the summary would be gone.
-      await store.write('zephyr', { title: `noise ${i}`, metadata: { kind: 'commit' } });
+      await store.write('zephyr', { title: `noise ${i}`, metadata: { kind: 'note' } });
     }
     const summary = await store.write(
       'zephyr is one word inside a much longer batch summary about unrelated work that should still be reachable when commits are not asked for',
@@ -43,7 +44,7 @@ describe('searchFts includeKinds', () => {
 
     const top = await store.searchFts('zephyr', 1);
     expect(top).toHaveLength(1);
-    expect(top[0]!.metadata.kind).toBe('commit');
+    expect(top[0]!.metadata.kind).toBe('note');
 
     const filtered = await store.searchFts('zephyr', 1, { includeKinds: [KIND_BATCH] });
     expect(filtered.map(h => h.id)).toEqual([summary.id]);

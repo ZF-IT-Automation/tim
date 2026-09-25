@@ -151,8 +151,15 @@ export interface SearchOptions {
    */
   ftsQueryMode?: 'literal' | 'or-terms';
   /** FTS/lexical path only: drop these metadata.kind values in SQL, before the limit
-   *  (post-filtering starves real hits). The vector path does not apply it. */
+   *  (post-filtering starves real hits). The vector path does not apply it.
+   *  Commit entries are already omitted; this list is unioned with that default. */
   excludeKinds?: string[];
+  /**
+   * Include git commit entries (metadata.kind "commit"). Omitted by default —
+   * they are recorded for last-activity, and git log already has the same text.
+   * An FTS includeKinds list that contains "commit" also includes them.
+   */
+  includeCommits?: boolean;
   /** Reconstruct validity at this timezone-qualified ISO timestamp (default: now). */
   asOf?: string;
 }

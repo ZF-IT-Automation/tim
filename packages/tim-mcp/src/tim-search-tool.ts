@@ -13,6 +13,7 @@ export interface TimSearchToolArgs {
   tag?: string;
   status?: string;
   asOf?: string;
+  includeCommits?: boolean;
 }
 
 export interface TimSearchToolResult {
@@ -49,7 +50,7 @@ export async function executeTimSearch(
   store: TimStore,
   parsed: TimSearchToolArgs,
 ): Promise<TimSearchToolResult> {
-  const { query, root, type, tag, status, searchType } = parsed;
+  const { query, root, type, tag, status, searchType, includeCommits } = parsed;
   const { topK, excerptChars, clamped } =
     clampSearchRequest(parsed.topK ?? 10, parsed.excerptChars ?? 500);
 
@@ -71,6 +72,7 @@ export async function executeTimSearch(
       tag,
       status,
       asOf: parsed.asOf,
+      includeCommits,
     });
     results = searchResult.entries;
     semantic = searchResult.semantic;

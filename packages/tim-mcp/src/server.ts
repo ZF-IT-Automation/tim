@@ -264,6 +264,8 @@ const TimSearchSchema = z.object({
     .describe('Filter by task/bug status (nested task.status, bug.status, or legacy metadata.status)'),
   asOf: z.string().optional()
     .describe('Reconstruct search validity at this timezone-qualified ISO timestamp (default: now)'),
+  includeCommits: z.boolean().optional()
+    .describe('Include git commit entries (metadata.kind commit). Omitted by default.'),
   // "at least one of query/tag" is checked in the handler, not with .refine():
   // refine returns a ZodEffects and the tool registry takes a ZodObject.
 }).describe(
@@ -729,7 +731,8 @@ export const TOOL_DEFS: Array<{
       'as before. Returns {results, returned, omitted, truncated}; ' +
       'results contain bounded excerpts. Use tim_read for the full body. ' +
       EVIDENCE_DISCLAIMER +
-      ' Semantic metadata is omitted for a plain FTS search (provider not used, no fallback).',
+      ' Semantic metadata is omitted for a plain FTS search (provider not used, no fallback).' +
+      ' Git commit entries are omitted unless includeCommits is true.',
     schema: TimSearchSchema,
   },
   {

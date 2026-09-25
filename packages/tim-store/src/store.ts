@@ -37,7 +37,7 @@ import { detectProjectVcs } from './vcs.js';
 // erased at runtime and creates no cycle (see the note on the Inbox literal below).
 import { BATCH_STRUCTURAL_TAGS } from './session-tree.js';
 // Constants-only module, no imports of its own — safe to pull in here.
-import { COMMIT_TAG } from './commit-tree.js';
+import { COMMIT_TAG, KIND_COMMIT } from './commit-tree.js';
 import {
   recordFromPayload,
   entryLocalLwwTimestamp,
@@ -185,6 +185,25 @@ function sanitizeFtsLiteralQuery(query: string): string {
     if (q) out.push(q);
   }
   return out.join(' ');
+}
+
+/**
+ * Commit rows stay in the store (last activity) but are recall noise.
+ * Drop them unless the caller opts in, or an allow-list already names them
+ * (looks-done evidence). A caller's excludeKinds list is unioned so a
+ * transcript filter does not put commits back.
+ */
+function recallExcludeKinds(opts: {
+  excludeKinds?: string[];
+  includeKinds?: string[];
+  includeCommits?: boolean;
+}): string[] | undefined {
+  const explicit = opts.excludeKinds ?? [];
+  const allowCommits = opts.includeCommits === true
+    || (opts.includeKinds ?? []).includes(KIND_COMMIT);
+  if (allowCommits) return explicit.length > 0 ? explicit : undefined;
+  if (explicit.includes(KIND_COMMIT)) return explicit;
+  return [...explicit, KIND_COMMIT];
 }
 
 /** Parse prompt-recall OR queries: only quoted terms joined by OR survive. */
@@ -2797,6 +2816,7 @@ ${zeroExchangeFilter}
         status: options.status,
         ftsQueryMode: options.ftsQueryMode,
         excludeKinds: options.excludeKinds,
+        includeCommits: options.includeCommits,
         confidenceAbove: options.confidenceAbove,
         visibilityMask: options.visibilityMask,
         asOfEpochMs: asOf?.getTime(),
@@ -2942,6 +2962,7 @@ ${zeroExchangeFilter}
       confidenceAbove: options.confidenceAbove,
       visibilityMask: options.visibilityMask,
       asOfEpochMs,
+      includeCommits: options.includeCommits,
     };
 
     const configuredModel = resolveConfiguredEmbeddingModelId();
@@ -3110,6 +3131,8 @@ ${zeroExchangeFilter}
     opts: {
       project?: string;
       excludeKinds?: string[];
+      /** Include metadata.kind "commit". Omitted from recall unless set. */
+      includeCommits?: boolean;
       /** Only these metadata.kind values; applied in SQL before LIMIT. */
       includeKinds?: string[];
       /**
@@ -3151,10 +3174,11 @@ ${zeroExchangeFilter}
       )`;
       params.push(root.id);
     }
-    if (opts.excludeKinds?.length) {
-      const holes = opts.excludeKinds.map(() => '?').join(', ');
+    const excludeKinds = recallExcludeKinds(opts);
+    if (excludeKinds?.length) {
+      const holes = excludeKinds.map(() => '?').join(', ');
       scopeSql += ` AND COALESCE(json_extract(e.metadata, '$.kind'), '') NOT IN (${holes})`;
-      params.push(...opts.excludeKinds);
+      params.push(...excludeKinds);
     }
     // Kind and type allow-lists are one predicate. AND would hide log/decision
     // rows (they have a type and no kind) whenever a kind list is also set,
