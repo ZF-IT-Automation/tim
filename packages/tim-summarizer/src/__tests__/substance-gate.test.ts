@@ -169,50 +169,34 @@ describe('Jev substance gate before the summarizer LLM', () => {
     expect(generateSpy).toHaveBeenCalledTimes(1);
   });
 
-  it('sends the first 4 and last 4 turns, including agent text, when the batch is longer', async () => {
+  it('does not ask Jev about a session with more than one batch or more than two exchanges', async () => {
     process.env.JEV_API_KEY = 'test-key';
-    const exchanges = Array.from({ length: 9 }, (_, i) =>
-      exchange(i + 1, `user-${i + 1}`, `agent-${i + 1}`));
-    const batch = batchOf(exchanges);
-    const { fetchSpy, generateSpy } = await runBatch(
-      batch,
-      new Response(scoreReply({ '0': 0.8, '1': 0.1, '2': 0.1 })),
-    );
-    expect(generateSpy).not.toHaveBeenCalled();
-    const { state } = requestBody(fetchSpy);
-    for (const n of [1, 2, 3, 4, 6, 7, 8, 9]) {
-      expect(state).toContain(`user-${n}`);
-      expect(state).toContain(`agent-${n}`);
-    }
-    expect(state).not.toContain('user-5');
-    expect(state).not.toContain('agent-5');
-  });
-
-  it('asks Jev once per batch, not once for the whole session', async () => {
-    process.env.JEV_API_KEY = 'test-key';
-    const fetchSpy = vi.fn(async () => new Response(scoreReply({ '0': 0.8, '1': 0.1, '2': 0.1 })));
+    const fetchSpy = vi.fn(async () => new Response(scoreReply({ '0': 0.99, '1': 0.01, '2': 0 })));
     vi.stubGlobal('fetch', fetchSpy);
-    vi.spyOn(generateSummary, 'generateSummaryDetailed').mockResolvedValue({
+    const generateSpy = vi.spyOn(generateSummary, 'generateSummaryDetailed').mockResolvedValue({
       text: 'Did the work\nSUBSTANCE: real',
       status: 'ok',
     });
     const first = batchOf([exchange(1, 'user-a', 'agent-a')], { hasMore: true, batchIndex: 1 });
-    const second = batchOf([exchange(2, 'user-b', 'agent-b')], { hasMore: false, batchIndex: 2 });
+    const second = batchOf([exchange(2, 'commit', 'pushed')], {
+      hasMore: false, batchIndex: 2, previousSummaries: ['Did the work'],
+    });
+    const three = batchOf([exchange(1, 'a', 'b'), exchange(2, 'c', 'd'), exchange(3, 'e', 'f')], { sessionId: 'sess-3' });
     vi.spyOn(mcpClient, 'connectTimMcp').mockResolvedValue({ close: vi.fn() } as never);
     vi.spyOn(mcpClient, 'callTimTool')
       .mockResolvedValueOnce(first)
       .mockResolvedValueOnce({ id: 'w1' })
       .mockResolvedValueOnce(second)
       .mockResolvedValueOnce({ id: 'w2' })
-      .mockResolvedValueOnce({ id: 'summary-root' });
+      .mockResolvedValueOnce({ id: 'summary-root' })
+      .mockResolvedValueOnce(three)
+      .mockResolvedValueOnce({ id: 'w3' })
+      .mockResolvedValueOnce({ id: 'summary-root-3' });
 
     await runSummarizerLoop('sess-gate');
+    await runSummarizerLoop('sess-3');
 
-    expect(fetchSpy).toHaveBeenCalledTimes(2);
-    const states = fetchSpy.mock.calls.map(call => JSON.parse((call[1] as { body: string }).body).state as string);
-    expect(states[0]).toContain('agent-a');
-    expect(states[0]).not.toContain('agent-b');
-    expect(states[1]).toContain('agent-b');
-    expect(states[1]).not.toContain('agent-a');
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(generateSpy).toHaveBeenCalledTimes(3);
   });
 });

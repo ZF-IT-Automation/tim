@@ -311,8 +311,7 @@ function entryText(entry: Entry): string {
 
 const AUTOMATION_SUMMARY = 'No user content (automation).';
 const TRIVIAL_SUMMARY = 'Session judged trivial.';
-// First+last turns at this clip matched a full transcript on the skip decision
-// (eval 3-session-substance) at about half the tokens.
+// Clip per turn; the gate only sees sessions of at most two exchanges.
 const TURN_CLIP = 1500;
 // argmax trivial alone is not enough: P=0.55 still hid a real blocker.
 const TRIVIAL_MIN_P = 0.7;
@@ -331,11 +330,13 @@ function clipTurn(text: string, max = TURN_CLIP): string {
   return `${trimmed.slice(0, max)}…`;
 }
 
-function substanceTurns(batch: UnsummarizedBatch) {
-  const turns = batch.exchanges;
-  if (turns.length <= 8) return turns;
-  const picked = new Set(turns.slice(0, 4).concat(turns.slice(-4)));
-  return turns.filter(turn => picked.has(turn));
+/**
+ * The gate was measured on whole sessions of 1–2 exchanges, where every saving
+ * came from; it skipped no longer session. A later batch of a working session
+ * judged alone ("commit", "pushed") would lose its summary to that unmeasured case.
+ */
+function isWholeShortSession(batch: UnsummarizedBatch): boolean {
+  return batch.previousSummaries.length === 0 && !batch.hasMore && batch.exchanges.length <= 2;
 }
 
 function substanceState(batch: UnsummarizedBatch): string {
@@ -349,7 +350,7 @@ function substanceState(batch: UnsummarizedBatch): string {
     meta.model ? `model: ${meta.model}` : '',
     meta.task_summary ? `task: ${clipTurn(meta.task_summary, 240)}` : '',
   ].filter(Boolean);
-  const body = substanceTurns(batch).map(turn => {
+  const body = batch.exchanges.map(turn => {
     const user = `U${turn.seq}: ${clipTurn(turn.userContent)}`;
     const agent = turn.agentContent?.trim() ? `A${turn.seq}: ${clipTurn(turn.agentContent)}` : '';
     return agent ? `${user}\n${agent}` : user;
@@ -572,7 +573,7 @@ export async function runSummarizerLoop(
         summary = AUTOMATION_SUMMARY;
         substance = 'none';
       } else {
-        const trivialP = await jevTrivialProbability(batch);
+        const trivialP = isWholeShortSession(batch) ? await jevTrivialProbability(batch) : null;
         if (trivialP != null) {
           summary = TRIVIAL_SUMMARY;
           substance = 'none';
