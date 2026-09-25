@@ -178,6 +178,7 @@ export { CurateManager, type UpdateManyFlags } from './curate.js';
 export {
   ConsolidationManager,
   type ConsolidationCandidate,
+  type DuplicateCandidateList,
   type ConsolidationType,
   type CurationStatus,
   type CurationMetadata,

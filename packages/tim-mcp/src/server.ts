@@ -844,7 +844,7 @@ export const TOOL_DEFS: Array<{
   },
   {
     name: 'tim_find_duplicates',
-    description: 'Report-first duplicate detector: scans a project for near-duplicate entries (identical/similar titles or embeddings) and enqueues them as pending curation candidates — never deletes anything. Review the returned pairs, then consolidate via tim_move_entry/tim_delete, or reject.',
+    description: 'Report-first duplicate detector: scans a project for near-duplicate entries (similar titles or embeddings), confirms each pair with Jev (one pair per request), and enqueues pending curation candidates only when Jev noul is at least 0.70 — never deletes anything. Pairs Jev rejects are counted and not queued. If Jev is unreachable the pair is still queued for a human and marked unconfirmed. Review the returned pairs, then consolidate via tim_move_entry/tim_delete, or reject.',
     schema: TimFindDuplicatesSchema,
   },
   {
@@ -3085,8 +3085,11 @@ export async function createMcpServer(
             project: label,
             duplicateCandidates: candidates.length,
             shown: pairs.length,
+            confirmed: candidates.confirmed,
+            rejectedByJev: candidates.rejected,
+            unconfirmed: candidates.unconfirmed,
             pairs,
-            note: 'Report-first: candidates enqueued as pending curation nodes (idempotent — re-running does not duplicate the queue). Nothing deleted. Review, then consolidate via tim_move_entry/tim_delete, or reject.',
+            note: `Report-first: Jev confirmed ${candidates.confirmed}, rejected ${candidates.rejected} by Jev, unconfirmed ${candidates.unconfirmed}. Confirmed and unconfirmed pairs are enqueued as pending curation nodes (idempotent — re-running lists them again but does not duplicate the queue or ask Jev again). Rejected pairs are not queued. Nothing deleted. Review, then consolidate via tim_move_entry/tim_delete, or reject.`,
           };
           return { content: [{ type: 'text', text: formatToolResponse(payload) }] };
         }
