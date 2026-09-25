@@ -3,7 +3,7 @@ import { spawnSync, type SpawnSyncReturns } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { TimStore } from 'tim-store';
+import { SessionManager, TimStore } from 'tim-store';
 
 const CLI = path.resolve(__dirname, '../../dist/cli.js');
 const MAX_STDIN_BYTES = 1024 * 1024;
@@ -131,17 +131,35 @@ describe('tim hook prompt-submit', () => {
     expect(result.stdout).not.toContain('Foreign dominance');
   });
 
-  it('does not walk up to a parent marker', async () => {
+  it('neither walks up to a parent marker nor searches every project without one', async () => {
     const child = path.join(cwd, 'child');
     fs.mkdirSync(child);
     await seedProject('P0001', 'Needle parent memory\nParent-scoped context.');
-    await seedProject('P0002', 'Needle global memory\nGlobal context remains visible.');
+    await seedProject('P0002', 'Needle global memory\nGlobal context stays out.');
     writeMarker(cwd, 'P0001');
 
     const result = run({ session_id: 's-child', prompt: 'Needle', cwd: child });
 
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toContain('Needle global memory');
+    expect(result.stdout).toBe('');
+  });
+
+  it("scopes recall to the session's bound project when cwd has drifted into a subdirectory", async () => {
+    const child = path.join(cwd, 'child');
+    fs.mkdirSync(child);
+    await seedProject('P0001', 'Needle bound memory\nBound project context.');
+    await seedProject('P0002', 'Needle foreign memory\nDo not inject this project context.');
+    const store = new TimStore(dbPath);
+    await new SessionManager(store).startProjectSession({
+      sessionId: 'bound-session', projectId: 'P0001', agentName: 'claude', cwd, harness: 'claude-code',
+    });
+    store.close();
+
+    const result = run({ session_id: 'bound-session', prompt: 'Needle', cwd: child });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain('Needle bound memory');
+    expect(result.stdout).not.toContain('Needle foreign memory');
   });
 
   it('treats shell metacharacters as prompt data without executing them', () => {

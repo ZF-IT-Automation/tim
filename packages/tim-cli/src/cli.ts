@@ -706,12 +706,19 @@ async function cmdHook(args: string[]) {
       const store = new TimStore(getDbPath(config));
       let context: string | null = null;
       try {
-        const marker = findMarker(cwd);
-        const result = await runPromptSubmit(store, {
-          prompt,
-          projectLabel: marker?.marker.project,
-        });
-        context = result?.context ?? null;
+        // The session's bound project first: Claude's cwd drifts into subdirectories,
+        // where the cwd-only marker lookup finds nothing.
+        const sessionId = typeof payload?.session_id === 'string' ? payload.session_id.trim() : '';
+        const session = sessionId ? await store.read(sessionId) : null;
+        const bound = session?.metadata.kind === 'session' && typeof session.metadata.project_ref === 'string'
+          ? session.metadata.project_ref
+          : undefined;
+        const projectLabel = bound ?? findMarker(cwd)?.marker.project;
+        // No project, no recall: an unscoped search pulls in every other project's memory.
+        if (projectLabel) {
+          const result = await runPromptSubmit(store, { prompt, projectLabel });
+          context = result?.context ?? null;
+        }
       } finally {
         store.close();
       }
