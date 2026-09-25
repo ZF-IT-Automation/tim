@@ -27,6 +27,24 @@ function extractBlock(text, heading) {
   return m ? m[1].trim() : '';
 }
 
+/**
+ * Bugs in `tim_load_project` are an indented section (`  Bugs`), not a
+ * `── Bugs ──` block. The block form is what unit fixtures use.
+ */
+function extractBugsSection(loadText) {
+  const headed = extractBlock(loadText, 'Bugs');
+  if (headed) return headed;
+  const lines = loadText.split('\n');
+  const start = lines.findIndex((l) => /^ {2}Bugs\s*$/.test(l));
+  if (start < 0) return '';
+  const out = [];
+  for (let i = start + 1; i < lines.length; i++) {
+    if (/^ {2}[A-Z]/.test(lines[i]) || /^── /.test(lines[i])) break;
+    out.push(lines[i]);
+  }
+  return out.join('\n');
+}
+
 function parseRecentSessions(text) {
   const m = text.match(/── Recent Sessions \((\d+)\/(\d+)\) ──([\s\S]*?)(?=\n── |\n────────|$)/);
   if (!m) return null;
@@ -319,19 +337,22 @@ export function evalS1(structure) {
   return result('S1', false, pass, loose, `looseDirectChildren=${loose}`);
 }
 
-/** S2 — bugs open-first. */
+/** S2 — bugs open-first. GOALS.md: no [fixed]/[done] line before the last open bug. */
 export function evalS2(loadText) {
-  const bugs = extractBlock(loadText, 'Bugs') || '';
+  const bugs = extractBugsSection(loadText);
   const lines = bugs.split('\n').map((l) => l.trim()).filter(Boolean);
-  let lastOpenIdx = -1;
-  let fixedBeforeOpen = false;
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
+  // A single forward pass only sees opens already passed, so "open, fixed, open"
+  // looked clean. The goal is about the last open line, which needs a full scan.
+  const flags = lines.map((line) => {
     const isFixed = /\[fixed\]|\[done\]|✓|fixed\)/i.test(line);
     const isOpen = /\[todo\]|\[open\]/i.test(line) || (!isFixed && /\[/.test(line));
-    if (isOpen) lastOpenIdx = i;
-    if (isFixed && (lastOpenIdx === -1 || i < lastOpenIdx)) fixedBeforeOpen = true;
+    return { isFixed, isOpen };
+  });
+  let lastOpenIdx = -1;
+  for (let i = 0; i < flags.length; i++) {
+    if (flags[i].isOpen) lastOpenIdx = i;
   }
+  const fixedBeforeOpen = lastOpenIdx >= 0 && flags.some((f, i) => f.isFixed && i < lastOpenIdx);
   const pass = !fixedBeforeOpen;
   return result('S2', false, pass, pass, `fixedBeforeOpen=${fixedBeforeOpen}`);
 }
@@ -394,7 +415,85 @@ export function evaluateAll(ctx) {
   return [...hard, ...soft];
 }
 
-export function formatScorecard(results) {
+/**
+ * Wording copied from the briefing-judge eval (judge.mjs). One request, five
+ * noul questions. S2 stays with the regex scorer — Jev was unreliable on it.
+ */
+export const JEV_BRIEFING_QUESTIONS = {
+  handoff: {
+    type: 'noul',
+    instructions:
+      'hook, preview, or load contains a handoff note: a "Latest handoff" heading or a "Handoff (...)" line that lists done, wip, or next. A "Previous session" block by itself is not a handoff note.',
+  },
+  g3_window: {
+    type: 'noul',
+    instructions:
+      'The Project Summary in load states which window it covers: a date range, or a count of at least 3 sessions. A summary that never says its window is a no.',
+  },
+  g6_already: {
+    type: 'noul',
+    instructions:
+      'hook, or the directive inside preview, says the project is already loaded, or it says "do NOT re-fetch". Ignore other negatives such as "do NOT ask which project" and "need not be re-queried".',
+  },
+  g6_call: {
+    type: 'noul',
+    instructions:
+      'hook, or the directive inside preview, tells the agent to call tim_load_project.',
+  },
+  g7: {
+    type: 'noul',
+    instructions:
+      'A bullet under a "[Since last session]" heading is bookkeeping: a session checkpoint, a batch label, an exchange count, a bare timestamp title like 2026-09-23-1819, or a repeat of a raw turn. Answer yes if any such bullet exists. Answer no when there is no "[Since last session]" heading. A "Since the last summary" section is not that heading.',
+  },
+};
+
+/** Presence check the Jev eval used to label "handoff note shown". */
+export function regexHandoffShown(hook, preview, load) {
+  return /── Latest handoff|^Handoff \(|^handoff:/im.test(`${hook}\n${preview}\n${load}`);
+}
+
+function noulOf(answers, key) {
+  const a = answers?.[key];
+  return a?.type === 'noul' && typeof a.noul === 'number' ? a.noul : undefined;
+}
+
+/**
+ * Advisory column. Never folded into hard/soft. null or a non-noul answer
+ * is `skipped` so a down model leaves the regex scorecard unchanged.
+ * Fail when g6 contradicts itself, g7 is bookkeeping, the summary has no
+ * window, or handoff disagrees with the regex at 0.5.
+ */
+export function evalJevColumn(answers, texts) {
+  if (!answers) return { status: 'skipped', detail: 'jev: skipped' };
+  const handoff = noulOf(answers, 'handoff');
+  const g3Window = noulOf(answers, 'g3_window');
+  const g6Already = noulOf(answers, 'g6_already');
+  const g6Call = noulOf(answers, 'g6_call');
+  const g7 = noulOf(answers, 'g7');
+  if ([handoff, g3Window, g6Already, g6Call, g7].some((n) => n === undefined)) {
+    return { status: 'skipped', detail: 'jev: skipped' };
+  }
+  const regexHandoff = regexHandoffShown(texts.hook ?? '', texts.preview ?? '', texts.load ?? '');
+  const jevHandoff = handoff >= 0.5;
+  const reasons = [];
+  if (g6Already >= 0.7 && g6Call >= 0.7) reasons.push('g6');
+  if (g7 >= 0.7) reasons.push('g7');
+  if (g3Window < 0.5) reasons.push('g3_window');
+  if (jevHandoff !== regexHandoff) reasons.push('handoff');
+  const status = reasons.length === 0 ? 'pass' : 'fail';
+  const detail =
+    `handoff=${handoff} g3_window=${g3Window} g6_already=${g6Already} g6_call=${g6Call} g7=${g7}` +
+    ` regexHandoff=${regexHandoff}` +
+    (reasons.length ? ` reasons=${reasons.join(',')}` : '');
+  return { status, detail };
+}
+
+export function formatJevLine(jev) {
+  if (!jev || jev.status === 'skipped') return 'jev: skipped';
+  return `jev: ${jev.status} ${jev.detail}`;
+}
+
+export function formatScorecard(results, jev = undefined) {
   const lines = results.map((r) => {
     const tag = r.na ? 'n/a' : r.pass ? 'PASS' : 'FAIL';
     return `${tag} ${r.id} ${r.detail}`;
@@ -407,11 +506,12 @@ export function formatScorecard(results) {
   const naGoals = results.filter((r) => r.na).map((r) => r.id);
   const naSuffix = naGoals.length > 0 ? `  n/a: ${naGoals.join(',')}` : '';
   lines.push(`hard: ${hardPass}/${hardTotal}  soft: ${softPass}/${softTotal}${naSuffix}`);
+  if (jev !== undefined) lines.push(formatJevLine(jev));
   return lines.join('\n');
 }
 
 /** One-line summary for --all-active output. */
-export function formatProjectSummaryLine(projectLabel, results) {
+export function formatProjectSummaryLine(projectLabel, results, jev = undefined) {
   const hardApplicable = results.filter((r) => r.hard && !r.na);
   const hardPass = hardApplicable.filter((r) => r.pass).length;
   const hardTotal = hardApplicable.length;
@@ -419,5 +519,6 @@ export function formatProjectSummaryLine(projectLabel, results) {
   const softTotal = results.filter((r) => !r.hard).length;
   const naGoals = results.filter((r) => r.na).map((r) => r.id);
   const naSuffix = naGoals.length > 0 ? ` (${naGoals.join(',')} n/a)` : '';
-  return `${projectLabel}  hard ${hardPass}/${hardTotal}  soft ${softPass}/${softTotal}${naSuffix}`;
+  const jevSuffix = jev !== undefined ? `  jev ${jev?.status ?? 'skipped'}` : '';
+  return `${projectLabel}  hard ${hardPass}/${hardTotal}  soft ${softPass}/${softTotal}${naSuffix}${jevSuffix}`;
 }
