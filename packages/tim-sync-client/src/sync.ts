@@ -9,8 +9,8 @@ import {
   localEdgeRecord,
   remoteEdgeWins,
 } from 'tim-store';
-import { SYNC_PROTOCOL_GENERATION, resolveLWW } from 'tim-core';
-import { SyncApiError, TimSyncClient } from './client.js';
+import { SYNC_PROTOCOL_GENERATION, parseGenerationCursor, resolveLWW } from 'tim-core';
+import { PERMANENT_SYNC_CODES, SyncApiError, TimSyncClient, type SyncCallOptions } from './client.js';
 import { deriveKey, encrypt, decrypt } from './crypto.js';
 import { stagingToEnvelope, envelopeToStaging, validatePulledEnvelope, type TimEnvelope } from './envelope.js';
 import {
@@ -18,11 +18,13 @@ import {
   getQueuePath,
   loadBoundSyncState,
   saveSyncState,
+  SyncStateRejectedError,
   type SyncState,
 } from './config.js';
 import { randomUUID } from 'node:crypto';
-import { enqueue, loadQueue, saveQueue, type QueueItem } from './queue.js';
+import { enqueue, loadQueue, queuedRevisions, saveQueue, PUSH_BATCH_MAX_BYTES, type QueueItem } from './queue.js';
 import { MissingSecretPassphraseError } from './credentials.js';
+import { SyncLockBusyError, syncDbIdentity, withSyncMutationAsync } from './lock.js';
 
 export type { SyncState } from './config.js';
 
@@ -266,19 +268,30 @@ function prepareQueueForPush(
   encryptFn: (data: string) => string,
   db: ReturnType<TimStore['getDb']>,
   secretEncrypt?: (data: string) => string,
-): { ready: QueueItem[]; remaining: QueueItem[]; blockedSecretCount: number } {
+): { ready: QueueItem[]; remaining: QueueItem[]; parked: QueueItem[]; blockedSecretCount: number } {
   const ready: QueueItem[] = [];
   const remaining: QueueItem[] = [];
+  const parked: QueueItem[] = [];
   let blockedSecretCount = 0;
 
   for (const item of queue) {
+    if (item.disposition === 'oversized') {
+      parked.push(item);
+      continue;
+    }
     const sendEnvelopes: TimEnvelope[] = [];
+    const sendRevisions: number[] = [];
     const blockEnvelopes: TimEnvelope[] = [];
+    const blockRevisions: number[] = [];
     let payloadChanged = false;
+    const hasRevisions = Array.isArray(item.revisions);
 
-    for (const env of item.envelopes) {
+    for (let i = 0; i < item.envelopes.length; i++) {
+      const env = item.envelopes[i]!;
+      const revision = item.revisions?.[i];
       if (!secretEncrypt && envelopeBlocksWithoutSecretKey(env, db)) {
         blockEnvelopes.push(env);
+        if (hasRevisions && revision !== undefined) blockRevisions.push(revision);
         blockedSecretCount++;
         continue;
       }
@@ -288,6 +301,7 @@ function prepareQueueForPush(
         payloadChanged = true;
       }
       sendEnvelopes.push(transformed);
+      if (hasRevisions && revision !== undefined) sendRevisions.push(revision);
     }
 
     const membershipChanged =
@@ -301,6 +315,7 @@ function prepareQueueForPush(
         ...item,
         envelopes: sendEnvelopes,
         blobs: sendEnvelopes.map((e) => blobForEnvelope(e, item, encryptFn, deviceId, reuseBlobs)),
+        revisions: hasRevisions ? sendRevisions : item.revisions,
         idempotency_key: needsFreshKey ? randomUUID() : item.idempotency_key,
       });
     }
@@ -320,12 +335,52 @@ function prepareQueueForPush(
             updated_at: e.lww,
           };
         }),
+        revisions: hasRevisions ? blockRevisions : item.revisions,
         idempotency_key: membershipChanged ? randomUUID() : item.idempotency_key,
       });
     }
   }
 
-  return { ready, remaining, blockedSecretCount };
+  return { ready, remaining, parked, blockedSecretCount };
+}
+
+export interface SyncCycleOptions {
+  deadlineAt?: number;
+  maxBytes?: number;
+  sleep?: (ms: number) => Promise<void>;
+}
+
+export interface PushCycleResult {
+  pushed: number;
+  queued: boolean;
+  complete: boolean;
+  permanent: boolean;
+  errorCode: string | null;
+  oversized: Array<{ revision: number; key: string }>;
+}
+
+const MAX_RATE_LIMIT_RETRIES = 8;
+
+function defaultSleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function pastDeadline(deadlineAt: number | undefined): boolean {
+  return deadlineAt !== undefined && Date.now() >= deadlineAt;
+}
+
+export function syncCycleExitCode(result: { complete: boolean; permanent: boolean }): number {
+  if (result.permanent) return 3;
+  if (!result.complete) return 2;
+  return 0;
+}
+
+export function thrownSyncExitCode(err: unknown): number {
+  if (err instanceof SyncLockBusyError) return 2;
+  if (err instanceof SyncStateRejectedError || err instanceof MissingSecretPassphraseError) return 1;
+  if (err instanceof SyncApiError && PERMANENT_SYNC_CODES.has(err.code)) return 3;
+  if (err instanceof SyncApiError) return 2;
+  return 1;
 }
 
 export async function pushCycle(
@@ -335,14 +390,30 @@ export async function pushCycle(
   deviceId: string,
   encryptFn: (data: string) => string,
   secretEncrypt?: (data: string) => string,
-): Promise<{ pushed: number; queued: boolean }> {
+  options?: SyncCycleOptions,
+): Promise<PushCycleResult> {
+  return withSyncMutationAsync(() => pushCycleUnlocked(
+    client, store, state, deviceId, encryptFn, secretEncrypt, options,
+  ));
+}
+
+async function pushCycleUnlocked(
+  client: TimSyncClient,
+  store: TimStore,
+  state: SyncState,
+  deviceId: string,
+  encryptFn: (data: string) => string,
+  secretEncrypt: ((data: string) => string) | undefined,
+  options: SyncCycleOptions | undefined,
+): Promise<PushCycleResult> {
   const db = store.getDb();
+  const deadlineAt = options?.deadlineAt;
   const allRows = getUnackedStaging(db);
-  const placeholderKeys: Array<{ key: string; lww: number }> = [];
+  const placeholderRevisions: number[] = [];
   let blockedSecretCount = 0;
   const rows = allRows.filter((row) => {
     if (row.entity_type === 'entry' && isSecretPlaceholderPayload(row.payload)) {
-      placeholderKeys.push({ key: row.key, lww: row.lww_timestamp });
+      placeholderRevisions.push(row.rowid);
       return false;
     }
     if (row.entity_type === 'entry' && row.operation !== 'delete' && !secretEncrypt && entryRequiresSecretPassphrase(db, row.payload, row.key)) {
@@ -353,10 +424,12 @@ export async function pushCycle(
   });
   const qPath = getQueuePath(state.fileId);
   let queue = loadQueue(qPath);
+  const alreadyQueued = queuedRevisions(queue);
+  const fresh = rows.filter((row) => !alreadyQueued.has(row.rowid));
   let queueBlockedSecretCount = 0;
 
-  if (rows.length > 0) {
-    const envelopes = rows
+  if (fresh.length > 0) {
+    const envelopes = fresh
       .map(stagingToEnvelope)
       .map((e) => transformEnvelopeForPush(e, secretEncrypt, db));
     const blobs = envelopes.map((e) => ({
@@ -366,23 +439,36 @@ export async function pushCycle(
       device_id: deviceId,
       updated_at: e.lww,
     }));
-    enqueue(qPath, queue, envelopes, blobs);
+    enqueue(qPath, queue, envelopes, blobs, fresh.map((row) => row.rowid), {
+      maxBytes: options?.maxBytes ?? PUSH_BATCH_MAX_BYTES,
+    });
     queue = loadQueue(qPath);
   }
 
   const prepared = prepareQueueForPush(queue, deviceId, encryptFn, db, secretEncrypt);
   queueBlockedSecretCount = prepared.blockedSecretCount;
+  const parked = [...prepared.parked];
   const blockedRemaining = [...prepared.remaining];
   const readyToSend = [...prepared.ready];
-  saveQueue(qPath, [...blockedRemaining, ...readyToSend]);
+  saveQueue(qPath, [...parked, ...blockedRemaining, ...readyToSend]);
 
-  const sent: QueueItem[] = [];
   let ok = true;
+  let permanent = false;
   let pushError: string | null = null;
+  let pushedCount = 0;
+  let rateLimits = 0;
+  const sleep = options?.sleep ?? defaultSleep;
+  const call: SyncCallOptions = { deadlineAt };
+
   while (readyToSend.length > 0) {
-    const item = readyToSend[0];
+    if (pastDeadline(deadlineAt)) {
+      ok = false;
+      pushError = 'DEADLINE';
+      break;
+    }
+    const item = readyToSend[0]!;
     try {
-      await bindFileGeneration(client,state);
+      await bindFileGeneration(client, state, deadlineAt);
       await client.push({
         file_id: state.fileId,
         file_generation: state.fileGeneration,
@@ -390,34 +476,48 @@ export async function pushCycle(
         idempotency_key: item.idempotency_key,
         client_schema_major: SYNC_PROTOCOL_GENERATION,
         blobs: item.blobs,
-      });
-      sent.push(item);
+      }, call);
+      const revisions = (item.revisions ?? []).filter((revision) => (
+        Number.isSafeInteger(revision) && revision > 0
+      ));
+      if (revisions.length > 0) ackStaging(db, revisions);
+      pushedCount += item.envelopes.length;
       readyToSend.shift();
-      saveQueue(qPath, [...blockedRemaining, ...readyToSend]);
+      saveQueue(qPath, [...parked, ...blockedRemaining, ...readyToSend]);
     } catch (err) {
-      item.attempts += 1;
-      saveQueue(qPath, [...blockedRemaining, ...readyToSend]);
+      if (err instanceof SyncApiError && err.code === 'RATE_LIMITED') {
+        rateLimits += 1;
+        const wait = err.retryAfterMs ?? 1000;
+        const wouldPassDeadline = deadlineAt !== undefined && Date.now() + wait > deadlineAt;
+        if (rateLimits > MAX_RATE_LIMIT_RETRIES || wouldPassDeadline) {
+          ok = false;
+          pushError = wouldPassDeadline ? 'DEADLINE' : 'RATE_LIMITED';
+          break;
+        }
+        await sleep(wait);
+        continue;
+      }
+      if (err instanceof SyncApiError && PERMANENT_SYNC_CODES.has(err.code)) {
+        ok = false;
+        permanent = true;
+        pushError = formatSyncFailure(err);
+        break;
+      }
+      if (!(err instanceof SyncApiError && err.code === 'DEADLINE')) {
+        item.attempts += 1;
+      }
+      saveQueue(qPath, [...parked, ...blockedRemaining, ...readyToSend]);
       ok = false;
-      pushError = formatSyncFailure(err);
+      pushError = err instanceof SyncApiError && err.code === 'DEADLINE'
+        ? 'DEADLINE'
+        : formatSyncFailure(err);
       break;
     }
   }
 
-  const unsentReady = readyToSend;
+  if (placeholderRevisions.length > 0) ackStaging(db, placeholderRevisions);
 
-  const keysToAck: Array<{ key: string; lww: number }> = [...placeholderKeys];
-  let pushedCount = 0;
-  for (const item of sent) {
-    for (const e of item.envelopes) {
-      // Envelopes carry the timestamp as ISO; staging stores epoch millis.
-      const lww = Date.parse(e.lww);
-      keysToAck.push({ key: e.key, lww: Number.isFinite(lww) ? lww : Date.now() });
-      pushedCount++;
-    }
-  }
-  if (keysToAck.length > 0) ackStaging(db, keysToAck);
-
-  const partialSend = !ok || unsentReady.length > 0;
+  const partialSend = !ok || readyToSend.length > 0;
   const now = new Date().toISOString();
   state.lastPushAttempt = now;
   if (!partialSend) {
@@ -433,36 +533,66 @@ export async function pushCycle(
     throw new MissingSecretPassphraseError(totalBlocked, pushedCount);
   }
 
-  const queueLeft = blockedRemaining.length + unsentReady.length;
-  return { pushed: pushedCount, queued: !ok || queueLeft > 0 };
+  const oversized = parked.flatMap((item) => item.envelopes.map((envelope, index) => ({
+    revision: item.revisions?.[index] ?? 0,
+    key: envelope.key,
+  })));
+  return {
+    pushed: pushedCount,
+    queued: !ok || blockedRemaining.length + readyToSend.length > 0,
+    complete: ok && readyToSend.length === 0 && !permanent,
+    permanent,
+    errorCode: pushError,
+    oversized,
+  };
 }
 
 
-async function bindFileGeneration(client: TimSyncClient, state: SyncState): Promise<void> {
+async function bindFileGeneration(
+  client: TimSyncClient,
+  state: SyncState,
+  deadlineAt?: number,
+): Promise<void> {
   if (state.fileGeneration) return;
   if (state.cursor) throw new SyncApiError('Cursor has no bound file generation; explicit reconciliation required','PROTOCOL_MISMATCH');
-  const generation = await client.fileGeneration(state.fileId);
+  const generation = await client.fileGeneration(state.fileId, { deadlineAt });
   const next = { ...state, fileGeneration: generation };
   saveSyncState(next);
-  Object.assign(state,next);
+  Object.assign(state, next);
 }
 
 export async function pullCycle(
   client: TimSyncClient, store: TimStore, state: SyncState,
   decryptFn: (data: string) => string, secretDecrypt?: (data: string) => string,
   deviceId = getDeviceId(),
+  options?: SyncCycleOptions,
+): Promise<{ pulled: number; conflicts: number }> {
+  return withSyncMutationAsync(() => pullCycleUnlocked(
+    client, store, state, decryptFn, secretDecrypt, deviceId, options,
+  ));
+}
+
+async function pullCycleUnlocked(
+  client: TimSyncClient, store: TimStore, state: SyncState,
+  decryptFn: (data: string) => string, secretDecrypt: ((data: string) => string) | undefined,
+  deviceId: string,
+  options: SyncCycleOptions | undefined,
 ): Promise<{ pulled: number; conflicts: number }> {
   const db = store.getDb();
+  const deadlineAt = options?.deadlineAt;
+  const call: SyncCallOptions = { deadlineAt };
   let pulled = 0; let conflicts = 0;
   try {
-    await bindFileGeneration(client,state);
+    if (pastDeadline(deadlineAt)) throw new SyncApiError('Deadline exceeded', 'DEADLINE');
+    await bindFileGeneration(client, state, deadlineAt);
     const generation = state.fileGeneration!;
     db.pragma('synchronous = FULL');
     // A previous cycle may have persisted the cursor and crashed before its ACK.
-    if (state.cursor) await client.ack(state.fileId,generation,deviceId,state.cursor);
+    if (state.cursor) await client.ack(state.fileId, generation, deviceId, state.cursor, call);
     let more: boolean;
     do {
-      const res = await client.pull(state.fileId,state.cursor ?? undefined,SYNC_PROTOCOL_GENERATION,generation,deviceId);
+      if (pastDeadline(deadlineAt)) throw new SyncApiError('Deadline exceeded', 'DEADLINE');
+      const res = await client.pull(state.fileId, state.cursor ?? undefined, SYNC_PROTOCOL_GENERATION, generation, deviceId, call);
       const counts = db.transaction(() => {
         let appliedCount = 0; let conflictCount = 0;
         for (const blob of res.blobs) {
@@ -485,10 +615,15 @@ export async function pullCycle(
         }
         return { appliedCount, conflictCount };
       })();
+      if (state.cursor) {
+        const before = parseGenerationCursor(state.cursor, generation);
+        const after = parseGenerationCursor(res.next_cursor, generation);
+        if (after < before) throw new SyncApiError('Cursor moved backwards', 'PROTOCOL_MISMATCH');
+      }
       const next = { ...state, cursor: res.next_cursor };
       saveSyncState(next);
-      Object.assign(state,next);
-      await client.ack(state.fileId,generation,deviceId,res.next_cursor);
+      Object.assign(state, next);
+      await client.ack(state.fileId, generation, deviceId, res.next_cursor, call);
       pulled += counts.appliedCount; conflicts += counts.conflictCount;
       more = res.has_more;
     } while (more);
@@ -513,20 +648,46 @@ export function formatSyncFailure(err: unknown): string {
   return 'REQUEST_FAILED';
 }
 
-export async function runPush(ctx: SyncCycleContext): Promise<{ pushed: number; queued: boolean }> {
+function reloadBoundState(ctx: SyncCycleContext): SyncState {
+  return loadBoundSyncState({
+    serverUrl: ctx.state.serverUrl ?? '',
+    userId: ctx.state.tenantId ?? '',
+    token: '',
+    salt: ctx.salt,
+    fileId: ctx.state.fileId,
+  }, syncDbIdentity(ctx.store.getDatabasePath()));
+}
+
+export async function runPush(
+  ctx: SyncCycleContext,
+  options?: SyncCycleOptions,
+): Promise<PushCycleResult> {
   const enc = makeEncrypt(ctx.passphrase, ctx.salt);
   const secretEnc = ctx.secretPassphrase
     ? makeSecretEncrypt(ctx.secretPassphrase, ctx.salt)
     : undefined;
-  return pushCycle(ctx.client, ctx.store, ctx.state, ctx.deviceId, enc, secretEnc);
+  return withSyncMutationAsync(async () => {
+    ctx.state = reloadBoundState(ctx);
+    return pushCycleUnlocked(
+      ctx.client, ctx.store, ctx.state, ctx.deviceId, enc, secretEnc, options,
+    );
+  });
 }
 
-export async function runPull(ctx: SyncCycleContext): Promise<{ pulled: number; conflicts: number }> {
+export async function runPull(
+  ctx: SyncCycleContext,
+  options?: SyncCycleOptions,
+): Promise<{ pulled: number; conflicts: number }> {
   const dec = makeDecrypt(ctx.passphrase, ctx.salt);
   const secretDec = ctx.secretPassphrase
     ? makeSecretDecrypt(ctx.secretPassphrase, ctx.salt)
     : undefined;
-  return pullCycle(ctx.client, ctx.store, ctx.state, dec, secretDec, ctx.deviceId);
+  return withSyncMutationAsync(async () => {
+    ctx.state = reloadBoundState(ctx);
+    return pullCycleUnlocked(
+      ctx.client, ctx.store, ctx.state, dec, secretDec, ctx.deviceId, options,
+    );
+  });
 }
 
 export function buildSyncContext(

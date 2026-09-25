@@ -19,25 +19,20 @@ export function getUnackedStaging(db: Database.Database): StagingRow[] {
 }
 
 /**
- * Mark pushed staging records as acknowledged.
+ * Mark the exact staging rows that were pushed.
  *
- * Matching is by key *and* timestamp, not by key alone: a local write that
- * lands while the push is in flight stages a newer record for the same key,
- * and that one has to stay unacked so the next cycle picks it up.
- *
- * ponytail: `<=` means two writes to one key inside the same millisecond, one
- * of them mid-push, still ack the newer record. `<` would be worse (the pushed
- * record would never ack at all). Give staging a monotonic sequence if that
- * millisecond ever matters.
+ * `rowid` is the AUTOINCREMENT revision. Collapse deletes older unacked rows
+ * and does not reuse their rowids, so a same-millisecond replacement stays
+ * unacked. A timestamp comparison cannot tell those rows apart.
  */
-export function ackStaging(
-  db: Database.Database,
-  acks: Array<{ key: string; lww: number }>,
-): void {
-  if (acks.length === 0) return;
-  const stmt = db.prepare('UPDATE staging SET acked = 1 WHERE key = ? AND lww_timestamp <= ?');
+export function ackStaging(db: Database.Database, revisions: readonly number[]): void {
+  if (revisions.length === 0) return;
+  const stmt = db.prepare('UPDATE staging SET acked = 1 WHERE rowid = ? AND acked = 0');
   db.transaction(() => {
-    for (const ack of acks) stmt.run(ack.key, ack.lww);
+    for (const revision of revisions) {
+      if (!Number.isSafeInteger(revision) || revision <= 0) continue;
+      stmt.run(revision);
+    }
   })();
 }
 

@@ -42,7 +42,7 @@ describe('staging queue stays bounded', () => {
     const store = new TimStore(':memory:');
     const db = store.getDb();
     stage(db, 'E1', 'pushed', 1000);
-    ackStaging(db, [{ key: 'E1', lww: 1000 }]);
+    ackStaging(db, getUnackedStaging(db).filter((row) => row.key === 'E1').map((row) => row.rowid));
     stage(db, 'E1', 'newer', 2000);
     stage(db, 'E1', 'stale', 500);
 
@@ -57,14 +57,16 @@ describe('staging queue stays bounded', () => {
     const store = new TimStore(':memory:');
     const db = store.getDb();
     stage(db, 'E1', 'in flight', 1000);
-    // A write lands mid-push: the trigger replaces the record being pushed.
-    stage(db, 'E1', 'written during push', 2000);
-    // The push confirms what it actually sent.
-    ackStaging(db, [{ key: 'E1', lww: 1000 }]);
+    const inflight = getUnackedStaging(db)[0]!;
+    // A write lands mid-push in the same millisecond. Collapse deletes the
+    // queued rowid and keeps a new one. Ack must not take the replacement.
+    stage(db, 'E1', 'written during push', 1000);
+    ackStaging(db, [inflight.rowid]);
 
     const unacked = getUnackedStaging(db);
     expect(unacked).toHaveLength(1);
-    expect(unacked[0].payload).toBe('written during push');
+    expect(unacked[0]!.payload).toBe('written during push');
+    expect(unacked[0]!.rowid).not.toBe(inflight.rowid);
     store.close();
   });
 
@@ -98,7 +100,7 @@ describe('staging queue stays bounded', () => {
     const store = new TimStore(':memory:', { staging: true });
     const db = store.getDb();
     stage(db, 'ACKED', 'x', Date.now());
-    ackStaging(db, [{ key: 'ACKED', lww: Date.now() }]);
+    ackStaging(db, getUnackedStaging(db).filter((row) => row.key === 'ACKED').map((row) => row.rowid));
     stage(db, 'UNACKED', 'y', Date.now());
 
     expect(await store.purgeStaging()).toBe(2);
@@ -111,10 +113,7 @@ describe('staging queue stays bounded', () => {
     const db = store.getDb();
     stage(db, 'OLD', 'x', Date.now() - 30 * 86400_000);
     stage(db, 'NEW', 'y', Date.now());
-    ackStaging(db, [
-      { key: 'OLD', lww: Date.now() },
-      { key: 'NEW', lww: Date.now() },
-    ]);
+    ackStaging(db, getUnackedStaging(db).map((row) => row.rowid));
 
     expect(await store.gcStaging(7)).toBe(1);
     expect(db.prepare('SELECT key FROM staging').all()).toEqual([{ key: 'NEW' }]);
