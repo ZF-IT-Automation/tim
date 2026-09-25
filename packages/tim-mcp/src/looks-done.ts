@@ -4,7 +4,7 @@
 // tim_load_project, the session-start briefing, or any hook: one call is a
 // network round-trip, and the start path cannot wait on it. A null answer
 // (no key, timeout, HTTP error) leaves those tasks unjudged — never "done".
-import { askJev, jevNoul, resolveEntryTaskStatus, type Entry } from 'tim-core';
+import { askJev, jevNoul, resolveEntryTaskStatus, resolveJevApiKey, type Entry } from 'tim-core';
 import { KIND_BATCH, KIND_COMMIT, type TimStore } from 'tim-store';
 
 export const LOOKS_DONE_WORD = 'looks-done';
@@ -82,6 +82,11 @@ async function gatherEvidence(store: TimStore, task: Entry): Promise<Entry[]> {
  * Reads only. Jev null for a batch yields one "could not judge" line and no ids.
  */
 export async function suggestLooksDone(store: TimStore, entries: Entry[]): Promise<string> {
+  // Without a key there is nothing to judge with; say how to switch it on instead
+  // of reporting every batch as an outage.
+  if (!resolveJevApiKey()) {
+    return 'looks-done needs a Jev key (JEV_API_KEY or ~/.config/jev/env); without it TIM works as before, this check is off.';
+  }
   const lines = ['Looks done — suggestion only, nothing was changed.'];
   const open = entries.filter(isOpenTask);
 

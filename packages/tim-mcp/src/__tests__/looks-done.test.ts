@@ -147,6 +147,17 @@ describe('suggestLooksDone', () => {
     store.close();
   });
 
+  it('without a key says how to enable it and makes no request', async () => {
+    const store = new TimStore(':memory:');
+    const [task] = await projectWithTasks(store, [{ title: 'Ship export rotation' }]);
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    const text = await suggestLooksDone(store, [task]);
+    expect(text).toContain('needs a Jev key');
+    expect(fetchSpy).not.toHaveBeenCalled();
+    store.close();
+  });
+
   it('says it could not judge the batch when Jev returns null', async () => {
     process.env.JEV_API_KEY = 'k';
     const store = new TimStore(':memory:');

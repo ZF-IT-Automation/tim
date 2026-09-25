@@ -547,8 +547,8 @@ describe('tim_show', () => {
     expect(judgedText.startsWith(plainText)).toBe(true);
     expect(judgedText).toContain('Still open checkpoint task');
     expect(judgedText).toContain('Already closed checkpoint task');
-    expect(judgedText).toContain('nothing was changed');
-    expect(judgedText).toContain('could not judge 1 tasks (Jev unavailable)');
+    // The spawned server has no Jev key: the listing is unchanged, the check says how to enable it.
+    expect(judgedText).toContain('needs a Jev key');
 
     const read = await client.callTool('tim_read', { id: openTask.id });
     const readPayload = JSON.parse(read.result!.content[0].text);
