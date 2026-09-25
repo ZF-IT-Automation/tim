@@ -10,7 +10,9 @@ import {
   evalG4,
   evalG6,
   evalG8,
+  evalJevColumn,
   evalS1,
+  evalS2,
   formatScorecard,
   formatProjectSummaryLine,
 } from '../briefing-eval-goals.mjs';
@@ -143,5 +145,64 @@ describe('briefing-eval goals', () => {
       encoding: 'utf8',
     });
     assert.equal(self.status, 0, self.stderr || self.stdout);
+  });
+
+  it('S2 fails open, fixed, open and passes open, open, fixed', () => {
+    const between = ['── Bugs ──', '- [open] first', '- [fixed] middle', '- [open] last'].join('\n');
+    assert.equal(evalS2(between).pass, false, 'a fixed bug before the last open bug fails');
+
+    const after = ['── Bugs ──', '- [open] first', '- [open] second', '- [done] after'].join('\n');
+    assert.equal(evalS2(after).pass, true, 'fixed bugs after the last open bug pass');
+
+    // tim_load_project renders Bugs as an indented section, not a ── block.
+    const indented = [
+      '  Bugs',
+      '    Bug and error tracking',
+      '    still open [open]',
+      '    shipped [done]',
+      '    still open too [todo]',
+      '  Decisions',
+    ].join('\n');
+    assert.equal(evalS2(indented).pass, false, 'indented Bugs section uses the same last-open rule');
+  });
+
+  it('Jev column is advisory and skips when answers are missing', () => {
+    const goals = [
+      { id: 'G1', hard: true, pass: true, value: true, detail: 'ok' },
+      { id: 'S1', hard: false, pass: false, value: 1, detail: 'loose=1' },
+    ];
+    const bare = formatScorecard(goals);
+    const skipped = formatScorecard(goals, { status: 'skipped', detail: 'jev: skipped' });
+    expect(skipped.startsWith(bare)).toBe(true);
+    expect(skipped).toMatch(/jev: skipped$/);
+    expect(skipped).toMatch(/hard: 1\/1  soft: 0\/1/);
+    expect(formatProjectSummaryLine('P0063', goals, { status: 'fail' })).toMatch(
+      /P0063  hard 1\/1  soft 0\/1  jev fail$/,
+    );
+
+    const texts = { hook: 'ACTION: call tim_load_project', preview: '', load: 'no handoff here' };
+    const noul = (n) => ({ type: 'noul', noul: n });
+    const answers = (over = {}) => ({
+      handoff: noul(0.1),
+      g3_window: noul(0.8),
+      g6_already: noul(0.2),
+      g6_call: noul(0.95),
+      g7: noul(0.1),
+      ...over,
+    });
+
+    expect(evalJevColumn(null, texts).status).toBe('skipped');
+    expect(evalJevColumn({ handoff: noul(0.1) }, texts).status).toBe('skipped');
+    expect(evalJevColumn(answers(), texts).status).toBe('pass');
+    expect(evalJevColumn(answers({ g6_already: noul(0.7), g6_call: noul(0.7) }), texts).status).toBe('fail');
+    expect(evalJevColumn(answers({ g6_already: noul(0.9), g6_call: noul(0.69) }), texts).status).toBe('pass');
+    expect(evalJevColumn(answers({ g7: noul(0.7) }), texts).status).toBe('fail');
+    expect(evalJevColumn(answers({ g3_window: noul(0.49) }), texts).status).toBe('fail');
+    expect(evalJevColumn(answers({ g3_window: noul(0.5) }), texts).status).toBe('pass');
+    expect(evalJevColumn(answers({ handoff: noul(0.5) }), texts).status).toBe('fail');
+    expect(evalJevColumn(answers({ handoff: noul(0.49) }), texts).status).toBe('pass');
+    const shown = { ...texts, preview: '── Latest handoff\ndone: x | next: y' };
+    expect(evalJevColumn(answers({ handoff: noul(0.49) }), shown).status).toBe('fail');
+    expect(evalJevColumn(answers({ handoff: noul(0.5) }), shown).status).toBe('pass');
   });
 });

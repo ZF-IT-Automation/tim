@@ -20,7 +20,13 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { evaluateAll, formatScorecard, formatProjectSummaryLine } from './briefing-eval-goals.mjs';
+import {
+  evaluateAll,
+  evalJevColumn,
+  formatScorecard,
+  formatProjectSummaryLine,
+  JEV_BRIEFING_QUESTIONS,
+} from './briefing-eval-goals.mjs';
 
 const require = createRequire(import.meta.url);
 const Database = require('better-sqlite3');
@@ -552,7 +558,7 @@ function loadDbContext(dbPath, projectLabel) {
 
 function runSelftest() {
   const { strict: assert } = require('node:assert');
-  const { evalG1, evalG6, evalS1 } = require('./briefing-eval-goals.mjs');
+  const { evalG1, evalG6, evalS1, evalS2 } = require('./briefing-eval-goals.mjs');
 
   const passLoad = [
     'P0063 — Demo',
@@ -576,7 +582,30 @@ function runSelftest() {
   assert.equal(evalS1({ looseDirectChildren: [] }).pass, true);
   assert.equal(evalS1({ looseDirectChildren: [{ id: 'x' }] }).pass, false);
 
+  const openFixedOpen = ['── Bugs ──', '- [open] a', '- [fixed] b', '- [open] c'].join('\n');
+  assert.equal(evalS2(openFixedOpen).pass, false);
+  const openOpenFixed = ['── Bugs ──', '- [open] a', '- [open] b', '- [done] c'].join('\n');
+  assert.equal(evalS2(openOpenFixed).pass, true);
+
   console.log('selftest: ok');
+}
+
+/** One Jev request per briefing. Missing dist, no key, or any failure → skipped. */
+async function scoreJev(dist, texts) {
+  const state = { hook: texts.hookText, preview: texts.previewText, load: texts.loadText };
+  let askJev;
+  try {
+    ({ askJev } = require(join(dist, 'packages/tim-core/dist/jev.js')));
+  } catch {
+    return { status: 'skipped', detail: 'jev: skipped' };
+  }
+  if (typeof askJev !== 'function') return { status: 'skipped', detail: 'jev: skipped' };
+  try {
+    const answers = await askJev('briefing-eval', state, JEV_BRIEFING_QUESTIONS);
+    return evalJevColumn(answers, state);
+  } catch {
+    return { status: 'skipped', detail: 'jev: skipped' };
+  }
 }
 
 async function scoreProject({ dist, dbPath, home, project }) {
@@ -590,7 +619,8 @@ async function scoreProject({ dist, dbPath, home, project }) {
     db: dbCtx,
     now: new Date(),
   });
-  return { texts, results };
+  const jev = await scoreJev(dist, texts);
+  return { texts, results, jev };
 }
 
 async function main() {
@@ -624,13 +654,13 @@ async function main() {
       db.close();
       for (const p of projects) {
         try {
-          const { results } = await scoreProject({
+          const { results, jev } = await scoreProject({
             dist: args.dist,
             dbPath: copied.dbPath,
             home,
             project: p.label,
           });
-          console.log(formatProjectSummaryLine(p.label, results));
+          console.log(formatProjectSummaryLine(p.label, results, jev));
         } catch (err) {
           console.log(`${p.label}  ERROR ${err instanceof Error ? err.message : err}`);
         }
@@ -638,7 +668,7 @@ async function main() {
       process.exit(0);
     }
 
-    const { texts, results } = await scoreProject({
+    const { texts, results, jev } = await scoreProject({
       dist: args.dist,
       dbPath: copied.dbPath,
       home,
@@ -654,9 +684,10 @@ async function main() {
     }
 
     if (args.json) {
-      console.log(JSON.stringify(results, null, 2));
+      // Goal objects stay the same array. `jev` is advisory and sits beside them.
+      console.log(JSON.stringify({ results, jev }, null, 2));
     } else {
-      console.log(formatScorecard(results));
+      console.log(formatScorecard(results, jev));
     }
     process.exit(0);
   } catch (err) {

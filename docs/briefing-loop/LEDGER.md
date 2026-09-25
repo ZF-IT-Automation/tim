@@ -28,6 +28,7 @@ Raw scorecards: `runs/`.
 | 2026-09-24 | review 7 + iteration 10 | 5b2da74 | live copy | 9/9 in all 8 | 4/4 | — | review 7: 0 blocker, 0 major, 4 minor, 5 nits — minors and nits fixed. Future touch clocks capped at now; legacy→object conversion drops the top-level twins; getTasks status/due read the same source as the record; scorer follows merge chains; rotation bound stated correctly; CHANGELOG entry |
 | 2026-09-24 | review 8 + cold read 1 + iteration 11 | 73e5020 | live copy | 9/9 in all 8 | 4/4 | — | review 8: 0 blocker, 2 major, 3 minor — fixed (future clocks dropped not clamped, stripped on write; tasks outside every project refused on write, 2 orphaned P0076 tasks moved; tim_show and tim_resume_topic use the task clock/status). Cold read by a context-free agent: P0063 6/10, P0062 3/10 → handoffs dated by write time and flagged when newer sessions lack one; ids on every task line; heading markers stripped; superseded rules collapsed to a count; 'X: X' rule lines deduped; no duplicate section line; P0063 State line and SQL-rule conflict curated |
 | 2026-09-24 | cold read 2 + iteration 12 | d377e35 | live copy | 9/9 in all 8 | 4/4 | — | cold read 2 (mid-session snapshot): P0063 6/10, P0062 3/10. Priorities shown on one P0–P3 scale; rule previews skip 'Split from … on …' provenance; omission footer counts section bodies instead of listing them; session footer says 'substantive' and keeps short ones apart; a handoff outgrown by ≥3 newer substantive sessions becomes a pointer; data: P0054 session with 5 handoffs moved out of P0062 |
+| 2026-09-25 | S2 tighten | jev/t5-briefing-judge | snapshot copy tim-20260925-0800 | 9/9 on the 8 active projects | P0073 and P0076 3/4 (S2); the other six active projects 4/4 | — | S2 now fails when a fixed or done bug line sits before the last open bug. Jev column on the scorecard is advisory and does not change hard/soft counts. |
 
 ## Goal changes
 - S1: sessions-root and commits-root are legitimate non-section roots (scorer counted them as loose).
@@ -43,6 +44,7 @@ Raw scorecards: `runs/`.
 - G8: stale lines are recognised by the ` · stale since` suffix (the word matched titles like "Stale Cache Alert"); task rows use the product's marker and touch rules; new coverage check: named + counted lines = open tasks in the DB.
 - Scope: P0000 Inbox exempt (no sections/sessions/summary by design).
 - G5: scorer dated handoffs by the summary root's `updated_at`, which metadata writes bump; now by the owning session's date.
+- S2 (2026-09-25): the scorer only flagged a fixed bug before any open bug, and it only read a `── Bugs ──` block, so an indented Bugs section with a done line between open bugs passed. It now matches GOALS.md: no `[fixed]`/`[done]` line before the last open bug line. On snapshot `tim-20260925-0800`, P0073 and P0076 fail S2; P0054, P0062, P0063, P0075, P0077 and P0078 still pass.
 
 ## Session filter — measurement behind the decision (2026-09-23, 591 sessions)
 
