@@ -84,7 +84,9 @@ describe('push success timestamps', () => {
       push: vi.fn().mockRejectedValue(new SyncApiError('failed', code, status)),
     } as unknown as TimSyncClient;
 
-    await pushCycle(client, store, state, 'dev', (data) => data);
+    await pushCycle(client, store, state, 'dev', (data) => data, undefined, {
+      sleep: async () => undefined,
+    });
 
     expect(state.lastPush).toBe('2020-01-01T00:00:00.000Z');
     expect(state.lastPushError).toContain(code);
@@ -122,9 +124,12 @@ describe('push success timestamps', () => {
       }),
     } as unknown as TimSyncClient;
 
-    await pushCycle(client, store, state, 'dev', (data) => data);
+    await pushCycle(client, store, state, 'dev', (data) => data, undefined, {
+      sleep: async () => undefined,
+    });
 
-    expect(calls).toBe(2);
+    // One accepted batch, then eight retries and the attempt that exhausts the budget.
+    expect(calls).toBe(10);
     expect(state.lastPush).toBe('2020-01-01T00:00:00.000Z');
     expect(state.lastPushError).toContain('RATE_LIMITED');
     store.close();
@@ -341,10 +346,11 @@ it('keeps retry ciphertext stable when entry and edge keys share the same string
   saveQueue(getQueuePath('file-1'),[{...queueItem(key),envelopes:[entry,edge],blobs}]);
   const push=vi.fn().mockRejectedValueOnce(new SyncApiError('lost response','NETWORK')).mockResolvedValue({mappings:[]});
   const client={push} as unknown as TimSyncClient;
+  const state=baseState();
   let encryptions=0;
   try {
-    await pushCycle(client,store,baseState(),'sender',()=>`reencrypted-${++encryptions}`);
-    await pushCycle(client,store,baseState(),'sender',()=>`reencrypted-${++encryptions}`);
+    await pushCycle(client,store,state,'sender',()=>`reencrypted-${++encryptions}`);
+    await pushCycle(client,store,state,'sender',()=>`reencrypted-${++encryptions}`);
     expect(push.mock.calls[0][0]).toEqual(push.mock.calls[1][0]);
     expect(encryptions).toBe(0);
   } finally {store.close();}
