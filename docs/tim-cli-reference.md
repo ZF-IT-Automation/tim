@@ -29,7 +29,7 @@ node packages/tim-cli/dist/cli.js statusline
 
 ---
 
-## Command Overview (40 commands)
+## Command Overview (41 commands)
 
 ### Top-Level Summary
 
@@ -74,7 +74,8 @@ node packages/tim-cli/dist/cli.js statusline
 | 37 | `tim consolidate` | Run memory consolidation |
 | 38 | `tim secret` | Manage secret entry metadata |
 | 39 | `tim viewer` | Browse the entry tree in a local web UI; move and soft-delete nodes |
-| 40 | `tim --help` | Show top-level help |
+| 40 | `tim sessions reap` | Reap empty session skeletons that never logged an exchange |
+| 41 | `tim --help` | Show top-level help |
 
 ---
 

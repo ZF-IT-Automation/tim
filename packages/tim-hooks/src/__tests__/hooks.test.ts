@@ -196,6 +196,36 @@ describe('session-end checkpoint orchestration', () => {
     store.close();
   });
 
+  it('reaps an older empty session when a new one starts', async () => {
+    const store = new TimStore(':memory:');
+    await store.createProject('P0091', { content: 'reap on start' });
+    const sessions = new SessionManager(store);
+    await sessions.startProjectSession({
+      sessionId: 'ancient',
+      projectId: 'P0091',
+      agentName: 'a',
+      cwd: '/tmp',
+      harness: 'test',
+    });
+    store.getDb().prepare('UPDATE entries SET created_at = ? WHERE id = ?').run(
+      new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString(),
+      'ancient',
+    );
+
+    const result = await runSessionStart(store, {
+      sessionId: 'fresh',
+      agentName: 'agent',
+      cwd: '/tmp',
+      harness: 'test',
+      projectId: 'P0091',
+    });
+
+    expect(await store.read('ancient')).toBeNull();
+    expect(await store.read('fresh')).not.toBeNull();
+    expect(result.briefing).toContain('reaped 1 empty sessions');
+    store.close();
+  });
+
   it('runSessionStart is a no-op when TEAMUP_WORKER=1', async () => {
     const store = new TimStore(':memory:');
     await store.createProject('P0098', { content: 'worker noop' });

@@ -347,6 +347,16 @@ describe('marker', () => {
     expect(d).not.toContain('do NOT re-fetch');
   });
 
+  it('buildLoadDirective names reaped empty sessions only when some were reaped', () => {
+    const plain = buildLoadDirective('P0063', '/repo');
+    expect(buildLoadDirective('P0063', '/repo', undefined, {})).toBe(plain);
+    const reaped = buildLoadDirective('P0063', '/repo', undefined, {
+      reapedNotice: 'reaped 2 empty sessions',
+    });
+    expect(reaped).toContain('reaped 2 empty sessions');
+    expect(reaped).toContain('tim_load_project(label="P0063")');
+  });
+
   it('buildLoadDirective ignores an empty briefing and keeps the plain directive', () => {
     const plain = buildLoadDirective('P0063', '/repo');
     expect(buildLoadDirective('P0063', '/repo', undefined, {})).toBe(plain);

@@ -9,8 +9,12 @@ import {
   getCurrentVersion,
   isSchemaMigrationPendingError,
   formatMemoryHealthLines,
+  reapEmptySessions,
+  reapSessionsById,
+  formatEmptySessionReapLine,
+  EMPTY_SESSION_REAP_CAP,
 } from 'tim-store';
-import { loadConfig, getTimDir, normalizeLegacyTypeTag, type TimConfigFile } from 'tim-core';
+import { loadConfig, getTimDir, normalizeLegacyTypeTag, resolveActiveSessionId, type TimConfigFile } from 'tim-core';
 import {
   runCheckpointWithSummarizerSpawn,
   runSessionEnd,
@@ -22,6 +26,7 @@ import {
   buildLoadDirective,
   buildSessionDirective,
   collectDirectiveBriefing,
+  type DirectiveBriefing,
   recoverProjectBinding,
   collectBindingReport,
   bindUnboundBindings,
@@ -73,7 +78,7 @@ import { runReleaseCheck } from './release-check.js';
 import { cmdMigrateFromHmem } from './migrate-from-hmem.js';
 import { cmdSetupAgent } from './setup-agent.js';
 import { cmdViewer } from './viewer.js';
-import { NEW_PROJECT_ALIASES, hasBooleanFlag, parseArgs, valueOptionsFor } from './args.js';
+import { NEW_PROJECT_ALIASES, MissingOptionValueError, hasBooleanFlag, parseArgs, valueOptionsFor } from './args.js';
 import { promptSubmitEnvelope, sessionStartEnvelope, readJsonStdin } from './claude-hook-io.js';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -211,6 +216,9 @@ const COMMAND_HELP: Record<string, string> = {
   'secret list': 'Usage: tim secret list',
   viewer:
     'Usage: tim viewer [--port <number>] [--host 127.0.0.1] [--db <path>] [--show-secrets]',
+  sessions: 'Usage: tim sessions reap [--dry-run] [--project <P00XX>] [--ids <file>]',
+  'sessions reap':
+    'Usage: tim sessions reap [--dry-run] [--project <P00XX>] [--ids <file>]',
   user: 'Usage: tim user <init|profile>',
   'user init': 'Usage: tim user init',
   'user profile': 'Usage: tim user profile',
@@ -279,6 +287,7 @@ Commands:
   consolidate              Run memory consolidation
   secret                   Manage secret entry metadata
   viewer                   Browse the entry tree in a local read-only web UI
+  sessions reap            Reap empty session skeletons
   --help                   Show this help`);
 }
 
@@ -544,9 +553,45 @@ async function buildStartDirectiveForCwd(cwd: string, walkUp?: boolean): Promise
       getDirectiveHookMaxTokens(config),
       false,
     ).catch(() => undefined);
-    return buildLoadDirective(projectLabel, dir, binding, briefing);
+    const reapedNotice = await emptySessionReapNotice(store, projectLabel, dir);
+    return buildLoadDirective(
+      projectLabel,
+      dir,
+      binding,
+      withReapNotice(briefing, reapedNotice),
+    );
   } finally {
     store.close();
+  }
+}
+
+function withReapNotice(
+  briefing: DirectiveBriefing | undefined,
+  notice: string | undefined,
+): DirectiveBriefing | undefined {
+  if (!notice) return briefing;
+  return { ...(briefing ?? {}), reapedNotice: notice };
+}
+
+/** Same-project empty skeletons, capped so a start hook stays fast. */
+async function emptySessionReapNotice(
+  store: TimStore,
+  projectId: string,
+  cwd: string,
+): Promise<string | undefined> {
+  if (isTeamupWorker()) return undefined;
+  try {
+    const result = await reapEmptySessions(store, {
+      projectIds: [projectId],
+      currentSessionId: resolveActiveSessionId({ cwd }),
+      cap: EMPTY_SESSION_REAP_CAP,
+    });
+    return formatEmptySessionReapLine(result.reaped.length) ?? undefined;
+  } catch (err) {
+    console.error(
+      `[tim] empty-session reap failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return undefined;
   }
 }
 
@@ -1292,6 +1337,73 @@ async function cmdMigrateSchema() {
   store.close();
 }
 
+function projectFlagValues(args: string[]): string[] {
+  const values: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === '--') break;
+    if (arg === '--project') {
+      const next = args[i + 1];
+      if (next === undefined) throw new MissingOptionValueError('project');
+      values.push(next);
+      i++;
+      continue;
+    }
+    if (arg.startsWith('--project=')) values.push(arg.slice('--project='.length));
+  }
+  return values.flatMap(value => value.split(',')).map(value => value.trim()).filter(Boolean);
+}
+
+async function cmdSessionsReap(args: string[]) {
+  const { flags } = parseArgs(args, { valueOptions: valueOptionsFor('sessions', 'reap') });
+  const dryRun = flags['dry-run'] === 'true';
+  const config = loadConfig();
+  const store = new TimStore(getDbPath(config));
+  const currentSessionId = resolveActiveSessionId({ cwd: process.cwd() });
+
+  try {
+    if (flags.ids) {
+      if (!fs.existsSync(flags.ids)) {
+        console.error(`No such file: ${flags.ids}`);
+        process.exit(1);
+      }
+      const ids = fs.readFileSync(flags.ids, 'utf8').split(/\r?\n/);
+      const result = await reapSessionsById(store, ids, { currentSessionId, dryRun });
+      const verb = dryRun ? 'would reap' : 'reaped';
+      for (const row of result.reaped) {
+        console.log(`${verb} ${row.sessionId} children=${row.childCount}`);
+      }
+      for (const row of result.refused) {
+        const why = row.reason === 'running' ? 'running session' : 'not a session';
+        console.log(`refused ${row.sessionId} children=${row.childCount} ${why}`);
+      }
+      for (const id of result.missing) {
+        console.log(`missing ${id}`);
+      }
+      return;
+    }
+
+    const projectIds = projectFlagValues(args);
+    const result = await reapEmptySessions(store, {
+      ...(projectIds.length > 0 ? { projectIds } : {}),
+      currentSessionId,
+      dryRun,
+    });
+    const verb = dryRun ? 'would reap' : 'reaped';
+    for (const row of result.reaped) {
+      console.log(`${verb} ${row.sessionId} children=${row.childCount} project=${row.projectId}`);
+    }
+    for (const row of result.suspicious) {
+      console.log(`suspicious ${row.sessionId} project=${row.projectId} empty interior batch`);
+    }
+    if (result.reaped.length === 0 && result.suspicious.length === 0) {
+      console.log(`${verb} 0`);
+    }
+  } finally {
+    store.close();
+  }
+}
+
 async function main() {
   const cmd = process.argv[2] || 'init';
   const rest = process.argv.slice(3);
@@ -1419,6 +1531,16 @@ async function main() {
     case 'viewer':
       await cmdViewer(rest);
       break;
+    case 'sessions': {
+      const sub = rest[0];
+      if (sub === 'reap') {
+        await cmdSessionsReap(rest.slice(1));
+      } else {
+        console.error('Usage: tim sessions reap [--dry-run] [--project <P00XX>] [--ids <file>]');
+        process.exit(1);
+      }
+      break;
+    }
     case 'user': {
       const sub = rest[0];
       if (sub === 'init') await cmdUserInit();
