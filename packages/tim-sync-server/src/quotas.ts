@@ -1,3 +1,5 @@
+import type Database from 'better-sqlite3';
+
 export type TenantTier = 'free' | 'pro';
 
 export interface TenantRecord {
@@ -46,4 +48,25 @@ export function quotaExceeded(
     }
   }
   return { exceeded: false };
+}
+
+/** Count one typed object and the largest ciphertext among ambiguous LWW maxima. */
+export function countUsageFromDb(db: Database.Database): QuotaUsage {
+  const row = db.prepare(`
+    SELECT COUNT(*) AS c, COALESCE(SUM(bytes),0) AS bytes FROM (
+      SELECT MAX(LENGTH(CAST(b.data AS BLOB))) AS bytes
+      FROM blobs b
+      WHERE NOT EXISTS (
+        SELECT 1 FROM blobs newer
+        WHERE newer.file_id=b.file_id AND newer.entity_type=b.entity_type AND newer.entity_key=b.entity_key
+          AND newer.lww_device IS NOT NULL AND b.lww_device IS NOT NULL
+          AND (newer.updated_at>b.updated_at OR
+            (newer.updated_at=b.updated_at AND newer.lww_device>b.lww_device))
+      )
+      GROUP BY b.file_id, COALESCE(b.entity_type, 'legacy'),
+        COALESCE(b.entity_key,b.client_proposed_id),
+        CASE WHEN b.entity_type IS NULL OR b.entity_key IS NULL OR b.lww_device IS NULL THEN b.id ELSE 0 END
+    )
+  `).get() as { c: number; bytes: number };
+  return { entryCount: row.c, totalBytes: row.bytes };
 }
