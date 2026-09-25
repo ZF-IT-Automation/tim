@@ -10,6 +10,8 @@ export interface HooksConfig {
   timeoutMs?: number;
   promptSubmit?: {
     enabled?: boolean;
+    /** Opt-in: Jev judges each recall candidate and picks its most relevant part. Sends the prompt to OpenRouter. */
+    jev?: boolean;
   };
 }
 

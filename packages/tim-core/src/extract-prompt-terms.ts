@@ -10,6 +10,21 @@ export const PROMPT_STOP_WORDS = new Set([
   'wo', 'warum', 'kann', 'können', 'haben', 'hat', 'sind', 'war', 'wurde',
   'werden', 'wird', 'über', 'dass', 'auch', 'noch', 'schon', 'nur', 'oder',
   'ich', 'mir', 'mich', 'dieses', 'dieser', 'diesem', 'diese', 'beim', 'zum',
+  // Conversational filler: under OR-terms every one of these pulls in unrelated entries.
+  'gab', 'gibt', 'deiner', 'deine', 'dein', 'meine', 'meiner', 'mein', 'unser', 'unsere',
+  'weiter', 'weitere', 'weiteren', 'soll', 'sollte', 'sollten', 'sollen', 'mal', 'bitte',
+  'jetzt', 'dann', 'kannst', 'könntest', 'wir', 'uns', 'lass', 'lasst', 'mach', 'mache',
+  'machen', 'einfach', 'genau', 'eigentlich', 'also', 'aber', 'wenn', 'denn', 'doch', 'hier',
+  'dort', 'sehr', 'ganz', 'alle', 'alles', 'etwas', 'nochmal', 'wieder', 'immer', 'schau',
+  'danke', 'okay', 'gut', 'klar', 'sich', 'sie', 'ihr', 'bei', 'nach', 'vor', 'zur', 'aus',
+  'bis', 'ohne', 'wäre', 'würde', 'hätte', 'habe', 'hast', 'bin', 'bist', 'sein', 'muss',
+  'musst', 'müssen', 'will', 'willst', 'wollen', 'gerade', 'heute', 'eben', 'selbst', 'man',
+  'einen', 'mehr', 'viel', 'viele', 'you', 'our', 'please', 'just', 'then', 'also', 'some',
+  'any', 'all', 'let', 'lets', 'now', 'again', 'here', 'there', 'really', 'like', 'want',
+  'need', 'look', 'see', 'get', 'got', 'them', 'they', 'their', 'its', 'not', 'yes',
+  'geben', 'schauen', 'guck', 'prüf', 'prüfe', 'check', 'wären', 'seine', 'seinen', 'darf',
+  'dürfen', 'jemand', 'dies', 'diesen', 'zwei', 'drei', 'neue', 'neuen', 'neu', 'erst',
+  'thing', 'things', 'something', 'make', 'sure', 'onto',
 ]);
 
 /**

@@ -187,12 +187,18 @@ Ten packages: `tim-core`, `tim-store`, `tim-mcp`, `tim-cli`, `tim-hooks`, `tim-s
 
 TIM runs fully without it. With a key for [Jev](https://openrouter.ai/typesafe/jev-1.13)
 (TypeSafe's decision model, via OpenRouter, fractions of a cent per call), four
-places add a fast relevance judgement on top of what they already do:
+places add a fast relevance judgement on top of what they already do, and a fifth is opt-in:
 
 - `tim_resume_topic` also finds sessions that describe the topic in other words.
 - The summarizer skips the LLM call for trivial one- or two-exchange sessions.
 - `tim_find_duplicates` queues only pairs Jev confirms as the same fact.
 - `tim_show` with `with: "looks-done"` suggests open tasks the evidence says are done.
+- Opt-in with `"hooks": {"promptSubmit": {"jev": true}}` in `~/.tim/config.json`: the
+  "TIM erinnert" reminders before each Claude Code prompt keep only the entries Jev judges
+  relevant (often none) and show their most relevant bullet or sentence instead of the
+  first 120 characters. Each prompt goes to OpenRouter together with up to 12 matching
+  memory entries (from every project when the directory has no `.tim-project` marker;
+  entries marked secret are never sent). One Jev call per candidate, about 0.5 s per prompt.
 
 Put the key in `JEV_API_KEY` or in `~/.config/jev/env` (`JEV_API_KEY=sk-or-...`).
 Without a key, or when Jev does not answer, every one of these behaves exactly as

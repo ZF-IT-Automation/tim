@@ -3,7 +3,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { TimStore } from 'tim-store';
-import { runPromptSubmit } from '../prompt-submit.js';
+import * as timCore from 'tim-core';
+import { recallUnits, runPromptSubmit } from '../prompt-submit.js';
 
 const LIVE_TASK_NOTIFICATION =
   '<task-notification><status>completed</status></task-notification>';
@@ -151,5 +152,73 @@ describe('runPromptSubmit', () => {
 
     const result = await runPromptSubmit(store, { prompt: 'anything' });
     expect(result).toBeNull();
+  });
+  describe('with Jev', () => {
+    const summary = [
+      '- **Soak:** 20h stable, RSS 116 MB.',
+      '- **WorldClock:** Decay now runs on WorldClock events; stopped clocks cause no decay.',
+      '- **Open:** review large clock jumps.',
+    ].join('\n');
+
+    async function twoHits() {
+      const batch = await store.write(`Batch 2\n${summary}`, { metadata: { kind: 'batch-summary' } });
+      const noise = await store.write('Ledger hash for iteration 3\nNothing else.', { metadata: { kind: 'commit' } });
+      vi.spyOn(store, 'search').mockResolvedValue([noise, batch]);
+      return { batch, noise };
+    }
+
+    it('keeps only hits Jev judges relevant and shows the part it picked', async () => {
+      const { batch } = await twoHits();
+      const ask = vi.spyOn(timCore, 'askJev').mockImplementation(async (_c, state) => {
+        const relevant = String((state as { memory: string }).memory).startsWith('Batch 2');
+        return relevant
+          ? { rel: { type: 'noul', noul: 0.9 }, focus: { type: 'choice', choice: 's1', probabilities: {}, confidence: 0.95 } }
+          : { rel: { type: 'noul', noul: 0.1 } };
+      });
+
+      const result = await runPromptSubmit(store, { prompt: 'decay an die worldclock knüpfen', jev: true });
+      expect(ask).toHaveBeenCalledTimes(2);
+      expect(result!.lines).toHaveLength(1);
+      expect(result!.lines[0]).toContain('Decay now runs on WorldClock events');
+      expect(result!.lines[0]).not.toContain('Soak');
+      expect(result!.lines[0]).toContain(`[${batch.id}]`);
+    });
+
+    it('stays silent when Jev finds nothing relevant', async () => {
+      await twoHits();
+      vi.spyOn(timCore, 'askJev').mockResolvedValue({ rel: { type: 'noul', noul: 0.2 } });
+      expect(await runPromptSubmit(store, { prompt: 'decay worldclock', jev: true })).toBeNull();
+    });
+
+    it('falls back to the plain lines when Jev does not answer', async () => {
+      await twoHits();
+      vi.spyOn(timCore, 'askJev').mockResolvedValue(null);
+      const result = await runPromptSubmit(store, { prompt: 'decay worldclock', jev: true });
+      expect(result!.lines).toHaveLength(2);
+      expect(result!.lines[0]).toContain('Ledger hash');
+    });
+
+    it('never sends secret entries to Jev', async () => {
+      const secret = await store.write('Vault note\nroot password is hunter2', { metadata: { kind: 'note', secret: true } });
+      vi.spyOn(store, 'search').mockResolvedValue([secret]);
+      const ask = vi.spyOn(timCore, 'askJev');
+      await runPromptSubmit(store, { prompt: 'vault password note', jev: true });
+      expect(ask).not.toHaveBeenCalled();
+    });
+
+    it('does not call Jev unless enabled', async () => {
+      await twoHits();
+      const ask = vi.spyOn(timCore, 'askJev');
+      await runPromptSubmit(store, { prompt: 'decay worldclock' });
+      expect(ask).not.toHaveBeenCalled();
+    });
+
+    it('splits summaries at bullets and prose at sentences, not at German abbreviations', () => {
+      expect(recallUnits(summary)).toHaveLength(3);
+      expect(recallUnits('Wir nutzen z. B. die API ggf. mit v1.2.3 weiter. Danach kommt der Rest vom Plan.')).toEqual([
+        'Wir nutzen z. B. die API ggf. mit v1.2.3 weiter.',
+        'Danach kommt der Rest vom Plan.',
+      ]);
+    });
   });
 });
