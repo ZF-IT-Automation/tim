@@ -39,9 +39,9 @@ import { BATCH_STRUCTURAL_TAGS } from './session-tree.js';
 // Constants-only module, no imports of its own — safe to pull in here.
 import { COMMIT_TAG, KIND_COMMIT } from './commit-tree.js';
 import {
-  recordFromPayload,
   entryLocalLwwTimestamp,
-  edgeLocalLwwTimestamp,
+  applyRemoteEdge,
+  persistEdgeVersion,
   localEntryRecordFromRow,
   applyEntryTombstone,
 } from './sync-methods.js';
@@ -2091,8 +2091,9 @@ ${zeroExchangeFilter}
       this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
         lww_timestamp, lww_device, lww_confidence)
         VALUES (?, 'edge', 'upsert', ?, ?, ?, 1.0)`).run(
-        key, JSON.stringify(edge), timestamp++, this.deviceId,
+        key, JSON.stringify(edge), timestamp, this.deviceId,
       );
+      persistEdgeVersion(this.db, JSON.stringify(edge), timestamp++, this.deviceId, false);
     }
   }
 
@@ -3182,8 +3183,9 @@ ${zeroExchangeFilter}
       this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
         lww_timestamp, lww_device, lww_confidence)
         VALUES (?, 'edge', 'upsert', ?, ?, ?, ?)`).run(
-        edgeKey, JSON.stringify(edgeRow), ts, this.agentId, 1.0,
+        edgeKey, JSON.stringify(edgeRow), ts, this.deviceId, 1.0,
       );
+      persistEdgeVersion(this.db, JSON.stringify(edgeRow), ts, this.deviceId, false);
     })();
 
     const edge = { id, sourceId, targetId, type, weight, metadata };
@@ -3284,8 +3286,9 @@ ${zeroExchangeFilter}
       this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
         lww_timestamp, lww_device, lww_confidence)
         VALUES (?, 'edge', 'upsert', ?, ?, ?, ?)`).run(
-        edgeKey, JSON.stringify(edgeRow), ts + 2, this.agentId, 1.0,
+        edgeKey, JSON.stringify(edgeRow), ts + 2, this.deviceId, 1.0,
       );
+      persistEdgeVersion(this.db, JSON.stringify(edgeRow), ts + 2, this.deviceId, false);
     });
 
     runLink.immediate();
@@ -3365,8 +3368,9 @@ ${zeroExchangeFilter}
           this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
             lww_timestamp, lww_device, lww_confidence)
             VALUES (?, 'edge', 'delete', ?, ?, ?, ?)`).run(
-            edgeKey, JSON.stringify(edgeRow), ts, this.agentId, 1.0,
+            edgeKey, JSON.stringify(edgeRow), ts, this.deviceId, 1.0,
           );
+      persistEdgeVersion(this.db, JSON.stringify(edgeRow), ts, this.deviceId, true);
           return;
         }
         if (!sourceExisting || !targetExisting) {
@@ -3430,8 +3434,9 @@ ${zeroExchangeFilter}
         this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
           lww_timestamp, lww_device, lww_confidence)
           VALUES (?, 'edge', 'delete', ?, ?, ?, ?)`).run(
-          edgeKey, JSON.stringify(edgeRow), ts + 2, this.agentId, 1.0,
+          edgeKey, JSON.stringify(edgeRow), ts + 2, this.deviceId, 1.0,
         );
+      persistEdgeVersion(this.db, JSON.stringify(edgeRow), ts + 2, this.deviceId, true);
       });
 
       runUndo.immediate();
@@ -3441,8 +3446,9 @@ ${zeroExchangeFilter}
         this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
           lww_timestamp, lww_device, lww_confidence)
           VALUES (?, 'edge', 'delete', ?, ?, ?, ?)`).run(
-          edgeKey, JSON.stringify(edgeRow), ts, this.agentId, 1.0,
+          edgeKey, JSON.stringify(edgeRow), ts, this.deviceId, 1.0,
         );
+      persistEdgeVersion(this.db, JSON.stringify(edgeRow), ts, this.deviceId, true);
       })();
     }
 
@@ -3570,12 +3576,7 @@ ${zeroExchangeFilter}
         metadata = excluded.metadata,
         lww_device = excluded.lww_device`);
 
-    const upsertEdge = this.db.prepare(`INSERT OR REPLACE INTO edges
-      (id, source_id, target_id, type, weight, metadata, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)`);
-
     const deleteEntry = this.db.prepare('DELETE FROM entries WHERE id = ?'); // slot-collision eviction only
-    const deleteEdge = this.db.prepare('DELETE FROM edges WHERE id = ?');
 
     const transaction = this.db.transaction(() => {
       for (const record of records) {
@@ -3629,45 +3630,8 @@ ${zeroExchangeFilter}
             );
           }
         } else if (record.entityType === 'edge') {
-          const edge = JSON.parse(record.payload) as RowEdge;
-          const compositeKey = `${edge.source_id}|${edge.target_id}|${edge.type}`;
-          const existing = this.db.prepare(
-            'SELECT * FROM edges WHERE source_id = ? AND target_id = ? AND type = ?',
-          ).get(edge.source_id, edge.target_id, edge.type) as RowEdge | undefined;
-
-          if (record.operation === 'delete') {
-            if (existing) {
-              const local = recordFromPayload(
-                compositeKey,
-                'edge',
-                'upsert',
-                JSON.stringify(existing),
-                edgeLocalLwwTimestamp(existing),
-                'local',
-              );
-              const { winner } = resolveLWW(local, record);
-              if (winner !== record) continue;
-            }
-            deleteEdge.run(edge.id);
-          } else {
-            if (existing) {
-              const local = recordFromPayload(
-                compositeKey,
-                'edge',
-                'upsert',
-                JSON.stringify(existing),
-                edgeLocalLwwTimestamp(existing),
-                'local',
-              );
-              const { winner } = resolveLWW(local, record);
-              if (winner !== record) continue;
-            }
-            upsertEdge.run(
-              edge.id, edge.source_id, edge.target_id,
-              edge.type, edge.weight, edge.metadata,
-              new Date(record.lwwTimestamp).toISOString(),
-            );
-          }
+          applyRemoteEdge(this.db, record.payload, record.lwwTimestamp, record.lwwDevice,
+            record.operation === 'delete');
         }
       }
     });

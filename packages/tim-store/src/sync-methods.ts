@@ -255,6 +255,32 @@ export function applyRemoteEntry(
   return true;
 }
 
+
+/** The register has no endpoint foreign keys: a delete can precede both endpoints. */
+export function persistEdgeVersion(
+  db: Database.Database, payload: string, timestamp: number, device: string, deleted: boolean,
+): void {
+  const edge = JSON.parse(payload) as { source_id: string; target_id: string; type: string };
+  db.prepare(`INSERT INTO edge_versions (entity_key, payload, lww_timestamp, lww_device, deleted)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(entity_key) DO UPDATE SET payload=excluded.payload,
+      lww_timestamp=excluded.lww_timestamp, lww_device=excluded.lww_device, deleted=excluded.deleted`)
+    .run(`${edge.source_id}|${edge.target_id}|${edge.type}`, payload, timestamp, device, Number(deleted));
+}
+
+export function localEdgeRecord(db: Database.Database, key: string): StagingRecord | undefined {
+  const version = db.prepare('SELECT * FROM edge_versions WHERE entity_key = ?').get(key) as
+    { payload: string; lww_timestamp: number; lww_device: string; deleted: number } | undefined;
+  if (version) return recordFromPayload(key, 'edge', version.deleted ? 'delete' : 'upsert',
+    version.payload, version.lww_timestamp, version.lww_device);
+  // Pre-T02 edges have no known origin. Do not invent a device identity.
+  const parts = key.split('|');
+  const row = db.prepare('SELECT * FROM edges WHERE source_id=? AND target_id=? AND type=?')
+    .get(...parts) as { updated_at?: string } | undefined;
+  return row ? recordFromPayload(key, 'edge', 'upsert', JSON.stringify(row),
+    edgeLocalLwwTimestamp(row), '') : undefined;
+}
+
 export function applyRemoteEdge(
   db: Database.Database,
   payloadJson: string,
@@ -262,64 +288,24 @@ export function applyRemoteEdge(
   lwwDevice: string,
   deleted: boolean,
 ): boolean {
-  let edge: {
-    id: string;
-    source_id: string;
-    target_id: string;
-    type: string;
-    weight: number;
-    metadata: string;
+  const edge = JSON.parse(payloadJson) as {
+    id: string; source_id: string; target_id: string; type: string; weight: number; metadata: string;
   };
-  try {
-    edge = JSON.parse(payloadJson) as typeof edge;
-  } catch {
-    return false;
-  }
-
-  const compositeKey = `${edge.source_id}|${edge.target_id}|${edge.type}`;
-  const remote = recordFromPayload(
-    compositeKey,
-    'edge',
-    deleted ? 'delete' : 'upsert',
-    payloadJson,
-    lwwTimestamp,
-    lwwDevice,
-  );
-
-  const existing = db.prepare(
-    'SELECT * FROM edges WHERE source_id = ? AND target_id = ? AND type = ?',
-  ).get(edge.source_id, edge.target_id, edge.type) as Record<string, unknown> | undefined;
-
-  if (existing) {
-    const local = recordFromPayload(
-      compositeKey,
-      'edge',
-      'upsert',
-      JSON.stringify(existing),
-      edgeLocalLwwTimestamp(existing as { updated_at?: string }),
-      'local',
-    );
-    const { winner } = resolveLWW(local, remote);
-    if (winner !== remote) return false;
-  } else if (deleted) {
-    return false;
-  }
-
-  if (deleted) {
-    db.prepare('DELETE FROM edges WHERE id = ?').run(edge.id);
+  const key = `${edge.source_id}|${edge.target_id}|${edge.type}`;
+  const remote = recordFromPayload(key, 'edge', deleted ? 'delete' : 'upsert',
+    payloadJson, lwwTimestamp, lwwDevice);
+  return db.transaction(() => {
+    const local = localEdgeRecord(db, key);
+    if (local && resolveLWW(local, remote).winner !== remote) return false;
+    // Remove by logical identity, including older replicas' different row IDs.
+    db.prepare('DELETE FROM edges WHERE source_id=? AND target_id=? AND type=?')
+      .run(edge.source_id, edge.target_id, edge.type);
+    if (!deleted) {
+      db.prepare(`INSERT INTO edges (id, source_id, target_id, type, weight, metadata, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)`).run(edge.id, edge.source_id, edge.target_id,
+        edge.type, edge.weight, edge.metadata, new Date(lwwTimestamp).toISOString());
+    }
+    persistEdgeVersion(db, payloadJson, lwwTimestamp, lwwDevice, deleted);
     return true;
-  }
-
-  const updatedAt = new Date(lwwTimestamp).toISOString();
-  db.prepare(`INSERT OR REPLACE INTO edges (id, source_id, target_id, type, weight, metadata, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
-    edge.id,
-    edge.source_id,
-    edge.target_id,
-    edge.type,
-    edge.weight,
-    edge.metadata,
-    updatedAt,
-  );
-  return true;
+  })();
 }

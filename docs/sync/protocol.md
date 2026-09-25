@@ -1,0 +1,29 @@
+# TIM sync protocol (T02)
+
+This contract precedes the T02 implementation. There is no deployed-server compatibility requirement. Transport protocol generation 1 accepts request schema major 1 and encrypted envelope version 1 only. `/health` publishes these accepted versions. Unsupported or missing wire versions fail explicitly; clients reject responses with an unknown protocol generation. Database schema versions are independent of wire versions.
+
+## Identity and logical order
+
+An object is identified by `(file_id, entity_type, entity_key)`. Entry keys are entry IDs. Edge keys are `source_id|target_id|type`; components must be nonempty and cannot contain `|`. Edge row IDs are payload attributes, never deletion identity. Deletes carry the same object identity as upserts. Local edge registers persist tombstones without endpoint foreign keys, including deletes received before creation. They retain the original writer device and logical timestamp even after physical edge removal.
+
+Each blob exposes `entity_type`, `entity_key`, `lww_device`, and `updated_at` outside ciphertext. `updated_at` is the normalized UTC ISO representation of an integer epoch-millisecond timestamp. `device_id` identifies the sender; `lww_device` identifies the original writer and must survive forwarding. `proposed_id` is a mapping alias equal to `entity_key`. Inside ciphertext, envelope `{v:1,type,key,lww,device,deleted,payload}` repeats the typed identity and logical order. Clients validate the envelope, payload identity, and all duplicated outer fields before applying it. Invalid timestamps never fall back to wall-clock time. Secret-layer transformation does not change this identity or order.
+
+The higher logical timestamp wins; equal timestamps use lexicographically higher original device ID. Arrival IDs and server receive time never resolve conflicts. Exact duplicate versions are harmless. Different payloads at the same timestamp and device are ambiguous: clients keep their current value, and the server retains every such blob. No collection may discard an ambiguous maximum until a separate conflicting-version policy exists. Legacy rows with unknown ordering metadata are explicitly unknown and ineligible for collection; no device or timestamp is guessed during server migration.
+
+## Push, replay, and logical quota
+
+Push requests include `client_schema_major:1`, `protocol_generation:1`, `file_generation`, `file_id`, `idempotency_key`, and ordered `blobs`. An accepted idempotency key is tenant-scoped and binds the complete normalized request, including file and generation. A replay returns the original mappings before quota checks. Reusing the key with different content fails with 409. Results and blobs commit atomically under a write transaction; rejected batches leave neither. Results do not expire in T02.
+
+Logical quota groups by file, type, and key. Updates replace the current winner's encrypted UTF-8 bytes. Stale arrivals add physical history but do not change logical usage. Ambiguous maximum versions count one object and the largest ciphertext size among those versions. Unknown legacy objects are conservatively counted separately. Tombstones count as objects and encrypted bytes. Physical history and filesystem limits remain separate work for T05/T08/T09.
+
+## File generations, cursors, and applied acknowledgements
+
+File creation returns a random UUID `generation`, independent of protocol generation, and file listing includes it. Push and pull require that generation. Clients fetch it on first use and persist it with their state before sending data; existing cursors without a bound generation are refused. A different generation requires explicit reconciliation/bootstrap. Restore tooling must rotate generations before serving restored data (T07); it must never reuse future client cursors.
+
+Cursor format is `<file-generation>|<nonnegative-safe-integer-id>`. IDs are SQLite AUTOINCREMENT arrival sequence values and are never reassigned or reset. File high-water is durable and survives future row deletion. Wrong-generation, malformed, and future cursors fail explicitly. Empty initial cursors mean ID 0 in the supplied generation. Pull orders by `(file_id,id)` and returns `next_cursor`, `has_more`, `generation`, `protocol_generation`, and each row's `received_at` (server UTC receive time). Pages can contain stale logical versions; every row must still be validated.
+
+Pull registers a device at applied cursor 0 before returning its first page. Registration is durable and never expires automatically. `/sync/ack` accepts `file_id`, `file_generation`, `device_id`, `cursor`, `client_schema_major`, and `protocol_generation`. Applied ACKs are durable, monotonic, and bounded by the cursor delivered to that device in this generation. Replay of an older ACK cannot move the floor backwards. ACK is an authenticated replica assertion, not proof the server can derive from ciphertext.
+
+Clients validate and apply an entire page transactionally, persist its cursor, then send ACK. A stale/duplicate row that validly loses LWW counts as processed; malformed/decryption/schema/identity/application errors roll back the page and forbid cursor advancement or ACK for that page. Failure after cursor persistence but before ACK is safe: the next pull can resend the persisted ACK. Failure before persistence causes replay. Successful earlier pages remain acknowledged when a later page fails. State persistence failure forbids ACK. T03 provides cross-process ownership and stronger filesystem durability; T02 requires the persistence call to succeed before ACK and uses durable atomic state replacement.
+
+Compaction (T08) must retain final tombstones, unknown metadata, and ambiguous maxima, preserve IDs/high-water, and use the minimum registered device applied ACK plus server receive age. T02 does not collect history, retire devices, deploy services, bootstrap baselines, or resolve secret-layer privacy gaps.
