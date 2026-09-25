@@ -3,7 +3,7 @@ import { spawnSync, type SpawnSyncReturns } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { TimStore, deriveCounters } from 'tim-store';
+import { SessionManager, TimStore, deriveCounters } from 'tim-store';
 
 const CLI = path.resolve(__dirname, '../../dist/cli.js');
 
@@ -170,6 +170,40 @@ describe('tim hook claude-stop', () => {
 
     expect(run(cursorPayload('sessionEnd', '2'), {}, 'cursor-stop').status).toBe(0);
     expect(await checkpointCount()).toBe(1);
+  });
+
+  it('logs a bound session when cwd drifted into a markerless child, and stays silent when unbound', async () => {
+    await seedProject('P0001');
+    writeMarker(cwd, 'P0001');
+    const child = path.join(cwd, 'packages');
+    fs.mkdirSync(child);
+    const store = new TimStore(dbPath);
+    await new SessionManager(store).startProjectSession({
+      sessionId: 'bound-stop',
+      projectId: 'P0001',
+      agentName: 'claude',
+      cwd,
+      harness: 'claude-code',
+    });
+    store.close();
+
+    const transcript = writeTranscript([
+      { type: 'user', uuid: 'u-drift', message: { role: 'user', content: 'drifted cwd' } },
+      { type: 'assistant', uuid: 'a-drift', message: { role: 'assistant', content: 'still logged' } },
+    ]);
+    const drifted = { transcript_path: transcript, cwd: child };
+
+    const unbound = run({ session_id: 'unbound-stop', ...drifted });
+    expect(unbound.status, unbound.stderr).toBe(0);
+
+    const bound = run({ session_id: 'bound-stop', ...drifted });
+    expect(bound.status, bound.stderr).toBe(0);
+
+    const check = new TimStore(dbPath);
+    expect(await check.read('unbound-stop')).toBeNull();
+    expect((await deriveCounters(check, 'bound-stop')).exchangeCount).toBe(1);
+    expect((await check.read('bound-stop'))?.metadata.project_ref).toBe('P0001');
+    check.close();
   });
 
   it('fail-soft: malformed JSON, missing marker, and stop_hook_active produce exit 0 with no stdout', async () => {
