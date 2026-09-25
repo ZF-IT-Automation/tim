@@ -3,7 +3,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { TenantRecord, TenantTier } from './quotas.js';
-import type { QuotaUsage } from './quotas.js';
+import { countUsageFromDb, type QuotaUsage } from './quotas.js';
 
 export interface RegistryStats {
   tenantCount: number;
@@ -61,30 +61,33 @@ export class TenantRegistry {
     const table = db.prepare(
       "SELECT sql FROM sqlite_master WHERE type='table' AND name='blobs'",
     ).get() as { sql: string } | undefined;
-    if (!table?.sql?.includes('UNIQUE(file_id, client_proposed_id)')) {
-      db.exec(`
-        CREATE INDEX IF NOT EXISTS idx_blobs_file_updated
-        ON blobs(file_id, updated_at, id);
-      `);
-      return;
-    }
-
-    db.exec(`
-      CREATE TABLE blobs_migrated (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        file_id TEXT NOT NULL,
-        client_proposed_id TEXT NOT NULL,
-        data TEXT NOT NULL,
-        device_id TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        deleted_at TEXT
-      );
-      INSERT INTO blobs_migrated (id, file_id, client_proposed_id, data, device_id, updated_at, deleted_at)
-      SELECT id, file_id, client_proposed_id, data, device_id, updated_at, deleted_at FROM blobs;
-      DROP TABLE blobs;
-      ALTER TABLE blobs_migrated RENAME TO blobs;
-      CREATE INDEX idx_blobs_file_updated ON blobs(file_id, updated_at, id);
-    `);
+    db.transaction(() => {
+      if (table?.sql?.includes('UNIQUE(file_id, client_proposed_id)')) {
+        const sequence = db.prepare("SELECT seq FROM sqlite_sequence WHERE name='blobs'").get() as { seq: number } | undefined;
+        db.exec(`CREATE TABLE blobs_migrated (
+          id INTEGER PRIMARY KEY AUTOINCREMENT, file_id TEXT NOT NULL,
+          client_proposed_id TEXT NOT NULL, data TEXT NOT NULL, device_id TEXT NOT NULL,
+          updated_at TEXT NOT NULL, deleted_at TEXT);
+          INSERT INTO blobs_migrated SELECT * FROM blobs;
+          DROP TABLE blobs;
+          ALTER TABLE blobs_migrated RENAME TO blobs;`);
+        if (sequence) db.prepare("UPDATE sqlite_sequence SET seq=MAX(seq,?) WHERE name='blobs'").run(sequence.seq);
+      }
+      const add = (table: string, name: string, type: string) => {
+        const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+        if (!cols.some(c => c.name === name)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);
+      };
+      // NULL marks unknown legacy metadata; collection must never infer it.
+      add('blobs', 'entity_type', 'TEXT');
+      add('blobs', 'entity_key', 'TEXT');
+      add('blobs', 'lww_device', 'TEXT');
+      add('blobs', 'received_at', 'TEXT');
+      add('idempotency', 'request_hash', 'TEXT');
+      add('idempotency', 'result_json', 'TEXT');
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_blobs_file_id ON blobs(file_id,id);
+        CREATE INDEX IF NOT EXISTS idx_blobs_object_version
+        ON blobs(file_id,entity_type,entity_key,updated_at,lww_device);`);
+    })();
   }
 
   private initTenantDb(tenantId: string): void {
@@ -126,17 +129,7 @@ export class TenantRegistry {
   getUsage(tenantId: string): QuotaUsage {
     const db = this.getTenantDb(tenantId);
     try {
-      const row = db.prepare(`
-        SELECT COUNT(*) AS c, COALESCE(SUM(LENGTH(data)), 0) AS bytes
-        FROM blobs b
-        INNER JOIN (
-          SELECT client_proposed_id, MAX(id) AS max_id
-          FROM blobs
-          WHERE deleted_at IS NULL
-          GROUP BY client_proposed_id
-        ) latest ON b.id = latest.max_id
-      `).get() as { c: number; bytes: number };
-      return { entryCount: row.c, totalBytes: row.bytes };
+      return countUsageFromDb(db);
     } finally {
       db.close();
     }

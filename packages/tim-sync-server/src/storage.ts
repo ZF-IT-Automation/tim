@@ -1,11 +1,15 @@
 import type Database from 'better-sqlite3';
 import type { TenantRegistry } from './tenant-registry.js';
-import { quotaExceeded } from './quotas.js';
+import { createHash } from 'node:crypto';
+import { countUsageFromDb, quotaExceeded } from './quotas.js';
 import type { TenantTier } from './quotas.js';
 
 export const PULL_PAGE_SIZE = 100;
 
 export interface PushBlobInput {
+  entity_type?: 'entry' | 'edge';
+  entity_key?: string;
+  lww_device?: string;
   proposed_id: string;
   data: string;
   device_id: string;
@@ -42,19 +46,8 @@ export function listFiles(registry: TenantRegistry, tenantId: string): { id: str
   }
 }
 
-function countUsageFromDb(db: Database.Database): { entryCount: number; totalBytes: number } {
-  const row = db.prepare(`
-    SELECT COUNT(*) AS c, COALESCE(SUM(LENGTH(data)), 0) AS bytes
-    FROM blobs b
-    INNER JOIN (
-      SELECT client_proposed_id, MAX(id) AS max_id
-      FROM blobs
-      WHERE deleted_at IS NULL
-      GROUP BY client_proposed_id
-    ) latest ON b.id = latest.max_id
-  `).get() as { c: number; bytes: number };
-  return { entryCount: row.c, totalBytes: row.bytes };
-}
+type PushResult = { mappings: { proposed_id: string; final_id: number }[] };
+class QuotaFailure extends Error {}
 
 export function pushBlobs(
   registry: TenantRegistry,
@@ -63,59 +56,43 @@ export function pushBlobs(
   fileId: string,
   idempotencyKey: string,
   blobs: PushBlobInput[],
-): { mappings: { proposed_id: string; final_id: number }[] } | { error: string; status: number } {
+): PushResult | { error: string; status: number } {
   const db = registry.getTenantDb(tenantId);
   try {
-    const file = db.prepare('SELECT id FROM files WHERE id = ?').get(fileId);
-    if (!file) return { error: 'File not found', status: 404 };
-
-    const usage = countUsageFromDb(db);
-    let newEntries = 0;
-    let newBytes = 0;
-    for (const b of blobs) {
-      const existing = db.prepare(
-        'SELECT id FROM blobs WHERE file_id = ? AND client_proposed_id = ? LIMIT 1',
-      ).get(fileId, b.proposed_id);
-      if (!existing) {
-        newEntries += 1;
+    return db.transaction(() => {
+      if (!db.prepare('SELECT id FROM files WHERE id=?').get(fileId)) {
+        return { error: 'File not found', status: 404 };
       }
-      newBytes += b.data.length;
-    }
-
-    const q = quotaExceeded(tier, usage, newEntries, newBytes);
-    if (q.exceeded) {
-      return { error: q.reason ?? 'Quota exceeded', status: 402 };
-    }
-
-    const mappings: { proposed_id: string; final_id: number }[] = [];
-    const insert = db.prepare(`
-      INSERT INTO blobs (file_id, client_proposed_id, data, device_id, updated_at, deleted_at)
-      VALUES (?, ?, ?, ?, ?, NULL)
-    `);
-
-    const tx = db.transaction(() => {
-      const seen = db.prepare('SELECT key FROM idempotency WHERE key = ?').get(idempotencyKey);
-      if (seen) return;
-
+      // Fixed property order makes object key ordering irrelevant, while array order remains significant.
+      const requestHash = createHash('sha256').update(JSON.stringify([fileId, blobs.map(b =>
+        [b.proposed_id,b.entity_type,b.entity_key,b.data,b.device_id,b.updated_at,b.lww_device])])).digest('hex');
+      const seen = db.prepare('SELECT request_hash,result_json FROM idempotency WHERE key=?')
+        .get(idempotencyKey) as { request_hash: string | null; result_json: string | null } | undefined;
+      if (seen) {
+        if (seen.request_hash !== requestHash || !seen.result_json) {
+          return { error: 'Idempotency key belongs to a different or unknown request', status: 409 };
+        }
+        return JSON.parse(seen.result_json) as PushResult;
+      }
+      const result: PushResult = { mappings: [] };
+      const insert = db.prepare(`INSERT INTO blobs
+        (file_id,client_proposed_id,data,device_id,updated_at,entity_type,entity_key,lww_device,received_at)
+        VALUES (?,?,?,?,?,?,?,?,?)`);
       for (const b of blobs) {
-        const r = insert.run(fileId, b.proposed_id, b.data, b.device_id, b.updated_at);
-        mappings.push({ proposed_id: b.proposed_id, final_id: Number(r.lastInsertRowid) });
+        const r = insert.run(fileId,b.proposed_id,b.data,b.device_id,b.updated_at,
+          b.entity_type ?? null,b.entity_key ?? null,b.lww_device ?? null,new Date().toISOString());
+        result.mappings.push({ proposed_id: b.proposed_id, final_id: Number(r.lastInsertRowid) });
       }
-      db.prepare('INSERT INTO idempotency (key, created_at) VALUES (?, ?)').run(
-        idempotencyKey,
-        new Date().toISOString(),
-      );
-    });
-    tx();
-
-    const seenAfter = db.prepare('SELECT key FROM idempotency WHERE key = ?').get(idempotencyKey);
-    if (!seenAfter) {
-      return { mappings: [] };
-    }
-    return { mappings };
-  } finally {
-    db.close();
-  }
+      const quota = quotaExceeded(tier, countUsageFromDb(db), 0, 0);
+      if (quota.exceeded) throw new QuotaFailure(quota.reason);
+      db.prepare('INSERT INTO idempotency (key,created_at,request_hash,result_json) VALUES (?,?,?,?)')
+        .run(idempotencyKey,new Date().toISOString(),requestHash,JSON.stringify(result));
+      return result;
+    }).immediate();
+  } catch (err) {
+    if (err instanceof QuotaFailure) return { error: err.message, status: 402 };
+    throw err;
+  } finally { db.close(); }
 }
 
 export function parsePullCursor(cursor?: string): { updatedAt: string; id: number } {

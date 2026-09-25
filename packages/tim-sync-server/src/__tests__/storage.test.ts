@@ -105,7 +105,7 @@ describe('storage append-only sync propagation', () => {
     expect((pull2.blobs[0] as { client_proposed_id: string }).client_proposed_id).toBe('from-c');
   });
 
-  it('idempotent push returns empty mappings on duplicate key', () => {
+  it('idempotent push returns original mappings on duplicate key', () => {
     const tenant = registry.register('free');
     createFile(registry, tenant.id, 'f1', 'salt');
     const blob = {
@@ -117,6 +117,6 @@ describe('storage append-only sync propagation', () => {
     const first = pushBlobs(registry, tenant.id, 'free', 'f1', 'dup-key', [blob]);
     expect(first).toHaveProperty('mappings');
     const second = pushBlobs(registry, tenant.id, 'free', 'f1', 'dup-key', [blob]);
-    expect(second).toEqual({ mappings: [] });
+    expect(second).toEqual(first);
   });
 });
