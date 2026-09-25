@@ -486,6 +486,11 @@ export interface DirectiveBriefing {
    * it must not steal the open-work budget.
    */
   staleBrief?: string[];
+  /**
+   * Set when this start tombstoned empty session skeletons. Omitted when
+   * nothing was reaped, so the directive text stays unchanged.
+   */
+  reapedNotice?: string;
 }
 
 /** Renders the content half of a directive; empty when there is nothing to say. */
@@ -524,6 +529,9 @@ function briefingBlock(briefing?: DirectiveBriefing): string[] {
   if (stale.length > 0) {
     out.push('', ...stale);
   }
+
+  const notice = briefing.reapedNotice?.trim();
+  if (notice) out.push('', notice);
   return out;
 }
 

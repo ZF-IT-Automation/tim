@@ -164,6 +164,21 @@ export {
   INBOX_PROJECT_LABEL,
 } from './session-tree.js';
 export {
+  reapEmptySessions,
+  reapSessionSubtree,
+  reapSessionsById,
+  formatEmptySessionReapLine,
+  EMPTY_SESSION_AGE_FLOOR_MS,
+  EMPTY_SESSION_REAP_CAP,
+  type ReapedSession,
+  type SuspiciousEmptySession,
+  type EmptySessionReapResult,
+  type ReapEmptySessionsOptions,
+  type ReapSessionsByIdOptions,
+  type ReapByIdRefusal,
+  type ReapByIdsResult,
+} from './session-reap.js';
+export {
   CommitManager,
   type RecordCommitParams,
 } from './commit.js';

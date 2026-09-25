@@ -15,6 +15,9 @@ import {
   INBOX_PROJECT_LABEL,
   deriveCounters,
   resolveProjectBindingLabel,
+  reapEmptySessions,
+  formatEmptySessionReapLine,
+  EMPTY_SESSION_REAP_CAP,
   type Summarizer,
   type TimStore,
 } from 'tim-store';
@@ -244,6 +247,21 @@ export async function runSessionStart(
 
   let briefing: string | undefined;
   const briefingParts: string[] = [];
+  // Previous dead sessions of this project. The session just created is the
+  // newest, so it is spared; only older empty skeletons qualify.
+  try {
+    const reaped = await reapEmptySessions(store, {
+      projectIds: [projectId],
+      currentSessionId: params.sessionId,
+      cap: EMPTY_SESSION_REAP_CAP,
+    });
+    const line = formatEmptySessionReapLine(reaped.reaped.length);
+    if (line) briefingParts.push(line);
+  } catch (err) {
+    console.error(
+      `[tim] empty-session reap failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
   if (projectId !== INBOX_PROJECT_LABEL) {
     const delta = await getDeltaBriefing(store, projectId, {
       sessionId: params.sessionId,
