@@ -39,6 +39,9 @@ describe('embedUnembeddedEntries', () => {
   let store: TimStore;
 
   beforeEach(() => {
+    // Suite setup disables embeddings. These tests inject a provider and must
+    // opt back in; the disabled case sets the env inside the test.
+    delete process.env.TIM_EMBEDDING_DISABLED;
     resetDefaultEmbeddingProviderCache();
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tim-test-'));
     store = new TimStore(path.join(dir, 'test.db'), {
@@ -50,6 +53,7 @@ describe('embedUnembeddedEntries', () => {
     store.close();
     fs.rmSync(dir, { recursive: true, force: true });
     resetDefaultEmbeddingProviderCache();
+    process.env.TIM_EMBEDDING_DISABLED = '1';
   });
 
   it('embeds entries that have no vectors yet', async () => {
@@ -79,16 +83,13 @@ describe('embedUnembeddedEntries', () => {
 
   it('TIM_EMBEDDING_DISABLED=1 skips processing', async () => {
     process.env.TIM_EMBEDDING_DISABLED = '1';
-    try {
-      const count = await embedUnembeddedEntries(store, { batchSize: 5 });
-      expect(count).toBe(0);
-    } finally {
-      delete process.env.TIM_EMBEDDING_DISABLED;
-    }
+    const count = await embedUnembeddedEntries(store, { batchSize: 5 });
+    expect(count).toBe(0);
   });
 
   it('embeds with the real local model when explicitly enabled', async () => {
     if (process.env.TIM_EMBEDDING_REAL_MODEL !== '1') return;
+    delete process.env.TIM_EMBEDDING_DISABLED;
 
     try {
       vi.doUnmock('fastembed');

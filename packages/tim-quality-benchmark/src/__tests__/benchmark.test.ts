@@ -61,6 +61,10 @@ describe('memory quality benchmark (#38)', () => {
   });
 
   it('runs synthetic benchmark across all modes with schema fields', async () => {
+    // Hybrid re-rank ignores vectors while the suite opt-out is set, which
+    // drops no-overlap synonym recall. This run uses the synthetic provider.
+    snapshotEnv('TIM_EMBEDDING_DISABLED');
+    delete process.env.TIM_EMBEDDING_DISABLED;
     const report = await runBenchmark({ providerMode: 'synthetic' });
     expect(report.reportVersion).toBe(REPORT_VERSION);
     expect(report.datasetVersion).toBe(DATASET_VERSION);
@@ -326,13 +330,17 @@ describe('memory quality benchmark (#38)', () => {
   it('CLI real opt-in reports honest no-network unavailable skip', () => {
     const out = path.join(os.tmpdir(), `tim-quality-real-skip-${Date.now()}.json`);
     outputs.push(out);
+    const env = {
+      ...process.env,
+      TIM_EMBEDDING_REAL_MODEL: '1',
+      TIM_EMBEDDING_MODEL: 'test-unknown-enum',
+    };
+    // Unknown model id is rejected before fastembed init. Drop the suite
+    // opt-out so this still asserts that path, not the disabled skip.
+    delete env.TIM_EMBEDDING_DISABLED;
     const result = spawnSync(process.execPath, [CLI_PATH, '--real-provider', '--output', out], {
       encoding: 'utf8',
-      env: {
-        ...process.env,
-        TIM_EMBEDDING_REAL_MODEL: '1',
-        TIM_EMBEDDING_MODEL: 'test-unknown-enum',
-      },
+      env,
     });
     expect(result.status).toBe(0);
     const parsed = JSON.parse(fs.readFileSync(out, 'utf8'));

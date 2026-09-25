@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TimStore, type EmbeddingProvider } from 'tim-store';
 
 const spawnMock = vi.fn(() => ({ once: vi.fn() }));
@@ -26,9 +26,16 @@ async function storeWith(n: number): Promise<TimStore> {
 }
 
 describe('embedding pass', () => {
+  beforeEach(() => {
+    // Suite setup sets TIM_EMBEDDING_DISABLED=1. This file exercises the
+    // embedding timer and drain, which both no-op while that is set.
+    delete process.env.TIM_EMBEDDING_DISABLED;
+  });
+
   afterEach(() => {
     stopEmbeddingTimer();
     spawnMock.mockClear();
+    process.env.TIM_EMBEDDING_DISABLED = '1';
   });
 
   it('drains every unembedded entry, batch after batch', async () => {
