@@ -10,6 +10,8 @@ import {
   type SyncConfigDiagnosticStatus,
   type SyncStateClassification,
 } from 'tim-core';
+import { insideSyncMutation, withSyncMutationSync } from './lock.js';
+import { atomicCreatePrivate, atomicWritePrivate } from './private-file.js';
 
 export interface SyncConfig {
   serverUrl: string;
@@ -34,6 +36,8 @@ export interface SyncState {
   lastPullAttempt?: string | null;
   lastPushError?: string | null;
   lastPullError?: string | null;
+  /** Optimistic concurrency token. Missing on legacy files, treated as 0. */
+  stateEpoch?: number;
 }
 
 export interface SyncConfigRead {
@@ -147,23 +151,33 @@ export function freshBoundSyncState(config: SyncConfig, dbIdentity: string): Syn
 }
 
 export function saveConfig(config: SyncConfig): void {
-  const dir = getTimDir();
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(getSyncConfigPath(), JSON.stringify(config, null, 2), { mode: 0o600 });
+  const write = (): void => {
+    atomicWritePrivate(getSyncConfigPath(), JSON.stringify(config, null, 2));
+  };
+  if (insideSyncMutation()) write();
+  else withSyncMutationSync(write);
 }
 
 export function clearConfig(): boolean {
-  const p = getSyncConfigPath();
-  if (!fs.existsSync(p)) return false;
-  fs.unlinkSync(p);
-  return true;
+  const clear = (): boolean => {
+    const p = getSyncConfigPath();
+    if (!fs.existsSync(p)) return false;
+    fs.unlinkSync(p);
+    return true;
+  };
+  if (insideSyncMutation()) return clear();
+  return withSyncMutationSync(clear);
 }
 
 export function clearSyncState(): boolean {
-  const p = getSyncStatePath();
-  if (!fs.existsSync(p)) return false;
-  fs.unlinkSync(p);
-  return true;
+  const clear = (): boolean => {
+    const p = getSyncStatePath();
+    if (!fs.existsSync(p)) return false;
+    fs.unlinkSync(p);
+    return true;
+  };
+  if (insideSyncMutation()) return clear();
+  return withSyncMutationSync(clear);
 }
 
 export function clearSyncConnection(): { config: boolean; state: boolean } {
@@ -222,6 +236,9 @@ export function loadBoundSyncState(config: SyncConfig, dbIdentity: string): Sync
     lastPullAttempt: classified.lastPullAttempt,
     lastPushError: classified.lastPushError,
     lastPullError: classified.lastPullError,
+    stateEpoch: typeof record.stateEpoch === 'number' && Number.isInteger(record.stateEpoch)
+      ? record.stateEpoch
+      : 0,
   };
 }
 
@@ -249,27 +266,29 @@ export interface SyncRepairResult {
  * Refuses when config is not a valid connection. Does not contact the server.
  */
 export function repairSyncState(dbIdentity: string): SyncRepairResult {
-  const configRead = readSyncConfig();
-  if (!configRead.config) {
-    throw new Error(describeSyncConfigStatus(configRead.status));
-  }
-  const binding = bindingFor(configRead.config, dbIdentity);
-  const read = readSyncStateFile();
-  if (read.kind === 'missing') {
-    saveSyncState(freshBoundSyncState(configRead.config, dbIdentity));
-    return { action: 'created', preservedPath: null };
-  }
-  if (read.kind === 'parsed') {
-    const classified = classifySyncStateValue(read.value, binding);
-    if (classified.status === 'available' && classified.cursorUsable) {
-      return { action: 'unchanged', preservedPath: null };
+  return withSyncMutationSync(() => {
+    const configRead = readSyncConfig();
+    if (!configRead.config) {
+      throw new Error(describeSyncConfigStatus(configRead.status));
     }
-  }
-  const preservedPath = legacyStateArchivePath(path.dirname(read.path));
-  fs.copyFileSync(read.path, preservedPath);
-  fs.chmodSync(preservedPath, 0o600);
-  saveSyncState(freshBoundSyncState(configRead.config, dbIdentity));
-  return { action: 'repaired', preservedPath };
+    const binding = bindingFor(configRead.config, dbIdentity);
+    const read = readSyncStateFile();
+    if (read.kind === 'missing') {
+      saveSyncState(freshBoundSyncState(configRead.config, dbIdentity), { replace: true });
+      return { action: 'created', preservedPath: null };
+    }
+    if (read.kind === 'parsed') {
+      const classified = classifySyncStateValue(read.value, binding);
+      if (classified.status === 'available' && classified.cursorUsable) {
+        return { action: 'unchanged', preservedPath: null };
+      }
+    }
+    const preservedPath = legacyStateArchivePath(path.dirname(read.path));
+    fs.copyFileSync(read.path, preservedPath);
+    fs.chmodSync(preservedPath, 0o600);
+    saveSyncState(freshBoundSyncState(configRead.config, dbIdentity), { replace: true });
+    return { action: 'repaired', preservedPath };
+  });
 }
 
 function legacyStateArchivePath(dir: string): string {
@@ -299,22 +318,66 @@ export function loadSyncState(): SyncState | null {
     lastPullAttempt: typeof record.lastPullAttempt === 'string' ? record.lastPullAttempt : null,
     lastPushError: typeof record.lastPushError === 'string' ? record.lastPushError : null,
     lastPullError: typeof record.lastPullError === 'string' ? record.lastPullError : null,
+    stateEpoch: typeof record.stateEpoch === 'number' && Number.isInteger(record.stateEpoch)
+      ? record.stateEpoch
+      : undefined,
   };
 }
 
-export function saveSyncState(state: SyncState): void {
-  const dir = getTimDir();
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+export class SyncStateConflictError extends Error {
+  readonly code = 'SYNC_STATE_CONFLICT';
+
+  constructor(
+    readonly onDisk: number,
+    readonly expected: number | undefined,
+  ) {
+    super(
+      `Sync state epoch ${expected ?? 'missing'} does not match on-disk epoch ${onDisk}. `
+      + 'Reload state inside the sync lock. Repair is the explicit replace path.',
+    );
+    this.name = 'SyncStateConflictError';
+  }
+}
+
+export interface SyncStateWriteOptions {
+  /** Overwrite even when the caller's epoch is stale. Repair and first bind use this. */
+  replace?: boolean;
+}
+
+function readOnDiskEpoch(target: string): number {
+  const parsed = JSON.parse(fs.readFileSync(target, 'utf8')) as { stateEpoch?: unknown };
+  const epoch = parsed?.stateEpoch;
+  return typeof epoch === 'number' && Number.isInteger(epoch) && epoch >= 0 ? epoch : 0;
+}
+
+function persistSyncState(state: SyncState, options?: SyncStateWriteOptions): void {
   const target = getSyncStatePath();
-  const tmp = `${target}.${randomUUID()}.tmp`;
-  try {
-    const fd = fs.openSync(tmp, 'wx', 0o600);
-    try { fs.writeFileSync(fd, JSON.stringify(state, null, 2)); fs.fsyncSync(fd); }
-    finally { fs.closeSync(fd); }
-    fs.renameSync(tmp,target);
-    const dirFd = fs.openSync(dir,'r');
-    try { fs.fsyncSync(dirFd); } finally { fs.closeSync(dirFd); }
-  } finally { if (fs.existsSync(tmp)) fs.unlinkSync(tmp); }
+  const exists = fs.existsSync(target);
+  let onDisk = 0;
+  if (exists) {
+    try {
+      onDisk = readOnDiskEpoch(target);
+    } catch {
+      if (!options?.replace) throw new SyncStateRejectedError('invalid_json');
+      onDisk = 0;
+    }
+    if (!options?.replace && state.stateEpoch !== onDisk) {
+      throw new SyncStateConflictError(onDisk, state.stateEpoch);
+    }
+  } else if (!options?.replace && state.stateEpoch !== undefined && state.stateEpoch !== 0) {
+    throw new SyncStateConflictError(0, state.stateEpoch);
+  }
+  const next: SyncState = { ...state, stateEpoch: onDisk + 1 };
+  atomicWritePrivate(target, JSON.stringify(next, null, 2));
+  state.stateEpoch = next.stateEpoch;
+}
+
+export function saveSyncState(state: SyncState, options?: SyncStateWriteOptions): void {
+  if (insideSyncMutation()) {
+    persistSyncState(state, options);
+    return;
+  }
+  withSyncMutationSync(() => persistSyncState(state, options));
 }
 
 export function getDeviceId(): string {
@@ -323,10 +386,16 @@ export function getDeviceId(): string {
     const id = fs.readFileSync(p, 'utf8').trim();
     if (id) return id;
   }
-  const dir = getTimDir();
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   const id = randomUUID();
-  fs.writeFileSync(p, id, { mode: 0o600 });
+  try {
+    atomicCreatePrivate(p, id);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'EEXIST') {
+      const existing = fs.readFileSync(p, 'utf8').trim();
+      if (existing) return existing;
+    }
+    throw err;
+  }
   return id;
 }
 
