@@ -8,6 +8,7 @@ import {
   KIND_EXCHANGE_BATCH,
   KIND_EXCHANGES_ROOT,
   ErrorLogger,
+  isSummarySkipCurrent,
   markSummarySkipped,
   readSummarySkipped,
   type TimStore,
@@ -274,13 +275,12 @@ export async function sweepIdleSessions(
     if (spawns >= maxSpawns) break;
 
     const sessionId = session.id;
-    if (readSummarySkipped(session.metadata)) {
+    const coverage = await deriveSessionCoverage(store, sessionId);
+    const { batchesSummarized } = coverage;
+    if (isSummarySkipCurrent(session.metadata, coverage.exchangeCount)) {
       results.push({ sessionId, reason: 'skipped' });
       continue;
     }
-
-    const coverage = await deriveSessionCoverage(store, sessionId);
-    const { batchesSummarized } = coverage;
     if (!coverage.hasPendingSummarization) {
       results.push({ sessionId, reason: 'no-pending' });
       continue;
@@ -324,6 +324,16 @@ export async function sweepIdleSessions(
 
     let sessionMeta = session.metadata as Record<string, unknown>;
     let attempts = getSweepAttempts(sessionMeta);
+    // The session grew after a give-up: start over. A legacy mark without a
+    // count keeps its attempts and is re-marked with the count below.
+    if (typeof readSummarySkipped(sessionMeta)?.exchanges === 'number') {
+      attempts = 0;
+      await store.update(sessionId, { metadata: { summary_skipped: null } });
+      sessionMeta = await patchSessionSweepMetadata(store, sessionId, {
+        sweepAttempts: 0,
+        sweepBatchesAtSpawn: null,
+      });
+    }
     const batchesAtSpawn = getSweepBatchesAtSpawn(sessionMeta);
     if (batchesAtSpawn !== undefined) {
       if (batchesSummarized > batchesAtSpawn) {
@@ -348,7 +358,7 @@ export async function sweepIdleSessions(
     }
 
     if (attempts >= maxAttempts) {
-      await markSummarySkipped(store, sessionId, 'exhausted');
+      await markSummarySkipped(store, sessionId, 'exhausted', coverage.exchangeCount);
       results.push({ sessionId, reason: 'exhausted' });
       continue;
     }

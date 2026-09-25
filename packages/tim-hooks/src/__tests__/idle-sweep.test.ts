@@ -374,6 +374,7 @@ describe('sweepIdleSessions (criterion 10 — attempt cap)', () => {
       expect(session?.metadata.summary_skipped).toEqual({
         reason: 'exhausted',
         at: expect.any(String),
+        exchanges: 2,
       });
       const exhaustedErrors = store.getDb().prepare(
         `SELECT error FROM error_log WHERE tool = 'idle_sweep' AND error LIKE '%exhausted%'`,
@@ -393,6 +394,40 @@ describe('sweepIdleSessions (criterion 10 — attempt cap)', () => {
       expect(memory.summaryCoverage.sessionsWithPending).toBe(1);
       expect(memory.summaryCoverage.pendingExchangeCount).toBe(2);
       expect(memory.summaryCoverage.pendingRanges.some(r => r.sessionId === 'skip-s')).toBe(false);
+    } finally {
+      info.mockRestore();
+    }
+  });
+
+  it('sweeps an exhausted session again once it logs a new exchange', async () => {
+    const dir = fs.mkdtempSync(path.join(TEST_ROOT, 'c10-grow-'));
+    writeMarker(dir, { project: 'P0100' });
+    await startSession(sessions, store, {
+      sessionId: 'grow-s',
+      projectId: 'P0100',
+      cwd: dir,
+      backdateTo: '2026-01-01T10:00:00.000Z',
+    });
+    const now = () => new Date('2026-08-12T16:20:00.000Z').getTime();
+    const spawn = vi.fn();
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    try {
+      for (let pass = 0; pass < 4; pass++) {
+        releaseLock(dir);
+        await sweepIdleSessions(store, { spawn, now, idleMinutes: 15, maxAttempts: 3 });
+      }
+      expect((await store.read('grow-s'))?.metadata.summary_skipped).toBeDefined();
+
+      await sessions.logExchange('grow-s', [
+        { role: 'user', content: 'q-late' },
+        { role: 'agent', content: 'a-late' },
+      ]);
+      backdateSessionExchanges(store, 'grow-s', '2026-01-01T10:00:00.000Z');
+      releaseLock(dir);
+      const after = await sweepIdleSessions(store, { spawn, now, idleMinutes: 15, maxAttempts: 3 });
+      expect(after.some(r => r.sessionId === 'grow-s' && r.reason === 'skipped')).toBe(false);
+      expect(spawn).toHaveBeenCalledTimes(4);
+      expect((await store.read('grow-s'))?.metadata.summary_skipped).toBeUndefined();
     } finally {
       info.mockRestore();
     }
