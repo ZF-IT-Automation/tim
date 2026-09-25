@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3';
 import type { Entry } from 'tim-core';
-import { SCHEMA_KINDS } from 'tim-core';
+import { askJev, jevNoul, SCHEMA_KINDS } from 'tim-core';
 import type { TimStore } from './store.js';
 import { titleSimilarity, cosineSimilarity } from './store.js';
 import { parseAndCoerceMetadata } from './metadata-coerce.js';
@@ -17,6 +17,13 @@ export interface ConsolidationCandidate {
   reason: string;
 }
 
+/** Scored pairs plus how this call's Jev pass classified the ones it asked about. */
+export interface DuplicateCandidateList extends Array<ConsolidationCandidate> {
+  confirmed: number;
+  rejected: number;
+  unconfirmed: number;
+}
+
 export interface CurationMetadata {
   kind: 'curation';
   consolidation: ConsolidationType;
@@ -24,6 +31,8 @@ export interface CurationMetadata {
   pair?: [string, string];
   target?: string;
   score?: number;
+  /** Jev noul when this pair was confirmed. Absent when confirmation was skipped or failed. */
+  jev?: number;
   reason: string;
   project_ref: string;
   dedup_key: string;
@@ -74,6 +83,46 @@ function rowToEntry(row: RowEntry): Entry {
 function pairDedupKey(id1: string, id2: string): string {
   const [a, b] = id1 < id2 ? [id1, id2] : [id2, id1];
   return `duplicate:${a}:${b}`;
+}
+
+const JEV_DUPLICATE_NOUL = 0.7;
+const JEV_CONFIRM_CONCURRENCY = 6;
+const JEV_BODY_CHARS = 1500;
+const JEV_SAME_FACT =
+  'Do A and B record the same fact or task, so that one can be dropped without losing a distinct fact? A different date, version, subject or a follow-up is not the same fact.';
+
+interface ScoredDuplicate {
+  pair: [string, string];
+  score: number;
+  reason: string;
+  a: Entry;
+  b: Entry;
+}
+
+function duplicateCandidateList(): DuplicateCandidateList {
+  const list = [] as ConsolidationCandidate[] as DuplicateCandidateList;
+  list.confirmed = 0;
+  list.rejected = 0;
+  list.unconfirmed = 0;
+  return list;
+}
+
+function jevPairState(a: Entry, b: Entry): { a: { title: string; body: string }; b: { title: string; body: string } } {
+  const clip = (entry: Entry) => ({ title: entry.title, body: entry.content.slice(0, JEV_BODY_CHARS) });
+  return { a: clip(a), b: clip(b) };
+}
+
+async function mapConcurrent<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (cursor < items.length) {
+      const index = cursor++;
+      results[index] = await fn(items[index]!);
+    }
+  });
+  await Promise.all(workers);
+  return results;
 }
 
 function targetDedupKey(target: string): string {
@@ -243,23 +292,24 @@ export class ConsolidationManager {
 
   async findDuplicateCandidates(
     projectLabel: string,
-    opts: { threshold?: number } = {},
-  ): Promise<ConsolidationCandidate[]> {
+    opts: { threshold?: number; confirm?: boolean } = {},
+  ): Promise<DuplicateCandidateList> {
     const titleThreshold = 0.6;
     const cosineThreshold = opts.threshold ?? 0.8;
+    const confirm = opts.confirm !== false;
     const project = await this.resolveProject(projectLabel);
     const entries = this.getProjectContentEntries(project.id);
     const vectors = this.loadVectors(entries.map(e => e.id));
-    const candidates: ConsolidationCandidate[] = [];
+    const scored: ScoredDuplicate[] = [];
 
     for (let i = 0; i < entries.length; i++) {
       for (let j = i + 1; j < entries.length; j++) {
-        const a = entries[i]!;
-        const b = entries[j]!;
-        const titleScore = titleSimilarity(a.title, b.title);
+        const left = entries[i]!;
+        const right = entries[j]!;
+        const titleScore = titleSimilarity(left.title, right.title);
         let cosScore = 0;
-        const va = vectors.get(a.id);
-        const vb = vectors.get(b.id);
+        const va = vectors.get(left.id);
+        const vb = vectors.get(right.id);
         if (va && vb) {
           cosScore = cosineSimilarity(va, vb);
         }
@@ -267,31 +317,103 @@ export class ConsolidationManager {
         const isDup = cosScore >= cosineThreshold || titleScore >= titleThreshold;
         if (!isDup) continue;
 
-        const pair: [string, string] = a.id < b.id ? [a.id, b.id] : [b.id, a.id];
+        const a = left.id < right.id ? left : right;
+        const b = left.id < right.id ? right : left;
         const reason =
           cosScore >= cosineThreshold
             ? `cosine=${cosScore.toFixed(2)} title=${titleScore.toFixed(2)}`
             : `title=${titleScore.toFixed(2)}`;
-
-        const written = await this.enqueue(projectLabel, 'duplicate', {
-          consolidation: 'duplicate',
-          status: 'pending',
-          pair,
+        scored.push({
+          pair: [a.id, b.id],
           score: Number(score.toFixed(3)),
           reason,
+          a,
+          b,
         });
-        if (written) {
-          candidates.push({
-            id: written.id,
-            consolidation: 'duplicate',
-            pair,
-            score: Number(score.toFixed(3)),
-            reason,
-          });
-        }
       }
     }
+
+    const candidates = duplicateCandidateList();
+    const fresh: ScoredDuplicate[] = [];
+    for (const item of scored) {
+      const existing = await this.findExistingCuration(projectLabel, pairDedupKey(item.pair[0], item.pair[1]));
+      if (!existing) {
+        fresh.push(item);
+        continue;
+      }
+      const storedScore = typeof existing.metadata.score === 'number' ? existing.metadata.score : item.score;
+      const storedReason = typeof existing.metadata.reason === 'string' ? existing.metadata.reason : item.reason;
+      candidates.push({
+        id: existing.id,
+        consolidation: 'duplicate',
+        pair: item.pair,
+        score: storedScore,
+        reason: storedReason,
+      });
+    }
+
+    if (!confirm) {
+      for (const item of fresh) {
+        const queued = await this.enqueueScoredDuplicate(projectLabel, item, item.reason);
+        if (queued) candidates.push(queued);
+      }
+      return candidates;
+    }
+
+    const decisions = await mapConcurrent(fresh, JEV_CONFIRM_CONCURRENCY, async item => {
+      const answers = await askJev('find-duplicates', jevPairState(item.a, item.b), {
+        same: { type: 'noul', instructions: JEV_SAME_FACT },
+      });
+      const noul = answers ? jevNoul(answers, 'same') : undefined;
+      if (noul === undefined) return { item, kind: 'unconfirmed' as const };
+      if (noul >= JEV_DUPLICATE_NOUL) return { item, kind: 'confirmed' as const, noul };
+      return { item, kind: 'rejected' as const };
+    });
+
+    for (const decision of decisions) {
+      if (decision.kind === 'rejected') {
+        candidates.rejected++;
+        continue;
+      }
+      const reason = decision.kind === 'confirmed'
+        ? `${decision.item.reason} jev=${decision.noul.toFixed(2)}`
+        : `${decision.item.reason} unconfirmed`;
+      const queued = await this.enqueueScoredDuplicate(
+        projectLabel,
+        decision.item,
+        reason,
+        decision.kind === 'confirmed' ? decision.noul : undefined,
+      );
+      if (!queued) continue;
+      if (decision.kind === 'confirmed') candidates.confirmed++;
+      else candidates.unconfirmed++;
+      candidates.push(queued);
+    }
     return candidates;
+  }
+
+  private async enqueueScoredDuplicate(
+    projectLabel: string,
+    item: ScoredDuplicate,
+    reason: string,
+    jev?: number,
+  ): Promise<ConsolidationCandidate | null> {
+    const written = await this.enqueue(projectLabel, 'duplicate', {
+      consolidation: 'duplicate',
+      status: 'pending',
+      pair: item.pair,
+      score: item.score,
+      reason,
+      ...(jev !== undefined ? { jev } : {}),
+    });
+    if (!written) return null;
+    return {
+      id: written.id,
+      consolidation: 'duplicate',
+      pair: item.pair,
+      score: item.score,
+      reason,
+    };
   }
 
   private hasFreshEdges(entryId: string, cutoffIso: string): boolean {
