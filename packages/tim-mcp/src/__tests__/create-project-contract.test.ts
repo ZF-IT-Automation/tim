@@ -137,7 +137,7 @@ describe('tim_create_project explicit mode contract', () => {
     const dbDir = path.join(root, "database dir's");
     fs.mkdirSync(dbDir);
     dbPath = path.join(dbDir, 'custom tim.db');
-    client = new StdioMcpClient(dbPath, serverCwd);
+    client = new StdioMcpClient(dbPath, serverCwd, { TIM_MCP_TOOLS: 'all' });
     await client.init();
   });
 

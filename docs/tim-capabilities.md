@@ -42,6 +42,8 @@ Secret-boundary enforcement and replicated delete ordering include reviewed corr
 
 Use MCP tools for project binding, reads/search, writes/updates, sessions, relationships and curation. Use the CLI for installation, host setup, operational diagnostics and recovery. Tool schemas and command help are the authoritative parameter reference; this page deliberately avoids a hard-coded tool count.
 
+MCP clients list eleven core tools by default. `TIM_MCP_TOOLS=all`, or `"mcp": { "tools": "all" }` in `~/.tim/config.json`, lists every registered tool. A call to a tool that is not listed still runs.
+
 Common entry points:
 
 - `tim_load_project`: bind and load project context; use `bind:false` for a non-binding lookup.

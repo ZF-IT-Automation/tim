@@ -7,9 +7,10 @@ Tags are how \`tim_resume_topic\` and \`tim_search({ tag })\` find past work, so
 vocabulary costs retrieval, not tidiness. Run this per project, when asked or when a
 project is old enough to have drifted. One project at a time. Never use direct SQL.
 
-\`tim_stats({ root: label, tags: true })\` gives the histogram plus \`distinct\` and
-\`usedOnce\`. Read the shape first: a healthy project has few singletons, a drifted one
-is mostly singletons and holds several names for one subject.
+\`tim doctor\` prints only the five most-used tags in the whole database. For this
+project, gather names from \`tim_search\` and \`tim_show\` and count what repeats. A
+healthy project has few one-off names; a drifted one is mostly one-offs and holds
+several names for one subject.
 
 Three patterns, and only two of them are drift:
 
@@ -32,17 +33,18 @@ Per family:
 
 1. Propose it with counts per member and the winning name. Never merge unasked — this
    rewrites how the history can be found.
-2. \`tim_tag_rename({ oldTag, newTag, project: label })\`. **Always pass \`project\`.**
-   Without it the rename hits every project, and one word means different things in
-   different trees: \`#handoff\` was the worker handoff in one and the handoff note in
-   another.
+2. For each entry you already read in this project, \`tim_read\` then \`tim_update\`
+   with the merged \`tags\` array (it replaces). **Always pass \`root\`** on the
+   \`tim_search\` that found them, and do not update an entry from another project.
+   One word means different things in different trees: \`#handoff\` was the worker
+   handoff in one and the handoff note in another.
 3. Write the merge and its reason into the project's Log. The next curator has to know
    a name was retired, or it comes back.
 
 Do not chase singletons as such. A one-off tag naming a real subject is fine; it is
 waste only when it restates a tag that already exists.
 
-Close by re-reading \`tim_stats({ root: label, tags: true })\` and reporting \`distinct\`
-and \`usedOnce\` before and after, plus every family you deliberately left intact.
+Close by searching the winning tag and the retired one with \`tim_search({ tag })\`
+and reporting what remains, plus every family you deliberately left intact.
 `,
 };

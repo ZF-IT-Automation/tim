@@ -14,8 +14,7 @@ Trust that file over training data — it matches the installed release.
 ## Live state (always fresh)
 | Question | Tool |
 |----------|------|
-| DB health, broken links, FTS | `tim_health` |
-| Full diagnostics | `tim doctor` (CLI) or `tim_doctor` (MCP) |
-| Entry counts, tags, kinds | `tim_stats` |
+| DB health, broken links, FTS, full diagnostics | `tim doctor` (CLI) or `tim_doctor` (MCP) |
+| Entry counts | `tim stats` (CLI) |
 
 If docs and live output disagree, believe the **installed version** (tools + docs), not memory.

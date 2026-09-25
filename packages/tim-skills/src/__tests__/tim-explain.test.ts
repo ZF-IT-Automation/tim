@@ -5,9 +5,11 @@ describe('tim-explain skill', () => {
   it('loads with capabilities doc path and live-state tools', () => {
     expect(TIM_EXPLAIN_SKILL.name).toBe('tim-explain');
     expect(TIM_EXPLAIN_SKILL.content).toContain('tim-capabilities.md');
-    expect(TIM_EXPLAIN_SKILL.content).toContain('tim_health');
+    expect(TIM_EXPLAIN_SKILL.content).toContain('tim doctor');
     expect(TIM_EXPLAIN_SKILL.content).toContain('tim_doctor');
-    expect(TIM_EXPLAIN_SKILL.content).toContain('tim_stats');
+    expect(TIM_EXPLAIN_SKILL.content).toContain('tim stats');
+    expect(TIM_EXPLAIN_SKILL.content).not.toContain('tim_health');
+    expect(TIM_EXPLAIN_SKILL.content).not.toContain('tim_stats');
     expect(TIM_EXPLAIN_SKILL.content.split('\n').length).toBeLessThanOrEqual(50);
   });
 

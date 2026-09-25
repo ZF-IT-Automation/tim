@@ -6,17 +6,16 @@ description: TIM session lifecycle — start, bind project, log exchanges.
 # tim-session-start
 
 ## Session lifecycle
-1. **Start** — `tim_session_start({ sessionId, projectId?, cwd, harness, agentName })`
-   Returns session node; binds project when `projectId` or cwd `.tim-project` present.
+1. **Start** — the host hook does this. From a shell: `tim hook session-start --session <id> [--project <label>] [--cwd <path>] [--harness <name>]`.
+   It returns the session node and binds the project when `--project` or a cwd `.tim-project` is present.
 2. **Load brief** — `tim_load_project({ label: "P0063", bind: true, sessionId })`
    Loading another project re-binds the session there (follow the work); an unbound session binds on its first `tim_write`. Cross-project read without re-binding → `bind: false`.
 3. **End** — the harness session-end hook checkpoints automatically. To leave a note yourself, use
-   the CLI: `tim checkpoint --session <sessionId> --handoff-note "…"` (there is no `tim_checkpoint`
-   MCP tool).
+   the CLI: `tim checkpoint --session <sessionId> --handoff-note "…"`.
 
 ## Hooks (automatic)
 - SessionStart briefing may include delta + update line (no extra calls).
-- UserPromptSubmit injects retrieval context via `tim_hook_prompt_submit`.
+- The UserPromptSubmit hook injects retrieval context. Do not call it yourself.
 - Installed Claude hooks log exchanges automatically — do not call internal logging tools.
 
 ## Inbox fallback (P0000)

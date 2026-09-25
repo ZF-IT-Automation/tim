@@ -5,12 +5,12 @@ description: Verify secret-marked TIM subtrees before sharing, sync, export, or 
 
 # tim-secret-audit
 
-Use before sharing, `tim_export`, sync setup, or adding collaborators.
+Use before sharing, `tim export`, sync setup, or adding collaborators.
 
 Checks:
 1. Identify sensitive roots: entries with `metadata.secret` or known private
    projects/sections.
-2. Use `tim_secret` helpers if available; otherwise `tim_read` suspected roots
+2. Use `tim secret list` and `tim secret status <id>`; otherwise `tim_read` suspected roots
    and inspect metadata only as far as needed.
 3. Verify moved children inherited secret metadata.
 4. Confirm export/sync scope excludes private material, or get user approval.

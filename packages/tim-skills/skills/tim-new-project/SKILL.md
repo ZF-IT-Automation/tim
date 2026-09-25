@@ -17,18 +17,10 @@ For a disk-backed repository or workspace:
    creation, marker publication, and sections.
 4. Call `tim_load_project`, then fill the appropriate seeded sections with TIM tools.
 
-If `tim_doctor` cannot provide a persistent database path, do not guess. Use direct MCP
-only with an already-known non-conflicting label as below, or ask the user.
+If `tim_doctor` cannot provide a persistent database path, do not guess. Ask the user.
 
-If directly using MCP, start only with an already-known non-conflicting `P` label and
-call `tim_create_project` with `label`, `content`, `aliases`, and
-`path="/absolute/path/to/repository"`. On collision, retry only under an explicit,
-known allocation policy. If no supported allocator/list is available, do not guess:
-use the CLI or ask the user. Accept success only when the result has `mode="bound"`
-and its `markerPath` is the `.tim-project` path for that same canonical repository.
-
-Use `memoryOnly=true` only for an intentionally virtual/database-only project.
-Never use `memoryOnly=true` for an unknown cwd; resolve the canonical path first.
+`tim new-project` always takes `--path`. Never use `memoryOnly=true` for an unknown cwd;
+resolve the canonical path first. A database-only project is a user decision, not a fallback.
 
 If project creation reports a partial marker-publication failure, run only the exact
 shell-quoted `tim bind-project` command it returns, against the same configured database.

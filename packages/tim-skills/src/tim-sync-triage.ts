@@ -7,10 +7,9 @@ Use when TIM sync looks stuck or divergent.
 
 Read-only first:
 1. \`tim sync status\`
-2. MCP \`tim_sync({ action:"status" })\`
-3. Check \`TIM_SYNC_PASSPHRASE\` exists, but never print it.
-4. If secret entries are pending, check \`TIM_SECRET_PASSPHRASE\` exists (never print it).
-5. \`tim doctor\`; record broken links/orphans separately from sync.
+2. Check \`TIM_SYNC_PASSPHRASE\` exists, but never print it.
+3. If secret entries are pending, check \`TIM_SECRET_PASSPHRASE\` exists (never print it).
+4. \`tim doctor\`; record broken links/orphans separately from sync.
 
 Safe retry:
 - Pull before push if the user expects remote changes.

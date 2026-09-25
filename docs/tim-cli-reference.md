@@ -109,7 +109,7 @@ TIM ready. Connect your MCP client to <home>/.tim/mcp.json
 ```
 
 **TIP:** Symlink or copy `~/.tim/mcp.json` into your MCP client config (Claude Code, Cursor, etc.)
-to enable the TIM MCP tools (tim_read, tim_search, tim_write, tim_update, etc.).
+to enable the TIM MCP tools. Clients list a core set by default (`tim_read`, `tim_search`, `tim_write`, `tim_update`, and the other core tools); `TIM_MCP_TOOLS=all` lists every registered tool.
 
 ---
 

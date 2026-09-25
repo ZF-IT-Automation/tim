@@ -1,10 +1,10 @@
 export const TIM_HMEM_IMPORT_AUDIT_SKILL = {
   name: 'tim-hmem-import-audit',
   description:
-    'After tim_import of a .hmem file, verify project structure and repair misplaced nodes without SQL.',
+    'After tim import of a .hmem file, verify project structure and repair misplaced nodes without SQL.',
   content: `# tim-hmem-import-audit
 
-Use after \`tim_import\` of a .hmem file.
+Use after \`tim import\` of a .hmem file.
 
 Rules:
 - No direct SQL. Use TIM tools only.
@@ -29,12 +29,12 @@ Repair:
   with merged data.
 - Duplicate section: move useful children into canonical section, then suppress
   or mark obsolete/irrelevant only after user agrees.
-- Broken links: recreate with \`tim_link\` when source/target are clear.
+- Broken links: write the gap into the project Log with \`tim_write\` and ask the user.
 
 Verify again:
 - \`tim_load_project({ label:"P####", bind:false, depth:3 })\`
 - \`tim_doctor\`
-- \`tim_import(source, { dryRun:true, deduplicate:true })\`
+- \`tim import <path.hmem> --dry-run --deduplicate\`
 
 Handoff:
 source path | snapshot path | import counts | projects checked | bindings resolved |

@@ -1,12 +1,13 @@
-// TIM MCP — Plumbing-tool gate (Plan 4, Task 4).
-// ListTools hides internal/plumbing tools by default. Setting
-// TIM_EXPOSE_INTERNAL_TOOLS=1 reveals them. Hidden tools remain fully callable
-// via CallTool — the summarizer and hooks depend on them.
+// TIM MCP — core tool listing.
+// ListTools returns the core set by default. TIM_MCP_TOOLS=all (or config
+// mcp.tools "all") lists every registered tool. Hidden tools remain callable
+// via CallTool — the summarizer and hooks depend on that.
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { spawn, type ChildProcess } from 'node:child_process';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
+import { TOOL_DEFS } from '../server.js';
 import { childServerCwd, isolateChildServerCwd } from './helpers/child-server-workspace.js';
 isolateChildServerCwd();
 
@@ -107,17 +108,25 @@ class McpClient {
   }
 }
 
-const INTERNAL_TOOL_NAMES = [
-  'tim_write_batch_summary',
-  'tim_rollup_session_summary',
-  'tim_show_unsummarized',
-  'tim_show_all_unsummarized',
-  'tim_show_untagged',
-  'tim_error_log',
-  'tim_session_log',
+const CORE_TOOLS = [
+  'tim_load_project',
+  'tim_read',
+  'tim_search',
+  'tim_write',
+  'tim_update',
+  'tim_show',
+  'tim_preview_briefing',
+  'tim_resume_topic',
+  'tim_delete',
+  'tim_doctor',
+  'tim_move_entry',
 ];
 
-describe('TIM_EXPOSE_INTERNAL_TOOLS gate', () => {
+function sorted(names: string[]): string[] {
+  return names.slice().sort();
+}
+
+describe('core MCP tool listing', () => {
   let dbPath: string;
 
   beforeEach(() => {
@@ -129,11 +138,14 @@ describe('TIM_EXPOSE_INTERNAL_TOOLS gate', () => {
     if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath);
   });
 
-  it('exposes tim_checkpoint to agents by default', async () => {
+  it('lists exactly the core set by default', async () => {
     const client = new McpClient(dbPath);
     try {
-      const tools = await client.listTools();
-      expect(tools.map(t => t.name)).toContain('tim_checkpoint');
+      const names = (await client.listTools()).map(t => t.name);
+      expect(sorted(names)).toEqual(sorted(CORE_TOOLS));
+      expect(names).not.toContain('tim_checkpoint');
+      expect(names).not.toContain('tim_health');
+      expect(names).not.toContain('tim_write_batch_summary');
     } finally {
       client.kill();
     }
@@ -156,56 +168,66 @@ describe('TIM_EXPOSE_INTERNAL_TOOLS gate', () => {
     }
   });
 
-  it('hides plumbing tools from ListTools by default', async () => {
-    const client = new McpClient(dbPath);
+  it('TIM_MCP_TOOLS=all lists every registered tool', async () => {
+    const client = new McpClient(dbPath, { TIM_MCP_TOOLS: 'all' });
     try {
-      const tools = await client.listTools();
-      const names = tools.map(t => t.name);
-      for (const internal of INTERNAL_TOOL_NAMES) {
-        expect(names, `expected ${internal} to be hidden`).not.toContain(internal);
-      }
-      // Sanity: a non-internal tool is still visible.
-      expect(names).toContain('tim_read');
-      expect(names).toContain('tim_show');
+      const names = (await client.listTools()).map(t => t.name);
+      expect(names).toEqual(TOOL_DEFS.map(def => def.name));
+      expect(names).toContain('tim_health');
+      expect(names).toContain('tim_write_batch_summary');
     } finally {
       client.kill();
     }
   });
 
-  it('TIM_EXPOSE_INTERNAL_TOOLS=1 reveals the plumbing tools', async () => {
+  it('mcp.tools all in config lists every tool, and TIM_MCP_TOOLS=core overrides it', async () => {
+    const configPath = path.join(process.env.HOME!, '.tim', 'config.json');
+    fs.writeFileSync(configPath, JSON.stringify({ mcp: { tools: 'all' } }));
+    const fromConfig = new McpClient(dbPath);
+    const overridden = new McpClient(dbPath, { TIM_MCP_TOOLS: 'core' });
+    try {
+      const fromConfigNames = (await fromConfig.listTools()).map(t => t.name);
+      expect(fromConfigNames).toEqual(TOOL_DEFS.map(def => def.name));
+      const overriddenNames = (await overridden.listTools()).map(t => t.name);
+      expect(sorted(overriddenNames)).toEqual(sorted(CORE_TOOLS));
+    } finally {
+      fromConfig.kill();
+      overridden.kill();
+      fs.rmSync(configPath, { force: true });
+    }
+  });
+
+  it('hidden tools still execute via CallTool', async () => {
+    const client = new McpClient(dbPath);
+    try {
+      const health = await client.callTool('tim_health', {});
+      expect(health.error).toBeUndefined();
+      expect(health.result?.isError).toBeFalsy();
+      expect(health.result?.content[0]?.text).not.toContain('Unknown tool');
+
+      const batch = await client.callTool('tim_write_batch_summary', {
+        sessionId: 'not-a-session',
+        batchIndex: 1,
+        summary: 'still dispatched',
+        seqFrom: 0,
+        seqTo: 0,
+      });
+      expect(batch.error).toBeUndefined();
+      expect(batch.result?.content[0]?.text ?? '').not.toContain('Unknown tool');
+
+      const sweep = await client.callTool('tim_show_all_unsummarized', {});
+      expect(sweep.error).toBeUndefined();
+      expect(sweep.result?.isError).toBeFalsy();
+    } finally {
+      client.kill();
+    }
+  });
+
+  it('TIM_EXPOSE_INTERNAL_TOOLS does not widen the default list', async () => {
     const client = new McpClient(dbPath, { TIM_EXPOSE_INTERNAL_TOOLS: '1' });
     try {
-      const tools = await client.listTools();
-      const names = tools.map(t => t.name);
-      for (const internal of INTERNAL_TOOL_NAMES) {
-        expect(names, `expected ${internal} to be revealed`).toContain(internal);
-      }
-      // Non-internal tools still visible.
-      expect(names).toContain('tim_read');
-    } finally {
-      client.kill();
-    }
-  });
-
-  it('hidden tools still execute via CallTool (handlers are unconditional)', async () => {
-    const client = new McpClient(dbPath);
-    try {
-      // tim_show_all_unsummarized is internal — its handler should still work
-      // even though ListTools hides it. The summarizer depends on this.
-      const resp = await client.callTool('tim_show_all_unsummarized', {});
-      expect(resp.error).toBeUndefined();
-      expect(resp.result!.isError).toBeFalsy();
-    } finally {
-      client.kill();
-    }
-  });
-
-  it('TIM_EXPOSE_INTERNAL_TOOLS=false (or unset) hides; non-1 values are not truthy', async () => {
-    const client = new McpClient(dbPath, { TIM_EXPOSE_INTERNAL_TOOLS: 'true' });
-    try {
-      const tools = await client.listTools();
-      const names = tools.map(t => t.name);
-      // Spec is strict: only '1' reveals. 'true', 'yes', 'on' do not.
+      const names = (await client.listTools()).map(t => t.name);
+      expect(sorted(names)).toEqual(sorted(CORE_TOOLS));
       expect(names).not.toContain('tim_write_batch_summary');
     } finally {
       client.kill();

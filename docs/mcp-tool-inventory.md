@@ -1,5 +1,7 @@
 # MCP tool inventory
 
+Implemented 2026-09-25: core listing. `ListTools` returns eleven tools by default: `tim_load_project`, `tim_read`, `tim_search`, `tim_write`, `tim_update`, `tim_show`, `tim_preview_briefing`, `tim_resume_topic`, `tim_delete`, `tim_doctor`, `tim_move_entry`. `TIM_MCP_TOOLS=all`, or `"mcp": { "tools": "all" }` in `~/.tim/config.json`, lists every registered tool; the env var wins when it is exactly `core` or `all`. `CallTool` still dispatches every tool. `TIM_EXPOSE_INTERNAL_TOOLS` does not change the list.
+
 Counted 2026-09-25. Proposals only — this change removes `tim_read_project` and leaves every other tool registered.
 
 Method: Claude Code transcripts under `~/.claude/projects/*/*.jsonl` with mtime in the 30 days before 2026-09-25 (7507 files, oldest 29.0 days; 99 files contained a TIM call); a call is a `tool_use` block whose `name` starts with `mcp__tim__tim_`, and an error is the matching `tool_result` with `is_error: true` (507 calls, 19 errors).
