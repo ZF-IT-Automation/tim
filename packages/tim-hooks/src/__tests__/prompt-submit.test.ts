@@ -206,6 +206,17 @@ describe('runPromptSubmit', () => {
       expect(ask).not.toHaveBeenCalled();
     });
 
+    it('ignores slash-command and shell output', async () => {
+      await twoHits();
+      const ask = vi.spyOn(timCore, 'askJev');
+      for (const prompt of [
+        '<local-command-stdout>Bye!</local-command-stdout>',
+        '<bash-input>cursor-agent login</bash-input>',
+        '<bash-stdout>done</bash-stdout><bash-stderr></bash-stderr>',
+      ]) expect(await runPromptSubmit(store, { prompt, jev: true })).toBeNull();
+      expect(ask).not.toHaveBeenCalled();
+    });
+
     it('does not call Jev unless enabled', async () => {
       await twoHits();
       const ask = vi.spyOn(timCore, 'askJev');
