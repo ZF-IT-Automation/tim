@@ -1,5 +1,8 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { TimStore, titleSimilarity } from '../index.js';
+
+const SAME_FACT =
+  'Do A and B record the same fact or task, so that one can be dropped without losing a distinct fact? A different date, version, subject or a follow-up is not the same fact.';
 
 describe('ConsolidationManager duplicates', () => {
   let store: TimStore;
@@ -207,5 +210,170 @@ describe('ConsolidationManager decay', () => {
     expect(a).toHaveLength(1);
     expect(b).toHaveLength(1);
     expect(a[0]!.id).toBe(b[0]!.id);
+  });
+});
+
+describe('findDuplicateCandidates Jev confirmation', () => {
+  let store: TimStore;
+
+  beforeEach(() => {
+    store = new TimStore(':memory:');
+    delete process.env.JEV_API_KEY;
+  });
+
+  afterEach(() => {
+    store.close();
+    vi.unstubAllGlobals();
+    delete process.env.JEV_API_KEY;
+  });
+
+  async function seedPair(label: string, bodyA = 'Notes A.') {
+    const project = await store.createProject(label, { content: `${label} — Test | Active` });
+    const a = await store.write(`Reminder System Cron Checker\n${bodyA}`, {
+      parentId: project.id,
+      tags: ['#reminder', '#cron'],
+    });
+    const b = await store.write('Reminder System via Cron Checker\nNotes B.', {
+      parentId: project.id,
+      tags: ['#reminder', '#design'],
+    });
+    return { a, b };
+  }
+
+  function stubNoul(noul: number) {
+    process.env.JEV_API_KEY = 'test-key';
+    const fetchMock = vi.fn(async (_url: unknown, init?: { body?: string }) =>
+      new Response(JSON.stringify({ answers: { same: { type: 'noul', noul } } }), {
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    return fetchMock;
+  }
+
+  it('enqueues a pair Jev confirms and records the noul', async () => {
+    const { a, b } = await seedPair('P0410', 'n'.repeat(2000));
+    const fetchMock = stubNoul(0.93);
+
+    const hits = await store.consolidate().findDuplicateCandidates('P0410');
+    expect(hits).toHaveLength(1);
+    expect(hits.confirmed).toBe(1);
+    expect(hits.rejected).toBe(0);
+    expect(hits.unconfirmed).toBe(0);
+    expect(hits[0]!.reason).toContain('jev=0.93');
+
+    const queue = await store.consolidate().getCurationQueue('P0410', 'pending');
+    expect(queue).toHaveLength(1);
+    expect(queue[0]!.metadata.jev).toBe(0.93);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const sent = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    const [low, high] = a.id < b.id ? [a, b] : [b, a];
+    expect(sent.state).toEqual({
+      a: { title: low.title, body: low.content.slice(0, 1500) },
+      b: { title: high.title, body: high.content.slice(0, 1500) },
+    });
+    expect(sent.questions).toEqual({
+      same: { type: 'noul', instructions: SAME_FACT },
+    });
+    expect(sent.state.a.body.length).toBeLessThanOrEqual(1500);
+    expect(sent.state.b.body.length).toBeLessThanOrEqual(1500);
+  });
+
+  it('enqueues when noul is exactly 0.70', async () => {
+    await seedPair('P0411');
+    stubNoul(0.7);
+    const hits = await store.consolidate().findDuplicateCandidates('P0411');
+    expect(hits).toHaveLength(1);
+    expect(hits.confirmed).toBe(1);
+    expect(hits[0]!.reason).toContain('jev=0.70');
+    const queue = await store.consolidate().getCurationQueue('P0411', 'pending');
+    expect(queue[0]!.metadata.jev).toBe(0.7);
+  });
+
+  it('does not enqueue a pair Jev rejects and counts it', async () => {
+    await seedPair('P0412');
+    stubNoul(0.69);
+    const hits = await store.consolidate().findDuplicateCandidates('P0412');
+    expect(hits).toHaveLength(0);
+    expect(hits.confirmed).toBe(0);
+    expect(hits.rejected).toBe(1);
+    expect(hits.unconfirmed).toBe(0);
+    const queue = await store.consolidate().getCurationQueue('P0412', 'pending');
+    expect(queue).toHaveLength(0);
+  });
+
+  it('enqueues unconfirmed when Jev fails and notes that in the reason', async () => {
+    await seedPair('P0413');
+    process.env.JEV_API_KEY = 'test-key';
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('busy', { status: 500 })));
+
+    const hits = await store.consolidate().findDuplicateCandidates('P0413');
+    expect(hits).toHaveLength(1);
+    expect(hits.confirmed).toBe(0);
+    expect(hits.rejected).toBe(0);
+    expect(hits.unconfirmed).toBe(1);
+    expect(hits[0]!.reason).toContain('unconfirmed');
+
+    const queue = await store.consolidate().getCurationQueue('P0413', 'pending');
+    expect(queue).toHaveLength(1);
+    expect(queue[0]!.metadata.reason).toContain('unconfirmed');
+    expect(queue[0]!.metadata.jev).toBeUndefined();
+  });
+
+  it('confirm:false enqueues without calling Jev', async () => {
+    await seedPair('P0414');
+    process.env.JEV_API_KEY = 'test-key';
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const hits = await store.consolidate().findDuplicateCandidates('P0414', { confirm: false });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(hits).toHaveLength(1);
+    expect(hits[0]!.reason).not.toContain('unconfirmed');
+    expect(String(hits[0]!.reason)).not.toMatch(/jev=/);
+    const queue = await store.consolidate().getCurationQueue('P0414', 'pending');
+    expect(queue[0]!.metadata.jev).toBeUndefined();
+  });
+
+  it('runs Jev confirmations with at most 6 requests in flight', async () => {
+    const project = await store.createProject('P0415', { content: 'P0415 — Test | Active' });
+    for (let i = 0; i < 7; i++) {
+      await store.write(`Pair${i}alpha sharedterm\nA.`, {
+        parentId: project.id,
+        tags: ['#pair', '#alpha'],
+      });
+      await store.write(`Pair${i}alpha sharedterm notes\nB.`, {
+        parentId: project.id,
+        tags: ['#pair', '#alpha'],
+      });
+    }
+
+    let inFlight = 0;
+    let maxInFlight = 0;
+    process.env.JEV_API_KEY = 'test-key';
+    const fetchMock = vi.fn(async () => {
+      inFlight++;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise(resolve => setTimeout(resolve, 40));
+      inFlight--;
+      return new Response(JSON.stringify({ answers: { same: { type: 'noul', noul: 0.91 } } }));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const hits = await store.consolidate().findDuplicateCandidates('P0415');
+    expect(hits).toHaveLength(7);
+    expect(hits.confirmed).toBe(7);
+    expect(fetchMock).toHaveBeenCalledTimes(7);
+    expect(maxInFlight).toBeGreaterThan(1);
+    expect(maxInFlight).toBeLessThanOrEqual(6);
+  });
+
+  it('does not treat version titles that differ only by a digit as duplicates', async () => {
+    const project = await store.createProject('P0416', { content: 'P0416 — Test | Active' });
+    await store.write('v1.3.7\nRelease A.', { parentId: project.id, tags: ['#release', '#a'] });
+    await store.write('v1.3.5\nRelease B.', { parentId: project.id, tags: ['#release', '#b'] });
+    const hits = await store.consolidate().findDuplicateCandidates('P0416', { confirm: false });
+    expect(hits).toHaveLength(0);
   });
 });
