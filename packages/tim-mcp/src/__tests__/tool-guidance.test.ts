@@ -17,6 +17,12 @@ describe('MCP tool guidance', () => {
     expect(desc('tim_move_entry')).toContain('Preview with tim_dry_run_move');
   });
 
+  it('documents the opt-in looks-done filter on tim_show', () => {
+    expect(desc('tim_show')).toContain('looks-done');
+    const show = TOOL_DEFS.find(definition => definition.name === 'tim_show')!;
+    expect(show.schema.shape.with.description).toContain('looks-done');
+  });
+
   it('documents the bounded tim_search response contract', () => {
     const search = TOOL_DEFS.find(definition => definition.name === 'tim_search')!;
 
