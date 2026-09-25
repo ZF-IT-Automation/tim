@@ -1,6 +1,7 @@
+import { SYNC_CAPABILITIES, validProtocolVersion, validProtocolBlob } from 'tim-core';
 import http from 'node:http';
 import { TenantRegistry } from './tenant-registry.js';
-import { createFile, listFiles, pushBlobs, pullBlobs } from './storage.js';
+import { createFile, listFiles, pushBlobs, pullBlobs, acknowledgeCursor } from './storage.js';
 import type { TenantTier } from './quotas.js';
 
 export const MAX_BODY_BYTES = 10 * 1024 * 1024;
@@ -53,7 +54,7 @@ export function readBody(req: http.IncomingMessage, maxBytes = MAX_BODY_BYTES): 
 
 function sendJson(res: http.ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify(body));
+  res.end(JSON.stringify({ ...SYNC_CAPABILITIES, ...(body as object) }));
 }
 
 function clientIp(req: http.IncomingMessage): string {
@@ -207,17 +208,22 @@ export function createHostedSyncServer(
       try {
         const raw = await readBody(req);
         const parsed = JSON.parse(raw) as {
+          client_schema_major: number; protocol_generation: number; file_generation: string;
           file_id: string;
           idempotency_key: string;
           blobs: { proposed_id: string; data: string; device_id: string; updated_at: string }[];
         };
+        if (!validProtocolVersion(parsed)) { sendJson(res, 409, { error: 'Unsupported protocol generation or request schema' }); return; }
+        if (!parsed.file_generation || !parsed.file_id || !parsed.idempotency_key || !Array.isArray(parsed.blobs)
+          || !parsed.blobs.every(validProtocolBlob)) { sendJson(res, 400, { error: 'Invalid push metadata' }); return; }
         const result = pushBlobs(
           registry,
           tenant.id,
           tenant.tier,
           parsed.file_id,
           parsed.idempotency_key,
-          parsed.blobs ?? [],
+          parsed.blobs,
+          parsed.file_generation,
         );
         if ('error' in result) {
           sendJson(res, result.status, { error: result.error });
@@ -240,8 +246,15 @@ export function createHostedSyncServer(
         sendJson(res, 400, { error: 'file_id required' });
         return;
       }
+      const generation = url.searchParams.get('file_generation');
+      const device = url.searchParams.get('device_id');
+      if (!validProtocolVersion({ client_schema_major: Number(url.searchParams.get('client_schema_major')),
+        protocol_generation: Number(url.searchParams.get('protocol_generation')) })) {
+        sendJson(res, 409, { error: 'Unsupported protocol generation or request schema' }); return;
+      }
+      if (!generation || !device) { sendJson(res, 400, { error: 'file_generation and device_id required' }); return; }
       const cursor = url.searchParams.get('cursor') ?? undefined;
-      const result = pullBlobs(registry, tenant.id, fileId, cursor);
+      const result = pullBlobs(registry, tenant.id, fileId, cursor, undefined, generation, device);
       if ('error' in result) {
         sendJson(res, result.status, { error: result.error });
         return;
@@ -250,6 +263,19 @@ export function createHostedSyncServer(
         ...result,
         server_time: new Date().toISOString(),
       });
+      return;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/sync/ack') {
+      try {
+        const p = JSON.parse(await readBody(req));
+        if (!validProtocolVersion(p)) { sendJson(res, 409, { error: 'Unsupported protocol generation or request schema' }); return; }
+        if (![p.file_id,p.file_generation,p.device_id,p.cursor].every(v => typeof v === 'string' && v.length>0)) {
+          sendJson(res, 400, { error: 'Invalid ACK' }); return;
+        }
+        const result = acknowledgeCursor(registry,tenant.id,p.file_id,p.file_generation,p.device_id,p.cursor);
+        sendJson(res, 'error' in result ? result.status : 200, result);
+      } catch { sendJson(res, 400, { error: 'Invalid ACK' }); }
       return;
     }
 

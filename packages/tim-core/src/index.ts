@@ -533,3 +533,6 @@ export {
   type JevAnswer,
   type JevQuestion,
 } from './jev.js';
+export { normalizeLwwTimestamp } from './lww.js';
+export { SYNC_CAPABILITIES, validProtocolVersion, validProtocolBlob, parseGenerationCursor } from './sync-protocol.js';
+export type { ProtocolBlob } from './sync-protocol.js';

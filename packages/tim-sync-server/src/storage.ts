@@ -1,6 +1,6 @@
-import type Database from 'better-sqlite3';
+import { parseGenerationCursor } from 'tim-core';
 import type { TenantRegistry } from './tenant-registry.js';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { countUsageFromDb, quotaExceeded } from './quotas.js';
 import type { TenantTier } from './quotas.js';
 
@@ -21,26 +21,27 @@ export function createFile(
   tenantId: string,
   fileId: string,
   salt: string,
-): { id: string; salt: string } | { conflict: true } {
+): { id: string; salt: string; generation: string } | { conflict: true } {
   const db = registry.getTenantDb(tenantId);
   try {
     const existing = db.prepare('SELECT id FROM files WHERE id = ?').get(fileId);
     if (existing) return { conflict: true };
-    db.prepare('INSERT INTO files (id, salt, created_at) VALUES (?, ?, ?)').run(
+    const generation = randomUUID();
+    db.prepare('INSERT INTO files (id, salt, created_at, generation) VALUES (?, ?, ?, ?)').run(
       fileId,
       salt,
-      new Date().toISOString(),
+      new Date().toISOString(), generation,
     );
-    return { id: fileId, salt };
+    return { id: fileId, salt, generation };
   } finally {
     db.close();
   }
 }
 
-export function listFiles(registry: TenantRegistry, tenantId: string): { id: string; salt: string }[] {
+export function listFiles(registry: TenantRegistry, tenantId: string): { id: string; salt: string; generation: string }[] {
   const db = registry.getTenantDb(tenantId);
   try {
-    return db.prepare('SELECT id, salt FROM files').all() as { id: string; salt: string }[];
+    return db.prepare('SELECT id, salt, generation FROM files').all() as { id: string; salt: string; generation: string }[];
   } finally {
     db.close();
   }
@@ -56,15 +57,18 @@ export function pushBlobs(
   fileId: string,
   idempotencyKey: string,
   blobs: PushBlobInput[],
+  generation?: string,
 ): PushResult | { error: string; status: number } {
   const db = registry.getTenantDb(tenantId);
   try {
     return db.transaction(() => {
-      if (!db.prepare('SELECT id FROM files WHERE id=?').get(fileId)) {
+      const file = db.prepare('SELECT generation FROM files WHERE id=?').get(fileId) as { generation: string } | undefined;
+      if (!file) {
         return { error: 'File not found', status: 404 };
       }
+      if (generation !== undefined && generation !== file.generation) return { error: 'File generation mismatch', status: 409 };
       // Fixed property order makes object key ordering irrelevant, while array order remains significant.
-      const requestHash = createHash('sha256').update(JSON.stringify([fileId, blobs.map(b =>
+      const requestHash = createHash('sha256').update(JSON.stringify([1,1,fileId,file.generation, blobs.map(b =>
         [b.proposed_id,b.entity_type,b.entity_key,b.data,b.device_id,b.updated_at,b.lww_device])])).digest('hex');
       const seen = db.prepare('SELECT request_hash,result_json FROM idempotency WHERE key=?')
         .get(idempotencyKey) as { request_hash: string | null; result_json: string | null } | undefined;
@@ -83,6 +87,7 @@ export function pushBlobs(
           b.entity_type ?? null,b.entity_key ?? null,b.lww_device ?? null,new Date().toISOString());
         result.mappings.push({ proposed_id: b.proposed_id, final_id: Number(r.lastInsertRowid) });
       }
+      db.prepare('UPDATE files SET high_water=MAX(high_water,COALESCE((SELECT MAX(id) FROM blobs WHERE file_id=?),0)) WHERE id=?').run(fileId,fileId);
       const quota = quotaExceeded(tier, countUsageFromDb(db), 0, 0);
       if (quota.exceeded) throw new QuotaFailure(quota.reason);
       db.prepare('INSERT INTO idempotency (key,created_at,request_hash,result_json) VALUES (?,?,?,?)')
@@ -95,76 +100,63 @@ export function pushBlobs(
   } finally { db.close(); }
 }
 
-export function parsePullCursor(cursor?: string): { updatedAt: string; id: number } {
-  if (!cursor) return { updatedAt: '1970-01-01T00:00:00.000Z', id: 0 };
-  if (cursor.includes('|')) {
-    const sep = cursor.lastIndexOf('|');
-    const updatedAt = cursor.slice(0, sep);
-    const id = parseInt(cursor.slice(sep + 1), 10);
-    return { updatedAt, id: Number.isFinite(id) ? id : 0 };
-  }
-  // Legacy numeric index cursors — full resync from epoch
-  if (/^\d+$/.test(cursor)) {
-    return { updatedAt: '1970-01-01T00:00:00.000Z', id: 0 };
-  }
-  return { updatedAt: cursor, id: 0 };
-}
 
-export function formatPullCursor(updatedAt: string, id: number): string {
-  return `${updatedAt}|${id}`;
+export function formatPullCursor(generation: string, id: number): string {
+  return `${generation}|${id}`;
 }
 
 export function pullBlobs(
-  registry: TenantRegistry,
-  tenantId: string,
-  fileId: string,
-  cursor?: string,
-  pageSize = PULL_PAGE_SIZE,
-): { blobs: unknown[]; salt?: string; next_cursor: string; has_more: boolean } | { error: string; status: number } {
+  registry: TenantRegistry, tenantId: string, fileId: string, cursor?: string,
+  pageSize = PULL_PAGE_SIZE, generation?: string, deviceId = 'storage-test',
+): { blobs: unknown[]; salt: string; generation: string; next_cursor: string; has_more: boolean }
+  | { error: string; status: number } {
   const db = registry.getTenantDb(tenantId);
   try {
-    const file = db.prepare('SELECT salt FROM files WHERE id = ?').get(fileId) as { salt: string } | undefined;
-    if (!file) return { error: 'File not found', status: 404 };
+    return db.transaction(() => {
+      const file = db.prepare('SELECT salt,generation,high_water FROM files WHERE id=?').get(fileId) as
+        { salt: string; generation: string; high_water: number } | undefined;
+      if (!file) return { error: 'File not found', status: 404 };
+      if (generation !== undefined && generation !== file.generation) return { error: 'File generation mismatch', status: 409 };
+      let id: number;
+      try { id = cursor ? parseGenerationCursor(cursor,file.generation) : 0; }
+      catch (err) { return { error: (err as Error).message, status: 409 }; }
+      if (id > file.high_water) return { error: 'Future cursor', status: 409 };
+      if (!Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 1000) return { error: 'Invalid page size', status: 400 };
+      const rows = db.prepare(`SELECT id,client_proposed_id,data,device_id,updated_at,deleted_at,
+        entity_type,entity_key,lww_device,received_at FROM blobs WHERE file_id=? AND id>? ORDER BY id LIMIT ?`)
+        .all(fileId,id,pageSize+1) as { id: number }[];
+      const slice = rows.slice(0,pageSize);
+      const next = slice.at(-1)?.id ?? id;
+      db.prepare(`INSERT INTO device_cursors (file_id,generation,device_id,delivered_id,updated_at)
+        VALUES (?,?,?,?,?) ON CONFLICT(file_id,generation,device_id) DO UPDATE SET
+        delivered_id=MAX(delivered_id,excluded.delivered_id),updated_at=excluded.updated_at`)
+        .run(fileId,file.generation,deviceId,next,new Date().toISOString());
+      return { blobs: slice, salt: file.salt, generation: file.generation,
+        next_cursor: formatPullCursor(file.generation,next), has_more: rows.length>pageSize };
+    }).immediate();
+  } finally { db.close(); }
+}
 
-    // Page on the server-assigned monotonic id only. updated_at comes from
-    // client clocks (LWW timestamps) — ordering on it lets a device with a
-    // lagging clock insert blobs *behind* other devices' cursors, which are
-    // then never delivered. Rows are append-only, so id order is complete.
-    const { updatedAt, id } = parsePullCursor(cursor);
-    const rows = db.prepare(`
-      SELECT id, client_proposed_id, data, deleted_at, updated_at
-      FROM blobs
-      WHERE file_id = ? AND id > ?
-      ORDER BY id ASC
-      LIMIT ?
-    `).all(fileId, id, pageSize + 1) as {
-      id: number;
-      client_proposed_id: string;
-      data: string;
-      deleted_at: string | null;
-      updated_at: string;
-    }[];
-
-    const hasMore = rows.length > pageSize;
-    const slice = hasMore ? rows.slice(0, pageSize) : rows;
-    const last = slice[slice.length - 1];
-    const nextCursor = last
-      ? formatPullCursor(last.updated_at, last.id)
-      : formatPullCursor(updatedAt, id);
-
-    return {
-      blobs: slice.map(b => ({
-        id: b.id,
-        client_proposed_id: b.client_proposed_id,
-        data: b.data,
-        deleted_at: b.deleted_at,
-        updated_at: b.updated_at,
-      })),
-      salt: file.salt,
-      next_cursor: nextCursor,
-      has_more: hasMore,
-    };
-  } finally {
-    db.close();
-  }
+export function acknowledgeCursor(
+  registry: TenantRegistry, tenantId: string, fileId: string, generation: string,
+  deviceId: string, cursor: string,
+): { cursor: string; generation: string } | { error: string; status: number } {
+  const db = registry.getTenantDb(tenantId);
+  try {
+    return db.transaction(() => {
+      const file = db.prepare('SELECT generation,high_water FROM files WHERE id=?').get(fileId) as
+        { generation: string; high_water: number } | undefined;
+      if (!file) return { error: 'File not found', status: 404 };
+      if (generation !== file.generation) return { error: 'File generation mismatch', status: 409 };
+      let id: number;
+      try { id = parseGenerationCursor(cursor,generation); }
+      catch (err) { return { error: (err as Error).message, status: 409 }; }
+      const device = db.prepare('SELECT applied_id,delivered_id FROM device_cursors WHERE file_id=? AND generation=? AND device_id=?')
+        .get(fileId,generation,deviceId) as { applied_id: number; delivered_id: number } | undefined;
+      if (!device || id>device.delivered_id || id>file.high_water) return { error: 'ACK exceeds delivered cursor', status: 409 };
+      db.prepare('UPDATE device_cursors SET applied_id=MAX(applied_id,?),updated_at=? WHERE file_id=? AND generation=? AND device_id=?')
+        .run(id,new Date().toISOString(),fileId,generation,deviceId);
+      return { cursor: formatPullCursor(generation,Math.max(id,device.applied_id)), generation };
+    }).immediate();
+  } finally { db.close(); }
 }

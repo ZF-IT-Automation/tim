@@ -27,3 +27,12 @@ export function resolveLWW(a: StagingRecord, b: StagingRecord): ConflictResoluti
   }
   return { winner: a, loser: b, reason: 'only_one' };
 }
+
+/** Normalize wire timestamps; never replace invalid logical time with the current clock. */
+export function normalizeLwwTimestamp(value: string | number): string {
+  const ms = typeof value === 'number' ? value : Date.parse(value);
+  if (!Number.isSafeInteger(ms) || Math.abs(ms) > 8.64e15) throw new Error('Invalid LWW timestamp');
+  const iso = new Date(ms).toISOString();
+  if (!/^\d{4}-/.test(iso)) throw new Error('LWW timestamp year must be between 0000 and 9999');
+  return iso;
+}

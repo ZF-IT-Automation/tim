@@ -61,6 +61,7 @@ function queueItem(key: string): QueueItem {
 
 function baseState(): SyncState {
   return {
+    fileGeneration: 'test-generation',
     fileId: 'file-1',
     cursor: null,
     lastPush: '2020-01-01T00:00:00.000Z',
@@ -329,4 +330,22 @@ describe('fresh bound state', () => {
     expect(state.fileId).toBe('file-real');
     expect(state.protocolGeneration).toBe(1);
   });
+});
+it('keeps retry ciphertext stable when entry and edge keys share the same string', async () => {
+  useHome();
+  const store = new TimStore(':memory:');
+  const key='a|b|relates';
+  const entry={...queueItem(key).envelopes[0],device:'origin',deleted:true};
+  const edge={...entry,type:'edge' as const,payload:JSON.stringify({id:'edge',source_id:'a',target_id:'b',type:'relates'})};
+  const blobs=[entry,edge].map(e=>({proposed_id:key,entity_key:key,entity_type:e.type,lww_device:'origin',device_id:'sender',updated_at:e.lww,data:`${e.type}-cipher`}));
+  saveQueue(getQueuePath('file-1'),[{...queueItem(key),envelopes:[entry,edge],blobs}]);
+  const push=vi.fn().mockRejectedValueOnce(new SyncApiError('lost response','NETWORK')).mockResolvedValue({mappings:[]});
+  const client={push} as unknown as TimSyncClient;
+  let encryptions=0;
+  try {
+    await pushCycle(client,store,baseState(),'sender',()=>`reencrypted-${++encryptions}`);
+    await pushCycle(client,store,baseState(),'sender',()=>`reencrypted-${++encryptions}`);
+    expect(push.mock.calls[0][0]).toEqual(push.mock.calls[1][0]);
+    expect(encryptions).toBe(0);
+  } finally {store.close();}
 });

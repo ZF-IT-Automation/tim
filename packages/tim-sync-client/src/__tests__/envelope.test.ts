@@ -56,15 +56,14 @@ describe('envelope', () => {
     expect(record.lwwDevice).toBe('local');
   });
 
-  it('falls back to the receiver id for legacy envelopes without device', () => {
-    const record = envelopeToStaging({
+  it('rejects legacy envelopes without original device identity', () => {
+    expect(() => envelopeToStaging({
       v: 1,
       type: 'entry',
       key: 'k',
       lww: new Date().toISOString(),
       deleted: false,
       payload: '{}',
-    }, 'remote-dev');
-    expect(record.lwwDevice).toBe('remote-dev');
+    }, 'remote-dev')).toThrow('Envelope has no original LWW device');
   });
 });

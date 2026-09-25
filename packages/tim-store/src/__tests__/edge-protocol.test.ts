@@ -76,3 +76,13 @@ describe('additive schema v15', () => {
     } finally { db.close(); }
   });
 });
+it('local repeated links remain one logical edge and stale same-millisecond replay cannot undo unlink', async () => {
+  const s = store(); await endpoints(s);
+  await s.link('source','target','relates');
+  const e = await s.link('source','target','relates',0.5);
+  expect(s.getDb().prepare('SELECT COUNT(*) AS c FROM edges').get()).toEqual({c:1});
+  const previous=localEdgeRecord(s.getDb(),key)!;
+  await s.unlink(e.id);
+  expect(localEdgeRecord(s.getDb(),key)!.lwwTimestamp).toBeGreaterThan(previous.lwwTimestamp);
+  expect(applyRemoteEdge(s.getDb(),previous.payload,previous.lwwTimestamp,previous.lwwDevice,false)).toBe(false);
+});

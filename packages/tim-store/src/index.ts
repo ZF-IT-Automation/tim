@@ -247,3 +247,5 @@ export {
 } from './project-path-inventory.js';
 
 export { taskLastTouch } from './task-touch.js';
+
+export { localEdgeRecord } from './sync-methods.js';

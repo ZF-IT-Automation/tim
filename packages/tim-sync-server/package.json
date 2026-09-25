@@ -17,6 +17,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "tim-core": "0.1.0-beta.1",
     "better-sqlite3": "^11.9.1"
   }
 }
