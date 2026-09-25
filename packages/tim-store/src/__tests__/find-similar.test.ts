@@ -68,4 +68,17 @@ describe('TimStore.findSimilar', () => {
     await store.write('Completely different words\nBody.', { tags: ['#a', '#b'] });
     expect(await store.findSimilar('quantum flux capacitor')).toEqual([]);
   });
+
+  it('write-time near-duplicate check does not flag titles that differ only by a digit', async () => {
+    // Body mentions the other version so FTS still surfaces the row. findSimilar
+    // strips the leading "v1" and searches the rest; the gate must then refuse
+    // the row on title overlap, not because the candidate was hidden.
+    const existing = await store.write('v1.3.7\nCompared with v1.3.5 in the notes.', {
+      tags: ['#release', '#notes'],
+    });
+    expect(titleSimilarity('v1.3.7', 'v1.3.5')).toBeLessThan(0.6);
+    const pooled = await store.searchFts('.3.5');
+    expect(pooled.map(entry => entry.id)).toContain(existing.id);
+    expect(await store.findSimilar('v1.3.5')).toEqual([]);
+  });
 });

@@ -215,12 +215,14 @@ export function sanitizeFtsQuery(query: string, mode: FtsQueryMode = 'literal'):
 /**
  * Jaccard overlap of lowercase word-token sets. 1.0 = same word set.
  * Single-char tokens are dropped — they are almost always punctuation
- * noise ("v2", "a") and inflate similarity between unrelated titles.
+ * noise ("a") and inflate similarity between unrelated titles.
+ * A single character that contains a digit is kept, so "v1.3.7" and
+ * "v1.3.5" do not collapse to the same token set.
  */
 export function titleSimilarity(a: string, b: string): number {
   const tokens = (s: string): Set<string> =>
     new Set(
-      s.toLowerCase().split(/[^0-9a-zà-öø-ÿ]+/).filter(w => w.length > 1),
+      s.toLowerCase().split(/[^0-9a-zà-öø-ÿ]+/).filter(w => w.length > 1 || /\d/.test(w)),
     );
   const ta = tokens(a);
   const tb = tokens(b);

@@ -47,7 +47,14 @@ export async function cmdConsolidate(args: string[]): Promise<void> {
         const hits = await mgr.findDuplicateCandidates(project, {
           threshold: flags.threshold ? Number(flags.threshold) : undefined,
         });
-        console.log(JSON.stringify({ project, count: hits.length, candidates: hits }, null, 2));
+        console.log(JSON.stringify({
+          project,
+          count: hits.length,
+          confirmed: hits.confirmed,
+          rejectedByJev: hits.rejected,
+          unconfirmed: hits.unconfirmed,
+          candidates: hits,
+        }, null, 2));
         break;
       }
       case 'find-decay': {
@@ -67,7 +74,13 @@ export async function cmdConsolidate(args: string[]): Promise<void> {
           JSON.stringify(
             {
               project,
-              queued: { duplicates: dupes.length, decay: decay.length },
+              queued: {
+                duplicates: dupes.length,
+                decay: decay.length,
+                confirmed: dupes.confirmed,
+                rejectedByJev: dupes.rejected,
+                unconfirmed: dupes.unconfirmed,
+              },
               processed,
             },
             null,
