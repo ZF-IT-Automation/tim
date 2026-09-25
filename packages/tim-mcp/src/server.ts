@@ -71,7 +71,7 @@ import {
 import { startIdleSweepTimer, stopIdleSweepTimer } from './idle-sweep-timer.js';
 import { handleUncaughtException, handleStdioStreamError, isBrokenPipeError } from './process-error-guards.js';
 import { tim_export, tim_import, inspectHmemManifest } from 'tim-migrate';
-import { autoPush, autoPull, resetSyncCooldowns, loadConfig as loadSyncConfig } from 'tim-sync-client';
+import { autoPush, autoPull, resetSyncCooldowns, loadConfig as loadSyncConfig, syncDbIdentity, syncOwnerActive } from 'tim-sync-client';
 import {
   validateWriteTags,
   supplementWriteTags,
@@ -2145,6 +2145,7 @@ const READ_TOOLS = new Set([
 const REMEMBER_TOOLS = new Set(['tim_remember']);
 
 function scheduleAutoSync(toolName: string, s: TimStore): void {
+  if (syncOwnerActive(syncDbIdentity(s.getDatabasePath()))) return;
   if (WRITE_TOOLS.has(toolName)) {
     void autoPush(s);
   } else if (READ_TOOLS.has(toolName)) {

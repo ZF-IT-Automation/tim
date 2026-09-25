@@ -49,6 +49,7 @@ const HELP_CASES: HelpCase[] = [
   { args: ['sync', 'disconnect'], usage: 'Usage: tim sync disconnect' },
   { args: ['sync', 'push'], usage: 'Usage: tim sync push' },
   { args: ['sync', 'pull'], usage: 'Usage: tim sync pull' },
+  { args: ['sync', 'owner'], usage: 'Usage: tim sync owner' },
   { args: ['sync', 'status'], usage: 'Usage: tim sync status' },
   { args: ['sync', 'audit'], usage: 'Usage: tim sync audit' },
   { args: ['sync', 'repair'], usage: 'Usage: tim sync repair' },

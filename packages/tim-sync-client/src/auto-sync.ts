@@ -3,6 +3,7 @@ import { loadConfig, getDeviceId } from './config.js';
 import { resolveSecretPassphrase } from './credentials.js';
 import { buildSyncContext, runPush, runPull } from './sync.js';
 import { MissingSecretPassphraseError } from './credentials.js';
+import { SyncLockBusyError, syncDbIdentity, syncOwnerActive } from './lock.js';
 
 const syncCooldowns = new Map<string, number>();
 const COOLDOWN_MS = 30_000;
@@ -29,10 +30,13 @@ export interface AutoPushResult {
   pushed?: number;
   queued?: boolean;
   /** blocked-secret = all rows blocked; partial-blocked = non-secret rows pushed */
-  reason?: 'no-passphrase' | 'in-flight' | 'cooldown' | 'no-config' | 'error' | 'blocked-secret' | 'partial-blocked';
+  reason?: 'no-passphrase' | 'in-flight' | 'cooldown' | 'no-config' | 'error' | 'blocked-secret' | 'partial-blocked' | 'owner';
 }
 
 export async function autoPush(store: TimStore): Promise<AutoPushResult> {
+  if (syncOwnerActive(syncDbIdentity(store.getDatabasePath()))) {
+    return { ran: false, reason: 'owner' };
+  }
   const passphrase = process.env.TIM_SYNC_PASSPHRASE;
   if (!passphrase) return { ran: false, reason: 'no-passphrase' };
   if (pushInFlight) return { ran: false, reason: 'in-flight' };
@@ -62,6 +66,7 @@ export async function autoPush(store: TimStore): Promise<AutoPushResult> {
       console.error('[tim-sync] autoPush failed:', err.message);
       return { ran: true, reason: 'blocked-secret' };
     }
+    if (err instanceof SyncLockBusyError) return { ran: false, reason: 'in-flight' };
     console.error('[tim-sync] autoPush failed:', (err as Error).message);
     return { ran: true, reason: 'error' };
   } finally {
@@ -77,6 +82,9 @@ export interface AutoPullResult {
 }
 
 export async function autoPull(store: TimStore): Promise<AutoPullResult> {
+  if (syncOwnerActive(syncDbIdentity(store.getDatabasePath()))) {
+    return { ran: false, reason: 'owner' };
+  }
   const passphrase = process.env.TIM_SYNC_PASSPHRASE;
   if (!passphrase) return { ran: false, reason: 'no-passphrase' };
   if (pullInFlight) return { ran: false, reason: 'in-flight' };
@@ -98,6 +106,7 @@ export async function autoPull(store: TimStore): Promise<AutoPullResult> {
     markSynced('pull'); // ONLY arm cooldown on success
     return { ran: true, pulled: result.pulled, conflicts: result.conflicts };
   } catch (err) {
+    if (err instanceof SyncLockBusyError) return { ran: false, reason: 'in-flight' };
     console.error('[tim-sync] autoPull failed:', (err as Error).message);
     // do NOT markSynced — let next call retry immediately (gated by InFlight only)
     return { ran: true, reason: 'error' };
