@@ -303,22 +303,57 @@ describe('findDuplicateCandidates Jev confirmation', () => {
     expect(queue).toHaveLength(0);
   });
 
-  it('enqueues unconfirmed when Jev fails and notes that in the reason', async () => {
+  it('does not queue a pair Jev could not judge, and asks again next run', async () => {
     await seedPair('P0413');
     process.env.JEV_API_KEY = 'test-key';
     vi.stubGlobal('fetch', vi.fn(async () => new Response('busy', { status: 500 })));
 
     const hits = await store.consolidate().findDuplicateCandidates('P0413');
-    expect(hits).toHaveLength(1);
-    expect(hits.confirmed).toBe(0);
-    expect(hits.rejected).toBe(0);
+    expect(hits).toHaveLength(0);
     expect(hits.unconfirmed).toBe(1);
-    expect(hits[0]!.reason).toContain('unconfirmed');
+    expect(await store.consolidate().getCurationQueue('P0413', 'pending')).toHaveLength(0);
 
-    const queue = await store.consolidate().getCurationQueue('P0413', 'pending');
-    expect(queue).toHaveLength(1);
-    expect(queue[0]!.metadata.reason).toContain('unconfirmed');
-    expect(queue[0]!.metadata.jev).toBeUndefined();
+    const fetchMock = stubNoul(0.9);
+    const again = await store.consolidate().findDuplicateCandidates('P0413');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(again.confirmed).toBe(1);
+  });
+
+  it('remembers a Jev rejection and does not ask again', async () => {
+    await seedPair('P0417');
+    stubNoul(0.2);
+    expect((await store.consolidate().findDuplicateCandidates('P0417')).rejected).toBe(1);
+
+    const fetchMock = stubNoul(0.99);
+    const again = await store.consolidate().findDuplicateCandidates('P0417');
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(again).toHaveLength(0);
+    expect(again.rejected).toBe(1);
+    expect(await store.consolidate().getCurationQueue('P0417', 'pending')).toHaveLength(0);
+  });
+
+  it('without a Jev key queues exactly as before and never calls fetch', async () => {
+    await seedPair('P0418');
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const hits = await store.consolidate().findDuplicateCandidates('P0418');
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(hits).toHaveLength(1);
+    expect(hits[0]!.reason).toMatch(/^title=\d\.\d\d$/);
+    expect(hits.unconfirmed).toBe(0);
+  });
+
+  it('asks Jev about at most 60 pairs per run and defers the rest', async () => {
+    const project = await store.createProject('P0419', { content: 'P0419 — Test | Active' });
+    for (let i = 0; i < 62; i++) {
+      await store.write(`Pair${i}beta sharedterm\nA.`, { parentId: project.id, tags: ['#pair', '#beta'] });
+      await store.write(`Pair${i}beta sharedterm notes\nB.`, { parentId: project.id, tags: ['#pair', '#beta'] });
+    }
+    const fetchMock = stubNoul(0.9);
+    const hits = await store.consolidate().findDuplicateCandidates('P0419');
+    expect(fetchMock).toHaveBeenCalledTimes(60);
+    expect(hits.confirmed).toBe(60);
+    expect(hits.deferred).toBe(2);
   });
 
   it('confirm:false enqueues without calling Jev', async () => {

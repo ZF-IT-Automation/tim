@@ -35,8 +35,9 @@ export function resolveJevApiKey(): string | undefined {
   try {
     const file = path.join(os.homedir(), '.config', 'jev', 'env');
     for (const line of fs.readFileSync(file, 'utf-8').split('\n')) {
-      const m = line.match(/^\s*(?:JEV_API_KEY|OPENROUTER_API_KEY)=(.+?)\s*$/);
-      if (m) return m[1];
+      const m = line.match(/^\s*(?:export\s+)?(?:JEV_API_KEY|OPENROUTER_API_KEY)=(.+?)\s*$/);
+      // Shell-style quoting would otherwise reach the Authorization header and 401 silently.
+      if (m) return m[1]!.replace(/^(['"])(.*)\1$/, '$2');
     }
   } catch {
     // no file → no Jev
@@ -89,7 +90,8 @@ export async function askJev(
     }
     return answers;
   } catch (err) {
-    logJevFailure(caller, (err as Error).name === 'TimeoutError' ? 'timeout' : String(err));
+    // Only the error name: a message could echo the request, bearer token included.
+    logJevFailure(caller, (err as Error).name === 'TimeoutError' ? 'timeout' : `error ${(err as Error).name}`);
     return null;
   }
 }
@@ -97,5 +99,6 @@ export async function askJev(
 /** noul probability of one answer, or undefined when the answer is not a noul. */
 export function jevNoul(answers: Record<string, JevAnswer>, key: string): number | undefined {
   const a = answers[key];
-  return a?.type === 'noul' ? a.noul : undefined;
+  // A non-number (true, "0.9") would coerce in a threshold comparison and pass as a judgement.
+  return a?.type === 'noul' && typeof a.noul === 'number' && Number.isFinite(a.noul) ? a.noul : undefined;
 }

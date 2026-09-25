@@ -845,7 +845,7 @@ export const TOOL_DEFS: Array<{
   },
   {
     name: 'tim_find_duplicates',
-    description: 'Report-first duplicate detector: scans a project for near-duplicate entries (similar titles or embeddings), confirms each pair with Jev (one pair per request), and enqueues pending curation candidates only when Jev noul is at least 0.70 — never deletes anything. Pairs Jev rejects are counted and not queued. If Jev is unreachable the pair is still queued for a human and marked unconfirmed. Review the returned pairs, then consolidate via tim_move_entry/tim_delete, or reject.',
+    description: 'Report-first duplicate detector: scans a project for near-duplicate entries (similar titles or embeddings). When Jev is configured, each pair is confirmed with its own request (at most 60 per run) and only pairs with noul at least 0.70 are enqueued as pending curation candidates; Jev rejections are remembered and not asked again; pairs Jev could not judge are left for the next run. Without Jev every scored pair is enqueued as before. Never deletes anything. Review the returned pairs, then consolidate via tim_move_entry/tim_delete, or reject.',
     schema: TimFindDuplicatesSchema,
   },
   {
@@ -3094,8 +3094,9 @@ export async function createMcpServer(
             confirmed: candidates.confirmed,
             rejectedByJev: candidates.rejected,
             unconfirmed: candidates.unconfirmed,
+            deferred: candidates.deferred,
             pairs,
-            note: `Report-first: Jev confirmed ${candidates.confirmed}, rejected ${candidates.rejected} by Jev, unconfirmed ${candidates.unconfirmed}. Confirmed and unconfirmed pairs are enqueued as pending curation nodes (idempotent — re-running lists them again but does not duplicate the queue or ask Jev again). Rejected pairs are not queued. Nothing deleted. Review, then consolidate via tim_move_entry/tim_delete, or reject.`,
+            note: `Report-first: Jev confirmed ${candidates.confirmed}, rejected ${candidates.rejected}, could not judge ${candidates.unconfirmed}, deferred ${candidates.deferred} to the next run (the last two are not queued). Listed pairs are pending curation nodes (idempotent — re-running lists them again without duplicating the queue). Nothing deleted. Review, then consolidate via tim_move_entry/tim_delete, or reject.`,
           };
           return { content: [{ type: 'text', text: formatToolResponse(payload) }] };
         }
