@@ -480,6 +480,12 @@ export interface DirectiveBriefing {
   latestHandoffNote?: string;
   /** Open work lines (tasks, next steps), already formatted and bounded. */
   openWork?: string[];
+  /**
+   * Stale-brief warning plus up to five commit subjects. Kept out of the
+   * token split: it must show even when the brief has no session text, and
+   * it must not steal the open-work budget.
+   */
+  staleBrief?: string[];
 }
 
 /** Renders the content half of a directive; empty when there is nothing to say. */
@@ -512,6 +518,11 @@ function briefingBlock(briefing?: DirectiveBriefing): string[] {
   const openWork = (briefing.openWork ?? []).map(l => l.trimEnd()).filter(l => l.trim());
   if (openWork.length > 0) {
     out.push('', '── Open work ──', ...openWork);
+  }
+
+  const stale = (briefing.staleBrief ?? []).map(l => l.trimEnd()).filter(l => l.trim());
+  if (stale.length > 0) {
+    out.push('', ...stale);
   }
   return out;
 }
