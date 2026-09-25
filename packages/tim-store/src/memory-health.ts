@@ -22,7 +22,6 @@ import type { TimStore } from './store.js';
 import { isSummarySkipCurrent } from './summary-skipped.js';
 import { deriveSessionCoverage } from './session-coverage.js';
 import { KIND_BATCH, KIND_SESSION, KIND_SUMMARY_ROOT } from './session-tree.js';
-import type { SemanticIndexHealthReport } from './vector-index.js';
 
 const ALL_SESSIONS = 1_000_000;
 const MAX_RANGE_SAMPLES = 50;
@@ -266,7 +265,6 @@ function parseLatestRollup(store: TimStore, entry: Entry): MemoryCoverageLatestR
 
 function buildGuidance(
   summary: MemorySummaryCoverageReport,
-  semantic: SemanticIndexHealthReport,
   sync: MemorySyncTelemetryReport,
 ): string[] {
   const guidance: string[] = [];
@@ -302,32 +300,6 @@ function buildGuidance(
     guidance.push(
       'Latest batch summary has invalid or missing seq range — associated exchanges stay pending.',
     );
-  }
-
-  switch (semantic.providerState) {
-    case 'disabled':
-      guidance.push('Semantic search disabled (TIM_EMBEDDING_DISABLED=1). Vector mode unavailable.');
-      break;
-    case 'unavailable':
-      guidance.push('Configured embedding model is unsupported — fix TIM_EMBEDDING_MODEL.');
-      break;
-    case 'unknown':
-      guidance.push('Embedding provider not initialized — health reads never load models.');
-      break;
-    case 'enabled': {
-      const backlog = semantic.unembeddedCount;
-      if (backlog > 0) {
-        const parts: string[] = [`${backlog} eligible entry vector(s) need (re)indexing`];
-        const breakdown: string[] = [];
-        if (semantic.staleVectorCount > 0) breakdown.push(`stale=${semantic.staleVectorCount}`);
-        if (semantic.wrongModelCount > 0) breakdown.push(`wrongModel=${semantic.wrongModelCount}`);
-        if (breakdown.length > 0) parts.push(`(${breakdown.join(', ')})`);
-        guidance.push(parts.join(' '));
-      } else if (semantic.vectorCount === 0) {
-        guidance.push('Embedding enabled but no vectors indexed yet — backlog may be zero work.');
-      }
-      break;
-    }
   }
 
   switch (sync.telemetryState) {
@@ -517,12 +489,10 @@ export async function computeMemoryHealth(
     store.getDatabasePath(),
   );
   const summaryCoverage = await computeSummaryCoverage(store);
-  const semanticIndex = store.getSemanticIndexHealth();
-  const guidance = buildGuidance(summaryCoverage, semanticIndex, sync);
+  const guidance = buildGuidance(summaryCoverage, sync);
 
   return {
     summaryCoverage,
-    semanticIndex,
     sync,
     guidance,
   };
@@ -530,7 +500,7 @@ export async function computeMemoryHealth(
 
 /** Human-readable memory lines for CLI/MCP doctor output. */
 export function formatMemoryHealthLines(memory: MemoryHealthReport): string[] {
-  const { summaryCoverage: s, semanticIndex: idx, sync } = memory;
+  const { summaryCoverage: s, sync } = memory;
   const pendingRangeNote = s.pendingRangesTruncated
     ? `, showing ${s.pendingRanges.length}/${s.pendingRangeCount}`
     : '';
@@ -542,11 +512,6 @@ export function formatMemoryHealthLines(memory: MemoryHealthReport): string[] {
       `${s.pendingExchangeCount} pending (${s.workState})`,
     `Memory ranges: pending=${s.pendingRangeCount}${pendingRangeNote}, ` +
       `covered=${s.coveredRangeCount}${coveredRangeNote}`,
-    `Semantic index: provider=${idx.providerState}, vectors=${idx.vectorCount}, ` +
-      `needsIndexing=${idx.unembeddedCount}` +
-      (idx.staleVectorCount > 0 || idx.wrongModelCount > 0
-        ? ` (stale=${idx.staleVectorCount}, wrongModel=${idx.wrongModelCount})`
-        : ''),
     `Sync telemetry: ${sync.telemetryState}, unacked=${sync.unackedStaging}` +
       (sync.lastPush ? `, lastPush=${sync.lastPush}` : '') +
       (sync.lastPull ? `, lastPull=${sync.lastPull}` : '') +

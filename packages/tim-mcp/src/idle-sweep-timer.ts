@@ -1,11 +1,8 @@
 import { loadConfig } from 'tim-core';
-import { spawn } from 'child_process';
-import * as path from 'path';
 import { isSummarizerChild, sweepIdleSessions } from 'tim-hooks';
-import { resolveConfiguredEmbeddingModelId, type TimStore } from 'tim-store';
+import type { TimStore } from 'tim-store';
 
 let idleSweepTimer: ReturnType<typeof setInterval> | null = null;
-let embeddingTimer: ReturnType<typeof setInterval> | null = null;
 
 /** Start the periodic idle-session sweep (idempotent). */
 export function startIdleSweepTimer(store: TimStore): void {
@@ -43,34 +40,4 @@ export function stopIdleSweepTimer(): void {
 /** Whether the idle sweep timer is running (tests). */
 export function isIdleSweepTimerRunning(): boolean {
   return idleSweepTimer !== null;
-}
-
-/**
- * Keep entry_vectors filled (duplicate detection's cosine arm, hybrid search).
- * Started by the HTTP singleton only. The model runs in a child process
- * (embed-pass.js) that exits after draining, so its memory is returned; the
- * server itself only checks whether there is anything to embed.
- */
-export function startEmbeddingTimer(store: TimStore, dbPath: string, intervalMs = 5 * 60_000): void {
-  if (embeddingTimer || isSummarizerChild()) return;
-  let running = false;
-  const pass = async () => {
-    if (running) return;
-    const modelId = resolveConfiguredEmbeddingModelId();
-    if (!modelId || (await store.getUnembedded(1, modelId)).length === 0) return;
-    running = true;
-    const child = spawn(process.execPath, [path.join(__dirname, 'embed-pass.js'), dbPath], { stdio: 'ignore' });
-    child.once('exit', () => { running = false; });
-    child.once('error', () => { running = false; });
-  };
-  void pass().catch(() => {});
-  embeddingTimer = setInterval(() => void pass().catch(() => {}), intervalMs);
-  embeddingTimer.unref?.();
-}
-
-export function stopEmbeddingTimer(): void {
-  if (embeddingTimer) {
-    clearInterval(embeddingTimer);
-    embeddingTimer = null;
-  }
 }

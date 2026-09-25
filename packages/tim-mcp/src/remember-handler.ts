@@ -15,7 +15,8 @@ export interface TimRememberOptions {
   topK: number;
   minConfidence: number;
   includeBatchSummaries: boolean;
-  searchType: 'fts';
+  /** Accepted for compatibility. Search is full-text. */
+  searchType?: string;
   projectScope?: string;
 }
 

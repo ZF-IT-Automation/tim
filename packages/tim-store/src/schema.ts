@@ -211,9 +211,7 @@ export const MIGRATIONS: Migration[] = [
   {
     version: 10,
     sql: `
-      -- Device-local embedding vectors. Each device computes its own;
-      -- vectors are NEVER synced, staged, or exported (same contract
-      -- as entry_usage in Plan 10).
+      -- unused since 2026-09-25 (vector index dropped); drop in a later migration
       CREATE TABLE IF NOT EXISTS entry_vectors (
         entry_id TEXT PRIMARY KEY,
         model TEXT NOT NULL,

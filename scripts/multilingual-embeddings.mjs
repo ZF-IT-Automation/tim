@@ -86,14 +86,17 @@ export function joinLabels(cases, inputs, outputs) {
 }
 
 export async function readRecallEntries(store) {
-  const { SCHEMA_KINDS } = require('../packages/tim-core/dist/index.js');
   const { shouldSkipPromptRecall } = require('../packages/tim-store/dist/index.js');
-  // A deliberately unmatched model enumerates indexable entries; FTS also admits schema kinds.
-  const entries = await store.getUnembedded(Number.MAX_SAFE_INTEGER, 'evaluation-enumeration-only');
-  for (const kind of SCHEMA_KINDS) {
-    if (!['exchange', 'checkpoint'].includes(kind)) entries.push(...await store.getByMetadataKind(kind, Number.MAX_SAFE_INTEGER));
+  const ids = store.getDb().prepare(
+    `SELECT id FROM entries WHERE tombstoned_at IS NULL AND irrelevant = 0`,
+  ).all();
+  const entries = [];
+  for (const row of ids) {
+    const entry = await store.read(row.id);
+    if (entry) entries.push(entry);
   }
-  return store.filterSuppressed(entries).filter(entry => !['exchange', 'checkpoint'].includes(entry.metadata.kind) && !shouldSkipPromptRecall(entry));
+  return store.filterSuppressed(entries).filter(entry =>
+    !['exchange', 'checkpoint'].includes(entry.metadata.kind) && !shouldSkipPromptRecall(entry));
 }
 
 async function prepare() {
@@ -128,7 +131,6 @@ async function prepare() {
   if (gates.length !== cases.length) throw new Error('Gate set differs from labelled cases');
   const store = new TimStore(db, { allowMigrations: false, staging: false });
   try {
-    const indexHealth = store.getSemanticIndexHealth();
     const all = await readRecallEntries(store);
     const roots = new Map();
     for (const project of new Set(cases.map(p => p.project).filter(Boolean))) {
@@ -168,8 +170,8 @@ async function prepare() {
     }
     save('corpus.json', corpus);
     save('cases.json', cases);
-    save('provenance.json', { ...provenance, indexHealth, corpusCount: corpus.length, projects: [...roots.values()], unrestrictedPrompts: cases.filter(p => p.project === null).length, cpu: cpus()[0].model, logicalCpus: cpus().length });
-    console.log(JSON.stringify({ corpus: corpus.length, prompts: cases.length, useful: cases.reduce((n, p) => n + Object.values(p.labels).filter(Boolean).length, 0), unavailableUseful: cases.flatMap(p => p.unavailableUseful).length, indexHealth }));
+    save('provenance.json', { ...provenance, corpusCount: corpus.length, projects: [...roots.values()], unrestrictedPrompts: cases.filter(p => p.project === null).length, cpu: cpus()[0].model, logicalCpus: cpus().length });
+    console.log(JSON.stringify({ corpus: corpus.length, prompts: cases.length, useful: cases.reduce((n, p) => n + Object.values(p.labels).filter(Boolean).length, 0), unavailableUseful: cases.flatMap(p => p.unavailableUseful).length }));
   } finally {
     store.close();
   }
@@ -218,9 +220,12 @@ async function e5Provider() {
   };
 }
 
+function embeddingText(title, content) {
+  return `${title}\n${content}`.slice(0, 2000);
+}
+
 async function runModel(name) {
-  const { TimStore, cosineSimilarity, shouldSkipPromptRecall } = require('../packages/tim-store/dist/index.js');
-  const { embeddingText } = require('../packages/tim-store/dist/vector-index.js');
+  const { cosineSimilarity } = require('../packages/tim-store/dist/index.js');
   const corpus = readJson(join(scratch, 'corpus.json'));
   const cases = readJson(join(scratch, 'cases.json'));
   const baselineRss = process.memoryUsage().rss;
@@ -228,10 +233,7 @@ async function runModel(name) {
   let provider;
   let modelDir;
   if (name === 'minilm') {
-    const { FlagEmbedding, EmbeddingModel } = require('fastembed');
-    const embedder = await FlagEmbedding.init({ model: EmbeddingModel.AllMiniLML6V2, cacheDir: join(homedir(), '.tim/models') });
-    provider = { modelId: 'all-MiniLM-L6-v2', dimension: 384, state: 'enabled', async embed(texts) { return (await embedder.embed(texts, texts.length).next()).value.map(v => new Float32Array(v)); } };
-    modelDir = join(homedir(), '.tim/models/fast-all-MiniLM-L6-v2');
+    throw new Error('MiniLM product encoder was removed with the index. See docs/research/2026-09-multilingual-embeddings.md');
   } else if (name === 'e5') {
     provider = await e5Provider();
     modelDir = join(scratch, 'models/e5-small');
@@ -245,7 +247,6 @@ async function runModel(name) {
     if (i % 400 === 0) console.log(`${name}: ${vectors.length}/${corpus.length} entries, ${((performance.now() - embedStart) / 1000).toFixed(1)}s`);
   }
   const corpusMs = performance.now() - embedStart;
-  const store = name === 'minilm' ? new TimStore(join(scratch, 'snapshot.db'), { allowMigrations: false, staging: false, embeddingProvider: provider }) : null;
   const rows = [];
   for (const p of cases) {
     const start = performance.now();
@@ -257,15 +258,8 @@ async function runModel(name) {
     const ranked = scored.slice(0, 12);
     const totalMs = performance.now() - start;
     const row = { key: p.key, ids: ranked.map(e => e.id), scores: ranked.map(e => e.similarity), currentKinds: scored.filter(e => e.currentIndexEligible).slice(0, 12).map(e => e.id), embeddingMs, totalMs };
-    if (store) {
-      const currentStart = performance.now();
-      row.current = (await store.search({ query: p.prompt, topK: 40, searchType: 'vector', project: p.project ?? undefined, asOf: p.createdAt }))
-        .filter(e => allowed.has(e.id) && !shouldSkipPromptRecall(e)).slice(0, 12).map(e => e.id);
-      row.currentMs = performance.now() - currentStart;
-    }
     rows.push(row);
   }
-  store?.close();
   const cost = { model: provider.modelId, modelSpec: name === 'e5' ? modelSpec : null, loadMs, corpusMs, baselineRss, rss: process.memoryUsage().rss, peakRss: process.resourceUsage().maxRSS * 1024, modelFiles, modelBytes: Object.values(modelFiles).reduce((n, f) => n + f.bytes, 0) };
   save(`${name}.json`, { cost, rows });
   console.log(JSON.stringify(cost));

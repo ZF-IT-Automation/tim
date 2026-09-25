@@ -1,11 +1,6 @@
 import { spawn } from 'child_process';
 import type { HooksConfig } from 'tim-core';
 import { normalizeHookScripts } from 'tim-core';
-import type { TimStore } from 'tim-store';
-import {
-  embeddingText,
-  vectorContentFingerprint,
-} from 'tim-store';
 
 export interface HookEnv {
   TIM_SESSION_ID?: string;
@@ -110,61 +105,4 @@ export async function runConfiguredHooks(
     timeoutMs: hooksConfig?.timeoutMs ?? 30_000,
     cwd: env.TIM_CWD,
   });
-}
-
-interface EmbeddingOptions {
-  batchSize?: number;
-  model?: string;
-}
-
-/**
- * Background hook: finds unembedded content entries and computes their
- * vectors via the shared embedding provider. Runs in the summarizer-style
- * fallback chain — best-effort, never blocks user flows.
- *
- * Set TIM_EMBEDDING_DISABLED=1 to skip entirely.
- */
-export async function embedUnembeddedEntries(
-  store: TimStore,
-  opts: EmbeddingOptions = {},
-): Promise<number> {
-  if (process.env.TIM_EMBEDDING_DISABLED === '1') return 0;
-
-  const batchSize = opts.batchSize ?? (Number(process.env.TIM_EMBEDDING_BATCH_SIZE) || 32);
-
-  let entries;
-  try {
-    const provider = await store.getEmbeddingProvider();
-    if (!provider || provider.state !== 'enabled') return 0;
-
-    entries = await store.getUnembedded(batchSize, provider.modelId);
-    if (entries.length === 0) return 0;
-
-    const fingerprints = entries.map(e =>
-      vectorContentFingerprint(e.title, e.content),
-    );
-    const texts = entries.map(e => embeddingText(e.title, e.content));
-    const vectors = await provider.embed(texts);
-    if (vectors.length === 0) return 0;
-
-    let embedded = 0;
-    for (let i = 0; i < entries.length; i++) {
-      try {
-        const stored = store.setVectors(
-          entries[i].id,
-          vectors[i],
-          provider.modelId,
-          provider.dimension,
-          fingerprints[i],
-        );
-        if (stored) embedded++;
-      } catch {
-        // individual entry failure — continue with next
-      }
-    }
-    return embedded;
-  } catch (err) {
-    console.debug('[tim-hooks] embedUnembeddedEntries: embedding not available:', (err as Error).message);
-    return 0;
-  }
 }

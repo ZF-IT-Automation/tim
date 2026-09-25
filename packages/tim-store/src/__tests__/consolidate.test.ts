@@ -65,29 +65,6 @@ describe('ConsolidationManager duplicates', () => {
     expect(queue).toHaveLength(1);
   });
 
-  it('uses cosine similarity when embeddings exist', async () => {
-    const project = await seedProject('P0202');
-    const a = await store.write('Unrelated title A\nSemantic body about databases.', {
-      parentId: project.id,
-      tags: ['#db', '#sql'],
-    });
-    const b = await store.write('Different title B\nSemantic body about databases.', {
-      parentId: project.id,
-      tags: ['#db', '#sql'],
-    });
-
-    const vec = new Float32Array([1, 0, 0, 0]);
-    store.setVectors(a.id, vec, 'test');
-    store.setVectors(b.id, vec, 'test');
-
-    const mgr = store.consolidate();
-    const hits = await mgr.findDuplicateCandidates('P0202', { threshold: 0.8 });
-    expect(hits.length).toBe(1);
-    expect(hits[0]!.score).toBeGreaterThanOrEqual(0.8);
-    expect(hits[0]!.pair).toContain(a.id);
-    expect(hits[0]!.pair).toContain(b.id);
-  });
-
   it('getCurationStats counts by status and type', async () => {
     const project = await seedProject('P0203');
     await store.write('Idea one\nx', { parentId: project.id, tags: ['#a', '#b'] });

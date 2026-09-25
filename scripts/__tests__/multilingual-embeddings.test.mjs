@@ -9,7 +9,7 @@ const require = createRequire(import.meta.url);
 const { TimStore } = require('../../packages/tim-store/dist/index.js');
 
 describe('multilingual embedding evaluation', () => {
-  it('includes FTS-retrievable summaries and commits that the current vector index excludes', async () => {
+  it('includes summaries and commits and drops exchanges, checkpoints, and harness turns', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'tim-embedding-eval-'));
     const store = new TimStore(join(dir, 'test.db'), { staging: false });
     try {

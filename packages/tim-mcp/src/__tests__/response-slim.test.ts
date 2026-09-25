@@ -11,17 +11,13 @@ import { executeTimSearch } from '../tim-search-tool.js';
 describe('slim default MCP payloads', () => {
   let dir: string;
   let store: TimStore;
-  const prevEmbedding = process.env.TIM_EMBEDDING_DISABLED;
 
   afterEach(() => {
     store?.close();
     if (dir) fs.rmSync(dir, { recursive: true, force: true });
-    if (prevEmbedding === undefined) delete process.env.TIM_EMBEDDING_DISABLED;
-    else process.env.TIM_EMBEDDING_DISABLED = prevEmbedding;
   });
 
-  it('omits default evidence, temporal, FTS semantic metadata, and health ranges past 5', async () => {
-    process.env.TIM_EMBEDDING_DISABLED = '1';
+  it('omits default evidence, temporal metadata, and health ranges past 5', async () => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tim-mcp-slim-'));
     store = new TimStore(path.join(dir, 'test.db'));
 
@@ -116,19 +112,6 @@ describe('slim default MCP payloads', () => {
     });
     expect(fts.results).toHaveLength(10);
     expect(fts.response.semantic).toBeUndefined();
-    expect(fts.semantic?.requestedMode).toBe('fts');
-    expect(fts.semantic?.providerState).toBe('not_used');
-
-    const hybrid = await executeTimSearch(store, {
-      query: 'SlimNeedle',
-      searchType: 'hybrid',
-      topK: 10,
-      root: 'P9100',
-    });
-    expect(hybrid.response.semantic).toMatchObject({
-      requestedMode: 'hybrid',
-      degradedToLexical: true,
-    });
 
     const sessions = new SessionManager(store);
     for (let i = 0; i < 8; i++) {

@@ -2,8 +2,6 @@ import type Database from 'better-sqlite3';
 import { resolveLWW } from 'tim-core';
 import type { StagingRecord } from 'tim-core';
 import { parseAndCoerceMetadata } from './metadata-coerce.js';
-import { invalidateEntryVector } from './vector-index.js';
-
 export interface StagingRow {
   rowid: number;
   key: string;
@@ -213,17 +211,6 @@ export function applyRemoteEntry(
   }
 
   const updatedAt = new Date(lwwTimestamp).toISOString();
-  if (existing && !deleted) {
-    const prior = db.prepare('SELECT title, content FROM entries WHERE id = ?').get(entryId) as
-      | { title: string; content: string }
-      | undefined;
-    if (
-      prior
-      && (prior.title !== (entry.title ?? '') || prior.content !== entry.content)
-    ) {
-      invalidateEntryVector(db, entryId);
-    }
-  }
   db.prepare(`INSERT INTO entries
     (id, parent_id, title, content, content_type, depth, confidence, created_at,
      accessed_at, updated_at, decay_rate, visibility, tags, irrelevant, favorite, tombstoned_at, metadata, lww_device)

@@ -68,7 +68,7 @@ import {
   previewSessionStart,
   runPromptSubmit,
 } from 'tim-hooks';
-import { startEmbeddingTimer, startIdleSweepTimer, stopEmbeddingTimer, stopIdleSweepTimer } from './idle-sweep-timer.js';
+import { startIdleSweepTimer, stopIdleSweepTimer } from './idle-sweep-timer.js';
 import { handleUncaughtException, handleStdioStreamError, isBrokenPipeError } from './process-error-guards.js';
 import { tim_export, tim_import, inspectHmemManifest } from 'tim-migrate';
 import { autoPush, autoPull, resetSyncCooldowns, loadConfig as loadSyncConfig } from 'tim-sync-client';
@@ -87,7 +87,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { buildBoundedSearchResponse, clampSearchRequest } from './search-response.js';
-import { executeTimSearch, semanticForAgent } from './tim-search-tool.js';
+import { executeTimSearch } from './tim-search-tool.js';
 import { validateTokenBudget, clampBriefingDefaultBudget, MAX_TOKEN_BUDGET, byteBudgetToHookMaxTokens } from './briefing-budget.js';
 import { loadProjectForBriefing } from './briefing-load.js';
 import { buildBriefingRenderContext } from './briefing-context.js';
@@ -255,7 +255,8 @@ const TimSearchSchema = z.object({
       'Maximum Unicode code points per result excerpt; values above 500 are clamped to 500, ' +
       'not rejected — the 24 KiB response budget truncates first either way',
     ),
-  searchType: z.enum(['fts', 'vector', 'hybrid']).optional().default('fts'),
+  searchType: z.string().optional()
+    .describe('Accepted for compatibility. Search is full-text.'),
   root: z.string().optional().describe('Scope to project (label/alias/name)'),
   type: z.string().optional().describe('Filter metadata.type'),
   tag: z.string().optional()
@@ -298,8 +299,8 @@ const TimRememberSchema = z.object({
     .describe('Treffer unter diesem Confidence werden gefiltert. Default 0.3.'),
   includeBatchSummaries: z.boolean().optional().default(true)
     .describe('Session-Batch-Summaries der letzten 30 Tage mit einbeziehen. Default true.'),
-  searchType: z.enum(['fts']).optional().default('fts')
-    .describe('Nur FTS5 in Phase 1.0. "hybrid" ist für Embedding-Phase 0.7+ reserviert.'),
+  searchType: z.string().optional()
+    .describe('Accepted for compatibility. Search is full-text.'),
   projectScope: z.string().regex(/^P\d{4}$/).optional()
     .describe('Optional: Suche auf ein Projekt beschränken (z.B. "P0062"). Default: alle Projekte.'),
 });
@@ -552,7 +553,7 @@ const TimCheckpointSchema = z.object({
 });
 
 const TimHookPromptSubmitSchema = z.object({
-  prompt: z.string().min(1).describe('User prompt text for hybrid retrieval'),
+  prompt: z.string().min(1).describe('User prompt text for full-text retrieval'),
   project: z.string().optional()
     .describe('Scope retrieval/guard to a project label'),
 });
@@ -832,7 +833,7 @@ export const TOOL_DEFS: Array<{
   {
     name: 'tim_health',
     description:
-      'Run health diagnostics: broken links, orphans, FTS integrity, counts, memory coverage and embedding backlog. ' +
+      'Run health diagnostics: broken links, orphans, FTS integrity, counts, and memory coverage. ' +
       'pendingRanges and coveredRanges default to the first 5 plus more; pass verbose:true for the lists the report already computed.',
     schema: TimHealthSchema,
   },
@@ -868,7 +869,7 @@ export const TOOL_DEFS: Array<{
   },
   {
     name: 'tim_find_duplicates',
-    description: 'Report-first duplicate detector: scans a project for near-duplicate entries (similar titles or embeddings). When Jev is configured, each pair is confirmed with its own request (at most 60 per run) and only pairs with noul at least 0.70 are enqueued as pending curation candidates; Jev rejections are remembered and not asked again; pairs Jev could not judge are left for the next run. Without Jev every scored pair is enqueued as before. Never deletes anything. Review the returned pairs, then consolidate via tim_move_entry/tim_delete, or reject.',
+    description: 'Report-first duplicate detector: scans a project for near-duplicate entries (similar titles). When Jev is configured, each pair is confirmed with its own request (at most 60 per run) and only pairs with noul at least 0.70 are enqueued as pending curation candidates; Jev rejections are remembered and not asked again; pairs Jev could not judge are left for the next run. Without Jev every scored pair is enqueued as before. Never deletes anything. Review the returned pairs, then consolidate via tim_move_entry/tim_delete, or reject.',
     schema: TimFindDuplicatesSchema,
   },
   {
@@ -1804,7 +1805,7 @@ const DB_PATH = process.env.TIM_DB_PATH || loadConfig().dbPath || process.env.HO
 // - tim-store sets synchronous=FULL and busy_timeout for write coordination
 // - systemd --user unit runs the single long-lived HTTP daemon (singleton)
 // - HTTP/SSE transport (7a733c5) is the cross-process path; stdio is for
-//   in-process embedding (e.g. tests, tim-summarizer child processes)
+//   in-process use (e.g. tests, tim-summarizer child processes)
 
 if (!CLI.http) {
   // Binary-write guard: refuse to start if DB is not a valid SQLite file.
@@ -2607,7 +2608,7 @@ export async function createMcpServer(
             };
           }
           const usageSid = await usageSessionId();
-          let { response, results, semantic } = await executeTimSearch(s, parsed);
+          let { response, results } = await executeTimSearch(s, parsed);
           if (root) {
             const roots = await resolveRoots(s, root);
             if (roots.error) {
@@ -2620,11 +2621,9 @@ export async function createMcpServer(
               roots.labels!.includes(s.getProjectLabel(r.id) ?? ''),
             );
             const excerptChars = clampSearchRequest(parsed.topK, parsed.excerptChars).excerptChars;
-            const agentSemantic = semanticForAgent(semantic);
             response = {
               ...buildBoundedSearchResponse(results, excerptChars),
               ...(response.clamped ? { clamped: response.clamped } : {}),
-              ...(agentSemantic ? { semantic: agentSemantic } : {}),
             };
           }
           bestEffortTelemetry('recordRead', () =>
@@ -3991,7 +3990,6 @@ export async function createHttpServer(options?: {
   installProcessErrorGuards();
 
   startIdleSweepTimer(getStore());
-  startEmbeddingTimer(getStore(), DB_PATH);
 
   const httpServer = await new Promise<HttpServer>((resolve, reject) => {
     const listener = app.listen(port, host);
@@ -4010,7 +4008,6 @@ export async function createHttpServer(options?: {
 
   const close = async (): Promise<void> => {
     stopIdleSweepTimer();
-    stopEmbeddingTimer();
     for (const transport of transports.values()) {
       try {
         await transport.close();
@@ -4049,7 +4046,6 @@ export async function startServer(): Promise<void> {
 
     const shutdown = async (): Promise<void> => {
       stopIdleSweepTimer();
-      stopEmbeddingTimer();
       await handle.close();
       process.exit(0);
     };
@@ -4067,7 +4063,6 @@ export async function startServer(): Promise<void> {
   // becoming a PID-1 orphan that logs write-EPIPE into error_log forever.
   const shutdownStdio = (): void => {
     stopIdleSweepTimer();
-    stopEmbeddingTimer();
     process.exit(0);
   };
   process.stdin.on('end', shutdownStdio);

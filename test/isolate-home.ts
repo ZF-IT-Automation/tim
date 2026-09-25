@@ -24,11 +24,9 @@ delete process.env.CLAUDE_CODE_SESSION_ID;
 delete process.env.TIM_SESSION_ID;
 // A developer's TIM_DB_PATH would point tests that forget their own at the live DB.
 delete process.env.TIM_DB_PATH;
-// Default search is hybrid and loads fastembed from ~/.tim/models. This empty
-// HOME has no model, so FlagEmbedding.init downloads ~88MB from GCS on the
-// first search in each worker and blows the 5s test timeout. Opt out unless a
-// test deletes this and injects a provider (or TIM_EMBEDDING_REAL_MODEL=1).
-process.env.TIM_EMBEDDING_DISABLED = '1';
+delete process.env.TIM_EMBEDDING_DISABLED;
+delete process.env.TIM_EMBEDDING_MODEL;
+delete process.env.TIM_EMBEDDING_REAL_MODEL;
 // Jev is a network call; the suite mocks fetch and must never bill the real key.
 delete process.env.JEV_API_KEY;
 // A machine with TIM installed has this directory; code that opens

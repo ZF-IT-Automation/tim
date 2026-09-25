@@ -193,7 +193,7 @@ async function computePromptContext(
 }
 
 /**
- * UserPromptSubmit hook: hybrid FTS retrieval + optional guard warnings.
+ * UserPromptSubmit hook: full-text retrieval + optional guard warnings.
  * Never throws; returns null when disabled, empty, slow, or on error.
  */
 export async function runPromptSubmit(

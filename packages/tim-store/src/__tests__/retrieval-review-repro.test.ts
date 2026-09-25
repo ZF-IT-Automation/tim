@@ -1,19 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { resolveEntrySearchStatus } from 'tim-core';
-import { TimStore, type EmbeddingProvider } from '../store.js';
-
-const TEST_PROVIDER: EmbeddingProvider = {
-  modelId: 'all-MiniLM-L6-v2',
-  dimension: 384,
-  state: 'enabled',
-  embed: async (texts) => texts.map(() => new Float32Array(384)),
-};
+import { TimStore } from '../store.js';
 
 describe('retrieval review repros', () => {
   let store: TimStore;
 
   beforeEach(() => {
-    store = new TimStore(':memory:', { embeddingProvider: TEST_PROVIDER });
+    store = new TimStore(':memory:');
   });
 
   afterEach(() => {
@@ -164,13 +157,11 @@ describe('retrieval review repros', () => {
     await store.update(project.id, { metadata: { aliases: ['alpha-scope'] } });
     await store.createProject('P0921', { content: 'Foreign project' });
     const hit = await store.write('P0921 local reference', { parentId: project.id });
-    for (const searchType of ['fts', 'hybrid'] as const) {
-      for (const scope of ['P0920', 'alpha-scope']) {
-        const hits = await store.search({ query: 'P0921', project: scope, topK: 1, searchType });
-        expect(hits.map(e => e.id)).toEqual([hit.id]);
-      }
-      expect(await store.search({ query: 'P0921', project: 'missing-scope', searchType })).toEqual([]);
+    for (const scope of ['P0920', 'alpha-scope']) {
+      const hits = await store.search({ query: 'P0921', project: scope, topK: 1, searchType: 'fts' });
+      expect(hits.map(e => e.id)).toEqual([hit.id]);
     }
+    expect(await store.search({ query: 'P0921', project: 'missing-scope', searchType: 'fts' })).toEqual([]);
   });
 
   it('parity: SQL and TS search status agree on fixture shapes', async () => {

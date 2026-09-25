@@ -2,18 +2,9 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { TimStore, type EmbeddingProvider } from '../index.js';
+import { TimStore } from '../index.js';
 import { applyRemoteEntry } from '../sync-methods.js';
 import { entryTemporallyEligibleAt } from '../temporal.js';
-
-const MODEL = 'all-MiniLM-L6-v2';
-
-function unitVector(dim = 384, bias = 0.1): Float32Array {
-  const v = new Float32Array(dim);
-  v[0] = bias;
-  v[1] = 1 - bias;
-  return v;
-}
 
 function peerPayload(
   entry: { id: string; title: string; content: string; depth: number; createdAt: string; accessedAt: string; parentId: string | null },
@@ -47,13 +38,7 @@ describe('review-fix temporal/search/recovery', () => {
 
   beforeEach(async () => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tim-review-fix-temporal-'));
-    const provider: EmbeddingProvider = {
-      modelId: MODEL,
-      dimension: 384,
-      state: 'enabled',
-      embed: async texts => texts.map(() => unitVector()),
-    };
-    store = new TimStore(path.join(dir, 'test.db'), { embeddingProvider: provider });
+    store = new TimStore(path.join(dir, 'test.db'));
     const project = await store.createProject('P3700', { content: 'Review fix', memoryOnly: true });
     const section = await store.write('Decisions', {
       parentId: project.id,
@@ -110,10 +95,6 @@ describe('review-fix temporal/search/recovery', () => {
 
     const fts = await store.search({ query: 'Replicated', searchType: 'fts', topK: 10 });
     expect(fts.map(e => e.id)).toContain(entry.id);
-
-    store.setVectors(entry.id, unitVector(384, 0.85), MODEL, 384);
-    const vector = await store.search({ query: 'Replicated', searchType: 'vector', topK: 10 });
-    expect(vector.map(e => e.id)).toContain(entry.id);
   });
 
   it('F3: tag-only lookup honors temporal eligibility and asOf', async () => {

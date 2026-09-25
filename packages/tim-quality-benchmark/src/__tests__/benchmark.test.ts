@@ -3,7 +3,6 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import type { EmbeddingProvider } from 'tim-store';
 import { runBenchmark } from '../runner.js';
 import { loadDataset } from '../dataset.js';
 import { REPORT_VERSION, DATASET_VERSION } from '../types.js';
@@ -55,17 +54,13 @@ describe('memory quality benchmark (#38)', () => {
     expect(dataset.questions.some(q => q.lang === 'de')).toBe(true);
     expect(dataset.questions.some(q => q.lang === 'en')).toBe(true);
     expect(dataset.fixedHandoff.text.length).toBeGreaterThan(50);
-    expect(dataset.entries.some(e => e.vectorHint === 'motor')).toBe(true);
+    expect(dataset.entries.some(e => e.title.includes('Kraftfahrzeug'))).toBe(true);
     expect(dataset.entries.some(e => e.supersedesGold)).toBe(true);
     expect(dataset.entries.some(e => e.section === 'Sessions')).toBe(false);
   });
 
-  it('runs synthetic benchmark across all modes with schema fields', async () => {
-    // Hybrid re-rank ignores vectors while the suite opt-out is set, which
-    // drops no-overlap synonym recall. This run uses the synthetic provider.
-    snapshotEnv('TIM_EMBEDDING_DISABLED');
-    delete process.env.TIM_EMBEDDING_DISABLED;
-    const report = await runBenchmark({ providerMode: 'synthetic' });
+  it('runs the full-text benchmark across all modes with schema fields', async () => {
+    const report = await runBenchmark();
     expect(report.reportVersion).toBe(REPORT_VERSION);
     expect(report.datasetVersion).toBe(DATASET_VERSION);
     expect(report.modeSummaries.map(m => m.mode)).toEqual([
@@ -90,7 +85,7 @@ describe('memory quality benchmark (#38)', () => {
         expect(r.evidence).toHaveProperty('irrelevant');
         expect(r.metrics).toHaveProperty('precision');
         expect(r.metrics).toHaveProperty('recall');
-        expect(r.provider.mode).toBe('synthetic');
+        expect(r.provider.mode).toBe('fts');
         expect(r.contextBytes).toBeLessThanOrEqual(report.contextBudget);
       }
       expect(q.results['fixed-handoff'].evidence.expected).toEqual(
@@ -99,11 +94,11 @@ describe('memory quality benchmark (#38)', () => {
     }
 
     const synonym = report.questions.find(q => q.id === 'q-en-synonym')!;
-    expect(synonym.results.tim.evidence.found).toContain('gold:motor-transport');
+    expect(synonym.results.tim.evidence.missing).toContain('gold:motor-transport');
     expect(synonym.results['no-memory'].evidence.missing).toContain('gold:motor-transport');
 
     const deSynonym = report.questions.find(q => q.id === 'q-de-synonym')!;
-    expect(deSynonym.results.tim.evidence.found).toContain('gold:motor-transport');
+    expect(deSynonym.results.tim.evidence.missing).toContain('gold:motor-transport');
 
     const temporalBefore = report.questions.find(q => q.id === 'q-en-decision-before')!;
     expect(temporalBefore.results.tim.evidence.found).toContain('gold:decision-v1');
@@ -125,7 +120,7 @@ describe('memory quality benchmark (#38)', () => {
     expect(briefing.results.tim.provider).toMatchObject({ modelId: null, state: 'not_used', searchType: 'fts' });
     for (const question of report.questions) {
       for (const mode of ['no-memory', 'fixed-handoff'] as const) {
-        expect(question.results[mode].provider).toEqual({ mode: 'synthetic', modelId: null, state: 'not_used' });
+        expect(question.results[mode].provider).toEqual({ mode: 'fts', modelId: null, state: 'not_used' });
       }
     }
     const partial = report.questions.find(q => q.id === 'q-de-briefing-session')!;
@@ -135,7 +130,7 @@ describe('memory quality benchmark (#38)', () => {
 
   it('loses expected recall for an unrelated query against a larger indexed distractor pool', async () => {
     const dataset = loadDataset();
-    const question = dataset.questions.find(q => q.id === 'q-en-synonym')!;
+    const question = dataset.questions.find(q => q.id === 'q-en-decision-current')!;
     const positive = await runBenchmark({ datasetOverride: { ...dataset, questions: [question] } });
     const negative = await runBenchmark({ datasetOverride: {
       ...dataset,
@@ -143,63 +138,12 @@ describe('memory quality benchmark (#38)', () => {
     } });
     expect(positive.questions[0].results.tim.metrics.recall).toBe(1);
     expect(negative.questions[0].results.tim.metrics.recall).toBe(0);
-    expect(negative.questions[0].results.tim.evidence.missing).toContain('gold:motor-transport');
-  });
-
-  it('reports explicit skip when real provider requested but unavailable (no synthetic run)', async () => {
-    snapshotEnv('TIM_EMBEDDING_REAL_MODEL');
-    snapshotEnv('TIM_EMBEDDING_DISABLED');
-    snapshotEnv('TIM_EMBEDDING_MODEL');
-    process.env.TIM_EMBEDDING_REAL_MODEL = '1';
-    process.env.TIM_EMBEDDING_MODEL = 'test-unknown-enum';
-    delete process.env.TIM_EMBEDDING_DISABLED;
-    const report = await runBenchmark({ providerMode: 'real' });
-    expect(report.provider.mode).toBe('real');
-    expect(report.provider.skipped).toBeDefined();
-    expect(report.provider.skipped!.reason).toMatch(/unavailable/i);
-    expect(report.questions).toHaveLength(0);
-  });
-
-  it('honors TIM_EMBEDDING_DISABLED without deleting the opt-out', async () => {
-    snapshotEnv('TIM_EMBEDDING_REAL_MODEL');
-    snapshotEnv('TIM_EMBEDDING_DISABLED');
-    process.env.TIM_EMBEDDING_REAL_MODEL = '1';
-    process.env.TIM_EMBEDDING_DISABLED = '1';
-    const report = await runBenchmark({ providerMode: 'real' });
-    expect(report.provider.skipped?.reason).toMatch(/TIM_EMBEDDING_DISABLED/);
-    expect(process.env.TIM_EMBEDDING_DISABLED).toBe('1');
-    expect(report.questions).toHaveLength(0);
-  });
-
-  it('uses injectable provider factory for real branch without synthetic vectors', async () => {
-    snapshotEnv('TIM_EMBEDDING_REAL_MODEL');
-    snapshotEnv('TIM_EMBEDDING_DISABLED');
-    process.env.TIM_EMBEDDING_REAL_MODEL = '1';
-    delete process.env.TIM_EMBEDDING_DISABLED;
-
-    const embeddedTexts: string[] = [];
-    const factory = async (): Promise<EmbeddingProvider> => ({
-      modelId: 'test-real-v1',
-      dimension: 3,
-      state: 'enabled',
-      embed: async (texts: string[]) => {
-        embeddedTexts.push(...texts);
-        return texts.map(() => new Float32Array([0.1, 0.2, 0.3]));
-      },
-    });
-
-    const report = await runBenchmark({ providerMode: 'real', providerFactory: factory });
-    expect(report.provider.skipped).toBeUndefined();
-    expect(report.provider.modelId).toBe('test-real-v1');
-    expect(report.questions.length).toBeGreaterThan(0);
-    expect(embeddedTexts.length).toBeGreaterThan(0);
-    expect(embeddedTexts.some(t => t.includes('Kraftfahrzeug'))).toBe(true);
-    expect(embeddedTexts.some(t => t.includes('vectorHint'))).toBe(false);
+    expect(negative.questions[0].results.tim.evidence.missing).toContain('gold:decision-current');
   });
 
   it('changes fixed-handoff metrics when handoff text is altered', async () => {
     const dataset = loadDataset();
-    const baseline = await runBenchmark({ providerMode: 'synthetic' });
+    const baseline = await runBenchmark();
     const handoffQ = baseline.questions.find(q => q.id === 'q-en-decision-current')!;
     const baselineRecall = handoffQ.results['fixed-handoff'].metrics.recall;
 
@@ -211,7 +155,6 @@ describe('memory quality benchmark (#38)', () => {
       },
     };
     const changed = await runBenchmark({
-      providerMode: 'synthetic',
       datasetOverride: altered,
     });
     const changedQ = changed.questions.find(q => q.id === 'q-en-decision-current')!;
@@ -280,7 +223,7 @@ describe('memory quality benchmark (#38)', () => {
           : q,
       ),
     };
-    const report = await runBenchmark({ providerMode: 'synthetic', datasetOverride: wrong });
+    const report = await runBenchmark({ datasetOverride: wrong });
     const q = report.questions.find(x => x.id === 'q-en-adversarial-scope')!;
     expect(q.results.tim.evidence.missing).toContain('gold:adversarial-b-noise');
     expect(q.results.tim.metrics.recall).toBe(0);
@@ -309,12 +252,11 @@ describe('memory quality benchmark (#38)', () => {
 
     const out = path.join(os.tmpdir(), `tim-quality-report-${Date.now()}.json`);
     outputs.push(out);
-    snapshotEnv('TIM_EMBEDDING_DISABLED');
     let result: ReturnType<typeof spawnSync>;
     try {
       result = spawnSync(process.execPath, [CLI_PATH, '--output', out], {
         encoding: 'utf8',
-        env: { ...process.env, TIM_EMBEDDING_DISABLED: '1' },
+        env: { ...process.env },
       });
     } finally {
       if (moved) fs.renameSync(srcBackup, srcDataset);
@@ -325,27 +267,5 @@ describe('memory quality benchmark (#38)', () => {
     const parsed = JSON.parse(fs.readFileSync(out, 'utf8'));
     expect(parsed.reportVersion).toBe(REPORT_VERSION);
     expect(parsed.questions.length).toBeGreaterThan(0);
-  });
-
-  it('CLI real opt-in reports honest no-network unavailable skip', () => {
-    const out = path.join(os.tmpdir(), `tim-quality-real-skip-${Date.now()}.json`);
-    outputs.push(out);
-    const env = {
-      ...process.env,
-      TIM_EMBEDDING_REAL_MODEL: '1',
-      TIM_EMBEDDING_MODEL: 'test-unknown-enum',
-    };
-    // Unknown model id is rejected before fastembed init. Drop the suite
-    // opt-out so this still asserts that path, not the disabled skip.
-    delete env.TIM_EMBEDDING_DISABLED;
-    const result = spawnSync(process.execPath, [CLI_PATH, '--real-provider', '--output', out], {
-      encoding: 'utf8',
-      env,
-    });
-    expect(result.status).toBe(0);
-    const parsed = JSON.parse(fs.readFileSync(out, 'utf8'));
-    expect(parsed.provider.mode).toBe('real');
-    expect(parsed.provider.skipped).toBeDefined();
-    expect(parsed.questions).toHaveLength(0);
   });
 });
