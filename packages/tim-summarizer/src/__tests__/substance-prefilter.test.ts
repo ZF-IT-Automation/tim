@@ -13,6 +13,7 @@ vi.mock('tim-core', () => ({
   })),
   getTimDir: vi.fn(() => os.tmpdir()),
   getConfigPath: vi.fn(() => path.join(os.tmpdir(), 'config.json')),
+  askJev: vi.fn(async () => null),
 }));
 
 describe('empty-user-turn pre-filter', () => {

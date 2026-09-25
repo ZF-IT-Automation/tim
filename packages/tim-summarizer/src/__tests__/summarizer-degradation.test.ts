@@ -22,6 +22,7 @@ vi.mock('tim-core', () => ({
   })),
   getTimDir: vi.fn(() => fs.mkdtempSync(path.join(os.tmpdir(), 'tim-log-'))),
   getConfigPath: vi.fn(() => CONFIG_PATH),
+  askJev: vi.fn(async () => null),
 }));
 
 const batch: UnsummarizedBatch = {
