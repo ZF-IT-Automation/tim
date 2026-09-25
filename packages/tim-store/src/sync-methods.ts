@@ -95,9 +95,35 @@ export function applyEntryTombstone(
   }
 }
 
+/**
+ * SQLite `datetime()` stores UTC as `YYYY-MM-DD HH:MM:SS` with no zone.
+ * `Date.parse` treats that shape as local time, which shifts the instant.
+ */
+export function parseStoredUtcMillis(value: string | undefined): number {
+  if (!value) return 0;
+  const trimmed = value.trim();
+  if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(trimmed)) {
+    const iso = `${trimmed.includes('T') ? trimmed : trimmed.replace(' ', 'T')}Z`;
+    const parsed = Date.parse(iso);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  const parsed = Date.parse(trimmed);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 export function edgeLocalLwwTimestamp(row: { updated_at?: string }): number {
-  if (row.updated_at) return Date.parse(row.updated_at);
-  return 0;
+  return parseStoredUtcMillis(row.updated_at);
+}
+
+/**
+ * Whether `remote` may replace `local`. A record with an empty device is an
+ * unknown pre-T02 edge: only a strictly newer timestamp wins, so device `''`
+ * cannot lose an equal-time tie.
+ */
+export function remoteEdgeWins(local: StagingRecord | undefined, remote: StagingRecord): boolean {
+  if (!local) return true;
+  if (local.lwwDevice === '') return remote.lwwTimestamp > local.lwwTimestamp;
+  return resolveLWW(local, remote).winner === remote;
 }
 
 export function recordFromPayload(
@@ -261,11 +287,26 @@ export function persistEdgeVersion(
   db: Database.Database, payload: string, timestamp: number, device: string, deleted: boolean,
 ): void {
   const edge = JSON.parse(payload) as { source_id: string; target_id: string; type: string };
+  const key = `${edge.source_id}|${edge.target_id}|${edge.type}`;
+  const existing = db.prepare(
+    'SELECT lww_timestamp, lww_device, deleted FROM edge_versions WHERE entity_key = ?',
+  ).get(key) as { lww_timestamp: number; lww_device: string; deleted: number } | undefined;
+  if (existing) {
+    const local = recordFromPayload(
+      key, 'edge', existing.deleted ? 'delete' : 'upsert', payload,
+      existing.lww_timestamp, existing.lww_device,
+    );
+    const incoming = recordFromPayload(
+      key, 'edge', deleted ? 'delete' : 'upsert', payload, timestamp, device,
+    );
+    // Equal timestamp and device keep the current payload (resolveLWW returns the first).
+    if (resolveLWW(local, incoming).winner !== incoming) return;
+  }
   db.prepare(`INSERT INTO edge_versions (entity_key, payload, lww_timestamp, lww_device, deleted)
     VALUES (?, ?, ?, ?, ?)
     ON CONFLICT(entity_key) DO UPDATE SET payload=excluded.payload,
       lww_timestamp=excluded.lww_timestamp, lww_device=excluded.lww_device, deleted=excluded.deleted`)
-    .run(`${edge.source_id}|${edge.target_id}|${edge.type}`, payload, timestamp, device, Number(deleted));
+    .run(key, payload, timestamp, device, Number(deleted));
 }
 
 export function localEdgeRecord(db: Database.Database, key: string): StagingRecord | undefined {
@@ -273,7 +314,7 @@ export function localEdgeRecord(db: Database.Database, key: string): StagingReco
     { payload: string; lww_timestamp: number; lww_device: string; deleted: number } | undefined;
   if (version) return recordFromPayload(key, 'edge', version.deleted ? 'delete' : 'upsert',
     version.payload, version.lww_timestamp, version.lww_device);
-  // Pre-T02 edges have no known origin. Do not invent a device identity.
+  // No register row: origin is unknown. Device '' must not lose an equal-time tie.
   const parts = key.split('|');
   const row = db.prepare('SELECT * FROM edges WHERE source_id=? AND target_id=? AND type=?')
     .get(...parts) as { updated_at?: string } | undefined;
@@ -296,7 +337,17 @@ export function applyRemoteEdge(
     payloadJson, lwwTimestamp, lwwDevice);
   return db.transaction(() => {
     const local = localEdgeRecord(db, key);
-    if (local && resolveLWW(local, remote).winner !== remote) return false;
+    if (!remoteEdgeWins(local, remote)) return false;
+    if (!deleted) {
+      const source = db.prepare('SELECT 1 AS present FROM entries WHERE id = ?').get(edge.source_id);
+      const target = db.prepare('SELECT 1 AS present FROM entries WHERE id = ?').get(edge.target_id);
+      if (!source || !target) {
+        // Remember the logical edge so the page can be acknowledged. Do not
+        // insert a physical row that the endpoint foreign keys would reject.
+        persistEdgeVersion(db, payloadJson, lwwTimestamp, lwwDevice, false);
+        return true;
+      }
+    }
     // Remove by logical identity, including older replicas' different row IDs.
     db.prepare('DELETE FROM edges WHERE source_id=? AND target_id=? AND type=?')
       .run(edge.source_id, edge.target_id, edge.type);

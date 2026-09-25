@@ -45,6 +45,8 @@ import {
   localEntryRecordFromRow,
   localEdgeRecord,
   applyEntryTombstone,
+  recordFromPayload,
+  remoteEdgeWins,
 } from './sync-methods.js';
 import { parentIsSecret } from './secret.js';
 import {
@@ -2052,9 +2054,19 @@ ${zeroExchangeFilter}
     if (!target) throw new Error(`Entry not found: ${targetId}`);
 
     const maxTimestamp = this.db.prepare(
-      'SELECT COALESCE(MAX(lww_timestamp), 0) AS value FROM staging',
+      `SELECT COALESCE(MAX(lww_timestamp), 0) AS value FROM (
+         SELECT lww_timestamp FROM staging
+         UNION ALL
+         SELECT lww_timestamp FROM edge_versions
+       )`,
     ).get() as { value: number };
     let timestamp = Math.max(Date.now(), maxTimestamp.value + 1);
+    const advanceEdgeTimestamp = (key: string, operation: 'upsert' | 'delete'): void => {
+      const local = localEdgeRecord(this.db, key);
+      if (!local) return;
+      const incoming = recordFromPayload(key, 'edge', operation, '', timestamp, this.deviceId);
+      if (!remoteEdgeWins(local, incoming)) timestamp = local.lwwTimestamp + 1;
+    };
 
     this.db.prepare(
       `DELETE FROM staging
@@ -2082,6 +2094,7 @@ ${zeroExchangeFilter}
       rewrite.edgeIds.forEach(id => edgeIds.add(id));
       for (const edge of rewrite.priorEdges) {
         const key = `${edge.source_id}|${edge.target_id}|${edge.type}`;
+        advanceEdgeTimestamp(key, 'delete');
         this.db.prepare(`INSERT INTO staging (key,entity_type,operation,payload,lww_timestamp,lww_device,lww_confidence)
           VALUES (?,'edge','delete',?,?,?,1.0)`).run(key,JSON.stringify(edge),timestamp,this.deviceId);
         persistEdgeVersion(this.db,JSON.stringify(edge),timestamp++,this.deviceId,true);
@@ -2096,6 +2109,7 @@ ${zeroExchangeFilter}
       const edge = this.db.prepare('SELECT * FROM edges WHERE id = ?').get(id) as RowEdge | undefined;
       if (!edge) continue;
       const key = `${edge.source_id}|${edge.target_id}|${edge.type}`;
+      advanceEdgeTimestamp(key, 'upsert');
       this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
         lww_timestamp, lww_device, lww_confidence)
         VALUES (?, 'edge', 'upsert', ?, ?, ?, 1.0)`).run(
@@ -3172,32 +3186,47 @@ ${zeroExchangeFilter}
 
     const id = ulid();
     const edgeKey = `${sourceId}|${targetId}|${type}`;
-    const ts = Math.max(Date.now(), (localEdgeRecord(this.db, edgeKey)?.lwwTimestamp ?? 0) + 1);
-
-    const edgeRow = {
-      id,
-      source_id: sourceId,
-      target_id: targetId,
-      type,
-      weight,
-      metadata: JSON.stringify(metadata),
-      updated_at: new Date(ts).toISOString(),
-    };
-
-    this.db.transaction(() => {
-      this.db.prepare('DELETE FROM edges WHERE source_id=? AND target_id=? AND type=?').run(sourceId, targetId, type);
-      this.db.prepare(`INSERT INTO edges (id, source_id, target_id, type, weight, metadata, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
-        edgeRow.id, edgeRow.source_id, edgeRow.target_id,
-        edgeRow.type, edgeRow.weight, edgeRow.metadata, edgeRow.updated_at,
+    const metadataJson = JSON.stringify(metadata);
+    const edgeRow = this.db.transaction(() => {
+      const current = localEdgeRecord(this.db, edgeKey);
+      const ts = Math.max(Date.now(), (current?.lwwTimestamp ?? 0) + 1);
+      const row = {
+        id,
+        source_id: sourceId,
+        target_id: targetId,
+        type,
+        weight,
+        metadata: metadataJson,
+        updated_at: new Date(ts).toISOString(),
+      };
+      const candidate = recordFromPayload(
+        edgeKey, 'edge', 'upsert', JSON.stringify(row), ts, this.deviceId,
       );
+      if (!remoteEdgeWins(current, candidate)) return null;
+      // Keep sibling rows the caller did not name. Update the oldest live row.
+      const existing = this.db.prepare(
+        `SELECT id FROM edges WHERE source_id=? AND target_id=? AND type=? ORDER BY rowid ASC LIMIT 1`,
+      ).get(sourceId, targetId, type) as { id: string } | undefined;
+      if (existing) {
+        this.db.prepare(
+          'UPDATE edges SET id=?, weight=?, metadata=?, updated_at=? WHERE id=?',
+        ).run(row.id, row.weight, row.metadata, row.updated_at, existing.id);
+      } else {
+        this.db.prepare(`INSERT INTO edges (id, source_id, target_id, type, weight, metadata, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
+          row.id, row.source_id, row.target_id,
+          row.type, row.weight, row.metadata, row.updated_at,
+        );
+      }
       this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
         lww_timestamp, lww_device, lww_confidence)
         VALUES (?, 'edge', 'upsert', ?, ?, ?, ?)`).run(
-        edgeKey, JSON.stringify(edgeRow), ts, this.deviceId, 1.0,
+        edgeKey, JSON.stringify(row), ts, this.deviceId, 1.0,
       );
-      persistEdgeVersion(this.db, JSON.stringify(edgeRow), ts, this.deviceId, false);
-    })();
+      persistEdgeVersion(this.db, JSON.stringify(row), ts, this.deviceId, false);
+      return row;
+    }).immediate();
+    if (!edgeRow) throw new Error('link: a newer edge version is already committed');
 
     const edge = { id, sourceId, targetId, type, weight, metadata };
     this.emit('edge:created', {
@@ -3223,10 +3252,15 @@ ${zeroExchangeFilter}
 
     const id = ulid();
     const edgeKey = `${sourceId}|${targetId}|supersedes`;
-    const ts = Math.max(Date.now(), (localEdgeRecord(this.db, edgeKey)?.lwwTimestamp ?? 0) + 1);
     let edgeMetadata: Record<string, unknown> = { effectiveAt: effective };
 
     const runLink = this.db.transaction(() => {
+      const current = localEdgeRecord(this.db, edgeKey);
+      const ts = Math.max(Date.now(), (current?.lwwTimestamp ?? 0) + 1);
+      const candidate = recordFromPayload(edgeKey, 'edge', 'upsert', '', ts + 2, this.deviceId);
+      if (!remoteEdgeWins(current, candidate)) {
+        throw new Error('supersedes: a newer edge version is already committed');
+      }
       const duplicate = this.db.prepare(
         `SELECT id FROM edges WHERE source_id = ? AND target_id = ? AND type = 'supersedes'`,
       ).get(sourceId, targetId) as { id: string } | undefined;
@@ -3328,7 +3362,6 @@ ${zeroExchangeFilter}
     if (!row) return;
 
     const edgeKey = `${row.source_id}|${row.target_id}|${row.type}`;
-    const ts = Math.max(Date.now(), (localEdgeRecord(this.db, edgeKey)?.lwwTimestamp ?? 0) + 1);
     const edgeRow = {
       id: row.id,
       source_id: row.source_id,
@@ -3361,6 +3394,14 @@ ${zeroExchangeFilter}
         if (!lockedEdge || JSON.stringify(lockedEdge) !== JSON.stringify(row)) {
           throw new Error('supersedes undo: edge changed; retry against the current edge');
         }
+        const current = localEdgeRecord(this.db, edgeKey);
+        const ts = Math.max(Date.now(), (current?.lwwTimestamp ?? 0) + 1);
+        const candidate = recordFromPayload(
+          edgeKey, 'edge', 'delete', JSON.stringify(edgeRow), ts + 2, this.deviceId,
+        );
+        if (!remoteEdgeWins(current, candidate)) {
+          throw new Error('supersedes undo: edge version changed; retry against the current edge');
+        }
         const sourceExisting = this.db.prepare('SELECT * FROM entries WHERE id = ?')
           .get(row.source_id) as RowEntry | undefined;
         const targetExisting = this.db.prepare('SELECT * FROM entries WHERE id = ?')
@@ -3375,13 +3416,18 @@ ${zeroExchangeFilter}
             && (temporal.supersededAt !== undefined || temporal.supersededBy !== undefined)) {
             throw new Error('supersedes discard: target has managed temporal state; use guarded undo');
           }
-          this.db.prepare('DELETE FROM edges WHERE source_id=? AND target_id=? AND type=?').run(row.source_id, row.target_id, row.type);
-          this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
-            lww_timestamp, lww_device, lww_confidence)
-            VALUES (?, 'edge', 'delete', ?, ?, ?, ?)`).run(
-            edgeKey, JSON.stringify(edgeRow), ts, this.deviceId, 1.0,
-          );
-          persistEdgeVersion(this.db, JSON.stringify(edgeRow), ts, this.deviceId, true);
+          this.db.prepare('DELETE FROM edges WHERE id=?').run(edgeId);
+          const remaining = this.db.prepare(
+            'SELECT COUNT(*) AS c FROM edges WHERE source_id=? AND target_id=? AND type=?',
+          ).get(row.source_id, row.target_id, row.type) as { c: number };
+          if (remaining.c === 0) {
+            this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
+              lww_timestamp, lww_device, lww_confidence)
+              VALUES (?, 'edge', 'delete', ?, ?, ?, ?)`).run(
+              edgeKey, JSON.stringify(edgeRow), ts, this.deviceId, 1.0,
+            );
+            persistEdgeVersion(this.db, JSON.stringify(edgeRow), ts, this.deviceId, true);
+          }
           return;
         }
         if (!sourceExisting || !targetExisting) {
@@ -3441,26 +3487,55 @@ ${zeroExchangeFilter}
         );
         this.insertStagingSync(sourceUpdated, ts, sourceUpdated.confidence);
         this.insertStagingSync(targetUpdated, ts + 1, targetUpdated.confidence);
-        this.db.prepare('DELETE FROM edges WHERE source_id=? AND target_id=? AND type=?').run(row.source_id, row.target_id, row.type);
-        this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
-          lww_timestamp, lww_device, lww_confidence)
-          VALUES (?, 'edge', 'delete', ?, ?, ?, ?)`).run(
-          edgeKey, JSON.stringify(edgeRow), ts + 2, this.deviceId, 1.0,
-        );
-        persistEdgeVersion(this.db, JSON.stringify(edgeRow), ts + 2, this.deviceId, true);
+        this.db.prepare('DELETE FROM edges WHERE id=?').run(edgeId);
+        const remaining = this.db.prepare(
+          'SELECT COUNT(*) AS c FROM edges WHERE source_id=? AND target_id=? AND type=?',
+        ).get(row.source_id, row.target_id, row.type) as { c: number };
+        if (remaining.c === 0) {
+          this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
+            lww_timestamp, lww_device, lww_confidence)
+            VALUES (?, 'edge', 'delete', ?, ?, ?, ?)`).run(
+            edgeKey, JSON.stringify(edgeRow), ts + 2, this.deviceId, 1.0,
+          );
+          persistEdgeVersion(this.db, JSON.stringify(edgeRow), ts + 2, this.deviceId, true);
+        }
       });
 
       runUndo.immediate();
     } else {
-      this.db.transaction(() => {
-        this.db.prepare('DELETE FROM edges WHERE source_id=? AND target_id=? AND type=?').run(row.source_id, row.target_id, row.type);
-        this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
-          lww_timestamp, lww_device, lww_confidence)
-          VALUES (?, 'edge', 'delete', ?, ?, ?, ?)`).run(
-          edgeKey, JSON.stringify(edgeRow), ts, this.deviceId, 1.0,
+      const removed = this.db.transaction(() => {
+        const locked = this.db.prepare('SELECT * FROM edges WHERE id = ?').get(edgeId) as RowEdge | undefined;
+        if (!locked) return null;
+        const lockedKey = `${locked.source_id}|${locked.target_id}|${locked.type}`;
+        const current = localEdgeRecord(this.db, lockedKey);
+        const ts = Math.max(Date.now(), (current?.lwwTimestamp ?? 0) + 1);
+        const lockedRow = {
+          id: locked.id,
+          source_id: locked.source_id,
+          target_id: locked.target_id,
+          type: locked.type,
+          weight: locked.weight,
+          metadata: locked.metadata,
+        };
+        const candidate = recordFromPayload(
+          lockedKey, 'edge', 'delete', JSON.stringify(lockedRow), ts, this.deviceId,
         );
-        persistEdgeVersion(this.db, JSON.stringify(edgeRow), ts, this.deviceId, true);
-      })();
+        if (!remoteEdgeWins(current, candidate)) return null;
+        this.db.prepare('DELETE FROM edges WHERE id=?').run(locked.id);
+        const remaining = this.db.prepare(
+          'SELECT COUNT(*) AS c FROM edges WHERE source_id=? AND target_id=? AND type=?',
+        ).get(locked.source_id, locked.target_id, locked.type) as { c: number };
+        if (remaining.c === 0) {
+          this.db.prepare(`INSERT INTO staging (key, entity_type, operation, payload,
+            lww_timestamp, lww_device, lww_confidence)
+            VALUES (?, 'edge', 'delete', ?, ?, ?, ?)`).run(
+            lockedKey, JSON.stringify(lockedRow), ts, this.deviceId, 1.0,
+          );
+          persistEdgeVersion(this.db, JSON.stringify(lockedRow), ts, this.deviceId, true);
+        }
+        return locked;
+      }).immediate();
+      if (!removed) return;
     }
 
     const edge: Edge = {

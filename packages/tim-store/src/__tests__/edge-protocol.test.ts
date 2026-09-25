@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import Database from 'better-sqlite3';
 import { TimStore } from '../store.js';
-import { applyRemoteEdge, localEdgeRecord } from '../sync-methods.js';
+import { applyRemoteEdge, localEdgeRecord, persistEdgeVersion } from '../sync-methods.js';
 import { MIGRATIONS, runMigrations, setStagingEnabled } from '../schema.js';
 
 const stores: TimStore[] = [];
@@ -76,6 +76,87 @@ describe('additive schema v15', () => {
     } finally { db.close(); }
   });
 });
+describe('edge register guards', () => {
+  it('persistEdgeVersion does not move the register backwards', () => {
+    const s = store();
+    persistEdgeVersion(s.getDb(), payload('current'), 5000, 'a', false);
+    persistEdgeVersion(s.getDb(), payload('stale'), 4990, 'b', false);
+    expect(localEdgeRecord(s.getDb(), key)?.lwwTimestamp).toBe(5000);
+    expect(JSON.parse(localEdgeRecord(s.getDb(), key)!.payload).id).toBe('current');
+  });
+
+  it('keeps the current edge when timestamp and device match but the payload differs', async () => {
+    const s = store(); await endpoints(s);
+    expect(applyRemoteEdge(s.getDb(), payload('current'), 100, 'same', false)).toBe(true);
+    expect(applyRemoteEdge(s.getDb(), payload('other'), 100, 'same', false)).toBe(false);
+    expect(s.getDb().prepare('SELECT id FROM edges').all()).toEqual([{ id: 'current' }]);
+    expect(JSON.parse(localEdgeRecord(s.getDb(), key)!.payload).id).toBe('current');
+    persistEdgeVersion(s.getDb(), payload('other'), 100, 'same', false);
+    expect(JSON.parse(localEdgeRecord(s.getDb(), key)!.payload).id).toBe('current');
+  });
+
+  it('does not delete sibling rows the caller did not name', async () => {
+    const s = store(); await endpoints(s);
+    const insert = s.getDb().prepare(
+      `INSERT INTO edges (id, source_id, target_id, type, weight, metadata, updated_at)
+       VALUES (?, 'source', 'target', 'relates', ?, ?, '2020-01-01 00:00:00')`,
+    );
+    insert.run('first', 0.1, '{"keep":false}');
+    insert.run('second', 0.2, '{"keep":true}');
+    const linked = await s.link('source', 'target', 'relates', 0.9, { fresh: true });
+    const afterLink = s.getDb().prepare('SELECT id, metadata FROM edges ORDER BY rowid').all() as Array<{
+      id: string; metadata: string;
+    }>;
+    expect(afterLink).toHaveLength(2);
+    expect(afterLink.map(row => row.id)).toContain('second');
+    expect(afterLink.map(row => row.id)).toContain(linked.id);
+    expect(afterLink.find(row => row.id === 'second')?.metadata).toBe('{"keep":true}');
+    await s.unlink('second');
+    expect(s.getDb().prepare('SELECT id FROM edges').all()).toEqual([{ id: linked.id }]);
+    expect(localEdgeRecord(s.getDb(), key)?.operation).toBe('upsert');
+  });
+
+  it('does not let a pre-T02 edge lose an equal-time conflict, parsing legacy datetime as UTC', async () => {
+    const s = store(); await endpoints(s);
+    s.getDb().prepare(
+      `INSERT INTO edges (id, source_id, target_id, type, weight, metadata, updated_at)
+       VALUES ('legacy', 'source', 'target', 'relates', 1, '{}', '2020-06-15 12:00:00')`,
+    ).run();
+    const utc = Date.parse('2020-06-15T12:00:00.000Z');
+    expect(localEdgeRecord(s.getDb(), key)?.lwwDevice).toBe('');
+    expect(localEdgeRecord(s.getDb(), key)?.lwwTimestamp).toBe(utc);
+    expect(applyRemoteEdge(s.getDb(), payload('remote'), utc, 'zzzz', false)).toBe(false);
+    expect(applyRemoteEdge(s.getDb(), payload('older'), utc - 1, 'zzzz', false)).toBe(false);
+    expect(s.getDb().prepare('SELECT id FROM edges').all()).toEqual([{ id: 'legacy' }]);
+    expect(applyRemoteEdge(s.getDb(), payload('newer'), utc + 1, 'a', false)).toBe(true);
+    expect(s.getDb().prepare('SELECT id FROM edges').all()).toEqual([{ id: 'newer' }]);
+  });
+
+  it('records an upsert when an endpoint is missing and does not throw', async () => {
+    const s = store();
+    expect(applyRemoteEdge(s.getDb(), payload('missing'), 50, 'origin', false)).toBe(true);
+    expect(s.getDb().prepare('SELECT * FROM edges').all()).toEqual([]);
+    expect(localEdgeRecord(s.getDb(), key)).toMatchObject({ lwwTimestamp: 50, lwwDevice: 'origin' });
+    await endpoints(s);
+    expect(applyRemoteEdge(s.getDb(), payload('stale'), 40, 'origin', false)).toBe(false);
+    expect(s.getDb().prepare('SELECT * FROM edges').all()).toEqual([]);
+  });
+
+  it('inbox repair does not move edge_versions backwards', async () => {
+    const s = store(); await endpoints(s);
+    const edge = await s.link('source', 'target', 'relates');
+    const high = Date.now() + 10_000_000;
+    persistEdgeVersion(s.getDb(), JSON.stringify({
+      id: edge.id, source_id: 'source', target_id: 'target', type: 'relates', weight: 1, metadata: '{}',
+    }), high, 'future', false);
+    const row = s.getDb().prepare('SELECT * FROM edges').get();
+    s.stageEntryIdRewritesSync('target', [{
+      sourceId: 'source', targetId: 'target', entryIds: [], edgeIds: [], priorEdges: [row as never],
+    }]);
+    expect(localEdgeRecord(s.getDb(), key)!.lwwTimestamp).toBeGreaterThan(high);
+  });
+});
+
 it('local repeated links remain one logical edge and stale same-millisecond replay cannot undo unlink', async () => {
   const s = store(); await endpoints(s);
   await s.link('source','target','relates');

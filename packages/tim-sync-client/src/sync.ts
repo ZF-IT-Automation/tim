@@ -7,6 +7,7 @@ import {
   isSecret,
   localEntryRecordFromRow,
   localEdgeRecord,
+  remoteEdgeWins,
 } from 'tim-store';
 import { SYNC_PROTOCOL_GENERATION, resolveLWW } from 'tim-core';
 import { SyncApiError, TimSyncClient } from './client.js';
@@ -475,7 +476,10 @@ export async function pullCycle(
               Parameters<typeof localEntryRecordFromRow>[0] | undefined;
             return row ? localEntryRecordFromRow(row) : undefined;
           })();
-          if (local && resolveLWW(local,remote).winner !== remote) conflictCount++;
+          const remoteWins = envelope.type === 'edge'
+            ? remoteEdgeWins(local, remote)
+            : !local || resolveLWW(local, remote).winner === remote;
+          if (!remoteWins) conflictCount++;
           const apply = envelope.type === 'entry' ? applyRemoteEntry : applyRemoteEdge;
           if (apply(db,envelope.payload,remote.lwwTimestamp,remote.lwwDevice,envelope.deleted)) appliedCount++;
         }
