@@ -183,6 +183,21 @@ SQLite holds local memory. MCP is the agent interface; the CLI handles setup and
 
 Ten packages: `tim-core`, `tim-store`, `tim-mcp`, `tim-cli`, `tim-hooks`, `tim-summarizer`, `tim-migrate`, `tim-sync-client`, `tim-sync-server` and `tim-skills`.
 
+## Optional: Jev
+
+TIM runs fully without it. With a key for [Jev](https://openrouter.ai/typesafe/jev-1.13)
+(TypeSafe's decision model, via OpenRouter, fractions of a cent per call), four
+places add a fast relevance judgement on top of what they already do:
+
+- `tim_resume_topic` also finds sessions that describe the topic in other words.
+- The summarizer skips the LLM call for trivial one- or two-exchange sessions.
+- `tim_find_duplicates` queues only pairs Jev confirms as the same fact.
+- `tim_show` with `with: "looks-done"` suggests open tasks the evidence says are done.
+
+Put the key in `JEV_API_KEY` or in `~/.config/jev/env` (`JEV_API_KEY=sk-or-...`).
+Without a key, or when Jev does not answer, every one of these behaves exactly as
+before; failures are logged to `~/.tim/logs/jev.log`.
+
 ## How TIM compares
 
 TIM focuses on **project work over time**: structured decisions and work items, session capture and handoff, retrieval, and tools to inspect and recover the store. Local storage and cross-client memory are valuable shared ideas, not features unique to TIM.
