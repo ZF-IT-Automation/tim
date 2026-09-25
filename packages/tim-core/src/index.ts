@@ -508,3 +508,12 @@ export function taskPriorityRank(priority: unknown): number {
   const key = /^[0-3]$/.test(raw) ? `P${raw}` : /^p[0-3]$/i.test(raw) ? raw.toUpperCase() : raw.toLowerCase();
   return TASK_PRIORITY_RANK[key] ?? 4;
 }
+export {
+  askJev,
+  jevNoul,
+  resolveJevApiKey,
+  JEV_ENDPOINT,
+  JEV_MODEL,
+  type JevAnswer,
+  type JevQuestion,
+} from './jev.js';

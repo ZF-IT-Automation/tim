@@ -24,6 +24,8 @@ delete process.env.CLAUDE_CODE_SESSION_ID;
 delete process.env.TIM_SESSION_ID;
 // A developer's TIM_DB_PATH would point tests that forget their own at the live DB.
 delete process.env.TIM_DB_PATH;
+// Jev is a network call; the suite mocks fetch and must never bill the real key.
+delete process.env.JEV_API_KEY;
 // A machine with TIM installed has this directory; code that opens
 // ~/.tim/tim.db without creating it first would otherwise fail here for a
 // reason no production run has.
