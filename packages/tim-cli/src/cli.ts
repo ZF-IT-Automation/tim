@@ -665,6 +665,24 @@ async function cmdBindProject(args: string[]) {
   }
 }
 
+/**
+ * Project a turn hook should use. A bound session (`kind === 'session'` and a
+ * string `project_ref`) wins over cwd: Claude's cwd drifts into subdirectories
+ * where the cwd-only marker lookup finds nothing. No session entry → the marker
+ * in cwd itself. No walk-up.
+ */
+async function resolveHookProject(
+  store: TimStore,
+  sessionId: string,
+  cwd: string,
+): Promise<string | undefined> {
+  const session = sessionId ? await store.read(sessionId) : null;
+  const bound = session?.metadata.kind === 'session' && typeof session.metadata.project_ref === 'string'
+    ? session.metadata.project_ref
+    : undefined;
+  return bound ?? findMarker(cwd)?.marker.project;
+}
+
 async function cmdHook(args: string[]) {
   // Agent CLIs the summarizer runs are hook-registered sessions of their own. Logging
   // their turns would store the summarizer's prompt as a user exchange and spawn a
@@ -706,14 +724,8 @@ async function cmdHook(args: string[]) {
       const store = new TimStore(getDbPath(config));
       let context: string | null = null;
       try {
-        // The session's bound project first: Claude's cwd drifts into subdirectories,
-        // where the cwd-only marker lookup finds nothing.
         const sessionId = typeof payload?.session_id === 'string' ? payload.session_id.trim() : '';
-        const session = sessionId ? await store.read(sessionId) : null;
-        const bound = session?.metadata.kind === 'session' && typeof session.metadata.project_ref === 'string'
-          ? session.metadata.project_ref
-          : undefined;
-        const projectLabel = bound ?? findMarker(cwd)?.marker.project;
+        const projectLabel = await resolveHookProject(store, sessionId, cwd);
         // No project, no recall: an unscoped search pulls in every other project's memory.
         if (projectLabel) {
           const result = await runPromptSubmit(store, { prompt, projectLabel });
@@ -773,12 +785,14 @@ async function cmdHook(args: string[]) {
         ? { agentName: 'cursor', harness: 'cursor' }
         : undefined;
 
-      const marker = findMarker(cwd);
-      if (!marker) return;
-
       const config = loadConfig();
       const store = new TimStore(getDbPath(config));
       try {
+        // ensureHookSession re-reads the marker only when no session entry exists.
+        // A bound session logs against project_ref; the drifted cwd is not consulted.
+        const projectLabel = await resolveHookProject(store, sessionId, cwd);
+        if (!projectLabel) return;
+
         const result = await runClaudeStop(
           store,
           {
@@ -827,18 +841,19 @@ async function cmdHook(args: string[]) {
       const cwd = typeof payload.cwd === 'string' ? payload.cwd.trim() : '';
       if (!cwd) return;
 
-      const marker = findMarker(cwd);
-      if (!marker) return;
-
       const config = loadConfig();
       const store = new TimStore(getDbPath(config));
       try {
+        // Same cwd drift as claude-stop: thread-id is the session id.
+        const sessionId = typeof payload['thread-id'] === 'string' ? payload['thread-id'].trim() : '';
+        const projectLabel = await resolveHookProject(store, sessionId, cwd);
+        if (!projectLabel) return;
+
         const result = await runCodexNotify(store, payload, { cwd });
         // Same reason as claude-stop: this is the only writer of Codex exchanges,
         // so it is also the only place that learns a batch just filled.
-        if (result.logged) {
-          const sessionId = String(payload['thread-id'] ?? '').trim();
-          if (sessionId) await maybeSpawnSummarizer(store, cwd, { sessionId });
+        if (result.logged && sessionId) {
+          await maybeSpawnSummarizer(store, cwd, { sessionId });
         }
       } finally {
         store.close();
