@@ -251,7 +251,7 @@ export function extractTags(text: string): { body: string; tags: string[]; subst
   return { body, tags: tags.slice(0, 5), ...(substance ? { substance } : {}) };
 }
 
-function appendSummarizerLog(line: string): void {
+export function appendSummarizerLog(line: string): void {
   try {
     const logPath = path.join(getTimDir(), 'summarizer.log');
     fs.appendFileSync(logPath, `${new Date().toISOString()} ${line}\n`);
