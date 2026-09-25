@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import * as os from 'os';
 import * as path from 'path';
-import { loadConfig, type Entry } from 'tim-core';
+import { askJev, loadConfig, type Entry, type JevAnswer } from 'tim-core';
 import {
   TimStore,
   SessionManager,
@@ -23,6 +23,7 @@ import {
   generateSubstanceVerdict,
   projectOverviewLines,
   type SubstanceProjectContext,
+  appendSummarizerLog,
   extractTags,
   FALLBACK_MARKER,
   type SummaryStatus,
@@ -309,6 +310,76 @@ function entryText(entry: Entry): string {
 }
 
 const AUTOMATION_SUMMARY = 'No user content (automation).';
+const TRIVIAL_SUMMARY = 'Session judged trivial.';
+// First+last turns at this clip matched a full transcript on the skip decision
+// (eval 3-session-substance) at about half the tokens.
+const TURN_CLIP = 1500;
+// argmax trivial alone is not enough: P=0.55 still hid a real blocker.
+const TRIVIAL_MIN_P = 0.7;
+
+const SUBSTANCE_QUESTION = {
+  substance: {
+    type: 'score' as const,
+    instructions: 'How substantive is this session for future work?',
+    criteria: ['trivial', 'some substance', 'major'],
+  },
+};
+
+function clipTurn(text: string, max = TURN_CLIP): string {
+  const trimmed = text.trim();
+  if (trimmed.length <= max) return trimmed;
+  return `${trimmed.slice(0, max)}…`;
+}
+
+function substanceTurns(batch: UnsummarizedBatch) {
+  const turns = batch.exchanges;
+  if (turns.length <= 8) return turns;
+  const picked = new Set(turns.slice(0, 4).concat(turns.slice(-4)));
+  return turns.filter(turn => picked.has(turn));
+}
+
+function substanceState(batch: UnsummarizedBatch): string {
+  const meta = batch.sessionMeta;
+  const header = [
+    meta.title ? `title: ${clipTurn(meta.title, 120)}` : '',
+    `session: ${batch.sessionId}`,
+    meta.project ? `project: ${meta.project}` : '',
+    meta.tool ? `tool: ${meta.tool}` : '',
+    meta.date ? `date: ${meta.date.slice(0, 10)}` : '',
+    meta.model ? `model: ${meta.model}` : '',
+    meta.task_summary ? `task: ${clipTurn(meta.task_summary, 240)}` : '',
+  ].filter(Boolean);
+  const body = substanceTurns(batch).map(turn => {
+    const user = `U${turn.seq}: ${clipTurn(turn.userContent)}`;
+    const agent = turn.agentContent?.trim() ? `A${turn.seq}: ${clipTurn(turn.agentContent)}` : '';
+    return agent ? `${user}\n${agent}` : user;
+  }).join('\n\n');
+  return `${header.join('\n')}\n\n${body}`;
+}
+
+/**
+ * P(trivial) only when level 0 is the unique argmax and at least 0.7.
+ * Any other answer, including a missing one, must not skip the summarizer.
+ */
+function trivialSkipProbability(answer: JevAnswer | undefined): number | null {
+  if (!answer || answer.type !== 'score' || !answer.probabilities) return null;
+  const p = answer.probabilities['0'];
+  if (typeof p !== 'number' || !(p >= TRIVIAL_MIN_P)) return null;
+  for (const [key, value] of Object.entries(answer.probabilities)) {
+    if (key === '0') continue;
+    if (typeof value === 'number' && value >= p) return null;
+  }
+  return p;
+}
+
+async function jevTrivialProbability(batch: UnsummarizedBatch): Promise<number | null> {
+  try {
+    const answers = await askJev('summarizer-substance', substanceState(batch), SUBSTANCE_QUESTION);
+    return answers ? trivialSkipProbability(answers.substance) : null;
+  } catch {
+    return null;
+  }
+}
 
 function batchHasOnlyEmptyUserTurns(batch: UnsummarizedBatch): boolean {
   return batch.exchanges.length > 0
@@ -501,19 +572,26 @@ export async function runSummarizerLoop(
         summary = AUTOMATION_SUMMARY;
         substance = 'none';
       } else {
-        const { text: raw, status } = await generateSummaryDetailed(batch, onMCPError);
-        if (status !== 'ok') opts.onDegraded?.({ batchIndex: batch.batchIndex, status });
-
-        if (raw === FALLBACK_MARKER) {
-          summary =
-            `${SUMMARY_FAILURE_MARKER} — main agent please resummarize batch ${batch.batchIndex}]\n` +
-            `${batch.exchanges.map(e => `Q: ${e.userContent.trim().slice(0, 200)}`).join('\n')}`;
-          tags = undefined;
+        const trivialP = await jevTrivialProbability(batch);
+        if (trivialP != null) {
+          summary = TRIVIAL_SUMMARY;
+          substance = 'none';
+          appendSummarizerLog(`SKIP jev-trivial session=${sessionId} P(trivial)=${trivialP}`);
         } else {
-          const extracted = extractTags(raw);
-          substance = extracted.substance;
-          summary = extracted.body;
-          tags = extracted.tags.length > 0 ? extracted.tags : undefined;
+          const { text: raw, status } = await generateSummaryDetailed(batch, onMCPError);
+          if (status !== 'ok') opts.onDegraded?.({ batchIndex: batch.batchIndex, status });
+
+          if (raw === FALLBACK_MARKER) {
+            summary =
+              `${SUMMARY_FAILURE_MARKER} — main agent please resummarize batch ${batch.batchIndex}]\n` +
+              `${batch.exchanges.map(e => `Q: ${e.userContent.trim().slice(0, 200)}`).join('\n')}`;
+            tags = undefined;
+          } else {
+            const extracted = extractTags(raw);
+            substance = extracted.substance;
+            summary = extracted.body;
+            tags = extracted.tags.length > 0 ? extracted.tags : undefined;
+          }
         }
       }
 
