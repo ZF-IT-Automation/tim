@@ -1,6 +1,6 @@
 import type { TimStore } from './store.js';
 
-export type SummarySkipReason = 'trivial' | 'exhausted';
+export type SummarySkipReason = 'exhausted';
 
 export interface SummarySkipped {
   reason: SummarySkipReason;
@@ -13,7 +13,7 @@ export function readSummarySkipped(metadata: Record<string, unknown>): SummarySk
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
   const reason = (raw as { reason?: unknown }).reason;
   const at = (raw as { at?: unknown }).at;
-  if ((reason !== 'trivial' && reason !== 'exhausted') || typeof at !== 'string' || !at) return null;
+  if (reason !== 'exhausted' || typeof at !== 'string' || !at) return null;
   return { reason, at };
 }
 

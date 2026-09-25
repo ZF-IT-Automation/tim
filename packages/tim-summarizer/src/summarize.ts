@@ -11,7 +11,6 @@ import {
   KIND_SESSION,
   deriveSessionCoverage,
   isSubstantiveSession,
-  markSummarySkipped,
   parseSessionSubstance,
 } from 'tim-store';
 import { connectTimMcp, callTimTool, type UnsummarizedBatch } from './mcp-client.js';
@@ -542,20 +541,6 @@ async function postSummarizerHandoff(sessionId: string): Promise<void> {
   }
 }
 
-/** Persist the substance-gate skip on the session row. Failure must not drop the batch write. */
-async function persistSummarySkip(sessionId: string, reason: 'trivial' | 'exhausted'): Promise<void> {
-  let store: TimStore | null = null;
-  try {
-    store = new TimStore(resolveDbPath());
-    await markSummarySkipped(store, sessionId, reason);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    appendSummarizerLog(`SKIP mark failed session=${sessionId} ${msg}`);
-  } finally {
-    store?.close();
-  }
-}
-
 export interface SummarizerLoopOpts {
   /** Called per batch that was stored degraded (marker or heuristic transcript). */
   onDegraded?: (info: { batchIndex: number; status: SummaryStatus }) => void;
@@ -593,7 +578,6 @@ export async function runSummarizerLoop(
           summary = TRIVIAL_SUMMARY;
           substance = 'none';
           appendSummarizerLog(`SKIP jev-trivial session=${sessionId} P(trivial)=${trivialP}`);
-          await persistSummarySkip(sessionId, 'trivial');
         } else {
           const { text: raw, status } = await generateSummaryDetailed(batch, onMCPError);
           if (status !== 'ok') opts.onDegraded?.({ batchIndex: batch.batchIndex, status });
