@@ -9,8 +9,13 @@
 // for "tim-viewer" returned nothing while full text found the same batches by
 // their bodies. Full text is forgiving but bm25-ranked and truncating, so it
 // cannot promise completeness the way the tag scan does.
+//
+// When a Jev key is present, a third path ORs the topic words (minus a few
+// generic tokens) across summaries and keeps a session only if Jev says it is
+// about the topic. No key, or a null reply, leaves the two paths above as they
+// are — an unfiltered OR set is worse than today's result.
 import type { Entry } from 'tim-core';
-import { resolveEntrySearchStatus, truncateSummary } from 'tim-core';
+import { askJev, jevNoul, resolveEntrySearchStatus, resolveJevApiKey, truncateSummary } from 'tim-core';
 import type { TimStore } from 'tim-store';
 import { KIND_BATCH, KIND_SESSION, KIND_SUMMARY_ROOT } from 'tim-store';
 import { recentExchanges } from 'tim-hooks';
@@ -109,6 +114,144 @@ function sessionDate(session: Entry): string {
   return typeof session.metadata.date === 'string' ? session.metadata.date : session.createdAt;
 }
 
+/** OR hits judged together. One HTTP call, eight sessions — measured on P0063. */
+const JEV_CHUNK = 8;
+/** Below this the widened session stays out. 0.70 kept more noise than it saved. */
+const JEV_KEEP = 0.75;
+/** Rollup prefix Jev actually reads. Longer text did not change the decision. */
+const JEV_ENTRY_CHARS = 550;
+/** Summaries, not commits. A short page of commits starved the text Jev judges. */
+const WIDEN_LIMIT = 300;
+/**
+ * These match the structural tag `#session-summary` or the product name, so an
+ * OR of them is the whole history. Jev does not reliably reject that flood.
+ */
+const GENERIC_OR_TOKENS = new Set(['tim', 'session', 'sessions', 'node', 'nodes']);
+
+type SessionCandidate = {
+  date: string;
+  summaryRoot: Entry;
+  batches: Entry[];
+  absorbed: number;
+};
+
+function remember(
+  candidates: Map<string, SessionCandidate>,
+  session: Entry,
+  summaryRoot: Entry,
+  batch?: Entry,
+): void {
+  const known = candidates.get(session.id);
+  const record = known ?? {
+    date: sessionDate(session),
+    summaryRoot,
+    batches: [] as Entry[],
+    absorbed: 0,
+  };
+  if (batch) record.batches.push(batch);
+  // Every hit that lands in a session block, so the "further entries" footer
+  // can subtract what was actually accounted for rather than block count.
+  record.absorbed += 1;
+  candidates.set(session.id, record);
+}
+
+async function absorbHit(
+  store: TimStore,
+  candidates: Map<string, SessionCandidate>,
+  hit: Entry,
+  skipSessionIds?: ReadonlySet<string>,
+): Promise<void> {
+  if (hit.metadata.kind === KIND_BATCH) {
+    const located = await sessionOfBatch(store, hit);
+    if (!located || skipSessionIds?.has(located.session.id)) return;
+    remember(candidates, located.session, located.summaryRoot, hit);
+    return;
+  }
+  // A Summary root carries the session's aggregated tags and its rollup text,
+  // so it matches topics its individual batches never spell out. It used to be
+  // counted only in the "kinds this view does not render" footer — while
+  // holding exactly the text this view now wants.
+  if (hit.metadata.kind === KIND_SUMMARY_ROOT && hit.parentId) {
+    const session = await store.read(hit.parentId);
+    if (!session || session.metadata.kind !== KIND_SESSION) return;
+    if (skipSessionIds?.has(session.id)) return;
+    remember(candidates, session, hit);
+  }
+}
+
+/** Topic words for the OR widening. Generic tokens are dropped, not quoted. */
+function orTopicTerms(topic: string): string[] {
+  return topic
+    .replace(/^#/, '')
+    .replace(/[-_]+/g, ' ')
+    .split(/\s+/)
+    .map(term => term.trim())
+    .filter(term => term.length > 0 && !GENERIC_OR_TOKENS.has(term.toLowerCase()));
+}
+
+/**
+ * What Jev should judge: the rollup when the session has one, otherwise the
+ * earliest matched batch — the same account the view would show.
+ */
+function jevJudgementText(rec: SessionCandidate): string {
+  const rollup = (rec.summaryRoot.content ?? '').trim();
+  if (rollup) return rollup.slice(0, JEV_ENTRY_CHARS);
+  const first = [...rec.batches].sort(
+    (a, b) => (Number(a.metadata.batch_index) || 0) - (Number(b.metadata.batch_index) || 0),
+  )[0];
+  return (first?.content ?? '').trim().slice(0, JEV_ENTRY_CHARS);
+}
+
+/**
+ * Union Jev-kept OR sessions into `candidates`. Sessions already found by the
+ * tag or AND path are not sent and are not touched. A null chunk is dropped
+ * whole — never merged unfiltered.
+ */
+async function mergeJevWidenedSessions(
+  store: TimStore,
+  projectLabel: string,
+  topic: string,
+  candidates: Map<string, SessionCandidate>,
+): Promise<void> {
+  if (!resolveJevApiKey()) return;
+  const terms = orTopicTerms(topic);
+  if (terms.length === 0) return;
+  // or-terms mode only ORs quoted terms; a bare word list falls back to AND.
+  const orQuery = terms.map(term => `"${term.replace(/"/g, ' ').trim()}"`).filter(q => q !== '""').join(' OR ');
+  if (!orQuery) return;
+
+  const widenedHits = await store.searchFts(orQuery, WIDEN_LIMIT, {
+    project: projectLabel,
+    ftsQueryMode: 'or-terms',
+    includeKinds: [KIND_BATCH, KIND_SUMMARY_ROOT],
+  });
+
+  const fresh = new Map<string, SessionCandidate>();
+  const already = new Set(candidates.keys());
+  for (const hit of widenedHits) {
+    await absorbHit(store, fresh, hit, already);
+  }
+  if (fresh.size === 0) return;
+
+  const ordered = [...fresh.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  for (let i = 0; i < ordered.length; i += JEV_CHUNK) {
+    const chunk = ordered.slice(i, i + JEV_CHUNK);
+    const entries = chunk.map(([, rec], n) => `E${n}: ${jevJudgementText(rec)}`);
+    const questions: Record<string, { type: 'noul'; instructions: string }> = {};
+    chunk.forEach((_, n) => {
+      questions[`e${n}`] = { type: 'noul', instructions: `Is entry E${n} about the topic?` };
+    });
+    const answers = await askJev('topic-recall', { topic, entries }, questions);
+    if (!answers) continue;
+    chunk.forEach(([id, rec], n) => {
+      const noul = jevNoul(answers, `e${n}`);
+      // Widened hits are not in `otherHits`. Counting them as absorbed would
+      // shrink the remainder line and hide a note the tag scan actually found.
+      if (noul !== undefined && noul >= JEV_KEEP) candidates.set(id, { ...rec, absorbed: 0 });
+    });
+  }
+}
+
 export async function collectTopicResume(
   store: TimStore,
   projectLabel: string,
@@ -137,41 +280,9 @@ export async function collectTopicResume(
   // Keyed by session id: every matching batch of one session collapses into that
   // session's single entry, and a matching Summary root reaches the same entry
   // from the other direction.
-  const candidates = new Map<
-    string,
-    { date: string; summaryRoot: Entry; batches: Entry[]; absorbed: number }
-  >();
-
-  const remember = (session: Entry, summaryRoot: Entry, batch?: Entry) => {
-    const known = candidates.get(session.id);
-    const record = known ?? {
-      date: sessionDate(session),
-      summaryRoot,
-      batches: [] as Entry[],
-      absorbed: 0,
-    };
-    if (batch) record.batches.push(batch);
-    // Every hit that lands in a session block, so the "further entries" footer
-    // can subtract what was actually accounted for rather than block count.
-    record.absorbed += 1;
-    candidates.set(session.id, record);
-  };
-
-  for (const hit of hits) {
-    if (hit.metadata.kind === KIND_BATCH) {
-      const located = await sessionOfBatch(store, hit);
-      if (located) remember(located.session, located.summaryRoot, hit);
-      continue;
-    }
-    // A Summary root carries the session's aggregated tags and its rollup text,
-    // so it matches topics its individual batches never spell out. It used to be
-    // counted only in the "kinds this view does not render" footer — while
-    // holding exactly the text this view now wants.
-    if (hit.metadata.kind === KIND_SUMMARY_ROOT && hit.parentId) {
-      const session = await store.read(hit.parentId);
-      if (session && session.metadata.kind === KIND_SESSION) remember(session, hit);
-    }
-  }
+  const candidates = new Map<string, SessionCandidate>();
+  for (const hit of hits) await absorbHit(store, candidates, hit);
+  await mergeJevWidenedSessions(store, projectLabel, topic, candidates);
 
   const byRecency = [...candidates.entries()].sort(
     (a, b) => b[1].date.localeCompare(a[1].date) || b[0].localeCompare(a[0]),

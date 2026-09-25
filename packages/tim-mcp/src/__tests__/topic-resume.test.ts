@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { TimStore, SessionManager } from 'tim-store';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { TimStore, SessionManager, findChildByKind, KIND_BATCH, KIND_SUMMARY_ROOT } from 'tim-store';
 import { collectTopicResume, formatTopicResume } from '../topic-resume.js';
 
 describe('tag-only retrieval (criterion 4)', () => {
@@ -354,5 +354,319 @@ describe('tim_resume_topic renders sessions, not batches', () => {
     expect(topic.sessions).toHaveLength(1);
     expect(topic.sessions[0]!.sessionId).toBe('viaroot');
     expect(topic.sessions[0]!.source).toBe('rollup');
+  });
+});
+
+// OR-widened sessions are noise unless Jev keeps them. Tag and AND hits stay
+// on today's path and are never sent: a real tag must not disappear because
+// the rollup paraphrased it, and a null reply must not leak the raw OR set.
+describe('tim_resume_topic Jev relevance filter', () => {
+  let store: TimStore;
+  let sessions: SessionManager;
+
+  beforeEach(async () => {
+    store = new TimStore(':memory:');
+    sessions = new SessionManager(store);
+    await store.createProject('P0084', { content: 'jev topic filter' });
+    delete process.env.JEV_API_KEY;
+  });
+
+  afterEach(() => {
+    store.close();
+    vi.unstubAllGlobals();
+    delete process.env.JEV_API_KEY;
+  });
+
+  async function seedSession(opts: {
+    id: string;
+    date: string;
+    tag: string;
+    summary: string;
+    rollup?: string;
+    secondBatch?: string;
+  }) {
+    await sessions.startProjectSession({
+      sessionId: opts.id,
+      projectId: 'P0084',
+      agentName: 'test',
+      cwd: '/tmp',
+      harness: 'test',
+      batchSize: 2,
+    });
+    await store.update(opts.id, { metadata: { date: opts.date } });
+    await sessions.logExchange(opts.id, [
+      { role: 'user', content: `${opts.id} question` },
+      { role: 'agent', content: 'answer' },
+    ]);
+    await sessions.writeBatchSummary(opts.id, 1, opts.summary, { seqFrom: 1, seqTo: 2 }, [opts.tag]);
+    if (opts.secondBatch) {
+      await sessions.writeBatchSummary(opts.id, 2, opts.secondBatch, { seqFrom: 3, seqTo: 4 }, [opts.tag]);
+    }
+    if (opts.rollup) await sessions.updateSessionSummary(opts.id, opts.rollup);
+  }
+
+  type JevBody = {
+    state: { topic?: string; entries?: string[]; [key: string]: unknown };
+    questions: Record<string, { type: string; instructions: string }>;
+  };
+
+  function stubJev(
+    decide: (body: JevBody) => Record<string, { type: 'noul'; noul: number }> | null,
+  ): JevBody[] {
+    const calls: JevBody[] = [];
+    process.env.JEV_API_KEY = 'test-key';
+    vi.stubGlobal('fetch', vi.fn(async (_url: unknown, init?: { body?: string }) => {
+      const body = JSON.parse(String(init?.body)) as JevBody;
+      calls.push(body);
+      const answers = decide(body);
+      if (!answers) return new Response('no', { status: 503 });
+      return new Response(JSON.stringify({ answers }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }));
+    return calls;
+  }
+
+  it('matches today byte for byte when Jev does not answer', async () => {
+    await seedSession({
+      id: 'and-hit', date: '2026-01-01T10:00:00.000Z', tag: '#other',
+      summary: 'alpha and bravo both named here',
+      rollup: 'alpha and bravo both named here',
+    });
+    await seedSession({
+      id: 'or-only', date: '2026-02-01T10:00:00.000Z', tag: '#other',
+      summary: 'alpha alone is not the phrase',
+      rollup: 'alpha alone is not the phrase',
+    });
+
+    const without = formatTopicResume(await collectTopicResume(store, 'P0084', 'alpha-bravo'));
+    expect(without).toContain('and-hit');
+    expect(without).not.toContain('or-only');
+
+    process.env.JEV_API_KEY = 'test-key';
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('network down'); }));
+    const failed = formatTopicResume(await collectTopicResume(store, 'P0084', 'alpha-bravo'));
+    expect(failed).toBe(without);
+  });
+
+  it('keeps an OR-only session at noul 0.9 and drops one at 0.5', async () => {
+    await seedSession({
+      id: 'keep-or', date: '2026-03-01T10:00:00.000Z', tag: '#other',
+      summary: 'batch text must not be what Jev sees',
+      rollup: 'KEEPME alpha widens this session',
+    });
+    await seedSession({
+      id: 'drop-or', date: '2026-04-01T10:00:00.000Z', tag: '#other',
+      summary: 'bravo mentioned once',
+      rollup: 'DROPME bravo widens this session',
+    });
+    await seedSession({
+      id: 'border', date: '2026-05-01T10:00:00.000Z', tag: '#other',
+      summary: 'alpha border',
+      rollup: 'BORDER alpha at the threshold',
+    });
+
+    const calls = stubJev(body => {
+      const answers: Record<string, { type: 'noul'; noul: number }> = {};
+      (body.state.entries ?? []).forEach((entry, n) => {
+        const noul = entry.includes('KEEPME') ? 0.9 : entry.includes('BORDER') ? 0.75 : 0.5;
+        answers[`e${n}`] = { type: 'noul', noul };
+      });
+      return answers;
+    });
+
+    const topic = await collectTopicResume(store, 'P0084', 'alpha-bravo');
+    expect(topic.sessions.map(s => s.sessionId).sort()).toEqual(['border', 'keep-or']);
+
+    expect(calls.length).toBeGreaterThan(0);
+    const body = calls[0]!;
+    expect(Object.keys(body.state).sort()).toEqual(['entries', 'topic']);
+    expect(body.state.topic).toBe('alpha-bravo');
+    expect(body.state.entries!.some(e => /^E\d+: /.test(e) && e.includes('KEEPME'))).toBe(true);
+    expect(body.state.entries!.some(e => e.includes('batch text must not be what Jev sees'))).toBe(false);
+    expect(body.questions.e0).toEqual({
+      type: 'noul',
+      instructions: 'Is entry E0 about the topic?',
+    });
+  });
+
+  it('keeps tag and AND sessions without sending them when Jev scores 0.1', async () => {
+    await seedSession({
+      id: 'tag-hit', date: '2026-01-01T10:00:00.000Z', tag: '#recall-banana',
+      summary: 'TAGONLY prose with neither word',
+      rollup: 'TAGONLY prose with neither word',
+    });
+    await seedSession({
+      id: 'and-hit', date: '2026-02-01T10:00:00.000Z', tag: '#other',
+      summary: 'recall and banana in the body',
+      rollup: 'ANDONLY recall and banana in the body',
+    });
+    await seedSession({
+      id: 'or-hit', date: '2026-03-01T10:00:00.000Z', tag: '#other',
+      summary: 'banana only',
+      rollup: 'ORONLY banana once',
+    });
+
+    const calls = stubJev(body => {
+      const answers: Record<string, { type: 'noul'; noul: number }> = {};
+      (body.state.entries ?? []).forEach((_, n) => {
+        answers[`e${n}`] = { type: 'noul', noul: 0.1 };
+      });
+      return answers;
+    });
+
+    const topic = await collectTopicResume(store, 'P0084', 'recall-banana');
+    expect(topic.sessions.map(s => s.sessionId).sort()).toEqual(['and-hit', 'tag-hit']);
+
+    const sent = calls.flatMap(c => c.state.entries ?? []).join('\n');
+    expect(sent).toContain('ORONLY');
+    expect(sent).not.toContain('TAGONLY');
+    expect(sent).not.toContain('ANDONLY');
+  });
+
+  it('does not OR the generic token session in "session binding"', async () => {
+    await seedSession({
+      id: 'binding-only', date: '2026-02-01T10:00:00.000Z', tag: '#other',
+      summary: 'the binding table was rewritten',
+      rollup: 'BINDINGONLY the binding table was rewritten',
+    });
+    // #session-summary tokenizes to "session", so an untouched binding summary
+    // is already an AND hit and never reaches the OR path this test is about.
+    const summary = (await findChildByKind(store, 'binding-only', KIND_SUMMARY_ROOT))!;
+    await store.update(summary.id, { tags: ['#other'] });
+    for (const batch of await store.getChildByKind(summary.id, KIND_BATCH)) {
+      await store.update(batch.id, { tags: ['#other'] });
+    }
+    await seedSession({
+      id: 'session-only', date: '2026-03-01T10:00:00.000Z', tag: '#other',
+      summary: 'the session started cleanly',
+      rollup: 'SESSIONONLY the session started cleanly',
+    });
+
+    const calls = stubJev(body => {
+      const answers: Record<string, { type: 'noul'; noul: number }> = {};
+      (body.state.entries ?? []).forEach((_, n) => {
+        answers[`e${n}`] = { type: 'noul', noul: 0.9 };
+      });
+      return answers;
+    });
+
+    const topic = await collectTopicResume(store, 'P0084', 'session binding');
+    expect(topic.sessions.map(s => s.sessionId)).toEqual(['binding-only']);
+    const sent = calls.flatMap(c => c.state.entries ?? []).join('\n');
+    expect(sent).toContain('BINDINGONLY');
+    expect(sent).not.toContain('SESSIONONLY');
+    expect(sent.toLowerCase()).not.toMatch(/\bsession\b/);
+  });
+
+  it('drops a chunk whose reply is null and still keeps a scored chunk', async () => {
+    for (let n = 0; n < 9; n++) {
+      const id = `jev-${String(n).padStart(2, '0')}`;
+      await seedSession({
+        id, date: `2026-01-${String(n + 1).padStart(2, '0')}T10:00:00.000Z`, tag: '#other',
+        summary: `${id} alpha only`,
+        rollup: `${id} alpha only`,
+      });
+    }
+
+    const calls = stubJev(body => {
+      const entries = body.state.entries ?? [];
+      if (entries.length < 8) return null;
+      const answers: Record<string, { type: 'noul'; noul: number }> = {};
+      entries.forEach((_, n) => {
+        answers[`e${n}`] = { type: 'noul', noul: 0.9 };
+      });
+      return answers;
+    });
+
+    const topic = await collectTopicResume(store, 'P0084', 'alpha-bravo');
+    const dropped = calls
+      .filter(c => (c.state.entries ?? []).length < 8)
+      .flatMap(c => c.state.entries ?? [])
+      .join('\n');
+    expect(calls.some(c => (c.state.entries ?? []).length === 8)).toBe(true);
+    expect(calls.some(c => (c.state.entries ?? []).length < 8)).toBe(true);
+    for (const call of calls) {
+      expect(Object.keys(call.questions).sort()).toEqual(
+        (call.state.entries ?? []).map((_, n) => `e${n}`).sort(),
+      );
+    }
+    for (const id of topic.sessions.map(s => s.sessionId)) {
+      expect(dropped).not.toContain(id);
+    }
+    expect(topic.sessions).toHaveLength(8);
+    expect(topic.sessionsMatched).toBe(8);
+  });
+
+  it('counts only kept sessions in the rendered-of-matched line', async () => {
+    await seedSession({
+      id: 'and-hit', date: '2026-01-01T10:00:00.000Z', tag: '#other',
+      summary: 'alpha bravo baseline',
+      rollup: 'alpha bravo baseline',
+    });
+    await seedSession({
+      id: 'keep-a', date: '2026-02-01T10:00:00.000Z', tag: '#other',
+      summary: 'alpha keep a',
+      rollup: 'KEEPA alpha',
+    });
+    await seedSession({
+      id: 'keep-b', date: '2026-03-01T10:00:00.000Z', tag: '#other',
+      summary: 'alpha keep b',
+      rollup: 'KEEPB alpha',
+    });
+    await seedSession({
+      id: 'drop-c', date: '2026-04-01T10:00:00.000Z', tag: '#other',
+      summary: 'alpha drop c',
+      rollup: 'DROPC alpha',
+    });
+
+    stubJev(body => {
+      const answers: Record<string, { type: 'noul'; noul: number }> = {};
+      (body.state.entries ?? []).forEach((entry, n) => {
+        answers[`e${n}`] = { type: 'noul', noul: entry.includes('DROPC') ? 0.5 : 0.9 };
+      });
+      return answers;
+    });
+
+    const topic = await collectTopicResume(store, 'P0084', 'alpha-bravo', 2);
+    expect(topic.sessionsMatched).toBe(3);
+    expect(formatTopicResume(topic)).toContain('Newest 2 of 3 matching sessions');
+    expect(formatTopicResume(topic)).not.toContain('drop-c');
+  });
+
+  it('sends the rollup truncated to 550 chars, or the first batch when there is no rollup', async () => {
+    const tail = 'TAILMARKER';
+    const rollup = `${'r'.repeat(540)} alpha ${tail}`;
+    expect(rollup.length).toBeGreaterThan(550);
+    await seedSession({
+      id: 'long', date: '2026-01-01T10:00:00.000Z', tag: '#other',
+      summary: 'short batch alpha',
+      rollup,
+    });
+    await seedSession({
+      id: 'bare', date: '2026-02-01T10:00:00.000Z', tag: '#other',
+      summary: 'FIRSTBATCH alpha earliest',
+      secondBatch: 'SECONDBATCH alpha later',
+    });
+
+    const calls = stubJev(body => {
+      const answers: Record<string, { type: 'noul'; noul: number }> = {};
+      (body.state.entries ?? []).forEach((_, n) => {
+        answers[`e${n}`] = { type: 'noul', noul: 0.9 };
+      });
+      return answers;
+    });
+
+    await collectTopicResume(store, 'P0084', 'alpha-bravo');
+    const entries = calls.flatMap(c => c.state.entries ?? []);
+    const long = entries.find(e => e.includes('rrr'));
+    const longBody = long?.match(/^E\d+: ([\s\S]*)$/)?.[1];
+    expect(longBody).toHaveLength(550);
+    expect(longBody).not.toContain(tail);
+    expect(entries.some(e => e.includes('short batch'))).toBe(false);
+    const bare = entries.find(e => e.includes('FIRSTBATCH'));
+    expect(bare).toBeDefined();
+    expect(entries.some(e => e.includes('SECONDBATCH'))).toBe(false);
   });
 });
