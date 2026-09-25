@@ -3108,6 +3108,8 @@ ${zeroExchangeFilter}
     opts: {
       project?: string;
       excludeKinds?: string[];
+      /** Only these metadata.kind values; applied in SQL before LIMIT. */
+      includeKinds?: string[];
       type?: string;
       tag?: string;
       status?: string;
@@ -3146,6 +3148,11 @@ ${zeroExchangeFilter}
       const holes = opts.excludeKinds.map(() => '?').join(', ');
       scopeSql += ` AND COALESCE(json_extract(e.metadata, '$.kind'), '') NOT IN (${holes})`;
       params.push(...opts.excludeKinds);
+    }
+    if (opts.includeKinds?.length) {
+      const holes = opts.includeKinds.map(() => '?').join(', ');
+      scopeSql += ` AND json_extract(e.metadata, '$.kind') IN (${holes})`;
+      params.push(...opts.includeKinds);
     }
     if (opts.type) {
       scopeSql += ` AND json_extract(e.metadata, '$.type') = ?`;
