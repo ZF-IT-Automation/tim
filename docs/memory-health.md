@@ -68,12 +68,22 @@ Local filesystem telemetry only — health does **not** probe the sync server.
 | `telemetryState` | Meaning |
 |------------------|---------|
 | `not_configured` | No `~/.tim/sync.json` |
+| `disconnected` | Placeholder config: `serverUrl`, `userId`, `token`, `salt`, and `fileId` are all empty strings. Not invalid JSON and not a network failure |
+| `invalid_config` | JSON parsed, but connection fields are missing, mistyped, or only partly filled |
+| `invalid_json` | `sync.json` or `sync-state.json` is not valid JSON |
+| `invalid_timestamp` | A push/pull timestamp or attempt timestamp is present and not a timezone-qualified ISO string. History is ignored |
 | `configured_no_state` | Valid config, no `sync-state.json` |
-| `available` | State `fileId` matches config; `lastPush` / `lastPull` are null or valid ISO timestamps |
-| `malformed` | Unreadable JSON or invalid timestamp shape |
-| `mismatched_file` | State `fileId` differs from configured `sync.json` — timestamps ignored |
+| `unbound` | State file is legacy: it lacks database, server, tenant, or protocol-generation binding. Cursor and success timestamps are not evidence |
+| `available` | State is bound to this database, server, tenant, file, and protocol generation. `lastPush` / `lastPull` are last successful delivery, null or valid ISO |
+| `mismatched_file` | State `fileId` differs from configured `sync.json` — cursor and timestamps ignored |
+| `mismatched_db` | State is bound to a different database path — cursor ignored |
+| `mismatched_server` | State is bound to a different server URL — cursor ignored |
+| `mismatched_tenant` | State is bound to a different tenant — cursor ignored |
+| `mismatched_protocol` | State protocol generation differs from this client — cursor ignored |
 
-`lastPush` / `lastPull` are historical local evidence only, not current server reachability. `unackedStaging` counts unacked staging rows without loading payload bodies.
+`lastPush` / `lastPull` are successful delivery only, and only when `telemetryState` is `available`. `lastPushAttempt` / `lastPullAttempt` and `lastPushError` / `lastPullError` record the latest cycle, including failures that must not move the success timestamps. They are historical local evidence, not current server reachability. `cursorUsable` is true only for a bound match. `unackedStaging` counts unacked staging rows without loading payload bodies.
+
+`tim sync audit --json` is the read-only gate report: effective staging trigger, backlog count and oldest age, queue bytes, attempt/success/error, and connection identity. It does not include the token or salt. `tim sync repair` archives a mismatched or legacy state file and writes a new bound state with a null cursor. Diagnosis does not reset state, and repair does not reuse the archived cursor.
 
 ## Actionable guidance
 
@@ -83,7 +93,7 @@ Local filesystem telemetry only — health does **not** probe the sync server.
 - Invalid summary range → resummarize; do not fabricate bounds
 - Embedding backlog when enabled → `unembeddedCount` total with optional stale/wrongModel breakdown
 - Provider `disabled` / `unavailable` / `unknown` → see `docs/semantic-retrieval.md`
-- Sync malformed / mismatched fileId / unacked staging → see `tim sync status`
+- Sync disconnected, invalid config/JSON/timestamps, unbound or mismatched identity, or unacked staging → see `tim sync audit --json`
 
 ## Severity interaction
 

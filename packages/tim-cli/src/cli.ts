@@ -193,13 +193,15 @@ const COMMAND_HELP: Record<string, string> = {
   'release-check': 'Usage: tim release-check [--beta] [--json] [--skip-tests <true|false>]',
   'setup-agent':
     'Usage: tim setup-agent --host claude|codex|cursor|hermes [--dry-run]',
-  sync: 'Usage: tim sync <connect|disconnect|push|pull|status|dev> [options]',
+  sync: 'Usage: tim sync <connect|disconnect|push|pull|status|audit|repair|dev> [options]',
   'sync connect':
     'Usage: tim sync connect [--server-url <url>] [--user-id <id>] [--token <token>] [--passphrase <text>] [--register] [--tier free|pro]',
   'sync disconnect': 'Usage: tim sync disconnect',
   'sync push': 'Usage: tim sync push [--passphrase <text>] [--secret-passphrase <text>]',
   'sync pull': 'Usage: tim sync pull [--passphrase <text>] [--secret-passphrase <text>]',
   'sync status': 'Usage: tim sync status',
+  'sync audit': 'Usage: tim sync audit --json',
+  'sync repair': 'Usage: tim sync repair',
   'sync dev': 'Usage: tim sync dev [--port <number>]',
   'root-entries':
     'Usage: tim root-entries [--type <type>] [--tag <tag>] [--format json|content]',
@@ -279,6 +281,8 @@ Commands:
   sync push                Push unacked staging to server
   sync pull                Pull remote changes
   sync status              Show sync configuration and health
+  sync audit               Read-only sync diagnostic (--json)
+  sync repair              Archive unbound state and start a null cursor
   sync dev                 Start local dev sync server (port 3100)
   user init                Create the human profile scaffold
   user profile             Show the human profile tree summary

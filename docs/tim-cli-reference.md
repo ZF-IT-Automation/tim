@@ -29,7 +29,7 @@ node packages/tim-cli/dist/cli.js statusline
 
 ---
 
-## Command Overview (41 commands)
+## Command Overview (43 commands)
 
 ### Top-Level Summary
 
@@ -66,16 +66,18 @@ node packages/tim-cli/dist/cli.js statusline
 | 29 | `tim sync push` | Push unacked staging to server |
 | 30 | `tim sync pull` | Pull remote changes |
 | 31 | `tim sync status` | Show sync configuration and health |
-| 32 | `tim sync dev` | Start local dev sync server (port 3100) |
-| 33 | `tim user init` | Create the human profile scaffold |
-| 34 | `tim user profile` | Show the human profile tree summary |
-| 35 | `tim update-skills` | Copy bundled TIM skills to detected agent hosts |
-| 36 | `tim root-entries` | List root entries |
-| 37 | `tim consolidate` | Run memory consolidation |
-| 38 | `tim secret` | Manage secret entry metadata |
-| 39 | `tim viewer` | Browse the entry tree in a local web UI; move and soft-delete nodes |
-| 40 | `tim sessions reap` | Reap empty session skeletons that never logged an exchange |
-| 41 | `tim --help` | Show top-level help |
+| 32 | `tim sync audit` | Read-only sync diagnostic (`--json`) |
+| 33 | `tim sync repair` | Archive unbound state and write a new null cursor |
+| 34 | `tim sync dev` | Start local dev sync server (port 3100) |
+| 35 | `tim user init` | Create the human profile scaffold |
+| 36 | `tim user profile` | Show the human profile tree summary |
+| 37 | `tim update-skills` | Copy bundled TIM skills to detected agent hosts |
+| 38 | `tim root-entries` | List root entries |
+| 39 | `tim consolidate` | Run memory consolidation |
+| 40 | `tim secret` | Manage secret entry metadata |
+| 41 | `tim viewer` | Browse the entry tree in a local web UI; move and soft-delete nodes |
+| 42 | `tim sessions reap` | Reap empty session skeletons that never logged an exchange |
+| 43 | `tim --help` | Show top-level help |
 
 ---
 
@@ -653,6 +655,21 @@ Last pull: 2026-06-17T07:35:19.338Z
 Cursor: 1
 Config: <home>/.tim/sync.json
 ```
+
+**`tim sync audit --json`**
+Read-only diagnostic for the selected database (`TIM_DB_PATH` or config `dbPath`).
+Prints one JSON object: canonical db path, schema compatibility, whether the
+staging outbox trigger is enabled, backlog count and oldest age, queue bytes,
+last attempt/success/error, and connection identity (server, tenant, file,
+protocol generation). The token and salt are omitted. The command does not
+migrate, change triggers, staging, usage, config, state, or queue files.
+
+**`tim sync repair`**
+Archive `sync-state.json` when it is legacy or bound to a different database,
+server, tenant, file, or protocol generation, then write a new bound state with
+a null cursor. The archive keeps the old cursor and timestamps as evidence.
+Repair does not copy that cursor and does not contact the server. Refuses when
+config is missing, a disconnected placeholder, or schema-invalid.
 
 **`tim sync dev`**
 Start a local dev sync server on port 3100.
