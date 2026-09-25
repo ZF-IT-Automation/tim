@@ -265,6 +265,9 @@ describe('F-MCP-003: auto-sync cooldown only arms on success', () => {
     try {
       mod.saveConfig({ serverUrl: '', userId: '', token: '', salt: '', fileId: '' });
     } catch { /* noop */ }
+    // State is bound to its server since T01; one test's state would be
+    // rejected (not reused) by the next test's config.
+    fs.rmSync(mod.getSyncStatePath(), { force: true });
   });
 
   function makeStore() {
