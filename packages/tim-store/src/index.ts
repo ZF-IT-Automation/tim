@@ -248,4 +248,4 @@ export {
 
 export { taskLastTouch } from './task-touch.js';
 
-export { localEdgeRecord } from './sync-methods.js';
+export { localEdgeRecord, remoteEdgeWins } from './sync-methods.js';

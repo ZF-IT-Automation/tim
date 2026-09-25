@@ -98,15 +98,22 @@ it('does not ACK an undecryptable page',async () => {
   await expect(pullCycle(client,store,state,() => {throw new Error('wrong key');},undefined,'replica')).rejects.toThrow('wrong key');
   expect(state.cursor).toBeNull(); expect(ackRow()?.applied_id).toBe(0);
 });
-it('rolls back a page whose valid edge cannot be applied locally',async () => {
+it('records a remote edge whose endpoint is missing and still ACKs the page',async () => {
   const edge={v:1,type:'edge',key:'missing|target|relates',lww:new Date(100).toISOString(),device:'origin',deleted:false,
     payload:JSON.stringify({id:'edge',source_id:'missing',target_id:'target',type:'relates',weight:1,metadata:'{}'})};
   await client.push({file_id:'f',file_generation:state.fileGeneration,client_schema_major:1,idempotency_key:'edge',blobs:[
-    blob('valid'),{...blob('missing|target|relates'),entity_type:'edge',data:enc(JSON.stringify(edge))},
+    blob('valid'),
+    {...blob('missing|target|relates'),entity_type:'edge',data:enc(JSON.stringify(edge))},
+    blob('after'),
   ]});
-  await expect(pullCycle(client,store,state,dec,undefined,'replica')).rejects.toThrow('FOREIGN KEY');
-  expect(store.getDb().prepare('SELECT id FROM entries').all()).toEqual([]);
-  expect(state.cursor).toBeNull(); expect(ackRow()?.applied_id).toBe(0);
+  await pullCycle(client,store,state,dec,undefined,'replica');
+  expect(store.getDb().prepare('SELECT id FROM entries ORDER BY id').all()).toEqual([{id:'after'},{id:'valid'}]);
+  expect(store.getDb().prepare('SELECT * FROM edges').all()).toEqual([]);
+  expect(store.getDb().prepare('SELECT entity_key, deleted FROM edge_versions').all()).toEqual([
+    {entity_key:'missing|target|relates',deleted:0},
+  ]);
+  expect(state.cursor).toBe(`${state.fileGeneration}|3`);
+  expect(ackRow()?.applied_id).toBe(3);
 });
 it('refuses a response cursor that skips beyond the returned records',async () => {
   const actual=globalThis.fetch;
