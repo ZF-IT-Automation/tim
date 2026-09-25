@@ -13,7 +13,7 @@ import type {
 import { getTimDir, isTimezoneQualifiedIso } from 'tim-core';
 import type { Entry } from 'tim-core';
 import type { TimStore } from './store.js';
-import { readSummarySkipped } from './summary-skipped.js';
+import { isSummarySkipCurrent } from './summary-skipped.js';
 import { deriveSessionCoverage } from './session-coverage.js';
 import { KIND_BATCH, KIND_SESSION, KIND_SUMMARY_ROOT } from './session-tree.js';
 import type { SemanticIndexHealthReport } from './vector-index.js';
@@ -430,10 +430,9 @@ async function computeSummaryCoverage(store: TimStore): Promise<MemorySummaryCov
   let workState: MemoryCoverageWorkState = 'fully_covered';
 
   for (const session of sessions) {
-    const skipped = readSummarySkipped(session.metadata) !== null;
-    if (skipped) skippedSessionCount++;
-
     const coverage = await deriveSessionCoverage(store, session.id);
+    const skipped = isSummarySkipCurrent(session.metadata, coverage.exchangeCount);
+    if (skipped) skippedSessionCount++;
     // A skipped session's uncovered exchanges are not pending. Exchanges a
     // summary already covers stay in the covered total.
     const skippedUncovered = skipped ? coverage.uncovered.length : 0;

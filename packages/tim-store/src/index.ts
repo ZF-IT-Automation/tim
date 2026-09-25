@@ -192,6 +192,7 @@ export {
 } from './validate.js';
 export { ErrorLogger, compactErrorLog, shouldRebuildErrorLog, type ErrorLogEntry, type ErrorStats } from './error-log.js';
 export {
+  isSummarySkipCurrent,
   markSummarySkipped,
   readSummarySkipped,
   type SummarySkipReason,
