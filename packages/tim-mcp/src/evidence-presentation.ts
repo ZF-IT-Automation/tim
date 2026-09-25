@@ -93,3 +93,10 @@ export async function projectEntryEvidence(
     disclaimer: EVIDENCE_DISCLAIMER,
   };
 }
+
+/** True when the projection is the legacy default and carries no source list. */
+export function isDefaultPresentedEvidence(evidence: PresentedEvidence): boolean {
+  return evidence.authority === 'unknown'
+    && evidence.authority_recorded === false
+    && evidence.sources.length === 0;
+}

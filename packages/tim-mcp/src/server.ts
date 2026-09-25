@@ -50,8 +50,9 @@ import {
   taskPriorityRank,
 } from 'tim-core';
 import { annotateTrust } from './trust.js';
-import { projectEntryEvidence } from './evidence-presentation.js';
-import { projectReadTemporal } from './temporal-presentation.js';
+import { EVIDENCE_DISCLAIMER, isDefaultPresentedEvidence, projectEntryEvidence } from './evidence-presentation.js';
+import { isDefaultPresentedTemporal, projectReadTemporal } from './temporal-presentation.js';
+import { presentHealthReport } from './health-presentation.js';
 import { captureProvenance } from './provenance.js';
 import { resolveCallerProjectPath } from './project-path.js';
 import { resolveEntryTaskStatus } from './task-status.js';
@@ -86,7 +87,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { buildBoundedSearchResponse, clampSearchRequest } from './search-response.js';
-import { executeTimSearch } from './tim-search-tool.js';
+import { executeTimSearch, semanticForAgent } from './tim-search-tool.js';
 import { validateTokenBudget, clampBriefingDefaultBudget, MAX_TOKEN_BUDGET, byteBudgetToHookMaxTokens } from './briefing-budget.js';
 import { loadProjectForBriefing } from './briefing-load.js';
 import { buildBriefingRenderContext } from './briefing-context.js';
@@ -676,7 +677,10 @@ const TimErrorLogSchema = z.object({
   args: z.record(z.unknown()).optional().describe('Tool arguments (optional)'),
 });
 
-const TimHealthSchema = z.object({});
+const TimHealthSchema = z.object({
+  verbose: z.boolean().optional().default(false)
+    .describe('Return every pending and covered range the report already computed (the store samples at most 50). Default is the first 5 of each plus more.'),
+});
 
 const TimShowAllUnsummarizedSchema = z.object({});
 
@@ -709,7 +713,10 @@ export const TOOL_DEFS: Array<{
     name: 'tim_read',
     description: 'Read an entry from TIM. Returns entry content, children, and optional edges. ' +
       'id accepts a human label (P0063, L0042, E0007) or an internal entry id — ' +
-      'labels are resolved automatically, no need to look up the id first.',
+      'labels are resolved automatically, no need to look up the id first. ' +
+      EVIDENCE_DISCLAIMER +
+      ' Evidence is omitted when authority is unknown, unrecorded, and has no sources. ' +
+      'Temporal is omitted when state is current and there are no supersedes or contradictions.',
     schema: TimReadSchemaBase,
   },
   {
@@ -737,7 +744,9 @@ export const TOOL_DEFS: Array<{
       'for a known label use tim_read directly. Pass tag without query for a pure tag lookup: ' +
       'everything carrying that tag, oldest first. With both, tag filters the ranked results ' +
       'as before. Returns {results, returned, omitted, truncated}; ' +
-      'results contain bounded excerpts. Use tim_read for the full body.',
+      'results contain bounded excerpts. Use tim_read for the full body. ' +
+      EVIDENCE_DISCLAIMER +
+      ' Semantic metadata is omitted for a plain FTS search (provider not used, no fallback).',
     schema: TimSearchSchema,
   },
   {
@@ -810,7 +819,8 @@ export const TOOL_DEFS: Array<{
   {
     name: 'tim_health',
     description:
-      'Run health diagnostics: broken links, orphans, FTS integrity, counts, memory coverage and embedding backlog.',
+      'Run health diagnostics: broken links, orphans, FTS integrity, counts, memory coverage and embedding backlog. ' +
+      'pendingRanges and coveredRanges default to the first 5 plus more; pass verbose:true for the lists the report already computed.',
     schema: TimHealthSchema,
   },
   {
@@ -1134,7 +1144,7 @@ function summarizeEntry(entry: Entry & { summary?: string }, includeBody: boolea
 type EntryWithChildren = Entry & { children?: Entry[] };
 
 /** Summary-first read presentation with trust and evidence annotations; recurses into children. */
-async function presentReadEntry(
+export async function presentReadEntry(
   store: TimStore,
   entry: EntryWithChildren,
   includeBody: boolean,
@@ -1144,12 +1154,14 @@ async function presentReadEntry(
   const nested = annotated.children;
   const { children: _drop, ...withoutChildren } = annotated;
   const base = summarizeEntry(withoutChildren, includeBody) as Record<string, unknown>;
-  base.evidence = await projectEntryEvidence(store, annotated.metadata as Record<string, unknown>);
-  base.temporal = await projectReadTemporal(
+  const evidence = await projectEntryEvidence(store, annotated.metadata as Record<string, unknown>);
+  if (!isDefaultPresentedEvidence(evidence)) base.evidence = evidence;
+  const temporal = await projectReadTemporal(
     store,
     annotated.id,
     annotated.metadata as Record<string, unknown>,
   );
+  if (!isDefaultPresentedTemporal(temporal)) base.temporal = temporal;
   if (nested && nested.length > 0) {
     base.children = await Promise.all(
       nested.map(child => presentReadEntry(store, child, includeBody, cwd)),
@@ -2599,10 +2611,11 @@ export async function createMcpServer(
               roots.labels!.includes(s.getProjectLabel(r.id) ?? ''),
             );
             const excerptChars = clampSearchRequest(parsed.topK, parsed.excerptChars).excerptChars;
+            const agentSemantic = semanticForAgent(semantic);
             response = {
               ...buildBoundedSearchResponse(results, excerptChars),
               ...(response.clamped ? { clamped: response.clamped } : {}),
-              ...(semantic ? { semantic } : {}),
+              ...(agentSemantic ? { semantic: agentSemantic } : {}),
             };
           }
           bestEffortTelemetry('recordRead', () =>
@@ -2929,7 +2942,8 @@ export async function createMcpServer(
         }
 
         case 'tim_health': {
-          const report = await s.health();
+          const { verbose } = TimHealthSchema.parse(args ?? {});
+          const report = presentHealthReport(await s.health(), verbose);
           return {
             content: [{ type: 'text', text: formatToolResponse(report) }],
           };

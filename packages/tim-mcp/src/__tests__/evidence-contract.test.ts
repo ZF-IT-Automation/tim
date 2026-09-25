@@ -79,7 +79,7 @@ describe('memory evidence contract (#35)', () => {
     expect(body.entry.evidence.disclaimer).toContain('not authentication');
   });
 
-  it('legacy entries default to unknown/unverified evidence on read', async () => {
+  it('omits default evidence and temporal on legacy reads', async () => {
     const written = await client.callTool('tim_write', {
       content: 'Legacy note\nNo evidence metadata.',
       parentId: sectionId,
@@ -88,9 +88,8 @@ describe('memory evidence contract (#35)', () => {
     const id = JSON.parse(written.result!.content![0].text).id;
     const read = await client.callTool('tim_read', { id });
     const body = JSON.parse(read.result!.content![0].text);
-    expect(body.entry.evidence.authority).toBe('unknown');
-    expect(body.entry.evidence.authority_recorded).toBe(false);
-    expect(body.entry.evidence.sources).toEqual([]);
+    expect(body.entry.evidence).toBeUndefined();
+    expect(body.entry.temporal).toBeUndefined();
   });
 
   it('tim_write_many rejects malformed evidence atomically before any write', async () => {
