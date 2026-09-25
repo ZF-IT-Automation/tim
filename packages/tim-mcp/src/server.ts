@@ -67,7 +67,7 @@ import {
   previewSessionStart,
   runPromptSubmit,
 } from 'tim-hooks';
-import { startIdleSweepTimer, stopIdleSweepTimer } from './idle-sweep-timer.js';
+import { startEmbeddingTimer, startIdleSweepTimer, stopEmbeddingTimer, stopIdleSweepTimer } from './idle-sweep-timer.js';
 import { handleUncaughtException, handleStdioStreamError, isBrokenPipeError } from './process-error-guards.js';
 import { tim_export, tim_import, inspectHmemManifest } from 'tim-migrate';
 import { autoPush, autoPull, resetSyncCooldowns, loadConfig as loadSyncConfig } from 'tim-sync-client';
@@ -4038,6 +4038,7 @@ export async function createHttpServer(options?: {
   installProcessErrorGuards();
 
   startIdleSweepTimer(getStore());
+  startEmbeddingTimer(getStore());
 
   const httpServer = await new Promise<HttpServer>((resolve, reject) => {
     const listener = app.listen(port, host);
@@ -4056,6 +4057,7 @@ export async function createHttpServer(options?: {
 
   const close = async (): Promise<void> => {
     stopIdleSweepTimer();
+    stopEmbeddingTimer();
     for (const transport of transports.values()) {
       try {
         await transport.close();
@@ -4094,6 +4096,7 @@ export async function startServer(): Promise<void> {
 
     const shutdown = async (): Promise<void> => {
       stopIdleSweepTimer();
+      stopEmbeddingTimer();
       await handle.close();
       process.exit(0);
     };
@@ -4111,6 +4114,7 @@ export async function startServer(): Promise<void> {
   // becoming a PID-1 orphan that logs write-EPIPE into error_log forever.
   const shutdownStdio = (): void => {
     stopIdleSweepTimer();
+    stopEmbeddingTimer();
     process.exit(0);
   };
   process.stdin.on('end', shutdownStdio);

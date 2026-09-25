@@ -3,6 +3,9 @@
  * Default initialization uses fastembed when available; tests inject deterministic vectors.
  */
 
+import * as path from 'path';
+import { getTimDir } from 'tim-core';
+
 export type EmbeddingProviderState = 'enabled' | 'disabled' | 'unavailable' | 'unknown';
 
 export interface EmbeddingProvider {
@@ -119,7 +122,12 @@ export async function getDefaultEmbeddingProvider(
         return createUnavailableEmbeddingProvider(modelId);
       }
       type StandardModel = typeof EmbeddingModel.AllMiniLML6V2;
-      const embedder = await FlagEmbedding.init({ model: fastembedModel as StandardModel });
+      // fastembed's default cache is ./local_cache under whatever cwd the process
+      // has — the systemd service never found the model there. One fixed home.
+      const embedder = await FlagEmbedding.init({
+        model: fastembedModel as StandardModel,
+        cacheDir: path.join(getTimDir(), 'models'),
+      });
       const probeGen = embedder.embed([''], 1);
       const probeBatch = await probeGen.next();
       const probeVec = probeBatch.value?.[0];
