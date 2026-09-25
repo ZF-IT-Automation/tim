@@ -71,8 +71,8 @@ tim snapshot
 Keep the printed snapshot path. If rollback is needed, use:
 
 ```bash
-tim restore --from /tmp/tim-snapshots/<snapshot-file>.db --dry-run
-tim restore --from /tmp/tim-snapshots/<snapshot-file>.db --force
+tim restore --from ~/.tim/snapshots/<snapshot-file>.db --dry-run
+tim restore --from ~/.tim/snapshots/<snapshot-file>.db --force
 ```
 
 Use `--force` for restore only when the user confirms rollback.

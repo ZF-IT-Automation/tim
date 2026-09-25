@@ -5,7 +5,7 @@
 #
 # Environment:
 #   TIM_DB_PATH  — override db location (default: ~/.tim/tim.db)
-#   TIM_SNAPSHOT_DIR — override snapshot dir (default: /tmp/tim-snapshots)
+#   TIM_SNAPSHOT_DIR — override snapshot dir (default: ${HOME}/.tim/snapshots)
 #   TIM_SNAPSHOT_RETENTION_HOURS — prune horizon in hours (default: 48)
 #   TIM_SNAPSHOT_TIMEOUT_SEC — wall-clock cap for `tim snapshot` (default: 300).
 #     SIGTERM at the cap, then SIGKILL 15s later. Hung backups previously
@@ -19,7 +19,7 @@ if [ "${TIM}" = ".js" ] || [ ! -f "${TIM}" ]; then
   TIM="node ${HOME}/projects/tim/packages/tim-cli/dist/cli.js"
 fi
 
-OUT_DIR="${TIM_SNAPSHOT_DIR:-/tmp/tim-snapshots}"
+OUT_DIR="${TIM_SNAPSHOT_DIR:-${HOME}/.tim/snapshots}"
 PRUNE_HOURS="${TIM_SNAPSHOT_RETENTION_HOURS:-48}"
 
 mkdir -p "${OUT_DIR}" 2>/dev/null || true

@@ -5,7 +5,7 @@
 // WAL-torn pages that a raw `cp` would produce against a live WAL-mode DB.
 //
 // Usage:
-//   tim snapshot                          # snapshot to /tmp/tim-snapshots/tim-YYYYMMDD-HHMM.db
+//   tim snapshot                          # snapshot to ~/.tim/snapshots/tim-YYYYMMDD-HHMM.db
 //   tim snapshot --out /custom/path.db    # override destination
 //   tim snapshot --no-symlink             # skip latest.db update
 //   tim snapshot --prune-hours 48         # prune files older than 48h (0 = skip)
@@ -17,7 +17,13 @@ import * as path from 'path';
 import * as os from 'os';
 import { parseArgs, valueOptionsFor } from './args.js';
 
-const DEFAULT_SNAPSHOT_DIR = '/tmp/tim-snapshots';
+/**
+ * Beside the DB, not in /tmp: Ubuntu clears /tmp at boot (tmpfiles.d `D /tmp`),
+ * which would take every rollback point with it exactly when one is needed.
+ */
+export function defaultSnapshotDir(): string {
+  return path.join(os.homedir(), '.tim', 'snapshots');
+}
 const DEFAULT_PRUNE_HOURS = 48;
 /** 48h of 2 GB snapshots every 30 min is ~192 GB. Cap on-host copies. */
 export const DEFAULT_MAX_BYTES = 8 * 1024 * 1024 * 1024;
@@ -273,7 +279,7 @@ export async function runSnapshot(opts: {
   };
 
   const dbPath = opts.dbPath ?? resolveDbPath();
-  const snapshotDir = opts.snapshotDir ?? DEFAULT_SNAPSHOT_DIR;
+  const snapshotDir = opts.snapshotDir ?? defaultSnapshotDir();
   const pruneHours = opts.pruneHours ?? DEFAULT_PRUNE_HOURS;
   let maxBytes: number;
   if (opts.maxBytes !== undefined) {
