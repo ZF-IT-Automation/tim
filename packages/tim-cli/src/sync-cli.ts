@@ -4,16 +4,12 @@ import * as fs from 'node:fs';
 import * as readline from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
 import { TimStore } from 'tim-store';
-import { getUnackedStaging } from 'tim-store';
 import {
   TimSyncClient,
   SyncApiError,
   generateSalt,
-  loadConfig,
   saveConfig,
   clearSyncConnection,
-  loadSyncState,
-  saveSyncState,
   getDeviceId,
   defaultFileId,
   buildSyncContext,
@@ -22,6 +18,17 @@ import {
   resolveSecretPassphrase,
   MissingSecretPassphraseError,
   startDevServer,
+  readSyncConfig,
+  saveSyncState,
+  describeSyncConfigStatus,
+  canonicalDbIdentity,
+  freshBoundSyncState,
+  readSyncStateFile,
+  repairSyncState,
+  collectSyncAudit,
+  SyncStateRejectedError,
+  classifySyncStateFile,
+  bindingFor,
 } from 'tim-sync-client';
 import { loadConfig as loadTimConfig, getTimDir } from 'tim-core';
 import { parseArgs, valueOptionsFor } from './args.js';
@@ -102,6 +109,7 @@ export async function cmdSyncConnect(args: string[]): Promise<void> {
           salt: existing.salt,
           fileId,
         });
+        noteUnboundSyncState();
         console.log(`✓ Connected (existing file). File ID: ${fileId}`);
         return;
       }
@@ -109,10 +117,23 @@ export async function cmdSyncConnect(args: string[]): Promise<void> {
     }
 
     saveConfig({ serverUrl, userId, token, salt, fileId });
-    saveSyncState({ fileId, cursor: null, lastPush: null, lastPull: null });
+    noteUnboundSyncState();
     console.log(`✓ Connected. File ID: ${fileId}`);
   } finally {
     rl.close();
+  }
+}
+
+function noteUnboundSyncState(): void {
+  const config = readSyncConfig().config;
+  const dbIdentity = canonicalDbIdentity(getDbPath());
+  const existing = readSyncStateFile();
+  if (existing.kind === 'missing' && config && dbIdentity) {
+    saveSyncState(freshBoundSyncState(config, dbIdentity));
+    return;
+  }
+  if (existing.kind !== 'missing') {
+    console.log('Existing sync state was left unchanged. Run `tim sync repair` before push or pull if it is not bound to this database.');
   }
 }
 
@@ -127,9 +148,10 @@ function requirePassphrase(flags: Record<string, string>): string {
 
 export async function cmdSyncPush(args: string[]): Promise<void> {
   const { flags } = parseArgs(args, { valueOptions: valueOptionsFor('sync', 'push') });
-  const config = loadConfig();
+  const configRead = readSyncConfig();
+  const config = configRead.config;
   if (!config) {
-    console.error('Not connected. Run: tim sync connect');
+    console.error(describeSyncConfigStatus(configRead.status));
     process.exit(1);
   }
 
@@ -141,7 +163,7 @@ export async function cmdSyncPush(args: string[]): Promise<void> {
     const { pushed, queued } = await runPush(ctx);
     console.log(`Pushed ${pushed} records${queued ? ' (more queued — retry push)' : ''}`);
   } catch (err) {
-    if (err instanceof MissingSecretPassphraseError) {
+    if (err instanceof MissingSecretPassphraseError || err instanceof SyncStateRejectedError) {
       console.error(err.message);
       process.exit(1);
     }
@@ -153,9 +175,10 @@ export async function cmdSyncPush(args: string[]): Promise<void> {
 
 export async function cmdSyncPull(args: string[]): Promise<void> {
   const { flags } = parseArgs(args, { valueOptions: valueOptionsFor('sync', 'pull') });
-  const config = loadConfig();
+  const configRead = readSyncConfig();
+  const config = configRead.config;
   if (!config) {
-    console.error('Not connected. Run: tim sync connect');
+    console.error(describeSyncConfigStatus(configRead.status));
     process.exit(1);
   }
 
@@ -166,20 +189,29 @@ export async function cmdSyncPull(args: string[]): Promise<void> {
     const ctx = buildSyncContext(store, config, passphrase, getDeviceId(), secretPassphrase);
     const { pulled, conflicts } = await runPull(ctx);
     console.log(`Pulled ${pulled} records, ${conflicts} conflicts`);
+  } catch (err) {
+    if (err instanceof SyncStateRejectedError) {
+      console.error(err.message);
+      process.exit(1);
+    }
+    throw err;
   } finally {
     store.close();
   }
 }
 
 export async function cmdSyncStatus(): Promise<void> {
-  const config = loadConfig();
-  const state = loadSyncState();
+  const configRead = readSyncConfig();
+  const config = configRead.config;
   const timDir = getTimDir();
 
   if (!config) {
-    console.log('Sync: not configured (run tim sync connect)');
+    console.log(`Sync: ${describeSyncConfigStatus(configRead.status)}`);
     return;
   }
+
+  const dbIdentity = canonicalDbIdentity(getDbPath());
+  const state = classifySyncStateFile(dbIdentity ? bindingFor(config, dbIdentity) : null);
 
   const client = new TimSyncClient(config.serverUrl, config.token);
   const healthy = await client.health();
@@ -192,9 +224,11 @@ export async function cmdSyncStatus(): Promise<void> {
 
   let unacked = 0;
   if (fs.existsSync(getDbPath())) {
-    const store = new TimStore(getDbPath());
+    const store = new TimStore(getDbPath(), { readonly: true });
     try {
-      unacked = getUnackedStaging(store.getDb()).length;
+      unacked = (store.getDb().prepare(
+        'SELECT COUNT(*) AS count FROM staging WHERE acked = 0',
+      ).get() as { count: number }).count;
     } finally {
       store.close();
     }
@@ -206,9 +240,14 @@ export async function cmdSyncStatus(): Promise<void> {
   console.log(`File ID: ${config.fileId}`);
   console.log(`Device ID: ${getDeviceId()}`);
   console.log(`Unacked staging: ${unacked}`);
-  console.log(`Last push: ${state?.lastPush ?? 'never'}`);
-  console.log(`Last pull: ${state?.lastPull ?? 'never'}`);
-  console.log(`Cursor: ${state?.cursor ?? '(none)'}`);
+  console.log(`State: ${state.status}`);
+  console.log(`Last push success: ${state.lastPushSuccess ?? 'never'}`);
+  console.log(`Last pull success: ${state.lastPullSuccess ?? 'never'}`);
+  console.log(`Last push attempt: ${state.lastPushAttempt ?? 'never'}`);
+  console.log(`Last pull attempt: ${state.lastPullAttempt ?? 'never'}`);
+  console.log(`Last push error: ${state.lastPushError ?? '(none)'}`);
+  console.log(`Last pull error: ${state.lastPullError ?? '(none)'}`);
+  console.log(`Cursor: ${state.cursorUsable ? 'usable' : `unavailable (${state.status})`}`);
   console.log(`Config: ${timDir}/sync.json`);
   if (remoteStatus.tier) {
     console.log(`Tier: ${remoteStatus.tier}`);
@@ -226,6 +265,40 @@ export function cmdSyncDisconnect(): void {
     console.log(`✓ Disconnected — removed ${parts.join(' and ')}`);
   } else {
     console.log('Sync: not configured');
+  }
+}
+
+export function cmdSyncAudit(args: string[]): void {
+  const { flags } = parseArgs(args, { valueOptions: valueOptionsFor('sync', 'audit') });
+  if (flags.json !== 'true') {
+    console.error('Usage: tim sync audit --json');
+    process.exit(1);
+  }
+  const report = collectSyncAudit(getDbPath());
+  console.log(JSON.stringify(report));
+}
+
+export function cmdSyncRepair(): void {
+  const dbIdentity = canonicalDbIdentity(getDbPath());
+  if (!dbIdentity) {
+    console.error('Sync repair needs an existing database. Refusing to create one.');
+    process.exit(1);
+  }
+  try {
+    const result = repairSyncState(dbIdentity);
+    if (result.action === 'unchanged') {
+      console.log('Sync state already matches this database, server, tenant, file, and protocol generation.');
+      return;
+    }
+    if (result.action === 'created') {
+      console.log('Sync state created with a null cursor.');
+      return;
+    }
+    console.log(`Sync state archived at ${result.preservedPath}`);
+    console.log('New state has a null cursor. The archived file was not applied.');
+  } catch (err) {
+    console.error((err as Error).message);
+    process.exit(1);
   }
 }
 
@@ -252,12 +325,18 @@ export async function cmdSync(sub: string | undefined, args: string[]): Promise<
     case 'disconnect':
       cmdSyncDisconnect();
       break;
+    case 'audit':
+      cmdSyncAudit(args);
+      break;
+    case 'repair':
+      cmdSyncRepair();
+      break;
     case 'dev':
       await cmdSyncDev(args);
       break;
     default:
       console.error(`Unknown sync command: ${sub ?? '(none)'}`);
-      console.error('Usage: tim sync <connect|disconnect|push|pull|status|dev> [options]');
+      console.error('Usage: tim sync <connect|disconnect|push|pull|status|audit|repair|dev> [options]');
       process.exit(1);
   }
 }

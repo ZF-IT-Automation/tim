@@ -50,6 +50,8 @@ const HELP_CASES: HelpCase[] = [
   { args: ['sync', 'push'], usage: 'Usage: tim sync push' },
   { args: ['sync', 'pull'], usage: 'Usage: tim sync pull' },
   { args: ['sync', 'status'], usage: 'Usage: tim sync status' },
+  { args: ['sync', 'audit'], usage: 'Usage: tim sync audit' },
+  { args: ['sync', 'repair'], usage: 'Usage: tim sync repair' },
   { args: ['sync', 'dev'], usage: 'Usage: tim sync dev' },
   { args: ['root-entries'], usage: 'Usage: tim root-entries' },
   { args: ['consolidate'], usage: 'Usage: tim consolidate' },
