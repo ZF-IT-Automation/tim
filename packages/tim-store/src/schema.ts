@@ -299,6 +299,18 @@ export const MIGRATIONS: Migration[] = [
       );
     },
   },
+  {
+    version: 15,
+    sql: `
+      CREATE TABLE IF NOT EXISTS edge_versions (
+        entity_key TEXT PRIMARY KEY,
+        payload TEXT NOT NULL,
+        lww_timestamp INTEGER NOT NULL,
+        lww_device TEXT NOT NULL,
+        deleted INTEGER NOT NULL CHECK (deleted IN (0, 1))
+      );
+    `,
+  },
 ];
 
 export function getCurrentVersion(): number {
