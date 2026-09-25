@@ -78,6 +78,17 @@ export class TenantRegistry {
         if (!cols.some(c => c.name === name)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);
       };
       // NULL marks unknown legacy metadata; collection must never infer it.
+      add('files', 'generation', 'TEXT');
+      add('files', 'high_water', 'INTEGER NOT NULL DEFAULT 0');
+      for (const file of db.prepare('SELECT id FROM files WHERE generation IS NULL').all() as { id: string }[]) {
+        db.prepare('UPDATE files SET generation=?,high_water=COALESCE((SELECT MAX(id) FROM blobs WHERE file_id=?),0) WHERE id=?')
+          .run(randomUUID(),file.id,file.id);
+      }
+      db.exec(`CREATE TABLE IF NOT EXISTS device_cursors (
+        file_id TEXT NOT NULL, generation TEXT NOT NULL, device_id TEXT NOT NULL,
+        applied_id INTEGER NOT NULL DEFAULT 0, delivered_id INTEGER NOT NULL DEFAULT 0,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY(file_id,generation,device_id));`);
       add('blobs', 'entity_type', 'TEXT');
       add('blobs', 'entity_key', 'TEXT');
       add('blobs', 'lww_device', 'TEXT');
@@ -122,8 +133,11 @@ export class TenantRegistry {
     const p = this.tenantDbPath(tenantId);
     if (!fs.existsSync(p)) this.initTenantDb(tenantId);
     const db = new Database(p);
-    this.migrateTenantDbIfNeeded(db);
-    return db;
+    try {
+      db.pragma('synchronous = FULL');
+      this.migrateTenantDbIfNeeded(db);
+      return db;
+    } catch (err) { db.close(); throw err; }
   }
 
   getUsage(tenantId: string): QuotaUsage {

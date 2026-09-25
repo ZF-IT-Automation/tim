@@ -20,6 +20,7 @@ export interface SyncConfig {
 }
 
 export interface SyncState {
+  fileGeneration?: string;
   fileId: string;
   cursor: string | null;
   lastPush: string | null;
@@ -210,6 +211,7 @@ export function loadBoundSyncState(config: SyncConfig, dbIdentity: string): Sync
   return {
     fileId: config.fileId,
     cursor: typeof record.cursor === 'string' ? record.cursor : null,
+    fileGeneration: typeof record.fileGeneration === 'string' ? record.fileGeneration : undefined,
     lastPush: classified.lastPushSuccess,
     lastPull: classified.lastPullSuccess,
     dbIdentity,
@@ -286,6 +288,7 @@ export function loadSyncState(): SyncState | null {
   return {
     fileId: record.fileId,
     cursor: typeof record.cursor === 'string' ? record.cursor : null,
+    fileGeneration: typeof record.fileGeneration === 'string' ? record.fileGeneration : undefined,
     lastPush: typeof record.lastPush === 'string' ? record.lastPush : null,
     lastPull: typeof record.lastPull === 'string' ? record.lastPull : null,
     dbIdentity: typeof record.dbIdentity === 'string' ? record.dbIdentity : undefined,
@@ -302,7 +305,16 @@ export function loadSyncState(): SyncState | null {
 export function saveSyncState(state: SyncState): void {
   const dir = getTimDir();
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(getSyncStatePath(), JSON.stringify(state, null, 2));
+  const target = getSyncStatePath();
+  const tmp = `${target}.${randomUUID()}.tmp`;
+  try {
+    const fd = fs.openSync(tmp, 'wx', 0o600);
+    try { fs.writeFileSync(fd, JSON.stringify(state, null, 2)); fs.fsyncSync(fd); }
+    finally { fs.closeSync(fd); }
+    fs.renameSync(tmp,target);
+    const dirFd = fs.openSync(dir,'r');
+    try { fs.fsyncSync(dirFd); } finally { fs.closeSync(dirFd); }
+  } finally { if (fs.existsSync(tmp)) fs.unlinkSync(tmp); }
 }
 
 export function getDeviceId(): string {

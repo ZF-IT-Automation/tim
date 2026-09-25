@@ -386,7 +386,7 @@ function startStubServer(): Promise<import('node:http').Server> {
     const server = http.createServer((req, res) => {
       const send = (status: number, body: unknown): void => {
         res.writeHead(status, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify(body));
+        res.end(JSON.stringify({ protocol_generation: 1, ...(body as object) }));
       };
       // Drain request body so the connection can close cleanly.
       req.resume();
@@ -395,8 +395,17 @@ function startStubServer(): Promise<import('node:http').Server> {
           blobs: [],
           server_time: new Date().toISOString(),
           has_more: false,
-          next_cursor: '',
+          next_cursor: 'test-generation|0',
+          generation: 'test-generation',
         });
+        return;
+      }
+      if (req.method === 'GET' && req.url === '/files') {
+        send(200, { files: [{ id: 'fake-file-id', generation: 'test-generation' }] });
+        return;
+      }
+      if (req.method === 'POST' && req.url === '/sync/ack') {
+        send(200, { generation: 'test-generation', cursor: 'test-generation|0' });
         return;
       }
       if (req.method === 'POST' && req.url === '/sync/push') {

@@ -3,9 +3,12 @@
  */
 
 import http from 'node:http';
+import { SYNC_CAPABILITIES, validProtocolVersion, parseGenerationCursor } from 'tim-core';
+import type { PushBlob } from './client.js';
 import { randomUUID } from 'node:crypto';
 
-interface StoredBlob {
+interface StoredBlob extends PushBlob {
+  received_at: string;
   id: number;
   client_proposed_id: string;
   data: string;
@@ -15,6 +18,7 @@ interface StoredBlob {
 }
 
 interface FileRecord {
+  generation: string;
   id: string;
   salt: string;
   blobs: StoredBlob[];
@@ -23,14 +27,14 @@ interface FileRecord {
 }
 
 const files = new Map<string, FileRecord>();
-const idempotency = new Map<string, number>();
+const idempotency = new Map<string, { hash: string; mappings: { proposed_id: string; final_id: number }[] }>();
 
 export function startDevServer(port = 3100): http.Server {
   const server = http.createServer((req, res) => {
     const url = new URL(req.url ?? '/', `http://localhost:${port}`);
     const send = (status: number, body: unknown) => {
       res.writeHead(status, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(body));
+      res.end(JSON.stringify({ ...SYNC_CAPABILITIES, ...(body as object) }));
     };
 
     if (req.method === 'GET' && url.pathname === '/health') {
@@ -40,7 +44,7 @@ export function startDevServer(port = 3100): http.Server {
 
     if (req.method === 'GET' && url.pathname === '/files') {
       send(200, {
-        files: [...files.values()].map((f) => ({ id: f.id, salt: f.salt })),
+        files: [...files.values()].map((f) => ({ id: f.id, salt: f.salt, generation: f.generation })),
       });
       return;
     }
@@ -55,13 +59,14 @@ export function startDevServer(port = 3100): http.Server {
           return;
         }
         files.set(parsed.id, {
+          generation: randomUUID(),
           id: parsed.id,
           salt: parsed.salt,
           blobs: [],
           nextId: 1,
           cursorSeq: 0,
         });
-        send(200, { id: parsed.id, salt: parsed.salt });
+        send(200, { id: parsed.id, salt: parsed.salt, generation: files.get(parsed.id)!.generation });
       });
       return;
     }
@@ -71,40 +76,27 @@ export function startDevServer(port = 3100): http.Server {
       req.on('data', (c) => { body += c; });
       req.on('end', () => {
         const parsed = JSON.parse(body) as {
+          file_generation: string;
           file_id: string;
           idempotency_key: string;
-          blobs: { proposed_id: string; data: string; device_id: string; updated_at: string }[];
+          blobs: PushBlob[];
         };
         const file = files.get(parsed.file_id);
         if (!file) {
           send(404, { error: 'File not found' });
           return;
         }
-        if (idempotency.has(parsed.idempotency_key)) {
-          send(200, { mappings: [] });
-          return;
-        }
-        idempotency.set(parsed.idempotency_key, 1);
+        if (!validProtocolVersion(parsed) || parsed.file_generation !== file.generation) { send(409, { error: 'Generation mismatch' }); return; }
+        const hash = JSON.stringify(parsed);
+        const seen = idempotency.get(parsed.idempotency_key);
+        if (seen) { send(seen.hash === hash ? 200 : 409, seen.hash === hash ? { mappings: seen.mappings } : { error: 'Idempotency mismatch' }); return; }
         const mappings: { proposed_id: string; final_id: number }[] = [];
         for (const b of parsed.blobs) {
-          const existing = file.blobs.find((x) => x.client_proposed_id === b.proposed_id);
-          if (existing) {
-            existing.data = b.data;
-            existing.updated_at = b.updated_at;
-            mappings.push({ proposed_id: b.proposed_id, final_id: existing.id });
-          } else {
-            const id = file.nextId++;
-            file.blobs.push({
-              id,
-              client_proposed_id: b.proposed_id,
-              data: b.data,
-              device_id: b.device_id,
-              updated_at: b.updated_at,
-              deleted_at: null,
-            });
-            mappings.push({ proposed_id: b.proposed_id, final_id: id });
-          }
+          const id = file.nextId++;
+          file.blobs.push({ ...b,id,client_proposed_id: b.proposed_id,deleted_at: null,received_at: new Date().toISOString() });
+          mappings.push({ proposed_id: b.proposed_id, final_id: id });
         }
+        idempotency.set(parsed.idempotency_key,{ hash,mappings });
         send(200, { mappings });
       });
       return;
@@ -118,23 +110,26 @@ export function startDevServer(port = 3100): http.Server {
         send(404, { error: 'File not found' });
         return;
       }
-      const startIdx = cursor ? parseInt(cursor, 10) : 0;
+      if (url.searchParams.get('file_generation') !== file.generation) { send(409, { error: 'Generation mismatch' }); return; }
+      let startIdx: number;
+      try { startIdx = cursor ? parseGenerationCursor(cursor,file.generation) : 0; } catch { send(409,{ error: 'Invalid cursor' }); return; }
       const slice = file.blobs.slice(startIdx);
       const hasMore = false;
-      const nextCursor = String(file.blobs.length);
+      const nextCursor = `${file.generation}|${file.blobs.length}`;
       send(200, {
-        blobs: slice.map((b) => ({
-          id: b.id,
-          client_proposed_id: b.client_proposed_id,
-          data: b.data,
-          deleted_at: b.deleted_at,
-          updated_at: b.updated_at,
-        })),
+        generation: file.generation,
+        blobs: slice,
         server_time: new Date().toISOString(),
         salt: file.salt,
         has_more: hasMore,
         next_cursor: nextCursor,
       });
+      return;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/sync/ack') {
+      let body = ''; req.on('data', c => { body += c; });
+      req.on('end', () => { const p = JSON.parse(body); send(200,{ generation: p.file_generation,cursor: p.cursor }); });
       return;
     }
 
@@ -155,5 +150,5 @@ export function resetDevServer(): void {
 
 /** @internal test helper */
 export function seedDevFile(id: string, salt: string): void {
-  files.set(id, { id, salt, blobs: [], nextId: 1, cursorSeq: 0 });
+  files.set(id, { generation: randomUUID(), id, salt, blobs: [], nextId: 1, cursorSeq: 0 });
 }

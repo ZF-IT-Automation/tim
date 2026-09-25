@@ -118,7 +118,7 @@ describe('legacy secret retry queue', () => {
     saveQueue(isolated.queue, [queueItem('legacy-attempt', [envelope])]);
     try {
       await expect(
-        pushCycle(client, store, { fileId: 'isolated-test', cursor: null, lastPush: null, lastPull: null }, 'test', s => s),
+        pushCycle(client, store, { fileGeneration: 'test-generation', fileId: 'isolated-test', cursor: null, lastPush: null, lastPull: null }, 'test', s => s),
       ).rejects.toThrow(MissingSecretPassphraseError);
       expect(push).not.toHaveBeenCalled();
       expect(loadQueue(isolated.queue).length).toBe(1);
@@ -137,7 +137,7 @@ describe('legacy secret retry queue', () => {
     ]);
     try {
       await expect(
-        pushCycle(client, store, { fileId: 'isolated-test', cursor: null, lastPush: null, lastPull: null }, 'test', s => s),
+        pushCycle(client, store, { fileGeneration: 'test-generation', fileId: 'isolated-test', cursor: null, lastPush: null, lastPull: null }, 'test', s => s),
       ).rejects.toThrow(MissingSecretPassphraseError);
       expect(push).toHaveBeenCalledOnce();
       const sent = push.mock.calls[0][0];
@@ -177,7 +177,7 @@ describe('legacy secret retry queue', () => {
       const result = await pushCycle(
         client,
         store,
-        { fileId: 'isolated-test', cursor: null, lastPush: null, lastPull: null },
+        { fileGeneration: 'test-generation', fileId: 'isolated-test', cursor: null, lastPush: null, lastPull: null },
         'test',
         encryptFn,
         secretEncrypt,
@@ -235,7 +235,7 @@ describe('legacy secret retry queue', () => {
       await pushCycle(
         client,
         store,
-        { fileId: 'isolated-test', cursor: null, lastPush: null, lastPull: null },
+        { fileGeneration: 'test-generation', fileId: 'isolated-test', cursor: null, lastPush: null, lastPull: null },
         'test',
         encryptFn,
         secretEncrypt,
@@ -269,7 +269,7 @@ describe('legacy secret retry queue', () => {
       const cycle = pushCycle(
         client,
         store,
-        { fileId: 'isolated-test', cursor: null, lastPush: null, lastPull: null },
+        { fileGeneration: 'test-generation', fileId: 'isolated-test', cursor: null, lastPush: null, lastPull: null },
         'test',
         s => s,
       );
@@ -310,7 +310,7 @@ describe('legacy secret retry queue', () => {
       const first = await pushCycle(
         client,
         store,
-        { fileId: 'isolated-test', cursor: null, lastPush: null, lastPull: null },
+        { fileGeneration: 'test-generation', fileId: 'isolated-test', cursor: null, lastPush: null, lastPull: null },
         'test',
         encryptFn,
       );
@@ -321,7 +321,7 @@ describe('legacy secret retry queue', () => {
       const second = await pushCycle(
         client,
         store,
-        { fileId: 'isolated-test', cursor: null, lastPush: null, lastPull: null },
+        { fileGeneration: 'test-generation', fileId: 'isolated-test', cursor: null, lastPush: null, lastPull: null },
         'test',
         encryptFn,
       );
@@ -355,7 +355,7 @@ describe('legacy secret retry queue', () => {
         pushCycle(
           client,
           store,
-          { fileId: 'isolated-test', cursor: null, lastPush: null, lastPull: null },
+          { fileGeneration: 'test-generation', fileId: 'isolated-test', cursor: null, lastPush: null, lastPull: null },
           'test',
           s => s,
         ),
@@ -400,7 +400,7 @@ describe('legacy secret retry queue', () => {
       await pushCycle(
         client,
         store,
-        { fileId: 'isolated-test', cursor: null, lastPush: null, lastPull: null },
+        { fileGeneration: 'test-generation', fileId: 'isolated-test', cursor: null, lastPush: null, lastPull: null },
         'test',
         encryptFn,
         secretEncrypt,
