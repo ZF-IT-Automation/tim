@@ -3112,6 +3112,11 @@ ${zeroExchangeFilter}
       excludeKinds?: string[];
       /** Only these metadata.kind values; applied in SQL before LIMIT. */
       includeKinds?: string[];
+      /**
+       * Only these metadata.type values. Combined with includeKinds as OR so a
+       * kind allow-list does not drop type-only rows before LIMIT.
+       */
+      includeTypes?: string[];
       type?: string;
       tag?: string;
       status?: string;
@@ -3151,10 +3156,27 @@ ${zeroExchangeFilter}
       scopeSql += ` AND COALESCE(json_extract(e.metadata, '$.kind'), '') NOT IN (${holes})`;
       params.push(...opts.excludeKinds);
     }
-    if (opts.includeKinds?.length) {
-      const holes = opts.includeKinds.map(() => '?').join(', ');
+    // Kind and type allow-lists are one predicate. AND would hide log/decision
+    // rows (they have a type and no kind) whenever a kind list is also set,
+    // and filtering after LIMIT would let other kinds fill the window.
+    const includeKinds = opts.includeKinds ?? [];
+    const includeTypes = opts.includeTypes ?? [];
+    if (includeKinds.length && includeTypes.length) {
+      const kindHoles = includeKinds.map(() => '?').join(', ');
+      const typeHoles = includeTypes.map(() => '?').join(', ');
+      scopeSql += ` AND (
+        json_extract(e.metadata, '$.kind') IN (${kindHoles})
+        OR json_extract(e.metadata, '$.type') IN (${typeHoles})
+      )`;
+      params.push(...includeKinds, ...includeTypes);
+    } else if (includeKinds.length) {
+      const holes = includeKinds.map(() => '?').join(', ');
       scopeSql += ` AND json_extract(e.metadata, '$.kind') IN (${holes})`;
-      params.push(...opts.includeKinds);
+      params.push(...includeKinds);
+    } else if (includeTypes.length) {
+      const holes = includeTypes.map(() => '?').join(', ');
+      scopeSql += ` AND json_extract(e.metadata, '$.type') IN (${holes})`;
+      params.push(...includeTypes);
     }
     if (opts.type) {
       scopeSql += ` AND json_extract(e.metadata, '$.type') = ?`;
