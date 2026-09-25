@@ -13,6 +13,7 @@ import type {
 import { getTimDir, isTimezoneQualifiedIso } from 'tim-core';
 import type { Entry } from 'tim-core';
 import type { TimStore } from './store.js';
+import { readSummarySkipped } from './summary-skipped.js';
 import { deriveSessionCoverage } from './session-coverage.js';
 import { KIND_BATCH, KIND_SESSION, KIND_SUMMARY_ROOT } from './session-tree.js';
 import type { SemanticIndexHealthReport } from './vector-index.js';
@@ -407,6 +408,7 @@ async function computeSummaryCoverage(store: TimStore): Promise<MemorySummaryCov
       pendingExchangeCount: 0,
       unknownSequenceExchangeCount: 0,
       sessionsWithPending: 0,
+      skippedSessionCount: 0,
       pendingRanges: [],
       coveredRanges: [],
       pendingRangeCount: 0,
@@ -422,26 +424,35 @@ async function computeSummaryCoverage(store: TimStore): Promise<MemorySummaryCov
   let pendingExchangeCount = 0;
   let unknownSequenceExchangeCount = 0;
   let sessionsWithPending = 0;
+  let skippedSessionCount = 0;
   const allPendingRanges: MemoryCoverageSeqRange[] = [];
   const allCoveredRanges: MemoryCoverageSeqRange[] = [];
   let workState: MemoryCoverageWorkState = 'fully_covered';
 
   for (const session of sessions) {
-    const coverage = await deriveSessionCoverage(store, session.id);
-    observedExchangeCount += coverage.exchangeCount;
-    pendingExchangeCount += coverage.uncovered.length;
-    unknownSequenceExchangeCount += coverage.unknownSequenceExchangeCount;
-    if (coverage.hasPendingSummarization) sessionsWithPending++;
+    const skipped = readSummarySkipped(session.metadata) !== null;
+    if (skipped) skippedSessionCount++;
 
-    const byBatch = new Map<number, number[]>();
-    for (const u of coverage.uncovered) {
-      const list = byBatch.get(u.batchIndex) ?? [];
-      list.push(u.seq);
-      byBatch.set(u.batchIndex, list);
-    }
-    for (const [batchIndex, seqs] of byBatch) {
-      for (const range of compactSeqRanges(session.id, batchIndex, seqs)) {
-        allPendingRanges.push(range);
+    const coverage = await deriveSessionCoverage(store, session.id);
+    // A skipped session's uncovered exchanges are not pending. Exchanges a
+    // summary already covers stay in the covered total.
+    const skippedUncovered = skipped ? coverage.uncovered.length : 0;
+    observedExchangeCount += coverage.exchangeCount - skippedUncovered;
+    if (!skipped) {
+      pendingExchangeCount += coverage.uncovered.length;
+      unknownSequenceExchangeCount += coverage.unknownSequenceExchangeCount;
+      if (coverage.hasPendingSummarization) sessionsWithPending++;
+
+      const byBatch = new Map<number, number[]>();
+      for (const u of coverage.uncovered) {
+        const list = byBatch.get(u.batchIndex) ?? [];
+        list.push(u.seq);
+        byBatch.set(u.batchIndex, list);
+      }
+      for (const [batchIndex, seqs] of byBatch) {
+        for (const range of compactSeqRanges(session.id, batchIndex, seqs)) {
+          allPendingRanges.push(range);
+        }
       }
     }
 
@@ -464,7 +475,7 @@ async function computeSummaryCoverage(store: TimStore): Promise<MemorySummaryCov
   if (unknownSequenceExchangeCount > 0) {
     workState = 'unknown';
   } else if (observedExchangeCount === 0) {
-    workState = 'no_exchanges';
+    workState = skippedSessionCount > 0 ? 'fully_covered' : 'no_exchanges';
   } else if (pendingExchangeCount > 0) {
     workState = 'pending';
   } else if (workState !== 'unknown') {
@@ -484,6 +495,7 @@ async function computeSummaryCoverage(store: TimStore): Promise<MemorySummaryCov
     pendingExchangeCount,
     unknownSequenceExchangeCount,
     sessionsWithPending,
+    skippedSessionCount,
     pendingRanges: pendingSample.samples,
     coveredRanges: coveredSample.samples,
     pendingRangeCount: pendingSample.total,
