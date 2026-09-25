@@ -152,7 +152,11 @@ describe('review-fix F6 default provider model identity', () => {
     reset();
     const provider = await getDefaultEmbeddingProvider('all-MiniLM-L6-v2');
     expect(provider?.state).toBe('enabled');
-    expect(initArgs).toEqual([{ model: 'fast-all-MiniLM-L6-v2' }]);
+    // Fixed cache under ~/.tim: fastembed's default (./local_cache) depends on the process cwd.
+    expect(initArgs).toEqual([{
+      model: 'fast-all-MiniLM-L6-v2',
+      cacheDir: path.join(os.homedir(), '.tim', 'models'),
+    }]);
   });
 
   it('rejects unsupported fastembedEnum mapping as unavailable', async () => {

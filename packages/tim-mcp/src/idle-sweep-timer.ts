@@ -1,8 +1,9 @@
 import { loadConfig } from 'tim-core';
-import { isSummarizerChild, sweepIdleSessions } from 'tim-hooks';
+import { embedUnembeddedEntries, isSummarizerChild, sweepIdleSessions } from 'tim-hooks';
 import type { TimStore } from 'tim-store';
 
 let idleSweepTimer: ReturnType<typeof setInterval> | null = null;
+let embeddingTimer: ReturnType<typeof setInterval> | null = null;
 
 /** Start the periodic idle-session sweep (idempotent). */
 export function startIdleSweepTimer(store: TimStore): void {
@@ -40,4 +41,36 @@ export function stopIdleSweepTimer(): void {
 /** Whether the idle sweep timer is running (tests). */
 export function isIdleSweepTimerRunning(): boolean {
   return idleSweepTimer !== null;
+}
+
+/**
+ * Keep entry_vectors filled (duplicate detection's cosine arm, hybrid search).
+ * Started by the HTTP singleton only: every stdio server would load its own
+ * ~90 MB ONNX model. Drains all unembedded entries per pass; the first pass is
+ * the backfill.
+ */
+export function startEmbeddingTimer(store: TimStore, intervalMs = 5 * 60_000): void {
+  if (embeddingTimer || isSummarizerChild()) return;
+  let running = false;
+  const pass = async () => {
+    if (running) return;
+    running = true;
+    try {
+      while ((await embedUnembeddedEntries(store)) > 0) { /* next batch */ }
+    } catch {
+      /* best-effort — never crash the MCP server */
+    } finally {
+      running = false;
+    }
+  };
+  void pass();
+  embeddingTimer = setInterval(() => void pass(), intervalMs);
+  embeddingTimer.unref?.();
+}
+
+export function stopEmbeddingTimer(): void {
+  if (embeddingTimer) {
+    clearInterval(embeddingTimer);
+    embeddingTimer = null;
+  }
 }
