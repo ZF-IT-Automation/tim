@@ -179,3 +179,28 @@ describe('searchFts resilience (quoting strategy)', () => {
     expect(results[0].title).toBe('German recall');
   });
 });
+
+describe('searchFts includeKinds OR includeTypes', () => {
+  it('keeps both allow-lists and applies them before LIMIT', async () => {
+    for (const name of ['alpha', 'beta', 'gamma', 'delta']) {
+      await store.write(`checkpoint rotation noise ${name}`, { tags: ['#note'] });
+    }
+    await store.write('checkpoint rotation shipped', {
+      metadata: { kind: 'commit' },
+      tags: ['#commit'],
+    });
+    await store.write('checkpoint rotation logged', {
+      metadata: { type: 'log' },
+      tags: ['#log'],
+    });
+
+    const hits = await store.searchFts('"checkpoint" OR "rotation"', 2, {
+      ftsQueryMode: 'or-terms',
+      includeKinds: ['commit'],
+      includeTypes: ['log'],
+    });
+
+    expect(hits).toHaveLength(2);
+    expect(hits.map(hit => hit.metadata.kind ?? hit.metadata.type).sort()).toEqual(['commit', 'log']);
+  });
+});
