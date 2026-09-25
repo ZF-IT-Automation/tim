@@ -78,7 +78,7 @@ Authority labels remain evidence annotations, not authentication.
 
 Default `tim_search` excludes entries that are not yet valid, expired, or
 superseded **as of now**. Temporal eligibility is applied before candidate
-limits in FTS, vector, and hybrid modes.
+limits in full-text search.
 
 Pass `asOf` (timezone-qualified ISO) to reconstruct which entries were valid at
 that instant. Boundary behavior follows the half-open interval rules above.

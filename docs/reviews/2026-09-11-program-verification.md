@@ -18,7 +18,7 @@ The last review was not a clean sign-off. Its seven findings were corrected by t
 |---|---|
 | Saturated benchmark recall | Index 120 in-project distractors, exceeding the ten retained hits. A nonsense-query negative control changes expected synonym recall from 1 to 0. |
 | Missing title-only evidence and noise | Put fixture-reference markers in rendered titles. Regression checks retained log noise and decision/idea references in briefing metrics. |
-| Borrowed provider metadata | Baseline and FTS-only briefing rows report `modelId: null`, `state: not_used`; they do not advertise vector retrieval. |
+| Borrowed provider metadata | Baseline and full-text briefing rows report `modelId: null`, `state: not_used`. |
 | Unscored partial session | The session question expects the partial-summary reference; health independently verifies three observed exchanges, two covered and one pending. |
 | Unrepairable unmanaged imported edge | Explicit `discardUnmanaged` removes only an edge when the target has no managed state. Store and actual MCP tests verify repair and refusal to bypass a real supersession. |
 | Ambiguous FTS provider state | Per-call FTS diagnostics report `not_used`, while index health retains its separate availability vocabulary. Concurrent search tests cover the distinction. |

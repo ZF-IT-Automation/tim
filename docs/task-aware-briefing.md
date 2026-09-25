@@ -64,7 +64,7 @@ Each UTF-8 byte consumes one budget unit. Unicode code points are never split.
 ## Limitations
 
 - Approximate token counts only; no model-specific tokenizer.
-- Query extras use FTS (`searchType: fts`); semantic/vector modes are not used for briefing selection.
+- Query extras use full-text search.
 - Very small `tokenBudget` values may retain only header fragments plus omission markers.
 - Entry-level `budget` truncation during `loadProject` can still occur before rendering; increase `budget` when drilling deep trees.
 

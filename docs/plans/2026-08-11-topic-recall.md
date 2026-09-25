@@ -221,7 +221,7 @@ guessed during implementation:
   call the aggregation itself or Summary roots stay stale.
 - No controlled/closed tag vocabulary. The prompt hint plus normalization is the
   mechanism; a fixed enum is not.
-- No vector or hybrid search in the topic path — FTS and exact tag match only.
+- Topic recall uses full-text search and exact tag match only.
 - `resumeSession` is not removed and not renamed. It has never been used, which
   is the argument for not building `resumeTopic` as a second manual tool people
   ignore: criterion 8 makes topic recall the path that actually gets walked.

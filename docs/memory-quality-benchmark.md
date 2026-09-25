@@ -4,7 +4,7 @@ Repeatable bilingual scenarios compare **no-memory**, **fixed-handoff**, and **T
 
 ## Commands
 
-Deterministic CI smoke (default — synthetic embedding provider, no network):
+Deterministic CI smoke (full-text search, no network):
 
 ```bash
 npm run benchmark:memory-quality
@@ -22,12 +22,6 @@ Run package tests (schema validation, mode outcomes, CLI smoke):
 npm test -- packages/tim-quality-benchmark/src/__tests__/benchmark.test.ts
 ```
 
-Optional real local model smoke (calls default provider path; skipped with explicit reason when unavailable):
-
-```bash
-TIM_EMBEDDING_REAL_MODEL=1 npm run benchmark:memory-quality -- --real-provider
-```
-
 ## Dataset and schema
 
 | Field | Value |
@@ -39,11 +33,11 @@ TIM_EMBEDDING_REAL_MODEL=1 npm run benchmark:memory-quality -- --real-provider
 
 ### Fixture scenarios
 
-- **Synonyms (DE/EN):** zero lexical overlap via injected vectors (`vectorHint: motor` vs query *automobile* / *Kraftfahrzeug*).
+- **Synonyms (DE/EN):** queries that do not share tokens with the gold title are misses under full-text search.
 - **Adversarial similar project:** `P3801` confuser entries must not appear in `P3800`-scoped search.
 - **Temporal correction:** superseded deployment policy with `asOf` before/after questions.
 - **Partial session:** `SessionManager` batch summary covering seq 1–2 with pending tail exchanges (no duplicate Sessions roots or fake session-summary-root entries).
-- **Noisy history:** 120 indexed in-project distractors, exceeding the ten retained search hits, plus the long Log section before reserved briefing tiers. An unrelated-query negative control must lose the expected synonym evidence instead of retaining the entire corpus.
+- **Noisy history:** 120 indexed in-project distractors, exceeding the ten retained search hits, plus the long Log section before reserved briefing tiers. An unrelated-query negative control must miss the synonym evidence instead of retaining the entire corpus.
 
 ### Gold label conventions
 
@@ -57,13 +51,10 @@ Labels use the `gold:<slug>` prefix in fixture JSON and handoff text. Entry titl
 
 | Capability | API |
 |------------|-----|
-| Semantic retrieval | `store.searchWithSemantics()` per call (`searchType: vector \| hybrid`, optional `asOf`) |
+| Full-text retrieval | `store.search()` per call (optional `asOf`) |
 | Task briefing | `loadProjectForBriefing` + `searchTaskBriefingExtras` + `formatProjectOutput` |
-| Memory health | `computeMemoryHealth(store)` (read-only, no model load) |
+| Memory health | `computeMemoryHealth(store)` (read-only) |
 | Temporal | `asOf` on search for historical eligibility |
-| Real embeddings | `getDefaultEmbeddingProvider()` when `TIM_EMBEDDING_REAL_MODEL=1` and not `TIM_EMBEDDING_DISABLED` |
-
-`store.lastSearchSemantic` is **not** used.
 
 ## Report fields
 
@@ -72,7 +63,7 @@ Per question and mode:
 - `evidence`: `expected`, `found`, `missing`, `irrelevant` (only evidence retained within the context budget)
 - `metrics`: `precision`, `recall`, `meanFirstRank`, `ranks` (null when denominator zero; non-gold retained search hits and marked briefing noise count in the precision denominator). These are fixture evidence-unit metrics, not a classification of every word of boilerplate.
 - `contextBytes`, `estimatedTokens` (UTF-8 byte heuristic), `latencyMs` (local wall-clock)
-- `provider`: run mode (`synthetic` \| `real`), consulted model id, state, search metadata. No-memory, fixed-handoff and FTS-only briefing rows report `modelId: null`, `state: not_used`; they do not inherit vector-search diagnostics.
+- `provider`: full-text mode, `modelId: null`, `state: not_used` on rows that do not consult a model.
 
 Run-level:
 
@@ -85,8 +76,7 @@ Run-level:
 
 ## Interpretation
 
-- **Synthetic default** tests retrieval plumbing only — not real-model semantic quality.
-- **Real provider mode** is opt-in (`TIM_EMBEDDING_REAL_MODEL=1`, no `TIM_EMBEDDING_DISABLED`). When disabled, unavailable, or not requested, the report records `provider.skipped` with reason and **does not** run a synthetic benchmark labeled as real.
+- The default run tests full-text retrieval plumbing. Wording that does not share tokens with the gold title is a miss.
 - **Latency** is nondeterministic and not a stable regression threshold.
 - **Agent task success** and maintenance savings are not measured without running agents.
 
@@ -97,7 +87,7 @@ dataset JSON (dist/dataset/) → buildFixtureStore (TimStore + SessionManager)
             → modes (same expectedGold, same 4096-byte budget):
                 no-memory: empty context
                 fixed-handoff: static handoff text → extract markers
-                tim: searchWithSemantics OR briefing path → bounded context
+                tim: store.search OR briefing path → bounded context
             → map entry IDs / context markers → gold labels (+ non-gold noise markers)
             → metrics + JSON report
 ```

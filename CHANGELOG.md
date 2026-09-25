@@ -6,6 +6,7 @@ All notable changes to TIM are documented in this file.
 
 ### Removed
 
+- Removed the vector index (FTS only); see docs/research/2026-09-multilingual-embeddings.md
 - **`tim_read_project`** — removed from the MCP tool list. Cross-project reads use `tim_load_project(label, bind:false)`.
 
 ### Changed — session-start briefing and open work (briefing loop, 2026-09-24)

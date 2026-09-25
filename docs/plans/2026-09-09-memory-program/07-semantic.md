@@ -1,8 +1,10 @@
 # feat(retrieval): discover semantic matches and refresh changed embeddings
 
+Removed 2026-09-25. Search is full-text only. This plan is historical.
+
 ## What to build
 
-Vector search can retrieve memories with no lexical overlap, hybrid merges independent lexical and semantic candidates, and indexed meaning tracks edited content.
+Embedding search was meant to retrieve memories with no lexical overlap, merge those hits with lexical candidates, and refresh the index when content changed.
 
 ## Blocked by
 
@@ -14,10 +16,10 @@ Store and public MCP retrieval using deterministic embedding provider; embedding
 
 ## Acceptance criteria
 
-- [ ] Independent vector candidates are scoped and filtered before result limits, then deduplicated with lexical candidates in hybrid mode.
-- [ ] Content edits invalidate/requeue vectors; model identity and dimensions are enforced.
+- [ ] Independent embedding candidates are scoped and filtered before result limits, then deduplicated with lexical candidates.
+- [ ] Content edits invalidate/requeue embeddings; model identity and dimensions are enforced.
 - [ ] Reuse model initialization; explicit disabled/unavailable provider has documented deterministic behavior.
-- [ ] Tests inject deterministic vectors to demonstrate no-overlap recall, model mismatch exclusion and changed-content reindexing.
+- [ ] Tests inject deterministic embeddings to demonstrate no-overlap recall, model mismatch exclusion and changed-content reindexing.
 - [ ] Document limits and an opt-in real local model check without asserting mocked quality as real-model evidence.
 
 ## Constraints
