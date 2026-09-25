@@ -429,6 +429,16 @@ export {
 } from './project-schema.js';
 export { isStale, staleDays, daysSinceLastVerified } from './staleness.js';
 export {
+  SYNC_PROTOCOL_GENERATION,
+  classifySyncConfigValue,
+  classifySyncStateValue,
+  type SyncConfigDiagnosticStatus,
+  type SyncConfigIdentity,
+  type SyncStateDiagnosticStatus,
+  type SyncBindingIdentity,
+  type SyncStateClassification,
+} from './sync-diagnostics.js';
+export {
   resolveEntryTaskStatus,
   entryTaskStatusSql,
   resolveEntrySearchStatus,

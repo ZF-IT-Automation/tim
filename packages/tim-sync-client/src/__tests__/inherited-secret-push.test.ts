@@ -46,12 +46,13 @@ describe('inherited secret push boundary (#F8)', () => {
   });
 
   function makeCtx(store: TimStore, client: TimSyncClient) {
+    try { fs.unlinkSync(path.join(os.homedir(), '.tim', 'sync-state.json')); } catch { /* none */ }
     return {
       ...buildSyncContext(
         store,
         {
           serverUrl: `http://127.0.0.1:${port}`,
-          token: 'test-token',
+          userId: 'test-user', token: 'test-token',
           salt,
           fileId,
         },

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -34,6 +34,14 @@ beforeAll(() => {
 afterAll(() => {
   process.env.HOME = origHome;
   fs.rmSync(tmpHome, { recursive: true, force: true });
+});
+
+function clearSyncState(): void {
+  try { fs.unlinkSync(path.join(os.homedir(), '.tim', 'sync-state.json')); } catch { /* none */ }
+}
+
+beforeEach(() => {
+  clearSyncState();
 });
 
 describe('secret sync fixes', () => {
@@ -182,7 +190,7 @@ describe('secret sync fixes', () => {
           store,
           {
             serverUrl: `http://127.0.0.1:${port}`,
-            token: 'test-token',
+            userId: 'test-user', token: 'test-token',
             salt,
             fileId,
           },
@@ -237,7 +245,7 @@ describe('secret sync fixes', () => {
         store1,
         {
           serverUrl: `http://127.0.0.1:${port}`,
-          token: 'test-token',
+          userId: 'test-user', token: 'test-token',
           salt,
           fileId,
         },
@@ -251,12 +259,13 @@ describe('secret sync fixes', () => {
 
       const dbPath2 = `${dbPath}.remote`;
       if (fs.existsSync(dbPath2)) fs.unlinkSync(dbPath2);
+      clearSyncState();
       const store2 = new TimStore(dbPath2);
       const ctx2 = buildSyncContext(
         store2,
         {
           serverUrl: `http://127.0.0.1:${port}`,
-          token: 'test-token',
+          userId: 'test-user', token: 'test-token',
           salt,
           fileId,
         },
@@ -316,7 +325,7 @@ describe('secret sync fixes', () => {
           store,
           {
             serverUrl: `http://127.0.0.1:${port}`,
-            token: 'test-token',
+            userId: 'test-user', token: 'test-token',
             salt,
             fileId,
           },
@@ -345,7 +354,7 @@ describe('secret sync fixes', () => {
           store,
           {
             serverUrl: `http://127.0.0.1:${port}`,
-            token: 'test-token',
+            userId: 'test-user', token: 'test-token',
             salt,
             fileId,
           },
@@ -382,7 +391,7 @@ describe('secret sync fixes', () => {
           store,
           {
             serverUrl: `http://127.0.0.1:${port}`,
-            token: 'test-token',
+            userId: 'test-user', token: 'test-token',
             salt,
             fileId,
           },
@@ -430,11 +439,6 @@ describe('secret sync fixes', () => {
           fileId,
         }),
       );
-      fs.writeFileSync(
-        path.join(timDir, 'sync-state.json'),
-        JSON.stringify({ fileId, cursor: null, lastPush: null, lastPull: null }),
-      );
-
       const origSync = process.env.TIM_SYNC_PASSPHRASE;
       const origSecret = process.env.TIM_SECRET_PASSPHRASE;
       process.env.TIM_SYNC_PASSPHRASE = passphrase;

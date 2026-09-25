@@ -7,14 +7,14 @@ import {
   isSecret,
   localEntryRecordFromRow,
 } from 'tim-store';
-import { resolveLWW } from 'tim-core';
+import { SYNC_PROTOCOL_GENERATION, resolveLWW } from 'tim-core';
 import type { StagingRecord } from 'tim-core';
-import { TimSyncClient } from './client.js';
+import { SyncApiError, TimSyncClient } from './client.js';
 import { deriveKey, encrypt, decrypt } from './crypto.js';
 import { stagingToEnvelope, envelopeToStaging, type TimEnvelope } from './envelope.js';
 import {
   getQueuePath,
-  loadSyncState,
+  loadBoundSyncState,
   saveSyncState,
   type SyncState,
 } from './config.js';
@@ -373,22 +373,24 @@ export async function pushCycle(
 
   const sent: QueueItem[] = [];
   let ok = true;
+  let pushError: string | null = null;
   while (readyToSend.length > 0) {
     const item = readyToSend[0];
     try {
       await client.push({
         file_id: state.fileId,
         idempotency_key: item.idempotency_key,
-        client_schema_major: 1,
+        client_schema_major: SYNC_PROTOCOL_GENERATION,
         blobs: item.blobs,
       });
       sent.push(item);
       readyToSend.shift();
       saveQueue(qPath, [...blockedRemaining, ...readyToSend]);
-    } catch {
+    } catch (err) {
       item.attempts += 1;
       saveQueue(qPath, [...blockedRemaining, ...readyToSend]);
       ok = false;
+      pushError = formatSyncFailure(err);
       break;
     }
   }
@@ -407,7 +409,15 @@ export async function pushCycle(
   }
   if (keysToAck.length > 0) ackStaging(db, keysToAck);
 
-  state.lastPush = new Date().toISOString();
+  const partialSend = !ok || unsentReady.length > 0;
+  const now = new Date().toISOString();
+  state.lastPushAttempt = now;
+  if (!partialSend) {
+    state.lastPush = now;
+    state.lastPushError = null;
+  } else {
+    state.lastPushError = pushError ?? 'PARTIAL_SEND';
+  }
   saveSyncState(state);
 
   const totalBlocked = blockedSecretCount + queueBlockedSecretCount;
@@ -430,84 +440,108 @@ export async function pullCycle(
   let cursor = state.cursor ?? undefined;
   let pulled = 0;
   let conflicts = 0;
-  let res: Awaited<ReturnType<TimSyncClient['pull']>>;
+  let res: Awaited<ReturnType<TimSyncClient['pull']>> | undefined;
+  let failed: unknown = null;
 
-  do {
-    res = await client.pull(state.fileId, cursor, 1);
-    if (res.salt && !state.fileId) {
-      // salt refresh handled by caller config
-    }
-
-    for (const blob of res.blobs) {
-      let env = JSON.parse(decryptFn(blob.data)) as TimEnvelope;
-      env = transformEnvelopeForPull(env, secretDecrypt);
-      const remote = envelopeToStaging(env, blob.client_proposed_id ?? 'remote');
-
-      if (env.type === 'entry') {
-        const existing = db.prepare(
-          'SELECT * FROM entries WHERE id = ?',
-        ).get(env.key) as Record<string, unknown> | undefined;
-
-        if (existing) {
-          const localRecord: StagingRecord = {
-            ...localEntryRecordFromRow(existing as Parameters<typeof localEntryRecordFromRow>[0]),
-            acked: true,
-          };
-          const resolution = resolveLWW(localRecord, remote);
-          if (resolution.winner !== remote) conflicts++;
-        }
-
-        const applied = applyRemoteEntry(
-          db,
-          env.payload,
-          remote.lwwTimestamp,
-          remote.lwwDevice,
-          env.deleted,
-        );
-        if (applied) pulled++;
-      } else {
-        const parts = env.key.split('|');
-        const sourceId = parts[0];
-        const targetId = parts[1];
-        const edgeType = parts[2];
-        const existing = db.prepare(
-          'SELECT * FROM edges WHERE source_id = ? AND target_id = ? AND type = ?',
-        ).get(sourceId, targetId, edgeType) as Record<string, unknown> | undefined;
-
-        if (existing) {
-          const localRecord: StagingRecord = {
-            key: env.key,
-            entityType: 'edge',
-            operation: 'upsert',
-            payload: JSON.stringify(existing),
-            lwwTimestamp: Date.now(),
-            lwwDevice: 'local',
-            lwwConfidence: 1,
-            acked: true,
-          };
-          const resolution = resolveLWW(localRecord, remote);
-          if (resolution.winner !== remote) conflicts++;
-        }
-
-        const applied = applyRemoteEdge(
-          db,
-          env.payload,
-          remote.lwwTimestamp,
-          remote.lwwDevice,
-          env.deleted,
-        );
-        if (applied) pulled++;
+  try {
+    do {
+      res = await client.pull(state.fileId, cursor, SYNC_PROTOCOL_GENERATION);
+      if (res.salt && !state.fileId) {
+        // salt refresh handled by caller config
       }
-    }
 
-    cursor = res.next_cursor;
-  } while (res.has_more === true);
+      for (const blob of res.blobs) {
+        let env = JSON.parse(decryptFn(blob.data)) as TimEnvelope;
+        env = transformEnvelopeForPull(env, secretDecrypt);
+        const remote = envelopeToStaging(env, blob.client_proposed_id ?? 'remote');
+
+        if (env.type === 'entry') {
+          const existing = db.prepare(
+            'SELECT * FROM entries WHERE id = ?',
+          ).get(env.key) as Record<string, unknown> | undefined;
+
+          if (existing) {
+            const localRecord: StagingRecord = {
+              ...localEntryRecordFromRow(existing as Parameters<typeof localEntryRecordFromRow>[0]),
+              acked: true,
+            };
+            const resolution = resolveLWW(localRecord, remote);
+            if (resolution.winner !== remote) conflicts++;
+          }
+
+          const applied = applyRemoteEntry(
+            db,
+            env.payload,
+            remote.lwwTimestamp,
+            remote.lwwDevice,
+            env.deleted,
+          );
+          if (applied) pulled++;
+        } else {
+          const parts = env.key.split('|');
+          const sourceId = parts[0];
+          const targetId = parts[1];
+          const edgeType = parts[2];
+          const existing = db.prepare(
+            'SELECT * FROM edges WHERE source_id = ? AND target_id = ? AND type = ?',
+          ).get(sourceId, targetId, edgeType) as Record<string, unknown> | undefined;
+
+          if (existing) {
+            const localRecord: StagingRecord = {
+              key: env.key,
+              entityType: 'edge',
+              operation: 'upsert',
+              payload: JSON.stringify(existing),
+              lwwTimestamp: Date.now(),
+              lwwDevice: 'local',
+              lwwConfidence: 1,
+              acked: true,
+            };
+            const resolution = resolveLWW(localRecord, remote);
+            if (resolution.winner !== remote) conflicts++;
+          }
+
+          const applied = applyRemoteEdge(
+            db,
+            env.payload,
+            remote.lwwTimestamp,
+            remote.lwwDevice,
+            env.deleted,
+          );
+          if (applied) pulled++;
+        }
+      }
+
+      cursor = res.next_cursor;
+    } while (res.has_more === true);
+  } catch (err) {
+    failed = err;
+  }
+
+  const now = new Date().toISOString();
+  state.lastPullAttempt = now;
+  if (failed || !res) {
+    state.lastPullError = formatSyncFailure(failed ?? new Error('Pull failed'));
+    saveSyncState(state);
+    throw failed instanceof Error ? failed : new Error(state.lastPullError);
+  }
 
   state.cursor = res.next_cursor ?? state.cursor;
-  state.lastPull = new Date().toISOString();
+  state.lastPull = now;
+  state.lastPullError = null;
   saveSyncState(state);
 
   return { pulled, conflicts };
+}
+
+export function formatSyncFailure(err: unknown): string {
+  if (err instanceof SyncApiError) {
+    return err.status === undefined ? err.code : `${err.code} (${err.status})`;
+  }
+  const error = err as { name?: string; message?: string };
+  if (error?.name === 'TimeoutError' || error?.name === 'AbortError') return 'TIMEOUT';
+  if (typeof error?.message === 'string' && /timeout|aborted/i.test(error.message)) return 'TIMEOUT';
+  return 'REQUEST_FAILED';
 }
 
 export async function runPush(ctx: SyncCycleContext): Promise<{ pushed: number; queued: boolean }> {
@@ -528,18 +562,12 @@ export async function runPull(ctx: SyncCycleContext): Promise<{ pulled: number; 
 
 export function buildSyncContext(
   store: TimStore,
-  config: { serverUrl: string; token: string; salt: string; fileId: string },
+  config: { serverUrl: string; userId: string; token: string; salt: string; fileId: string },
   passphrase: string,
   deviceId: string,
   secretPassphrase?: string,
 ): SyncCycleContext {
-  const state = loadSyncState() ?? {
-    fileId: config.fileId,
-    cursor: null,
-    lastPush: null,
-    lastPull: null,
-  };
-  state.fileId = config.fileId;
+  const state = loadBoundSyncState(config, store.getDatabasePath());
   return {
     client: new TimSyncClient(config.serverUrl, config.token),
     store,

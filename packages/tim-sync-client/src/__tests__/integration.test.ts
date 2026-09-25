@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -26,6 +26,14 @@ beforeAll(() => {
 afterAll(() => {
   process.env.HOME = origHome;
   fs.rmSync(tmpHome, { recursive: true, force: true });
+});
+
+function clearSyncState(): void {
+  try { fs.unlinkSync(path.join(os.homedir(), '.tim', 'sync-state.json')); } catch { /* none */ }
+}
+
+beforeEach(() => {
+  clearSyncState();
 });
 
 describe('sync integration', () => {
@@ -64,7 +72,7 @@ describe('sync integration', () => {
       store1,
       {
         serverUrl: `http://127.0.0.1:${port}`,
-        token: 'test-token',
+        userId: 'test-user', token: 'test-token',
         salt,
         fileId,
       },
@@ -77,12 +85,13 @@ describe('sync integration', () => {
 
     const dbPath2 = `${dbPath}.remote`;
     if (fs.existsSync(dbPath2)) fs.unlinkSync(dbPath2);
+    clearSyncState();
     const store2 = new TimStore(dbPath2);
     const ctx2 = buildSyncContext(
       store2,
       {
         serverUrl: `http://127.0.0.1:${port}`,
-        token: 'test-token',
+        userId: 'test-user', token: 'test-token',
         salt,
         fileId,
       },
@@ -124,7 +133,7 @@ describe('sync integration', () => {
       source,
       {
         serverUrl: `http://127.0.0.1:${port}`,
-        token: 'test-token',
+        userId: 'test-user', token: 'test-token',
         salt,
         fileId: rawFileId,
       },
@@ -134,12 +143,13 @@ describe('sync integration', () => {
     await runPush(sourceContext);
     source.close();
 
+    clearSyncState();
     const destination = new TimStore(destinationPath);
     const destinationContext = buildSyncContext(
       destination,
       {
         serverUrl: `http://127.0.0.1:${port}`,
-        token: 'test-token',
+        userId: 'test-user', token: 'test-token',
         salt,
         fileId: rawFileId,
       },

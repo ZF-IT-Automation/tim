@@ -268,6 +268,11 @@ export interface TimStoreOptions {
   staging?: boolean;
   /** Injectable embedding provider for semantic search and tests (#33). */
   embeddingProvider?: EmbeddingProvider;
+  /**
+   * Open an existing database without migrations, triggers, staging changes,
+   * or acked-row cleanup. Queries only.
+   */
+  readonly?: boolean;
 }
 
 export interface CreateProjectOptions {
@@ -401,6 +406,21 @@ export class TimStore implements MemoryInterface {
   readonly lastMigration: MigrationRunResult | null;
 
   constructor(dbPath: string, options: TimStoreOptions = {}) {
+    if (options.readonly) {
+      this.db = new Database(dbPath, { readonly: true, fileMustExist: true });
+      try {
+        this.db.pragma('query_only = ON');
+      } catch {
+        // SQLITE_OPEN_READONLY already rejects writes.
+      }
+      this.databasePath = this.db.memory ? ':memory:' : fs.realpathSync(this.db.name);
+      this.emitter = options.emitter;
+      this.agentId = options.agentId ?? 'system';
+      this.deviceId = options.deviceId ?? 'local';
+      this.injectedEmbeddingProvider = options.embeddingProvider;
+      this.lastMigration = null;
+      return;
+    }
     this.db = new Database(dbPath);
     this.databasePath = this.db.memory ? ':memory:' : fs.realpathSync(this.db.name);
     this.emitter = options.emitter;

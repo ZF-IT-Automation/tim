@@ -1,8 +1,25 @@
 export class SyncApiError extends Error {
-  constructor(message: string, public readonly code: string) {
+  constructor(
+    message: string,
+    public readonly code: string,
+    public readonly status?: number,
+  ) {
     super(message);
     this.name = 'SyncApiError';
   }
+}
+
+function failureFromResult(status: number, error: string): SyncApiError {
+  if (status === 401) return new SyncApiError(error || 'Unauthorized', 'UNAUTHORIZED', status);
+  if (status === 402) return new SyncApiError(error || 'Subscription required', 'PAYMENT_REQUIRED', status);
+  if (status === 403) return new SyncApiError(error || 'Access revoked', 'REVOKED', status);
+  if (status === 409) return new SyncApiError(error || 'Conflict', 'CONFLICT', status);
+  if (status === 429) return new SyncApiError(error || 'Too many requests', 'RATE_LIMITED', status);
+  if (status === 0 && /timeout|aborted/i.test(error)) {
+    return new SyncApiError(error || 'Timeout', 'TIMEOUT', 0);
+  }
+  if (status === 0) return new SyncApiError(error || 'Network error', 'NETWORK', 0);
+  return new SyncApiError(error || 'Request failed', 'HTTP_ERROR', status);
 }
 
 type ApiResult<T> = { ok: true; data: T } | { ok: false; status: number; error: string };
@@ -70,7 +87,12 @@ export class TimSyncClient {
       }
       return { ok: true, data: data as T };
     } catch (e) {
-      return { ok: false, status: 0, error: (e as Error).message };
+      const err = e as Error;
+      const timedOut = err.name === 'TimeoutError'
+        || err.name === 'AbortError'
+        || /timeout|aborted/i.test(err.message ?? '');
+      const message = err.message || 'Network error';
+      return { ok: false, status: 0, error: timedOut ? `timeout: ${message}` : message };
     }
   }
 
@@ -131,9 +153,9 @@ export class TimSyncClient {
       body: JSON.stringify(req),
     });
     if (!r.ok) {
-      if (r.status === 403) throw new SyncApiError('Access revoked', 'REVOKED');
-      if (r.status === 402) throw new SyncApiError('Subscription required', 'PAYMENT_REQUIRED');
-      throw new Error(r.error);
+      if (r.status === 403) throw new SyncApiError('Access revoked', 'REVOKED', 403);
+      if (r.status === 402) throw new SyncApiError('Subscription required', 'PAYMENT_REQUIRED', 402);
+      throw failureFromResult(r.status, r.error);
     }
     return r.data;
   }
@@ -144,9 +166,9 @@ export class TimSyncClient {
     params.push(`client_schema_major=${clientSchemaMajor}`);
     const r = await this.request<PullResponse>(`/sync/pull?${params.join('&')}`);
     if (!r.ok) {
-      if (r.status === 403) throw new SyncApiError('Access revoked', 'REVOKED');
-      if (r.status === 402) throw new SyncApiError('Subscription required', 'PAYMENT_REQUIRED');
-      throw new Error(r.error);
+      if (r.status === 403) throw new SyncApiError('Access revoked', 'REVOKED', 403);
+      if (r.status === 402) throw new SyncApiError('Subscription required', 'PAYMENT_REQUIRED', 402);
+      throw failureFromResult(r.status, r.error);
     }
     return r.data;
   }
