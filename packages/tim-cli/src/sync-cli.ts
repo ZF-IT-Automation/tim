@@ -15,6 +15,9 @@ import {
   buildSyncContext,
   runPush,
   runPull,
+  runSyncOwner,
+  syncCycleExitCode,
+  thrownSyncExitCode,
   resolveSecretPassphrase,
   MissingSecretPassphraseError,
   startDevServer,
@@ -137,6 +140,16 @@ function noteUnboundSyncState(): void {
   }
 }
 
+function cycleDeadline(flags: Record<string, string>): number {
+  const raw = flags.deadline;
+  const ms = raw === undefined ? 60_000 : Number(raw);
+  if (!Number.isFinite(ms) || ms < 0) {
+    console.error('--deadline must be a non-negative number of milliseconds');
+    process.exit(1);
+  }
+  return Date.now() + ms;
+}
+
 function requirePassphrase(flags: Record<string, string>): string {
   const p = process.env.TIM_SYNC_PASSPHRASE ?? flags.passphrase;
   if (!p) {
@@ -160,12 +173,17 @@ export async function cmdSyncPush(args: string[]): Promise<void> {
   const store = new TimStore(getDbPath());
   try {
     const ctx = buildSyncContext(store, config, passphrase, getDeviceId(), secretPassphrase);
-    const { pushed, queued } = await runPush(ctx);
-    console.log(`Pushed ${pushed} records${queued ? ' (more queued — retry push)' : ''}`);
+    const result = await runPush(ctx, { deadlineAt: cycleDeadline(flags) });
+    if (result.oversized.length > 0) {
+      console.error(`Oversized records parked: ${result.oversized.map((row) => `${row.key}#${row.revision}`).join(', ')}`);
+    }
+    console.log(`Pushed ${result.pushed} records${result.queued ? ' (more queued — retry push)' : ''}`);
+    const code = syncCycleExitCode(result);
+    if (code !== 0) process.exit(code);
   } catch (err) {
-    if (err instanceof MissingSecretPassphraseError || err instanceof SyncStateRejectedError) {
+    if (err instanceof MissingSecretPassphraseError || err instanceof SyncStateRejectedError || err instanceof SyncApiError) {
       console.error(err.message);
-      process.exit(1);
+      process.exit(thrownSyncExitCode(err));
     }
     throw err;
   } finally {
@@ -187,14 +205,61 @@ export async function cmdSyncPull(args: string[]): Promise<void> {
   const store = new TimStore(getDbPath());
   try {
     const ctx = buildSyncContext(store, config, passphrase, getDeviceId(), secretPassphrase);
-    const { pulled, conflicts } = await runPull(ctx);
+    const { pulled, conflicts } = await runPull(ctx, { deadlineAt: cycleDeadline(flags) });
     console.log(`Pulled ${pulled} records, ${conflicts} conflicts`);
   } catch (err) {
-    if (err instanceof SyncStateRejectedError) {
+    if (err instanceof SyncStateRejectedError || err instanceof SyncApiError) {
       console.error(err.message);
-      process.exit(1);
+      process.exit(thrownSyncExitCode(err));
     }
     throw err;
+  } finally {
+    store.close();
+  }
+}
+
+export async function cmdSyncOwner(args: string[]): Promise<void> {
+  const { flags } = parseArgs(args, { valueOptions: valueOptionsFor('sync', 'owner') });
+  const configRead = readSyncConfig();
+  const config = configRead.config;
+  if (!config) {
+    console.error(describeSyncConfigStatus(configRead.status));
+    process.exit(1);
+  }
+  const passphrase = requirePassphrase(flags);
+  const secretPassphrase = resolveSecretPassphrase(flags);
+  const intervalMs = flags.interval === undefined ? undefined : Number(flags.interval);
+  const deadlineMs = flags.deadline === undefined ? undefined : Number(flags.deadline);
+  if ((intervalMs !== undefined && (!Number.isFinite(intervalMs) || intervalMs < 0))
+    || (deadlineMs !== undefined && (!Number.isFinite(deadlineMs) || deadlineMs < 0))) {
+    console.error('--interval and --deadline must be non-negative milliseconds');
+    process.exit(1);
+  }
+  const store = new TimStore(getDbPath());
+  try {
+    const result = await runSyncOwner({
+      store,
+      config,
+      passphrase,
+      secretPassphrase,
+      once: flags.once === 'true',
+      intervalMs,
+      deadlineMs,
+    });
+    if (result.alreadyOwned) {
+      console.log('Sync owner already running');
+      return;
+    }
+    if (result.push) {
+      if (result.push.oversized.length > 0) {
+        console.error(`Oversized records parked: ${result.push.oversized.map((row) => `${row.key}#${row.revision}`).join(', ')}`);
+      }
+      console.log(`Pushed ${result.push.pushed} records${result.push.queued ? ' (more queued — retry push)' : ''}`);
+    }
+    if (result.pull) {
+      console.log(`Pulled ${result.pull.pulled} records, ${result.pull.conflicts} conflicts`);
+    }
+    if (result.exitCode !== 0) process.exit(result.exitCode);
   } finally {
     store.close();
   }
@@ -319,6 +384,9 @@ export async function cmdSync(sub: string | undefined, args: string[]): Promise<
     case 'pull':
       await cmdSyncPull(args);
       break;
+    case 'owner':
+      await cmdSyncOwner(args);
+      break;
     case 'status':
       await cmdSyncStatus();
       break;
@@ -336,7 +404,7 @@ export async function cmdSync(sub: string | undefined, args: string[]): Promise<
       break;
     default:
       console.error(`Unknown sync command: ${sub ?? '(none)'}`);
-      console.error('Usage: tim sync <connect|disconnect|push|pull|status|audit|repair|dev> [options]');
+      console.error('Usage: tim sync <connect|disconnect|push|pull|owner|status|audit|repair|dev> [options]');
       process.exit(1);
   }
 }

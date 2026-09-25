@@ -29,7 +29,7 @@ node packages/tim-cli/dist/cli.js statusline
 
 ---
 
-## Command Overview (43 commands)
+## Command Overview (44 commands)
 
 ### Top-Level Summary
 
@@ -65,19 +65,20 @@ node packages/tim-cli/dist/cli.js statusline
 | 28 | `tim sync disconnect` | Remove local sync configuration |
 | 29 | `tim sync push` | Push unacked staging to server |
 | 30 | `tim sync pull` | Pull remote changes |
-| 31 | `tim sync status` | Show sync configuration and health |
-| 32 | `tim sync audit` | Read-only sync diagnostic (`--json`) |
-| 33 | `tim sync repair` | Archive unbound state and write a new null cursor |
-| 34 | `tim sync dev` | Start local dev sync server (port 3100) |
-| 35 | `tim user init` | Create the human profile scaffold |
-| 36 | `tim user profile` | Show the human profile tree summary |
-| 37 | `tim update-skills` | Copy bundled TIM skills to detected agent hosts |
-| 38 | `tim root-entries` | List root entries |
-| 39 | `tim consolidate` | Run memory consolidation |
-| 40 | `tim secret` | Manage secret entry metadata |
-| 41 | `tim viewer` | Browse the entry tree in a local web UI; move and soft-delete nodes |
-| 42 | `tim sessions reap` | Reap empty session skeletons that never logged an exchange |
-| 43 | `tim --help` | Show top-level help |
+| 31 | `tim sync owner` | Drain sync on an interval; one owner per database |
+| 32 | `tim sync status` | Show sync configuration and health |
+| 33 | `tim sync audit` | Read-only sync diagnostic (`--json`) |
+| 34 | `tim sync repair` | Archive unbound state and write a new null cursor |
+| 35 | `tim sync dev` | Start local dev sync server (port 3100) |
+| 36 | `tim user init` | Create the human profile scaffold |
+| 37 | `tim user profile` | Show the human profile tree summary |
+| 38 | `tim update-skills` | Copy bundled TIM skills to detected agent hosts |
+| 39 | `tim root-entries` | List root entries |
+| 40 | `tim consolidate` | Run memory consolidation |
+| 41 | `tim secret` | Manage secret entry metadata |
+| 42 | `tim viewer` | Browse the entry tree in a local web UI; move and soft-delete nodes |
+| 43 | `tim sessions reap` | Reap empty session skeletons that never logged an exchange |
+| 44 | `tim --help` | Show top-level help |
 
 ---
 
@@ -641,6 +642,12 @@ Requires `TIM_SYNC_PASSPHRASE` env var or `--passphrase`.
 `TIM_SECRET_PASSPHRASE` or `--secret-passphrase` is optional; without it,
 encrypted secret payloads arrive as local placeholders (title `🔒 [secret]`).
 
+**`tim sync owner`**
+Drain push and pull on an interval while holding the per-database owner lock.
+Does not install or start a service. A second live owner exits 0.
+`--once` runs a single cycle. `--interval` defaults to 30000 ms and `--deadline`
+defaults to 20000 ms per cycle. Exit 3 on permanent auth or quota failure.
+
 **`tim sync status`**
 Show sync configuration and health:
 ```
@@ -960,7 +967,7 @@ Sessions:       tim hook session-start/end, tim checkpoint, tim rebalance
 Status:         tim statusline
 Data Mgmt:      tim export, tim import, tim migrate
 Safety:         tim snapshot, tim restore
-Sync:           tim sync {connect,push,pull,status,dev}
+Sync:           tim sync {connect,push,pull,owner,status,dev}
 Setup:          tim init, tim setup-hermes-statusline
 ```
 
