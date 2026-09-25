@@ -42,7 +42,7 @@ export interface FormatProjectOutputOptions {
   /** Appended before whole-response bounding (e.g. load NEXT hint). */
   trailingSuffix?: string;
   briefingContext?: BriefingRenderContext;
-  /** Explicit section filter from tim_load_project / tim_read_project. */
+  /** Explicit section filter from tim_load_project. */
   requestedSections?: string[] | null;
 }
 

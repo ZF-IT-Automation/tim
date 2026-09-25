@@ -623,24 +623,7 @@ const TimLoadProjectSchema = z.object({
     'Harness session id; when omitted, resolved from env/cache or the current session for the marker-bound project (stdio only). Binds (or re-binds) the TIM session project_ref.',
   ),
   bind: z.boolean().optional().default(true)
-    .describe('false = cross-project read without binding the session (replaces tim_read_project)'),
-});
-
-const TimReadProjectSchema = z.object({
-  label: z.string()
-    .describe('Project label (P0062), alias, or name (TIM). Several matches list the candidates.'),
-  depth: z.number().min(1).max(5).optional().default(3)
-    .describe('How many child levels to load (1-5)'),
-  budget: z.number().min(1).max(1000).optional().default(200)
-    .describe('Max child entries to return'),
-  tokenBudget: z.number().int().min(1).max(MAX_TOKEN_BUDGET).optional()
-    .describe('Token budget for the rendered project brief; defaults to briefing.maxTokens from config'),
-  query: z.string().optional()
-    .describe('Optional task query — adds project-scoped context extras inside the brief'),
-  ftsQueryMode: z.enum(['literal', 'or-terms']).optional().default('literal')
-    .describe('How to sanitize query for FTS when selecting task extras'),
-  sections: z.array(z.string()).nullable().optional().default(null)
-    .describe('Optional section IDs/labels to filter direct children'),
+    .describe('false = cross-project read without binding the session'),
 });
 
 const TimShowSchema = z.object({
@@ -1017,14 +1000,8 @@ export const TOOL_DEFS: Array<{
   {
     name: 'tim_load_project',
     description:
-      'Load a project by label or alias and bind the session to it. Loading a different project re-binds the session there (follow the work) — pass bind:false for a cross-project read that leaves the binding alone (replaces tim_read_project).',
+      'Load a project by label or alias and bind the session to it. Loading a different project re-binds the session there (follow the work) — pass bind:false for a cross-project read that leaves the binding alone.',
     schema: TimLoadProjectSchema,
-  },
-  {
-    name: 'tim_read_project',
-    description:
-      '[DEPRECATED — use tim_load_project with bind:false] Read a project brief + tree WITHOUT binding the session (cross-project lookup). Use tim_load_project to start working on a project.',
-    schema: TimReadProjectSchema,
   },
   {
     name: 'tim_show',
@@ -2125,7 +2102,7 @@ const WRITE_TOOLS = new Set([
 const READ_TOOLS = new Set([
   'tim_read', 'tim_search', 'tim_trace', 'tim_health', 'tim_stats', 'tim_section_children',
   'tim_export', 'tim_import_manifest', 'tim_project_structure', 'tim_import_audit',
-  'tim_dry_run_move', 'tim_doctor', 'tim_sync', 'tim_load_project', 'tim_read_project',
+  'tim_dry_run_move', 'tim_doctor', 'tim_sync', 'tim_load_project',
   'tim_show',
   'tim_show_unsummarized', 'tim_show_all_unsummarized', 'tim_show_untagged',
   'tim_resume_list',
@@ -3779,76 +3756,6 @@ export async function createMcpServer(
             budget,
             loadProjectSchema(),
             'load',
-            getBriefingRecentSessions(loadConfig()),
-            formatOptions,
-          );
-          return {
-            content: [{
-              type: 'text',
-              text: formatted,
-            }],
-          };
-        }
-
-        case 'tim_read_project': {
-          const {
-            label,
-            depth,
-            budget,
-            tokenBudget: tokenBudgetArg,
-            query,
-            ftsQueryMode,
-            sections,
-          } = TimReadProjectSchema.parse(args);
-          const budgetCheck = resolveBriefingTokenBudget(tokenBudgetArg, undefined, {
-            hasQuery: Boolean(query?.trim()),
-          });
-          if (!budgetCheck.ok) return errorResult(budgetCheck.message);
-
-          const resolved = await s.resolveProjectLabel(label);
-          if (resolved.status === 'ambiguous') {
-            return errorResult(
-              `'${label}' matches ${await describeProjectCandidates(s, resolved.labels)} — ` +
-              'repeat with the one you meant.',
-            );
-          }
-          if (resolved.status === 'not_found') {
-            return errorResult(`Project not found: ${label}`);
-          }
-
-          const result = await loadProjectForBriefing(s, resolved.label, {
-            depth,
-            budget,
-            sections,
-          });
-          if (!result) {
-            return errorResult(`Project not found: ${label}`);
-          }
-
-          const queryExtras = await resolveBriefingQueryExtras(
-            s,
-            resolved.label,
-            query,
-            ftsQueryMode,
-          );
-          const stats = s.getProjectEntryStats(result.project.id);
-          const formatOptions = {
-            ...buildFormatProjectOptions(
-              budgetCheck,
-              query,
-              queryExtras,
-            ),
-            requestedSections: sections,
-            briefingContext: {
-              lastActivityDate: stats.lastActivity,
-            },
-          };
-
-          const formatted = formatProjectOutput(
-            result,
-            budget,
-            loadProjectSchema(),
-            'read',
             getBriefingRecentSessions(loadConfig()),
             formatOptions,
           );
