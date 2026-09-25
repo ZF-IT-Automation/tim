@@ -7,10 +7,16 @@ import type {
   MemoryCoverageWorkState,
   MemoryHealthReport,
   MemorySummaryCoverageReport,
-  MemorySyncTelemetryReport,
-  MemorySyncTelemetryState,
 } from 'tim-core';
-import { getTimDir, isTimezoneQualifiedIso } from 'tim-core';
+import {
+  SYNC_PROTOCOL_GENERATION,
+  classifySyncConfigValue,
+  classifySyncStateValue,
+  getTimDir,
+  type MemorySyncTelemetryReport,
+  type MemorySyncTelemetryState,
+  type SyncStateDiagnosticStatus,
+} from 'tim-core';
 import type { Entry } from 'tim-core';
 import type { TimStore } from './store.js';
 import { isSummarySkipCurrent } from './summary-skipped.js';
@@ -21,130 +27,92 @@ import type { SemanticIndexHealthReport } from './vector-index.js';
 const ALL_SESSIONS = 1_000_000;
 const MAX_RANGE_SAMPLES = 50;
 
-interface SyncConfigShape {
-  fileId?: unknown;
-}
-
-interface SyncFileState {
-  fileId?: unknown;
-  lastPush?: unknown;
-  lastPull?: unknown;
-}
-
-function isValidIsoTimestamp(value: unknown): value is string {
-  if (typeof value !== 'string' || value.length === 0) return false;
-  return isTimezoneQualifiedIso(value);
-}
-
-function parseSyncTimestamp(value: unknown): string | null {
-  if (value === null || value === undefined) return null;
-  return isValidIsoTimestamp(value) ? value : null;
-}
-
-function readSyncTelemetry(unackedStaging: number, telemetryDir: string): MemorySyncTelemetryReport {
-  const syncConfigPath = path.join(telemetryDir, 'sync.json');
-  const syncStatePath = path.join(telemetryDir, 'sync-state.json');
-  if (!fs.existsSync(syncConfigPath)) {
-    return {
-      telemetryState: 'not_configured',
-      lastPush: null,
-      lastPull: null,
-      unackedStaging,
-    };
-  }
-
-  let config: SyncConfigShape | null = null;
-  try {
-    config = JSON.parse(fs.readFileSync(syncConfigPath, 'utf8')) as SyncConfigShape;
-  } catch {
-    return {
-      telemetryState: 'malformed',
-      lastPush: null,
-      lastPull: null,
-      unackedStaging,
-    };
-  }
-
-  if (!config || typeof config !== 'object') {
-    return {
-      telemetryState: 'malformed',
-      lastPush: null,
-      lastPull: null,
-      unackedStaging,
-    };
-  }
-
-  const configuredFileId = typeof config.fileId === 'string' ? config.fileId : null;
-  if (!configuredFileId) {
-    return {
-      telemetryState: 'malformed',
-      lastPush: null,
-      lastPull: null,
-      unackedStaging,
-    };
-  }
-
-  if (!fs.existsSync(syncStatePath)) {
-    return {
-      telemetryState: 'configured_no_state',
-      lastPush: null,
-      lastPull: null,
-      unackedStaging,
-    };
-  }
-
-  let state: SyncFileState | null = null;
-  try {
-    state = JSON.parse(fs.readFileSync(syncStatePath, 'utf8')) as SyncFileState;
-  } catch {
-    return {
-      telemetryState: 'malformed',
-      lastPush: null,
-      lastPull: null,
-      unackedStaging,
-    };
-  }
-
-  if (!state || typeof state !== 'object') {
-    return {
-      telemetryState: 'malformed',
-      lastPush: null,
-      lastPull: null,
-      unackedStaging,
-    };
-  }
-
-  const stateFileId = typeof state.fileId === 'string' ? state.fileId : null;
-  if (!stateFileId || stateFileId !== configuredFileId) {
-    return {
-      telemetryState: 'mismatched_file',
-      lastPush: null,
-      lastPull: null,
-      unackedStaging,
-    };
-  }
-
-  const lastPush = parseSyncTimestamp(state.lastPush);
-  const lastPull = parseSyncTimestamp(state.lastPull);
-  const hasInvalidTimestamp =
-    (state.lastPush !== null && state.lastPush !== undefined && lastPush === null)
-    || (state.lastPull !== null && state.lastPull !== undefined && lastPull === null);
-  if (hasInvalidTimestamp) {
-    return {
-      telemetryState: 'malformed',
-      lastPush: null,
-      lastPull: null,
-      unackedStaging,
-    };
-  }
-
-  const telemetryState: MemorySyncTelemetryState = 'available';
+function telemetryReport(
+  telemetryState: MemorySyncTelemetryState,
+  unackedStaging: number,
+  extra: Partial<MemorySyncTelemetryReport> = {},
+): MemorySyncTelemetryReport {
   return {
     telemetryState,
-    lastPush,
-    lastPull,
+    lastPush: null,
+    lastPull: null,
+    lastPushAttempt: null,
+    lastPullAttempt: null,
+    lastPushError: null,
+    lastPullError: null,
+    cursorUsable: false,
     unackedStaging,
+    ...extra,
   };
+}
+
+function readJsonFile(filePath: string): { ok: true; value: unknown } | { ok: false; missing: boolean } {
+  if (!fs.existsSync(filePath)) return { ok: false, missing: true };
+  try {
+    return { ok: true, value: JSON.parse(fs.readFileSync(filePath, 'utf8')) };
+  } catch {
+    return { ok: false, missing: false };
+  }
+}
+
+function readSyncTelemetry(
+  unackedStaging: number,
+  telemetryDir: string,
+  dbIdentity: string,
+): MemorySyncTelemetryReport {
+  const syncConfigPath = path.join(telemetryDir, 'sync.json');
+  const syncStatePath = path.join(telemetryDir, 'sync-state.json');
+  const configFile = readJsonFile(syncConfigPath);
+  if (!configFile.ok && configFile.missing) return telemetryReport('not_configured', unackedStaging);
+  if (!configFile.ok) return telemetryReport('invalid_json', unackedStaging);
+
+  const config = classifySyncConfigValue(configFile.value);
+  if (config.status !== 'configured' || !config.identity) {
+    const status: MemorySyncTelemetryState = config.status === 'disconnected'
+      ? 'disconnected'
+      : 'invalid_config';
+    return telemetryReport(status, unackedStaging);
+  }
+
+  const stateFile = readJsonFile(syncStatePath);
+  if (!stateFile.ok && stateFile.missing) return telemetryReport('configured_no_state', unackedStaging);
+  if (!stateFile.ok) return telemetryReport('invalid_json', unackedStaging);
+
+  const classified = classifySyncStateValue(stateFile.value, {
+    dbIdentity,
+    serverUrl: config.identity.serverUrl,
+    tenantId: config.identity.tenantId,
+    fileId: config.identity.fileId,
+    protocolGeneration: SYNC_PROTOCOL_GENERATION,
+  });
+  if (classified.status !== 'available') {
+    return telemetryReport(syncStateTelemetry(classified.status), unackedStaging);
+  }
+  return telemetryReport('available', unackedStaging, {
+    lastPush: classified.lastPushSuccess,
+    lastPull: classified.lastPullSuccess,
+    lastPushAttempt: classified.lastPushAttempt,
+    lastPullAttempt: classified.lastPullAttempt,
+    lastPushError: classified.lastPushError,
+    lastPullError: classified.lastPullError,
+    cursorUsable: classified.cursorUsable,
+  });
+}
+
+function syncStateTelemetry(status: Exclude<SyncStateDiagnosticStatus, 'available'>): MemorySyncTelemetryState {
+  switch (status) {
+    case 'missing':
+      return 'configured_no_state';
+    case 'invalid_json':
+    case 'invalid_timestamp':
+    case 'mismatched_file':
+    case 'mismatched_db':
+    case 'mismatched_server':
+    case 'mismatched_tenant':
+    case 'mismatched_protocol':
+    case 'unbound':
+      return status;
+  }
 }
 
 function compactSeqRanges(
@@ -366,18 +334,48 @@ function buildGuidance(
     case 'not_configured':
       guidance.push('Sync not configured — only local device state is reported.');
       break;
+    case 'disconnected':
+      guidance.push('Sync config is a disconnected placeholder (empty connection fields), not a network or JSON failure.');
+      break;
+    case 'invalid_config':
+      guidance.push('Sync config failed schema validation — connection identity is unknown.');
+      break;
+    case 'invalid_json':
+      guidance.push('Sync config or state JSON is unreadable — treat push/pull history as unknown.');
+      break;
+    case 'invalid_timestamp':
+      guidance.push('Sync state has invalid timestamps — push/pull history ignored.');
+      break;
     case 'configured_no_state':
       guidance.push('Sync configured but no sync-state.json telemetry yet.');
       break;
-    case 'malformed':
-      guidance.push('Sync telemetry unreadable or invalid — treat push/pull history as unknown.');
-      break;
     case 'mismatched_file':
-      guidance.push('Sync state fileId does not match sync.json — local push/pull timestamps ignored.');
+      guidance.push('Sync state fileId does not match sync.json — cursor and timestamps ignored.');
+      break;
+    case 'mismatched_db':
+      guidance.push('Sync state is bound to a different database — cursor ignored.');
+      break;
+    case 'mismatched_server':
+      guidance.push('Sync state is bound to a different server — cursor ignored.');
+      break;
+    case 'mismatched_tenant':
+      guidance.push('Sync state is bound to a different tenant — cursor ignored.');
+      break;
+    case 'mismatched_protocol':
+      guidance.push('Sync state protocol generation does not match this client — cursor ignored.');
+      break;
+    case 'unbound':
+      guidance.push('Legacy sync state is not bound to this database, server, tenant, file, and protocol generation. Cursor ignored. Explicit repair archives it; diagnosis does not reset it.');
       break;
     case 'available':
       if (sync.unackedStaging > 0) {
         guidance.push(`${sync.unackedStaging} staging row(s) await sync push.`);
+      }
+      if (!sync.cursorUsable) {
+        guidance.push('Sync cursor is not usable.');
+      }
+      if (sync.lastPushError || sync.lastPullError) {
+        guidance.push('Latest sync attempt failed — success timestamps were not advanced.');
       }
       if (sync.lastPush || sync.lastPull) {
         guidance.push('Sync timestamps are historical local evidence only — not current server reachability.');
@@ -513,7 +511,11 @@ export async function computeMemoryHealth(
 ): Promise<MemoryHealthReport> {
   const unackedStaging = (store.getDb().prepare('SELECT COUNT(*) AS count FROM staging WHERE acked = 0')
     .get() as { count: number }).count;
-  const sync = readSyncTelemetry(unackedStaging, options.telemetryDir ?? getTimDir());
+  const sync = readSyncTelemetry(
+    unackedStaging,
+    options.telemetryDir ?? getTimDir(),
+    store.getDatabasePath(),
+  );
   const summaryCoverage = await computeSummaryCoverage(store);
   const semanticIndex = store.getSemanticIndexHealth();
   const guidance = buildGuidance(summaryCoverage, semanticIndex, sync);
@@ -547,7 +549,9 @@ export function formatMemoryHealthLines(memory: MemoryHealthReport): string[] {
         : ''),
     `Sync telemetry: ${sync.telemetryState}, unacked=${sync.unackedStaging}` +
       (sync.lastPush ? `, lastPush=${sync.lastPush}` : '') +
-      (sync.lastPull ? `, lastPull=${sync.lastPull}` : ''),
+      (sync.lastPull ? `, lastPull=${sync.lastPull}` : '') +
+      (sync.lastPushError ? `, lastPushError=${sync.lastPushError}` : '') +
+      (sync.lastPullError ? `, lastPullError=${sync.lastPullError}` : ''),
   ];
   if (s.latestBatchSummary) {
     const b = s.latestBatchSummary;

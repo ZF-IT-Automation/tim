@@ -222,15 +222,31 @@ export interface MemorySummaryCoverageReport {
 
 export type MemorySyncTelemetryState =
   | 'not_configured'
+  | 'disconnected'
+  | 'invalid_config'
+  | 'invalid_json'
+  | 'invalid_timestamp'
   | 'configured_no_state'
   | 'available'
-  | 'malformed'
-  | 'mismatched_file';
+  | 'mismatched_file'
+  | 'mismatched_db'
+  | 'mismatched_server'
+  | 'mismatched_tenant'
+  | 'mismatched_protocol'
+  | 'unbound';
 
 export interface MemorySyncTelemetryReport {
   telemetryState: MemorySyncTelemetryState;
+  /** Last successful push. Null unless telemetryState is `available`. */
   lastPush: string | null;
+  /** Last successful pull. Null unless telemetryState is `available`. */
   lastPull: string | null;
+  lastPushAttempt: string | null;
+  lastPullAttempt: string | null;
+  lastPushError: string | null;
+  lastPullError: string | null;
+  /** True only when state is bound to this database, server, tenant, file, and protocol generation. */
+  cursorUsable: boolean;
   unackedStaging: number;
 }
 

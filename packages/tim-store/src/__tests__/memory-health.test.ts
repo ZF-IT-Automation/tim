@@ -196,23 +196,28 @@ describe('computeMemoryHealth', () => {
       path.join(timDir, 'sync-state.json'),
       JSON.stringify({
         fileId: 'file-abc',
+        dbIdentity: ':memory:',
+        serverUrl: 'http://localhost',
+        tenantId: 'u',
+        protocolGeneration: 1,
         lastPush: '2026-01-01T00:00:00.000Z',
         lastPull: null,
-        cursor: null,
+        cursor: 'cursor-1',
       }),
     );
     memory = await computeMemoryHealth(store);
     expect(memory.sync.telemetryState).toBe('available');
+    expect(memory.sync.cursorUsable).toBe(true);
     expect(memory.sync.lastPush).toBe('2026-01-01T00:00:00.000Z');
     expect(memory.guidance.some(g => g.includes('historical local evidence'))).toBe(true);
   });
 
-  it('marks malformed sync telemetry and rejects non-ISO timestamps', async () => {
+  it('marks invalid JSON and rejects non-ISO timestamps', async () => {
     const timDir = path.join(home, '.tim');
     fs.mkdirSync(timDir, { recursive: true });
     fs.writeFileSync(path.join(timDir, 'sync.json'), '{not json');
     let memory = await computeMemoryHealth(store);
-    expect(memory.sync.telemetryState).toBe('malformed');
+    expect(memory.sync.telemetryState).toBe('invalid_json');
 
     fs.writeFileSync(path.join(timDir, 'sync.json'), JSON.stringify({
       serverUrl: 'http://localhost',
@@ -228,8 +233,33 @@ describe('computeMemoryHealth', () => {
       cursor: null,
     }));
     memory = await computeMemoryHealth(store);
-    expect(memory.sync.telemetryState).toBe('malformed');
+    expect(memory.sync.telemetryState).toBe('invalid_timestamp');
     expect(memory.sync.lastPush).toBeNull();
+    expect(memory.sync.cursorUsable).toBe(false);
+  });
+
+  it('reports an empty placeholder config as disconnected and ignores fake-file-id state', async () => {
+    const timDir = path.join(home, '.tim');
+    fs.mkdirSync(timDir, { recursive: true });
+    fs.writeFileSync(path.join(timDir, 'sync.json'), JSON.stringify({
+      serverUrl: '',
+      userId: '',
+      token: '',
+      salt: '',
+      fileId: '',
+    }));
+    fs.writeFileSync(path.join(timDir, 'sync-state.json'), JSON.stringify({
+      fileId: 'fake-file-id',
+      cursor: 'stale-cursor',
+      lastPush: '2026-08-12T00:00:00.000Z',
+      lastPull: '2026-08-12T00:00:00.000Z',
+    }));
+    const memory = await computeMemoryHealth(store);
+    expect(memory.sync.telemetryState).toBe('disconnected');
+    expect(memory.sync.lastPush).toBeNull();
+    expect(memory.sync.lastPull).toBeNull();
+    expect(memory.sync.cursorUsable).toBe(false);
+    expect(memory.guidance.some(g => g.includes('disconnected placeholder'))).toBe(true);
   });
 
   it('ignores sync state when fileId mismatches configured sync.json', async () => {
@@ -251,6 +281,7 @@ describe('computeMemoryHealth', () => {
     const memory = await computeMemoryHealth(store);
     expect(memory.sync.telemetryState).toBe('mismatched_file');
     expect(memory.sync.lastPush).toBeNull();
+    expect(memory.sync.cursorUsable).toBe(false);
   });
 
   it('reports flat unbound session exchanges via sessionStart/sessionLog', async () => {

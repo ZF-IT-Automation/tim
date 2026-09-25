@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -23,6 +23,10 @@ beforeAll(() => {
 afterAll(() => {
   process.env.HOME = origHome;
   fs.rmSync(tmpHome, { recursive: true, force: true });
+});
+
+beforeEach(() => {
+  try { fs.unlinkSync(path.join(tmpHome, '.tim', 'sync-state.json')); } catch { /* none */ }
 });
 
 describe('autoPush partial secret block (#F3)', () => {
@@ -51,10 +55,6 @@ describe('autoPush partial secret block (#F3)', () => {
         salt,
         fileId,
       }),
-    );
-    fs.writeFileSync(
-      path.join(timDir, 'sync-state.json'),
-      JSON.stringify({ fileId, cursor: null, lastPush: null, lastPull: null }),
     );
   });
 
