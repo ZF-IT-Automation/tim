@@ -191,6 +191,12 @@ export {
   validateTagsDeprecated,
 } from './validate.js';
 export { ErrorLogger, compactErrorLog, shouldRebuildErrorLog, type ErrorLogEntry, type ErrorStats } from './error-log.js';
+export {
+  markSummarySkipped,
+  readSummarySkipped,
+  type SummarySkipReason,
+  type SummarySkipped,
+} from './summary-skipped.js';
 export { formatEntryId, sessionShortFromMetadata } from './entry-id.js';
 export {
   ackStaging,

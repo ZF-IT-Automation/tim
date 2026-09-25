@@ -8,6 +8,8 @@ import {
   KIND_EXCHANGE_BATCH,
   KIND_EXCHANGES_ROOT,
   ErrorLogger,
+  markSummarySkipped,
+  readSummarySkipped,
   type TimStore,
 } from 'tim-store';
 import {
@@ -186,7 +188,8 @@ export type IdleSweepReason =
   | 'no-cwd'
   | 'not-idle'
   | 'no-pending'
-  | 'exhausted';
+  | 'exhausted'
+  | 'skipped';
 
 export interface IdleSweepResult {
   sessionId: string;
@@ -271,6 +274,11 @@ export async function sweepIdleSessions(
     if (spawns >= maxSpawns) break;
 
     const sessionId = session.id;
+    if (readSummarySkipped(session.metadata)) {
+      results.push({ sessionId, reason: 'skipped' });
+      continue;
+    }
+
     const coverage = await deriveSessionCoverage(store, sessionId);
     const { batchesSummarized } = coverage;
     if (!coverage.hasPendingSummarization) {
@@ -340,16 +348,7 @@ export async function sweepIdleSessions(
     }
 
     if (attempts >= maxAttempts) {
-      const key = `${sessionId}:exhausted`;
-      if (!sweepSkipLogged.has(key)) {
-        errorLogger.logError({
-          tool: 'idle_sweep',
-          error:
-            `session exhausted ${maxAttempts} idle-sweep attempts without a new summary — skipped`,
-          sessionId,
-        });
-        sweepSkipLogged.add(key);
-      }
+      await markSummarySkipped(store, sessionId, 'exhausted');
       results.push({ sessionId, reason: 'exhausted' });
       continue;
     }

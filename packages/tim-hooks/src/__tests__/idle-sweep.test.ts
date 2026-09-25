@@ -8,6 +8,7 @@ import { runCheckpointWithSummarizerSpawn, runSessionEnd } from '../checkpoint.j
 import {
   TimStore,
   SessionManager,
+  computeMemoryHealth,
   findChildByKind,
   KIND_SUMMARY_ROOT,
 } from 'tim-store';
@@ -297,7 +298,7 @@ describe('sweepIdleSessions (criterion 10 — attempt cap)', () => {
     store.close();
   });
 
-  it('retries three times then skips with one error-log entry', async () => {
+  it('retries three times then skips without an error-log entry', async () => {
     const dir = fs.mkdtempSync(path.join(TEST_ROOT, 'c10-'));
     writeMarker(dir, { project: 'P0100' });
     await startSession(sessions, store, {
@@ -324,15 +325,77 @@ describe('sweepIdleSessions (criterion 10 — attempt cap)', () => {
     const exhaustedErrors = store.getDb().prepare(
       `SELECT error, session_id FROM error_log WHERE tool = 'idle_sweep' AND error LIKE '%exhausted%'`,
     ).all() as Array<{ error: string; session_id: string }>;
-    expect(exhaustedErrors).toHaveLength(1);
-    expect(exhaustedErrors[0]!.session_id).toBe('strike-s');
+    expect(exhaustedErrors).toHaveLength(0);
+    const marked = await store.read('strike-s');
+    expect(marked?.metadata.summary_skipped).toMatchObject({ reason: 'exhausted' });
 
     releaseLock(dir);
     await sweepIdleSessions(store, { spawn, now, idleMinutes: 15, maxAttempts: 3 });
     const exhaustedAgain = store.getDb().prepare(
       `SELECT error FROM error_log WHERE tool = 'idle_sweep' AND error LIKE '%exhausted%'`,
     ).all();
-    expect(exhaustedAgain).toHaveLength(1);
+    expect(exhaustedAgain).toHaveLength(0);
+  });
+
+  it('persists an exhausted skip once so health counts it skipped, not pending', async () => {
+    const dir = fs.mkdtempSync(path.join(TEST_ROOT, 'c10-skip-'));
+    const freshDir = fs.mkdtempSync(path.join(TEST_ROOT, 'c10-fresh-'));
+    writeMarker(dir, { project: 'P0100' });
+    writeMarker(freshDir, { project: 'P0100' });
+    await startSession(sessions, store, {
+      sessionId: 'skip-s',
+      projectId: 'P0100',
+      cwd: dir,
+      backdateTo: '2026-01-01T10:00:00.000Z',
+    });
+    await startSession(sessions, store, {
+      sessionId: 'still-s',
+      projectId: 'P0100',
+      cwd: freshDir,
+      backdateTo: '2026-08-12T16:10:00.000Z',
+    });
+
+    const now = () => new Date('2026-08-12T16:20:00.000Z').getTime();
+    const spawn = vi.fn();
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    try {
+      for (let pass = 0; pass < 3; pass++) {
+        releaseLock(dir);
+        await sweepIdleSessions(store, { spawn, now, idleMinutes: 15, maxAttempts: 3 });
+      }
+      expect(spawn).toHaveBeenCalledTimes(3);
+
+      releaseLock(dir);
+      const fourth = await sweepIdleSessions(store, { spawn, now, idleMinutes: 15, maxAttempts: 3 });
+      expect(spawn).toHaveBeenCalledTimes(3);
+      expect(fourth.some(r => r.sessionId === 'skip-s' && r.reason === 'exhausted')).toBe(true);
+
+      const session = await store.read('skip-s');
+      expect(session?.metadata.summary_skipped).toEqual({
+        reason: 'exhausted',
+        at: expect.any(String),
+      });
+      const exhaustedErrors = store.getDb().prepare(
+        `SELECT error FROM error_log WHERE tool = 'idle_sweep' AND error LIKE '%exhausted%'`,
+      ).all();
+      expect(exhaustedErrors).toHaveLength(0);
+      const skipLogs = info.mock.calls.filter(c => String(c[0]).includes('summary skipped'));
+      expect(skipLogs).toHaveLength(1);
+
+      releaseLock(dir);
+      const fifth = await sweepIdleSessions(store, { spawn, now, idleMinutes: 15, maxAttempts: 3 });
+      expect(spawn).toHaveBeenCalledTimes(3);
+      expect(fifth.some(r => r.sessionId === 'skip-s' && r.reason === 'skipped')).toBe(true);
+      expect(info.mock.calls.filter(c => String(c[0]).includes('summary skipped'))).toHaveLength(1);
+
+      const memory = await computeMemoryHealth(store);
+      expect(memory.summaryCoverage.skippedSessionCount).toBe(1);
+      expect(memory.summaryCoverage.sessionsWithPending).toBe(1);
+      expect(memory.summaryCoverage.pendingExchangeCount).toBe(2);
+      expect(memory.summaryCoverage.pendingRanges.some(r => r.sessionId === 'skip-s')).toBe(false);
+    } finally {
+      info.mockRestore();
+    }
   });
 
   it('resets the counter when a summary is written', async () => {

@@ -208,6 +208,8 @@ export interface MemorySummaryCoverageReport {
   /** User exchanges with missing or invalid positive integer seq metadata. */
   unknownSequenceExchangeCount: number;
   sessionsWithPending: number;
+  /** Sessions marked summary_skipped. Their exchanges are not pending. */
+  skippedSessionCount: number;
   pendingRanges: MemoryCoverageSeqRange[];
   coveredRanges: MemoryCoverageSeqRange[];
   pendingRangeCount: number;
