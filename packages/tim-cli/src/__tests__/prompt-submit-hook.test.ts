@@ -46,7 +46,6 @@ describe('tim hook prompt-submit', () => {
         ...process.env,
         HOME: home,
         TIM_DB_PATH: dbPath,
-        TIM_EMBEDDING_DISABLED: '1',
         ...env,
       },
     });

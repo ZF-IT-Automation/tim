@@ -162,7 +162,6 @@ function migrateTempDb(dist, dbPath, home) {
     PATH: process.env.PATH,
     HOME: home,
     TIM_DB_PATH: dbPath,
-    TIM_EMBEDDING_DISABLED: '1',
     HERMES_SKIP_DB_GUARD: '1',
   };
   const r = spawnSync(process.execPath, [cli, 'migrate-schema'], { env, encoding: 'utf8' });
@@ -176,7 +175,6 @@ function cleanEnv(home, dbPath) {
     PATH: process.env.PATH ?? '/usr/bin:/bin',
     HOME: home,
     TIM_DB_PATH: dbPath,
-    TIM_EMBEDDING_DISABLED: '1',
     HERMES_SKIP_DB_GUARD: '1',
     // Keep env minimal — no user TIM config leakage
     LANG: process.env.LANG ?? 'C.UTF-8',

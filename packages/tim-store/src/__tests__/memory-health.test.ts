@@ -6,44 +6,20 @@ import {
   TimStore,
   SessionManager,
   computeMemoryHealth,
-  resetDefaultEmbeddingProviderCache,
-  createUnavailableEmbeddingProvider,
-  type EmbeddingProvider,
 } from '../index.js';
-import { isDefaultEmbeddingProviderResolved } from '../embedding-provider.js';
-
-const CUSTOM_MODEL = 'all-MiniLM-L6-v2';
-
-function unitVector(dim = 384, bias = 0.1): Float32Array {
-  const v = new Float32Array(dim);
-  v[0] = bias;
-  v[1] = 1 - bias;
-  return v;
-}
 
 describe('computeMemoryHealth', () => {
   let store: TimStore;
   let sessions: SessionManager;
   let home: string;
   let origHome: string | undefined;
-  let origDisabled: string | undefined;
 
   beforeEach(async () => {
-    resetDefaultEmbeddingProviderCache();
     origHome = process.env.HOME;
-    origDisabled = process.env.TIM_EMBEDDING_DISABLED;
     home = fs.mkdtempSync(path.join(os.tmpdir(), 'tim-mem-health-'));
     process.env.HOME = home;
-    delete process.env.TIM_EMBEDDING_DISABLED;
-    delete process.env.TIM_EMBEDDING_MODEL;
 
-    const provider: EmbeddingProvider = {
-      modelId: CUSTOM_MODEL,
-      dimension: 384,
-      state: 'enabled',
-      embed: async texts => texts.map(() => unitVector()),
-    };
-    store = new TimStore(':memory:', { embeddingProvider: provider });
+    store = new TimStore(':memory:');
     sessions = new SessionManager(store);
     await store.createProject('P3700');
   });
@@ -51,10 +27,7 @@ describe('computeMemoryHealth', () => {
   afterEach(() => {
     store.close();
     process.env.HOME = origHome;
-    if (origDisabled === undefined) delete process.env.TIM_EMBEDDING_DISABLED;
-    else process.env.TIM_EMBEDDING_DISABLED = origDisabled;
     fs.rmSync(home, { recursive: true, force: true });
-    resetDefaultEmbeddingProviderCache();
   });
 
   it('reports idle state on empty store', async () => {
@@ -62,7 +35,6 @@ describe('computeMemoryHealth', () => {
     expect(memory.summaryCoverage.workState).toBe('no_sessions');
     expect(memory.summaryCoverage.observedExchangeCount).toBe(0);
     expect(memory.sync.telemetryState).toBe('not_configured');
-    expect(memory.semanticIndex.providerState).toBe('enabled');
   });
 
   it('reports pending after partial summary then appended exchanges', async () => {
@@ -126,56 +98,6 @@ describe('computeMemoryHealth', () => {
       { seqFrom: 1, seqTo: 1 });
     const memory = await computeMemoryHealth(store);
     expect(memory.summaryCoverage.latestBatchSummary).toBeNull();
-  });
-
-  it('reports embedding backlog after indexed entry edit without double-counting', async () => {
-    const entry = await store.write('Indexed\nBody.', { tags: ['#note'] });
-    store.setVectors(entry.id, unitVector(384, 0.85), CUSTOM_MODEL, 384);
-    await store.update(entry.id, { content: 'Edited\nBody.' });
-
-    const memory = await computeMemoryHealth(store);
-    const backlog = memory.semanticIndex.unembeddedCount;
-    expect(backlog).toBeGreaterThanOrEqual(1);
-    const indexingLine = memory.guidance.find(g => g.includes('need (re)indexing'));
-    expect(indexingLine).toBeDefined();
-    expect(indexingLine).toMatch(new RegExp(`^${backlog} eligible`));
-    if (memory.semanticIndex.staleVectorCount > 0) {
-      expect(indexingLine).toContain(`stale=${memory.semanticIndex.staleVectorCount}`);
-    }
-  });
-
-  it('uses the same non-additive backlog count in health warnings and guidance', async () => {
-    const entry = await store.write('Wrong model vector\nBody.', { tags: ['#note'] });
-    store.setVectors(entry.id, unitVector(), 'old-model', 384);
-    const health = await store.health();
-    const count = health.memory!.semanticIndex.unembeddedCount;
-    expect(health.memory!.semanticIndex.wrongModelCount).toBeGreaterThan(0);
-    expect(health.warnings).toContain(`${count} entry vector(s) need (re)indexing`);
-    expect(health.memory!.guidance.some(line => line.startsWith(`${count} eligible entry vector(s)`))).toBe(true);
-  });
-
-  it('reports disabled embeddings without claiming vector success', async () => {
-    store.close();
-    process.env.TIM_EMBEDDING_DISABLED = '1';
-    const disabledStore = new TimStore(':memory:');
-    await disabledStore.write('No vectors\nBody.', { tags: ['#note'] });
-
-    const memory = await computeMemoryHealth(disabledStore);
-    expect(memory.semanticIndex.providerState).toBe('disabled');
-    expect(memory.semanticIndex.vectorCount).toBe(0);
-    expect(memory.guidance.some(g => g.includes('disabled'))).toBe(true);
-    disabledStore.close();
-  });
-
-  it('reports unavailable provider for unsupported model', async () => {
-    store.close();
-    const unavailable: EmbeddingProvider = createUnavailableEmbeddingProvider('unknown-model-x');
-    const badStore = new TimStore(':memory:', { embeddingProvider: unavailable });
-
-    const memory = await computeMemoryHealth(badStore);
-    expect(memory.semanticIndex.providerState).toBe('unavailable');
-    expect(memory.guidance.some(g => g.includes('unsupported'))).toBe(true);
-    badStore.close();
   });
 
   it('reads sync telemetry states from local files without network', async () => {
@@ -436,9 +358,8 @@ describe('computeMemoryHealth', () => {
     expect(memory.summaryCoverage.pendingRangesTruncated).toBe(true);
   });
 
-  it('health() includes memory and does not initialize default embedding provider', async () => {
+  it('health() includes memory without mutating the store', async () => {
     store.close();
-    resetDefaultEmbeddingProviderCache();
     const bare = new TimStore(':memory:');
 
     const before = (bare.getDb().prepare('SELECT COUNT(*) AS c FROM entries').get() as { c: number }).c;
@@ -446,8 +367,7 @@ describe('computeMemoryHealth', () => {
     const after = (bare.getDb().prepare('SELECT COUNT(*) AS c FROM entries').get() as { c: number }).c;
 
     expect(report.memory).toBeDefined();
-    expect(report.memory!.semanticIndex.providerState).toBe('unknown');
-    expect(isDefaultEmbeddingProviderResolved()).toBe(false);
+    expect(report.memory!.summaryCoverage).toBeDefined();
     expect(before).toBe(after);
     bare.close();
   });

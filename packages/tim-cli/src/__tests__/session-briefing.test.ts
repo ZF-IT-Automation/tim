@@ -62,7 +62,6 @@ describe('session-start directive carries content', () => {
         HOME: home,
         TIM_DB_PATH: dbPath,
         TIM_MARKER_MAX_ROOT: root,
-        TIM_EMBEDDING_DISABLED: '1',
       },
     });
   }
@@ -476,7 +475,6 @@ describe('tim hook claude-session-start', () => {
         HOME: home,
         TIM_DB_PATH: dbPath,
         TIM_MARKER_MAX_ROOT: root,
-        TIM_EMBEDDING_DISABLED: '1',
       },
     });
   }

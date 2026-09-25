@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import type { Entry } from 'tim-core';
 import { askJev, jevNoul, resolveJevApiKey, SCHEMA_KINDS } from 'tim-core';
 import type { TimStore } from './store.js';
-import { titleSimilarity, cosineSimilarity } from './store.js';
+import { titleSimilarity } from './store.js';
 import { parseAndCoerceMetadata } from './metadata-coerce.js';
 
 export type ConsolidationType = 'duplicate' | 'decay';
@@ -174,22 +174,6 @@ export class ConsolidationManager {
     return rows.map(rowToEntry).filter(isContentEntry);
   }
 
-  private loadVectors(entryIds: string[]): Map<string, Float32Array> {
-    if (entryIds.length === 0) return new Map();
-    const rows = this.db.prepare(`
-      SELECT entry_id, vector FROM entry_vectors
-      WHERE entry_id IN (${entryIds.map(() => '?').join(', ')})
-    `).all(...entryIds) as Array<{ entry_id: string; vector: Buffer }>;
-    const map = new Map<string, Float32Array>();
-    for (const row of rows) {
-      map.set(
-        row.entry_id,
-        new Float32Array(row.vector.buffer, row.vector.byteOffset, row.vector.byteLength / 4),
-      );
-    }
-    return map;
-  }
-
   private hasJevRejection(projectLabel: string, dedupKey: string): boolean {
     return !!this.db.prepare(`
       SELECT 1 FROM entries
@@ -317,12 +301,10 @@ export class ConsolidationManager {
     opts: { threshold?: number; confirm?: boolean } = {},
   ): Promise<DuplicateCandidateList> {
     const titleThreshold = 0.6;
-    const cosineThreshold = opts.threshold ?? 0.8;
     // No key is the configured "off" state: exactly the pre-Jev queueing, not an outage.
     const confirm = opts.confirm !== false && resolveJevApiKey() !== undefined;
     const project = await this.resolveProject(projectLabel);
     const entries = this.getProjectContentEntries(project.id);
-    const vectors = this.loadVectors(entries.map(e => e.id));
     const scored: ScoredDuplicate[] = [];
 
     for (let i = 0; i < entries.length; i++) {
@@ -330,22 +312,12 @@ export class ConsolidationManager {
         const left = entries[i]!;
         const right = entries[j]!;
         const titleScore = titleSimilarity(left.title, right.title);
-        let cosScore = 0;
-        const va = vectors.get(left.id);
-        const vb = vectors.get(right.id);
-        if (va && vb) {
-          cosScore = cosineSimilarity(va, vb);
-        }
-        const score = Math.max(titleScore, cosScore);
-        const isDup = cosScore >= cosineThreshold || titleScore >= titleThreshold;
-        if (!isDup) continue;
+        if (titleScore < titleThreshold) continue;
 
         const a = left.id < right.id ? left : right;
         const b = left.id < right.id ? right : left;
-        const reason =
-          cosScore >= cosineThreshold
-            ? `cosine=${cosScore.toFixed(2)} title=${titleScore.toFixed(2)}`
-            : `title=${titleScore.toFixed(2)}`;
+        const reason = `title=${titleScore.toFixed(2)}`;
+        const score = titleScore;
         scored.push({
           pair: [a.id, b.id],
           score: Number(score.toFixed(3)),

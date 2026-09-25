@@ -15,8 +15,7 @@
       "title": "Kraftfahrzeug Wartungsfenster",
       "body": "Interne Verbrennung und Fleet-Checkliste. Kein englisches Automobil-Vokabular.",
       "section": "Ideas",
-      "tags": ["#transport", "#fleet"],
-      "vectorHint": "motor"
+      "tags": ["#transport", "#fleet"]
     },
     {
       "goldLabel": "gold:adversarial-b-noise",
@@ -24,8 +23,7 @@
       "body": "Unrelated sedan brochure text for adversarial similar project.",
       "section": "Ideas",
       "tags": ["#noise"],
-      "project": "P3801",
-      "vectorHint": "noise"
+      "project": "P3801"
     },
     {
       "goldLabel": "gold:decision-v1",
@@ -33,7 +31,6 @@
       "body": "Rolling deploy allowed without staging gate.",
       "section": "Decisions",
       "tags": ["#decision"],
-      "vectorHint": "decision",
       "temporal": { "validFrom": "2025-01-01T00:00:00Z", "validUntil": "2026-06-01T00:00:00Z" }
     },
     {
@@ -42,7 +39,6 @@
       "body": "Blue-green only after staging sign-off.",
       "section": "Decisions",
       "tags": ["#decision"],
-      "vectorHint": "decision",
       "temporal": { "validFrom": "2026-03-01T00:00:00Z" },
       "supersedesGold": "gold:decision-v1"
     },
@@ -51,16 +47,14 @@
       "title": "Always run tests before merge (gold:rule-tests)",
       "body": "Agent rule for CI hygiene.",
       "section": "Rules",
-      "tags": ["#rule"],
-      "vectorHint": "rule"
+      "tags": ["#rule"]
     },
     {
       "goldLabel": "gold:task-auth",
       "title": "Ship auth middleware fix",
       "body": "Urgent open task for OAuth callback regression.",
       "section": "Tasks",
-      "tags": ["#task"],
-      "vectorHint": "auth"
+      "tags": ["#task"]
     }
   ],
   "questions": [
@@ -69,7 +63,6 @@
       "lang": "en",
       "text": "What do we know about automobiles?",
       "path": "search",
-      "searchType": "vector",
       "expectedGold": ["gold:motor-transport"],
       "irrelevantGold": ["gold:adversarial-b-noise"]
     },
@@ -78,7 +71,6 @@
       "lang": "de",
       "text": "Was wissen wir über Kraftfahrzeuge?",
       "path": "search",
-      "searchType": "hybrid",
       "expectedGold": ["gold:motor-transport"],
       "irrelevantGold": ["gold:adversarial-b-noise"]
     },
@@ -87,25 +79,22 @@
       "lang": "en",
       "text": "automobile marketing",
       "path": "search",
-      "searchType": "hybrid",
       "expectedGold": [],
       "irrelevantGold": ["gold:adversarial-b-noise"]
     },
     {
       "id": "q-en-decision-current",
       "lang": "en",
-      "text": "What is the current deployment policy?",
+      "text": "deployment policy",
       "path": "search",
-      "searchType": "hybrid",
       "expectedGold": ["gold:decision-current"],
       "irrelevantGold": ["gold:decision-v1"]
     },
     {
       "id": "q-en-decision-before",
       "lang": "en",
-      "text": "What was the deployment policy in February 2026?",
+      "text": "deployment policy",
       "path": "search",
-      "searchType": "hybrid",
       "expectedGold": ["gold:decision-v1"],
       "irrelevantGold": ["gold:decision-current"],
       "temporalAsOf": "2026-02-15T12:00:00Z"

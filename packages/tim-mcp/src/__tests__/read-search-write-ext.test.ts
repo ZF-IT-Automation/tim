@@ -355,43 +355,6 @@ describe('tim_search extended', () => {
     expect(response.results[0].title).toBe('SearchTypeNeedle alpha beta');
   });
 
-  it('propagates semantic retrieval metadata from store.search', async () => {
-    client.kill();
-    const disabledClient = new McpClient(dbPath, { TIM_EMBEDDING_DISABLED: '1' });
-    client = disabledClient; // The suite cleanup also runs when initialization or an assertion fails.
-    await disabledClient.init();
-    const proj = await disabledClient.callTool('tim_create_project', {
-      label: 'P0528',
-      content: 'P0528 Proj',
-      memoryOnly: true,
-    });
-    const project = JSON.parse(proj.result!.content[0].text);
-    const section = await disabledClient.callTool('tim_write', {
-      content: 'Notes',
-      parentId: project.id,
-      metadata: { kind: 'section' },
-      tags: ['#section', '#schema'],
-    });
-    const sec = JSON.parse(section.result!.content[0].text);
-    await disabledClient.callTool('tim_write', {
-      content: 'SemanticMetaNeedle alpha',
-      parentId: sec.id,
-      tags: ['#note', '#test'],
-    });
-
-    const resp = await disabledClient.callTool('tim_search', {
-      query: 'SemanticMetaNeedle',
-      searchType: 'hybrid',
-      root: 'P0528',
-    });
-    const response = JSON.parse(resp.result!.content[0].text);
-    expect(response.semantic).toBeDefined();
-    expect(response.semantic.requestedMode).toBe('hybrid');
-    expect(response.semantic.providerState).toBe('disabled');
-    expect(response.semantic.degradedToLexical).toBe(true);
-    disabledClient.kill();
-  });
-
   it('scoped MCP search finds in-project match despite foreign dominance', async () => {
     const foreignProj = await client.callTool('tim_create_project', {
       label: 'P0998',

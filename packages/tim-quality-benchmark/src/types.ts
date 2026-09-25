@@ -5,7 +5,7 @@ export const DATASET_VERSION = '1.0.0';
 
 export type BenchmarkMode = 'no-memory' | 'fixed-handoff' | 'tim';
 
-export type ProviderMode = 'synthetic' | 'real';
+export type ProviderMode = 'fts';
 
 export type QuestionPath = 'search' | 'briefing';
 
@@ -15,8 +15,6 @@ export interface DatasetEntry {
   body: string;
   section: string;
   tags?: string[];
-  /** Routes deterministic synthetic embeddings — not lexical overlap with queries. */
-  vectorHint?: string;
   project?: string;
   temporal?: {
     validFrom?: string;
@@ -32,7 +30,8 @@ export interface DatasetQuestion {
   lang: 'de' | 'en';
   text: string;
   path: QuestionPath;
-  searchType?: 'fts' | 'vector' | 'hybrid';
+  /** Accepted for compatibility. Search is full-text. */
+  searchType?: string;
   expectedGold: string[];
   irrelevantGold?: string[];
   /** ISO timestamp for temporal search eligibility (#36). */
@@ -84,8 +83,6 @@ export interface QuestionModeResult {
     modelId: string | null;
     state: string;
     searchType?: string;
-    degradedToLexical?: boolean;
-    vectorUnavailable?: boolean;
   };
   contextPreview?: string;
 }

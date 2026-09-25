@@ -1,9 +1,8 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { SessionManager, TimStore, type EmbeddingProvider } from 'tim-store';
+import { SessionManager, TimStore } from 'tim-store';
 import type { DatasetEntry, DatasetFixture } from './types.js';
-import { SYNTHETIC_DIMENSION, SYNTHETIC_MODEL_ID, vectorForHint } from './synthetic-provider.js';
 
 export interface FixtureStore {
   store: TimStore;
@@ -13,11 +12,6 @@ export interface FixtureStore {
   entryIdToGold: Map<string, string>;
   projectLabel: string;
   adversarialProjectLabel: string;
-}
-
-export interface BuildFixtureOptions {
-  /** When true, embed entry text through the provider instead of vectorHint shortcuts. */
-  realEmbeddings?: boolean;
 }
 
 async function writeSection(
@@ -37,25 +31,19 @@ async function writeSection(
 async function seedNoisyLog(
   store: TimStore,
   projectId: string,
-  provider: EmbeddingProvider,
-  realEmbeddings: boolean,
 ): Promise<void> {
   const log = await store.write('Log', {
     parentId: projectId,
     metadata: { kind: 'section', label: 'Log', order: 1 },
     tags: ['#section', '#schema'],
   });
-  const entryTexts = new Map<string, string>();
   for (let i = 0; i < 120; i++) {
     const text = `Log filler ${i} [retrieved:log-${i}]\nnoise-entry-${i} unrelated chatter`;
-    const entry = await store.write(text, {
+    await store.write(text, {
       parentId: log.id,
       tags: ['#log'],
     });
-    if (realEmbeddings) entryTexts.set(entry.id, text);
-    else store.setVectors(entry.id, vectorForHint('default'), SYNTHETIC_MODEL_ID, SYNTHETIC_DIMENSION);
   }
-  if (realEmbeddings) await embedEntriesForReal(store, entryTexts, provider);
 }
 
 async function seedPartialSession(
@@ -99,7 +87,6 @@ async function writeFixtureEntry(
   entry: DatasetEntry,
   projectIds: Record<string, string>,
   sectionIds: Record<string, string>,
-  useSyntheticVectors: boolean,
 ): Promise<string> {
   const projectKey = entry.project ?? fixture.projectLabel;
   const projectId = projectIds[projectKey];
@@ -118,53 +105,18 @@ async function writeFixtureEntry(
         : {}),
     },
   });
-  if (useSyntheticVectors) {
-    if (entry.vectorHint) {
-      store.setVectors(
-        written.id,
-        vectorForHint(entry.vectorHint),
-        SYNTHETIC_MODEL_ID,
-        SYNTHETIC_DIMENSION,
-      );
-    } else if (entry.section === 'Decisions') {
-      store.setVectors(
-        written.id,
-        vectorForHint('decision'),
-        SYNTHETIC_MODEL_ID,
-        SYNTHETIC_DIMENSION,
-      );
-    }
-  }
   return written.id;
-}
-
-async function embedEntriesForReal(
-  store: TimStore,
-  entryTexts: Map<string, string>,
-  provider: EmbeddingProvider,
-): Promise<void> {
-  const ids = [...entryTexts.keys()];
-  if (ids.length === 0) return;
-  const texts = ids.map(id => entryTexts.get(id)!);
-  const vectors = await provider.embed(texts);
-  for (let i = 0; i < ids.length; i++) {
-    store.setVectors(ids[i], vectors[i], provider.modelId, provider.dimension);
-  }
 }
 
 export async function buildFixtureStore(
   fixture: DatasetFixture,
-  provider: EmbeddingProvider,
-  options: BuildFixtureOptions = {},
 ): Promise<FixtureStore> {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tim-quality-bench-'));
   const dbPath = path.join(tmpDir, 'bench.db');
-  const store = new TimStore(dbPath, { embeddingProvider: provider });
-  const useSyntheticVectors = !options.realEmbeddings;
+  const store = new TimStore(dbPath);
 
   const goldToEntryId = new Map<string, string>();
   const entryIdToGold = new Map<string, string>();
-  const entryTexts = new Map<string, string>();
 
   try {
     const mainProject = await store.createProject(fixture.projectLabel, {
@@ -203,7 +155,7 @@ export async function buildFixtureStore(
       }
     }
 
-    await seedNoisyLog(store, mainProject.id, provider, options.realEmbeddings ?? false);
+    await seedNoisyLog(store, mainProject.id);
     await seedPartialSession(store, fixture.projectLabel);
 
     const pendingLinks: Array<{ fromGold: string; toGold: string }> = [];
@@ -214,18 +166,12 @@ export async function buildFixtureStore(
         entry,
         projectIds,
         sectionIds,
-        useSyntheticVectors,
       );
       goldToEntryId.set(entry.goldLabel, entryId);
       entryIdToGold.set(entryId, entry.goldLabel);
-      entryTexts.set(entryId, `${entry.title} [${entry.goldLabel}]\n${entry.body}`);
       if (entry.supersedesGold) {
         pendingLinks.push({ fromGold: entry.goldLabel, toGold: entry.supersedesGold });
       }
-    }
-
-    if (options.realEmbeddings) {
-      await embedEntriesForReal(store, entryTexts, provider);
     }
 
     for (const link of pendingLinks) {

@@ -27,8 +27,6 @@ export {
   type IdeaMetadata,
   type HealthSeverity,
   type HealthReport,
-  type EmbeddingProviderHealthState,
-  type SemanticIndexHealthSnapshot,
   type MemoryCoverageSeqRange,
   type MemoryCoverageLatestBatchSummary,
   type MemoryCoverageLatestRollup,
@@ -134,7 +132,8 @@ export interface DecayOptions {
 export interface SearchOptions {
   query: string;
   topK?: number;
-  searchType?: 'fts' | 'vector' | 'hybrid';
+  /** Accepted for compatibility. Every value is full-text search. */
+  searchType?: string;
   confidenceAbove?: number;
   visibilityMask?: number;
   /** Project label/alias/name — scope retrieval to project subtree before limits. */
@@ -150,8 +149,8 @@ export interface SearchOptions {
    * `or-terms` preserves OR between quoted prompt-recall terms.
    */
   ftsQueryMode?: 'literal' | 'or-terms';
-  /** FTS/lexical path only: drop these metadata.kind values in SQL, before the limit
-   *  (post-filtering starves real hits). The vector path does not apply it.
+  /** Drop these metadata.kind values in SQL, before the limit
+   *  (post-filtering starves real hits).
    *  Commit entries are already omitted; this list is unioned with that default. */
   excludeKinds?: string[];
   /**

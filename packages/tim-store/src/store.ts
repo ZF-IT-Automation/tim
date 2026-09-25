@@ -15,7 +15,7 @@ import type {
   TaskStatusValue,
 } from 'tim-core';
 import {
-  stripDeprecatedTags, resolveLWW, SCHEMA_KINDS, staleDays, isStale,
+  stripDeprecatedTags, resolveLWW, SCHEMA_KINDS, staleDays,
   loadConfig as loadTimConfig,
   resolveEntrySearchStatus,
   entrySearchStatusSql,
@@ -71,31 +71,6 @@ import {
   validateSupersessionLink,
   validateSupersessionUnlink,
 } from './temporal.js';
-import {
-  type EmbeddingProvider,
-  type SearchSemanticInfo,
-  createDisabledEmbeddingProvider,
-  createUnavailableEmbeddingProvider,
-  getDefaultEmbeddingProvider,
-  isDefaultEmbeddingProviderResolved,
-  peekCachedDefaultEmbeddingProvider,
-  resolveConfiguredEmbeddingModelId,
-  validateEmbeddingModelId,
-  embeddingModelDimension,
-} from './embedding-provider.js';
-import {
-  assertValidVector,
-  buildSearchEligibilitySql,
-  embeddingText,
-  entryVectorNeedsReindex,
-  invalidateEntryVector,
-  isVectorContentFresh,
-  parseStoredVector,
-  querySemanticIndexHealth,
-  vectorContentFingerprint,
-  type SemanticIndexHealthReport,
-  type SearchEligibilityFilters,
-} from './vector-index.js';
 import { computeMemoryHealth } from './memory-health.js';
 
 /**
@@ -266,8 +241,6 @@ export interface TimStoreOptions {
    * config.json, which is where the answer normally comes from.
    */
   staging?: boolean;
-  /** Injectable embedding provider for semantic search and tests (#33). */
-  embeddingProvider?: EmbeddingProvider;
   /**
    * Open an existing database without migrations, triggers, staging changes,
    * or acked-row cleanup. Queries only.
@@ -395,13 +368,6 @@ export class TimStore implements MemoryInterface {
   private emitter?: Pick<EventBus, 'emit'>;
   private agentId: string;
   private deviceId: string;
-  private readonly injectedEmbeddingProvider?: EmbeddingProvider;
-  /**
-   * Populated by the most recent search() call.
-   * @deprecated Prefer searchWithSemantics() — this field is shared mutable state and
-   *   can be overwritten by concurrent searches on the same store instance.
-   */
-  lastSearchSemantic: SearchSemanticInfo | null = null;
   /** Set when this open applied one or more migrations; null if none ran. */
   readonly lastMigration: MigrationRunResult | null;
 
@@ -417,7 +383,6 @@ export class TimStore implements MemoryInterface {
       this.emitter = options.emitter;
       this.agentId = options.agentId ?? 'system';
       this.deviceId = options.deviceId ?? 'local';
-      this.injectedEmbeddingProvider = options.embeddingProvider;
       this.lastMigration = null;
       return;
     }
@@ -426,7 +391,6 @@ export class TimStore implements MemoryInterface {
     this.emitter = options.emitter;
     this.agentId = options.agentId ?? 'system';
     this.deviceId = options.deviceId ?? 'local';
-    this.injectedEmbeddingProvider = options.embeddingProvider;
     this.lastMigration = runMigrations(this.db, MIGRATIONS, {
       allowMigrations: options.allowMigrations === true,
     });
@@ -2018,7 +1982,6 @@ ${zeroExchangeFilter}
 
     const rewrite = this.repointEntryReferencesSync(oldId, newId);
     this.db.prepare('UPDATE entry_usage SET entry_id = ? WHERE entry_id = ?').run(newId, oldId);
-    this.db.prepare('UPDATE entry_vectors SET entry_id = ? WHERE entry_id = ?').run(newId, oldId);
 
     this.db.prepare('DELETE FROM entries WHERE id = ?').run(oldId);
     return { entry: this.readSystemRepairEntrySync(newId)!, rewrite };
@@ -2076,7 +2039,6 @@ ${zeroExchangeFilter}
     this.db.prepare('UPDATE entries SET metadata = ? WHERE id = ?')
       .run(withSnapshot.value, targetId);
     this.db.prepare('UPDATE entry_usage SET entry_id = ? WHERE entry_id = ?').run(targetId, sourceId);
-    this.db.prepare('DELETE FROM entry_vectors WHERE entry_id = ?').run(sourceId);
     this.db.prepare('DELETE FROM entries WHERE id = ?').run(sourceId);
     return rewrite;
   }
@@ -2442,9 +2404,6 @@ ${zeroExchangeFilter}
         updated.accessed_at, updated.updated_at, updated.lww_device, id
       );
       this.insertStagingSync(updated, timestamp, updated.confidence);
-      if (updated.title !== existing.title || updated.content !== existing.content) {
-        invalidateEntryVector(this.db, id);
-      }
     })();
 
     return rowToEntry(updated);
@@ -2786,37 +2745,6 @@ ${zeroExchangeFilter}
     return true;
   }
 
-  /** Resolve injectable or default embedding provider (#33). */
-  async getEmbeddingProvider(): Promise<EmbeddingProvider | null> {
-    return this.resolveEmbeddingProvider();
-  }
-
-  private async resolveEmbeddingProvider(): Promise<EmbeddingProvider | null> {
-    if (this.injectedEmbeddingProvider) return this.injectedEmbeddingProvider;
-    const configured = resolveConfiguredEmbeddingModelId();
-    if (configured === null) return createDisabledEmbeddingProvider();
-    if (!validateEmbeddingModelId(configured)) {
-      return createUnavailableEmbeddingProvider(configured);
-    }
-    return getDefaultEmbeddingProvider(configured);
-  }
-
-  private async embedQuery(
-    provider: EmbeddingProvider,
-    query: string,
-  ): Promise<Float32Array | null> {
-    if (provider.state !== 'enabled') return null;
-    try {
-      const vectors = await provider.embed([query]);
-      const vec = vectors[0];
-      if (!vec) return null;
-      assertValidVector(vec, provider.dimension);
-      return vec;
-    } catch {
-      return null;
-    }
-  }
-
   private async fetchLexicalCandidates(
     options: SearchOptions,
     fetchLimit: number,
@@ -2858,48 +2786,6 @@ ${zeroExchangeFilter}
     return eligible.slice(0, fetchLimit);
   }
 
-  private fetchVectorCandidates(
-    queryVector: Float32Array,
-    provider: EmbeddingProvider,
-    eligibility: SearchEligibilityFilters,
-    fetchLimit: number,
-    patterns: string[],
-    asOf?: Date,
-  ): Array<{ entry: Entry; similarity: number }> {
-    const params: unknown[] = [provider.modelId];
-    const scopeSql = buildSearchEligibilitySql(eligibility, params);
-    const rows = this.db.prepare(`
-      SELECT e.*, v.vector, v.content_hash FROM entries e
-      INNER JOIN entry_vectors v ON v.entry_id = e.id
-      WHERE e.irrelevant = 0
-        AND e.tombstoned_at IS NULL
-        AND v.model = ?
-        ${scopeSql}
-    `).all(...params) as Array<RowEntry & { vector: Buffer; content_hash: string }>;
-
-    const scored: Array<{ entry: Entry; similarity: number }> = [];
-    for (const row of rows) {
-      const entry = rowToEntry(row);
-      if (asOf && !entryTemporallyEligibleAt(entry, asOf)) continue;
-      if (TimStore.matchesSuppressed(patterns, entry)) continue;
-      if (!isVectorContentFresh(entry.title, entry.content, row.content_hash)) continue;
-      const vec = parseStoredVector(row.vector, provider.dimension);
-      if (!vec) continue;
-      const similarity = cosineSimilarity(queryVector, vec);
-      scored.push({ entry, similarity });
-    }
-    return scored
-      .sort((a, b) => b.similarity - a.similarity)
-      .slice(0, fetchLimit);
-  }
-
-  private rankVectorOnly(
-    vectorHits: Array<{ entry: Entry; similarity: number }>,
-    topK: number,
-  ): Entry[] {
-    return vectorHits.slice(0, topK).map(h => h.entry);
-  }
-
   private async prependDirectProjectHit(
     ranked: Entry[],
     options: SearchOptions,
@@ -2929,137 +2815,29 @@ ${zeroExchangeFilter}
     return ranked.slice(0, topK);
   }
 
-  async search(options: SearchOptions): Promise<Entry[]> {
-    const { entries, semantic } = await this.searchWithSemantics(options);
-    this.lastSearchSemantic = semantic;
-    return entries;
-  }
-
   /**
-   * Search with per-call semantic metadata — safe for concurrent use on one store.
-   * search() remains for MemoryInterface compatibility and updates lastSearchSemantic.
+   * Full-text search. `searchType` is accepted and ignored so older callers
+   * keep working; every value is FTS.
    */
-  async searchWithSemantics(options: SearchOptions): Promise<{
-    entries: Entry[];
-    semantic: SearchSemanticInfo;
-  }> {
+  async search(options: SearchOptions): Promise<Entry[]> {
     const topK = options.topK ?? 10;
-    const searchType = options.searchType ?? 'hybrid';
     const asOf = resolveSearchAsOf(options.asOf);
-    const asOfEpochMs = asOf.getTime();
     let scopeRootId: string | undefined;
     if (!TimStore.isUnrestrictedProjectScope(options.project)) {
       const scope = await this.resolveProjectLabel(options.project!);
-      if (scope.status !== 'found') {
-        return {
-          entries: [],
-          semantic: {
-            requestedMode: searchType,
-            providerState: 'unknown',
-            configuredModel: resolveConfiguredEmbeddingModelId(),
-          },
-        };
-      }
+      if (scope.status !== 'found') return [];
       scopeRootId = (await this.read(scope.label))?.id;
-      if (!scopeRootId) {
-        return {
-          entries: [],
-          semantic: {
-            requestedMode: searchType,
-            providerState: 'unknown',
-            configuredModel: resolveConfiguredEmbeddingModelId(),
-          },
-        };
-      }
+      if (!scopeRootId) return [];
     }
     const patterns = this.loadActiveSuppressPatterns();
     const fetchLimit = topK * 3;
-    const eligibility: SearchEligibilityFilters = {
-      scopeRootId,
-      type: options.type,
-      tag: options.tag,
-      status: options.status,
-      confidenceAbove: options.confidenceAbove,
-      visibilityMask: options.visibilityMask,
-      asOfEpochMs,
-      includeCommits: options.includeCommits,
-    };
-
-    const configuredModel = resolveConfiguredEmbeddingModelId();
-    const semanticInfo: SearchSemanticInfo = {
-      requestedMode: searchType,
-      providerState: 'unknown',
-      configuredModel,
-    };
-
-    if (searchType === 'fts') {
-      semanticInfo.providerState = 'not_used';
-      const ftsOnly = this.rankByUsage(
-        await this.fetchLexicalCandidates(options, fetchLimit, patterns, asOf),
-        topK,
-      );
-      const entries = await this.prependDirectProjectHit(
-        ftsOnly, options, scopeRootId, patterns, topK, asOf,
-      );
-      return { entries, semantic: semanticInfo };
-    }
-
-    const provider = await this.resolveEmbeddingProvider();
-    semanticInfo.providerState = provider?.state ?? 'unavailable';
-    if (provider) semanticInfo.configuredModel = provider.modelId;
-
-    if (searchType === 'vector') {
-      if (!provider || provider.state !== 'enabled') {
-        semanticInfo.vectorUnavailable = true;
-        return { entries: [], semantic: semanticInfo };
-      }
-      const queryVector = await this.embedQuery(provider, options.query);
-      if (!queryVector) {
-        semanticInfo.vectorUnavailable = true;
-        return { entries: [], semantic: semanticInfo };
-      }
-      const vectorHits = this.fetchVectorCandidates(
-        queryVector, provider, eligibility, fetchLimit, patterns, asOf,
-      );
-      const ranked = this.rankVectorOnly(vectorHits, topK);
-      const entries = await this.prependDirectProjectHit(
-        ranked, options, scopeRootId, patterns, topK, asOf,
-      );
-      return { entries, semantic: semanticInfo };
-    }
-
-    // hybrid — independent lexical + vector candidates, merged before ranking
-    const lexical = await this.fetchLexicalCandidates(options, fetchLimit, patterns, asOf);
-    let queryVector: Float32Array | null = null;
-    if (provider?.state === 'enabled') {
-      queryVector = await this.embedQuery(provider, options.query);
-    }
-    if (!queryVector) {
-      semanticInfo.degradedToLexical = true;
-      if (provider?.state === 'enabled') {
-        semanticInfo.vectorUnavailable = true;
-      }
-      const ftsOnly = this.rankByUsage(lexical, topK);
-      const entries = await this.prependDirectProjectHit(
-        ftsOnly, options, scopeRootId, patterns, topK, asOf,
-      );
-      return { entries, semantic: semanticInfo };
-    }
-    const vectorHits = this.fetchVectorCandidates(
-      queryVector, provider!, eligibility, fetchLimit, patterns, asOf,
-    );
-    if (vectorHits.length === 0) semanticInfo.degradedToLexical = true;
-    const ranked = await this.rankByHybrid(
-      lexical,
-      vectorHits,
-      queryVector,
-      provider!,
+    const ranked = this.rankByUsage(
+      await this.fetchLexicalCandidates(options, fetchLimit, patterns, asOf),
       topK,
     );
-    const entries = await this.prependDirectProjectHit(
+    return this.prependDirectProjectHit(
       ranked, options, scopeRootId, patterns, topK, asOf,
     );
-    return { entries, semantic: semanticInfo };
   }
 
   /**
@@ -3074,72 +2852,6 @@ ${zeroExchangeFilter}
     const counts = this.getReferenceCounts(entries.map(e => e.id));
     return entries
       .map((e, i) => ({ e, score: i - 2 * Math.log2(1 + (counts.get(e.id) ?? 0)) }))
-      .sort((a, b) => a.score - b.score)
-      .map(x => x.e)
-      .slice(0, topK);
-  }
-
-  /**
-   * Hybrid re-rank combining three signals:
-   *   1. FTS5 position (lexical pool; vector-only hits penalized at pool tail)
-   *   2. Cosine similarity from validated vector candidates
-   *   3. Graph/usage/staleness boost (from Plan 8/10)
-   */
-  private async rankByHybrid(
-    lexical: Entry[],
-    vectorHits: Array<{ entry: Entry; similarity: number }>,
-    queryVector: Float32Array | null,
-    provider: EmbeddingProvider,
-    topK: number,
-  ): Promise<Entry[]> {
-    if (process.env.TIM_EMBEDDING_DISABLED === '1' || !queryVector || vectorHits.length === 0) {
-      return this.rankByUsage(lexical, topK);
-    }
-
-    const raw = (process.env.TIM_HYBRID_WEIGHTS ?? '1.0,2.0,0.5').split(',');
-    const wFts = Number(raw[0]) || 1;
-    const wEmbed = Number(raw[1]) || 2;
-    const wGraph = Number(raw[2]) || 0.5;
-
-    const days = staleDays();
-    const lexicalPoolSize = lexical.length;
-    const lexicalIds = new Set(lexical.map(e => e.id));
-    const similarityById = new Map(vectorHits.map(h => [h.entry.id, h.similarity]));
-    const candidates: Entry[] = [];
-    const seen = new Set<string>();
-    for (const e of lexical) {
-      if (seen.has(e.id)) continue;
-      seen.add(e.id);
-      candidates.push(e);
-    }
-    for (const hit of vectorHits) {
-      if (seen.has(hit.entry.id)) continue;
-      seen.add(hit.entry.id);
-      candidates.push(hit.entry);
-    }
-    if (candidates.length === 0) return [];
-
-    const counts = this.getReferenceCounts(candidates.map(e => e.id));
-    const scored = candidates.map((e) => {
-      let score = 0;
-      if (lexicalIds.has(e.id)) {
-        score += lexical.findIndex(x => x.id === e.id) * wFts;
-      } else {
-        // Vector-only: penalize as if ranked at the end of the lexical pool so
-        // weak semantic noise cannot outrank a strong lexical match with no vector yet.
-        score += lexicalPoolSize * wFts;
-      }
-      const similarity = similarityById.get(e.id);
-      if (similarity !== undefined) {
-        score -= similarity * wEmbed;
-      }
-      const refCount = counts.get(e.id) ?? 0;
-      const stale = isStale(e, days) ? 1 : 0;
-      score -= (refCount * 0.5 - stale * 0.3) * wGraph;
-      return { e, score };
-    });
-
-    return scored
       .sort((a, b) => a.score - b.score)
       .map(x => x.e)
       .slice(0, topK);
@@ -4053,99 +3765,6 @@ ${zeroExchangeFilter}
     return new Map(rows.map(r => [r.entry_id, r.c]));
   }
 
-  // ─── Embedding vectors (device-local, never synced) ─────
-
-  /**
-   * Entries that need embedding (no vector yet, wrong model, newest content first).
-   * Schema kinds (sessions, sections, …) are skipped — they don't need
-   * semantic search.
-   */
-  async getUnembedded(count: number, model?: string): Promise<Entry[]> {
-    const configured = model ?? resolveConfiguredEmbeddingModelId() ?? 'all-MiniLM-L6-v2';
-    const scopesKinds = [...SCHEMA_KINDS].map(() => '?').join(', ');
-    const rows = this.db.prepare(`
-      SELECT e.*, v.model AS vector_model, v.content_hash FROM entries e
-      LEFT JOIN entry_vectors v ON v.entry_id = e.id
-      WHERE e.tombstoned_at IS NULL
-        AND e.irrelevant = 0
-        AND (json_extract(e.metadata, '$.kind') IS NULL
-             OR json_extract(e.metadata, '$.kind') NOT IN (${scopesKinds}))
-      ORDER BY e.updated_at DESC, e.rowid DESC
-    `).all(...SCHEMA_KINDS) as Array<RowEntry & {
-      vector_model: string | null;
-      content_hash: string | null;
-    }>;
-    const pending: Entry[] = [];
-    for (const row of rows) {
-      const vectorRow = row.vector_model === null
-        ? null
-        : { model: row.vector_model, content_hash: row.content_hash ?? '' };
-      if (!entryVectorNeedsReindex(row.title, row.content, vectorRow, configured)) continue;
-      pending.push(rowToEntry(row));
-      if (pending.length >= count) break;
-    }
-    return pending;
-  }
-
-  /**
-   * Store an embedding vector for an entry. Upserts — second call replaces.
-   * When expectedContentHash is set, the write is rejected if entry text changed
-   * since embedding began (#38 CAS).
-   */
-  setVectors(
-    entryId: string,
-    vector: Float32Array,
-    model: string,
-    expectedDimension?: number,
-    expectedContentHash?: string,
-  ): boolean {
-    const dim = expectedDimension ?? embeddingModelDimension(model);
-    if (dim !== null) assertValidVector(vector, dim);
-    const row = this.db.prepare(
-      'SELECT title, content FROM entries WHERE id = ?',
-    ).get(entryId) as { title: string; content: string } | undefined;
-    if (!row) throw new Error(`Entry not found: ${entryId}`);
-    const contentHash = vectorContentFingerprint(row.title, row.content);
-    if (expectedContentHash !== undefined && expectedContentHash !== contentHash) {
-      return false;
-    }
-    const blob = Buffer.from(vector.buffer, vector.byteOffset, vector.byteLength);
-    this.db.prepare(
-      `INSERT INTO entry_vectors (entry_id, model, vector, content_hash)
-       VALUES (?, ?, ?, ?)
-       ON CONFLICT(entry_id) DO UPDATE SET
-         model = excluded.model,
-         vector = excluded.vector,
-         content_hash = excluded.content_hash`,
-    ).run(entryId, model, blob, contentHash);
-    return true;
-  }
-
-  /** Non-generating semantic index health for coverage diagnostics (#37). */
-  getSemanticIndexHealth(): SemanticIndexHealthReport {
-    const configured = this.injectedEmbeddingProvider?.modelId
-      ?? resolveConfiguredEmbeddingModelId();
-    const supported = configured !== null && validateEmbeddingModelId(configured);
-    let providerState: SemanticIndexHealthReport['providerState'] = 'unknown';
-    if (this.injectedEmbeddingProvider) {
-      providerState = this.injectedEmbeddingProvider.state;
-    } else if (configured === null) {
-      providerState = 'disabled';
-    } else if (!supported) {
-      providerState = 'unavailable';
-    } else if (!isDefaultEmbeddingProviderResolved()) {
-      providerState = 'unknown';
-    } else {
-      providerState = peekCachedDefaultEmbeddingProvider()?.state ?? 'unknown';
-    }
-    return querySemanticIndexHealth(
-      this.db,
-      configured,
-      providerState,
-      supported,
-    );
-  }
-
   // ─── Health ────────────────────────────────────────────
 
   async health(): Promise<HealthReport> {
@@ -4245,21 +3864,13 @@ ${zeroExchangeFilter}
     }
 
     const memory = await computeMemoryHealth(this);
-    const { summaryCoverage, semanticIndex } = memory;
+    const { summaryCoverage } = memory;
     if (summaryCoverage.pendingExchangeCount > 0) {
       const message =
         `${summaryCoverage.pendingExchangeCount} exchange(s) pending summarization ` +
         `across ${summaryCoverage.sessionsWithPending} session(s)`;
       warnings.push(message);
       issues.push(message);
-    }
-    if (semanticIndex.providerState === 'enabled') {
-      const backlog = semanticIndex.unembeddedCount;
-      if (backlog > 0) {
-        const message = `${backlog} entry vector(s) need (re)indexing`;
-        warnings.push(message);
-        issues.push(message);
-      }
     }
 
     const status = blockers.length > 0 ? 'BLOCKER' : warnings.length > 0 ? 'WARN' : 'OK';

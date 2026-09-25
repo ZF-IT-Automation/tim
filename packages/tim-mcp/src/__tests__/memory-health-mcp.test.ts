@@ -114,6 +114,6 @@ describe('tim_health memory diagnostics (MCP)', () => {
   it('tim_doctor includes memory coverage lines', async () => {
     const text = await client.doctor();
     expect(text).toContain('Memory exchanges:');
-    expect(text).toContain('Semantic index:');
+    expect(text).toContain('Sync telemetry:');
   });
 });

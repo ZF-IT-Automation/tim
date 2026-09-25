@@ -2,7 +2,6 @@ export {
   runHookScript,
   runHooks,
   runConfiguredHooks,
-  embedUnembeddedEntries,
   type HookEnv,
   type HookRunResult,
   type RunHooksOptions,

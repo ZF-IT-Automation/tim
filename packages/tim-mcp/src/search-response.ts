@@ -41,14 +41,6 @@ export interface BoundedSearchResponse {
   returned: number;
   omitted: number;
   truncated: boolean;
-  /** Semantic retrieval metadata from the most recent store.search (#33). */
-  semantic?: {
-    requestedMode: 'fts' | 'vector' | 'hybrid';
-    providerState: string;
-    configuredModel: string | null;
-    degradedToLexical?: boolean;
-    vectorUnavailable?: boolean;
-  };
 }
 
 /**

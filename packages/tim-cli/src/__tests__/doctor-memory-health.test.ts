@@ -14,7 +14,6 @@ function runDoctor(dbPath: string, home: string): string {
       ...process.env,
       HOME: home,
       TIM_DB_PATH: dbPath,
-      TIM_EMBEDDING_DISABLED: '1',
     },
   });
 }
@@ -66,7 +65,6 @@ describe('tim doctor memory health integration', () => {
     const output = runDoctor(dbPath, home);
     expect(output).toContain('Memory exchanges:');
     expect(output).toContain('pending');
-    expect(output).toContain('Semantic index:');
     expect(output).toContain('Sync telemetry:');
 
     const afterStore = new TimStore(dbPath);

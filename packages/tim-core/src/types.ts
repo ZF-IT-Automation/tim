@@ -154,19 +154,6 @@ export function isDeprecatedTag(tag: string): boolean {
 
 export type HealthSeverity = 'OK' | 'WARN' | 'BLOCKER';
 
-/** Non-generating semantic index snapshot for memory health (#37). */
-export type EmbeddingProviderHealthState = 'enabled' | 'disabled' | 'unavailable' | 'unknown';
-
-export interface SemanticIndexHealthSnapshot {
-  providerState: EmbeddingProviderHealthState;
-  configuredModel: string | null;
-  supportedModel: boolean;
-  vectorCount: number;
-  unembeddedCount: number;
-  staleVectorCount: number;
-  wrongModelCount: number;
-}
-
 export interface MemoryCoverageSeqRange {
   sessionId: string;
   batchIndex: number;
@@ -252,7 +239,6 @@ export interface MemorySyncTelemetryReport {
 
 export interface MemoryHealthReport {
   summaryCoverage: MemorySummaryCoverageReport;
-  semanticIndex: SemanticIndexHealthSnapshot;
   sync: MemorySyncTelemetryReport;
   guidance: string[];
 }
@@ -268,7 +254,7 @@ export interface HealthReport {
   totalEdges: number;
   staleEntries: number;
   issues: string[];
-  /** Additive memory coverage, embedding backlog and sync telemetry (#37). */
+  /** Additive memory coverage and sync telemetry (#37). */
   memory?: MemoryHealthReport;
 }
 
