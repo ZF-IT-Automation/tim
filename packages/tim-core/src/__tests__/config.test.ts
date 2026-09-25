@@ -69,6 +69,15 @@ describe('loadConfig summarizer defaults', () => {
     });
   });
 
+  it('keeps mcp.tools when the config file sets it', () => {
+    writeConfig({ mcp: { tools: 'all' } });
+    expect(loadConfig().mcp?.tools).toBe('all');
+  });
+
+  it('leaves mcp unset when the config file omits it', () => {
+    expect(loadConfig().mcp).toBeUndefined();
+  });
+
   it('an explicitly empty chain is honoured (opt-out, not overridden)', () => {
     writeConfig({ summarizer: { chain: [] } });
     expect(loadConfig().summarizer?.chain).toEqual([]);

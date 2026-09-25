@@ -148,7 +148,7 @@ TIM tools only, never direct SQL.
 If the import used `tim migrate-from-hmem`, read the printed `audit` block and
 run the listed MCP tool call before declaring the migration complete.
 
-If TIM MCP tools are available, prefer this structured sequence:
+If TIM MCP tools are available, prefer this structured sequence. Those names are registered, but a default client lists only the core set; `tim import` (with `--dry-run` and `--deduplicate`) and the `tim-hmem-import-audit` skill are the path agents see. `TIM_MCP_TOOLS=all` lists the tools below.
 
 ```text
 tim_import_manifest(source)

@@ -13,18 +13,18 @@ fixed or written down. One project at a time. Never use direct SQL.
 root, S1-S4 sessions, C1-C3 content) that define "curated". Everything below is how
 to reach them.
 
-Then read: 1. `tim_project_structure({ label })` (the R2-R6 report) 2.
-`tim_load_project({ label, bind:false, depth:3 })` 3. `tim_find_duplicates({ label })`
-(C3 candidates, enqueued not deleted) 4. `tim_doctor`.
+Then read: 1. `tim_load_project({ label, bind:false, depth:3 })` (the tree) 2.
+`tim consolidate find-duplicates --project <label>` (C3 candidates, enqueued not
+deleted) 3. `tim doctor` (bindings, broken links, orphans).
 
 Fix order — each step assumes the ones above it are done:
 
 - Doctor `unbound`/`label-mismatch` finding → confirm directory with user, then `tim bind-project`; never overwrite a mismatched marker without explicit user decision.
-- Missing canonical section → `tim_repair_section({ project:label, title })`. Never
+- Missing canonical section → `tim_write({ where:label, title, metadata:{kind:"section"} })`. Never
   for `Sessions`/`Commits`: those are `managed: true` and materialize themselves by
   kind, so creating them by title is what produces the duplicate (R6).
-- Duplicate managed root (R4) → keep the one with children, move children off the
-  others with `tim_dry_run_move` then `tim_move_entry`, then delete the emptied ones.
+- Duplicate managed root (R4) → keep the one with children, `tim_read` the others,
+  move children with `tim_move_entry`, then delete the emptied ones.
   Both have children → merge into the older one, it holds the inbound edges.
 - Duplicate section (R5) → same shape: move useful children into the canonical
   section, then delete the empty duplicate.
@@ -33,7 +33,7 @@ Fix order — each step assumes the ones above it are done:
 - Wrong content/metadata → `tim_read`, merge, then `tim_update`: body is replaced, metadata
   merges per key (`null` removes one, e.g. `task: null` when retyping).
 - Duplicate content (C3) → merge into the older node, delete the newer.
-- Broken relation → recreate with `tim_link` only when source and target are clear.
+- Broken relation → write the gap into the project Log with `tim_write` and ask the user.
 
 Before any delete:
 
@@ -47,7 +47,7 @@ Before any delete:
 - Deletes sync. They reach other devices; this is not a local-only cleanup.
 - Structure you may fix on your own judgement. Anything with a body: ask first.
 
-End with `tim_project_structure` + `tim_doctor`, and report per invariant what now
+End with `tim_load_project` + `tim doctor`, and report per invariant what now
 holds and what you deliberately left alone.
 
 Tags are content, not structure: merging names needs a reader who has seen the

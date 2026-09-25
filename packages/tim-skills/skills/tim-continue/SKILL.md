@@ -25,9 +25,9 @@ in this directory.
 
 - `tim_preview_briefing` is a pure read: no session, no marker, no hooks. The
   current session keeps its own identity and its exchanges keep appending to it.
-- Do **not** use `tim_session_resume` for this. That tool aliases the running
-  session onto the old session node — a session merge, not a briefing — and it
-  throws once the current session has logged an exchange.
+- Do **not** merge the running session onto an older session node. That is a
+  session merge, not a briefing, and it fails once this session has logged an
+  exchange.
 - No topic argument and no session picker: this is the newest *substantive*
   session (≥ 3 turns, a handoff note, or judged real by the summarizer — worker
   and automation sessions never count), plus the newest handoff note from another

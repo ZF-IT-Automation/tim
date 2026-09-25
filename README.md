@@ -80,6 +80,8 @@ For manual MCP setup, use **absolute paths** to the built server and database. A
 }
 ```
 
+Agents see eleven core tools by default (`tim_load_project`, `tim_read`, `tim_search`, `tim_write`, `tim_update`, `tim_show`, `tim_preview_briefing`, `tim_resume_topic`, `tim_delete`, `tim_doctor`, `tim_move_entry`). Set `TIM_MCP_TOOLS=all`, or `"mcp": { "tools": "all" }` in `~/.tim/config.json`, to list every registered tool. Tools that are not listed stay callable by name.
+
 ### Create a project
 
 ```bash

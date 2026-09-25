@@ -29,15 +29,17 @@ describe('weak-model skills', () => {
   });
 
   it('tim-remember contrasts remember vs search vs read', () => {
-    expect(TIM_REMEMBER_SKILL.content).toContain('tim_remember');
     expect(TIM_REMEMBER_SKILL.content).toContain('tim_search');
     expect(TIM_REMEMBER_SKILL.content).toContain('tim_read');
-    expect(TIM_REMEMBER_SKILL.content).toContain('tim_guard');
+    expect(TIM_REMEMBER_SKILL.content).toContain('tim_resume_topic');
+    expect(TIM_REMEMBER_SKILL.content).not.toContain('tim_remember');
+    expect(TIM_REMEMBER_SKILL.content).not.toContain('tim_guard');
     expect(lineCount(TIM_REMEMBER_SKILL.content)).toBeLessThanOrEqual(50);
   });
 
   it('tim-session-start covers lifecycle steps without model-driven exchange logging', () => {
-    expect(TIM_SESSION_START_SKILL.content).toContain('tim_session_start');
+    expect(TIM_SESSION_START_SKILL.content).toContain('tim hook session-start');
+    expect(TIM_SESSION_START_SKILL.content).not.toContain('tim_session_start');
     expect(TIM_SESSION_START_SKILL.content).toContain('tim_load_project');
     expect(TIM_SESSION_START_SKILL.content).not.toContain('tim_session_log');
     expect(TIM_SESSION_START_SKILL.content).toMatch(/hooks log exchanges automatically/i);
@@ -51,7 +53,8 @@ describe('weak-model skills', () => {
   });
 
   it('tim-hmem-import-audit gives agents a post-import structure checklist', () => {
-    expect(TIM_HMEM_IMPORT_AUDIT_SKILL.content).toContain('tim_import');
+    expect(TIM_HMEM_IMPORT_AUDIT_SKILL.content).toContain('tim import');
+    expect(TIM_HMEM_IMPORT_AUDIT_SKILL.content).not.toContain('tim_import');
     expect(TIM_HMEM_IMPORT_AUDIT_SKILL.content).toContain('tim_load_project');
     expect(TIM_HMEM_IMPORT_AUDIT_SKILL.content).toContain('tim_read');
     expect(TIM_HMEM_IMPORT_AUDIT_SKILL.content).toContain('tim_update');
@@ -75,11 +78,8 @@ describe('weak-model skills', () => {
     const requiredGuidance = [
       'tim_doctor',
       "TIM_DB_PATH='<doctor-db-path>' tim new-project --path <absolute-path> --name <name>",
-      'path="/absolute/path/to/repository"',
       'memoryOnly=true',
       'unknown cwd',
-      'markerPath',
-      'already-known non-conflicting',
       'do not guess',
       'persistent',
       "TIM_DB_PATH='/srv/Agent DB'\"'\"'s/tim.db' tim new-project",
@@ -137,9 +137,9 @@ describe('weak-model skills', () => {
   it('migration and beta ops skills are concise and tool-oriented', () => {
     const expectations = [
       [TIM_RELEASE_BETA_SKILL, ['npm pack --dry-run', 'git tag', 'tim snapshot']],
-      [TIM_PROJECT_CURATE_SKILL, ['tim_project_structure', 'tim_repair_section', 'tim_move_entry']],
-      [TIM_SYNC_TRIAGE_SKILL, ['tim sync status', 'tim_sync', 'TIM_SYNC_PASSPHRASE']],
-      [TIM_SECRET_AUDIT_SKILL, ['metadata.secret', 'tim_secret', 'tim_export']],
+      [TIM_PROJECT_CURATE_SKILL, ['tim consolidate find-duplicates', 'tim_write', 'tim_move_entry']],
+      [TIM_SYNC_TRIAGE_SKILL, ['tim sync status', 'TIM_SYNC_PASSPHRASE']],
+      [TIM_SECRET_AUDIT_SKILL, ['metadata.secret', 'tim secret', 'tim export']],
       [TIM_MCP_SMOKE_SKILL, ['tools/list', 'tim_doctor', 'tim_write']],
     ] as const;
 
@@ -157,11 +157,36 @@ describe('weak-model skills', () => {
   it('tag inventory insists on the project scope and on leaving real siblings alone', () => {
     const skill = getSkill('tim-tag-inventory');
     expect(skill).toBeDefined();
-    expect(skill!.content).toContain('tim_stats({ root: label, tags: true })');
-    expect(skill!.content).toMatch(/Always pass `project`/);
+    expect(skill!.content).toContain('tim doctor');
+    expect(skill!.content).toContain('tim_update');
+    expect(skill!.content).toMatch(/Always pass `root`/);
+    expect(skill!.content).not.toContain('tim_stats');
+    expect(skill!.content).not.toContain('tim_tag_rename');
     expect(skill!.content).toContain('Distinct siblings sharing a head word');
     expect(skill!.content).toContain('**Leave alone.**');
     expect(lineCount(skill!.content)).toBeLessThanOrEqual(50);
+  });
+
+  it('skills name only the core MCP tools', () => {
+    const allowed = new Set([
+      'tim_load_project',
+      'tim_read',
+      'tim_search',
+      'tim_write',
+      'tim_update',
+      'tim_show',
+      'tim_preview_briefing',
+      'tim_resume_topic',
+      'tim_delete',
+      'tim_doctor',
+      'tim_move_entry',
+    ]);
+    for (const skill of listSkills()) {
+      const text = `${skill.description}\n${skill.content}`;
+      for (const name of text.match(/tim_[a-z0-9_]+/g) ?? []) {
+        expect(allowed.has(name), `${skill.name} names ${name}`).toBe(true);
+      }
+    }
   });
 
   it('listSkills returns all sixteen skills', () => {

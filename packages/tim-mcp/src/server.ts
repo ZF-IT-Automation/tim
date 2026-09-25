@@ -673,6 +673,33 @@ const TimShowUntaggedSchema = z.object({});
 
 // ─── ListTools registry (single source of truth) ────────
 
+/** Names `ListTools` returns unless `TIM_MCP_TOOLS=all` or config `mcp.tools` is `"all"`. */
+export const CORE_MCP_TOOLS = [
+  'tim_load_project',
+  'tim_read',
+  'tim_search',
+  'tim_write',
+  'tim_update',
+  'tim_show',
+  'tim_preview_briefing',
+  'tim_resume_topic',
+  'tim_delete',
+  'tim_doctor',
+  'tim_move_entry',
+] as const;
+
+const CORE_MCP_TOOL_SET = new Set<string>(CORE_MCP_TOOLS);
+
+/** Env wins when it is exactly `core` or `all`. Anything else falls through to config, then `core`. */
+export function resolveMcpToolsMode(
+  envValue: string | undefined,
+  configValue: string | undefined,
+): 'core' | 'all' {
+  if (envValue === 'all' || envValue === 'core') return envValue;
+  if (configValue === 'all' || configValue === 'core') return configValue;
+  return 'core';
+}
+
 export interface ToolInputSchema {
   type: 'object';
   properties?: Record<string, unknown>;
@@ -725,8 +752,8 @@ export const TOOL_DEFS: Array<{
   {
     name: 'tim_search',
     description: 'Search TIM entries using FTS5 full-text search: keywords, "quoted phrases", ' +
-      'prefix*. NOT SQL — no column filters. For vague/associative queries use tim_remember; ' +
-      'for a known label use tim_read directly. Pass tag without query for a pure tag lookup: ' +
+      'prefix*. NOT SQL — no column filters. For a vague query, broaden the keywords ' +
+      'or quote a phrase you remember; for a known label use tim_read directly. Pass tag without query for a pure tag lookup: ' +
       'everything carrying that tag, oldest first. With both, tag filters the ranked results ' +
       'as before. Returns {results, returned, omitted, truncated}; ' +
       'results contain bounded excerpts. Use tim_read for the full body. ' +
@@ -972,7 +999,7 @@ export const TOOL_DEFS: Array<{
   },
   {
     name: 'tim_move_entry',
-    description: 'Move an entry under a new parent and cascade depth updates to descendants. Preview with tim_dry_run_move before moving imported or ambiguous nodes.',
+    description: 'Move an entry under a new parent and cascade depth updates to descendants. Read the entry and its parent first when the node was imported or the target is ambiguous.',
     schema: TimMoveEntrySchema,
   },
   {
@@ -2246,22 +2273,24 @@ export async function createMcpServer(
     isError: true as const,
   });
 
-  // Plumbing tools called by the summarizer / hooks via MCP — handlers must
-  // remain fully functional, but ListTools hides them by default so agents
-  // don't see internal-only entries. Set TIM_EXPOSE_INTERNAL_TOOLS=1 to reveal.
+  // Agents see the core set. Every other tool stays registered: CallTool
+  // dispatches by name, which the summarizer and hooks rely on. TIM_MCP_TOOLS=all,
+  // or mcp.tools "all" in config, lists the full registry for maintenance agents.
+  // The env var wins when it is exactly "core" or "all".
   server.setRequestHandler(ListToolsRequestSchema, async () => {
-    const rememberEnabled = loadConfig().remember?.enabled !== false;
-    const defs = rememberEnabled
+    const config = loadConfig();
+    const rememberEnabled = config.remember?.enabled !== false;
+    const mode = resolveMcpToolsMode(process.env.TIM_MCP_TOOLS, config.mcp?.tools);
+    let defs = rememberEnabled
       ? TOOL_DEFS
       : TOOL_DEFS.filter(d => d.name !== 'tim_remember');
-    const allTools = defs.map(def => ({
+    if (mode !== 'all') defs = defs.filter(d => CORE_MCP_TOOL_SET.has(d.name));
+    const tools = defs.map(def => ({
       name: def.name,
       description: def.description,
       inputSchema: toolInputSchema(def.schema),
       internal: def.internal,
     }));
-    const exposeInternal = process.env.TIM_EXPOSE_INTERNAL_TOOLS === '1';
-    const tools = exposeInternal ? allTools : allTools.filter(t => !t.internal);
     return { tools };
   });
 

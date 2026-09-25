@@ -30,6 +30,10 @@ export interface RememberConfig {
 export interface TimConfigFile extends TimConfig {
   hooks?: HooksConfig;
   remember?: RememberConfig;
+  /** Which tools `ListTools` returns. `CallTool` still accepts every registered tool. */
+  mcp?: {
+    tools?: 'core' | 'all';
+  };
 }
 
 const DEFAULT_REMEMBER_CHAIN: NonNullable<RememberConfig['chain']> = [

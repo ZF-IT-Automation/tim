@@ -14,7 +14,7 @@ Before `/clear`, leave a durable handoff so the next session starts better.
    ```
    tim checkpoint --session <sessionId> --handoff-note "done: … | wip: … | next: …"
    ```
-   There is no `tim_checkpoint` MCP tool — only the CLI writes a note. Get the session id from
+   Get the session id from
    `~/.tim/claude-session`, or from the newest session of the bound project.
 3. **Tasks:** Update the project's Tasks section via `tim_update` (read → merge → update).
 4. Tell the user to `/clear` when the checkpoint confirms.
