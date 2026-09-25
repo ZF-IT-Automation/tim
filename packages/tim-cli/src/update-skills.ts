@@ -24,7 +24,7 @@ function bundledSkillsDir(): string {
   })();
 }
 
-function copySkillsTo(srcRoot: string, skillsBase: string): { skill: string; target: string }[] {
+export function copySkillsTo(srcRoot: string, skillsBase: string): { skill: string; target: string }[] {
   const skillNames = fs.readdirSync(srcRoot).filter(name => {
     const p = path.join(srcRoot, name);
     return fs.statSync(p).isDirectory() && fs.existsSync(path.join(p, 'SKILL.md'));
@@ -34,7 +34,11 @@ function copySkillsTo(srcRoot: string, skillsBase: string): { skill: string; tar
   const copied: { skill: string; target: string }[] = [];
   for (const name of skillNames) {
     const from = path.join(srcRoot, name);
-    const to = path.join(skillsBase, name);
+    // A host dir can be a symlink to a shared skills dir (~/.claude/skills/x ->
+    // ~/.config/opencode/skills/x); cpSync refuses to overwrite a symlink, so copy
+    // into its target.
+    const dest = path.join(skillsBase, name);
+    const to = fs.existsSync(dest) ? fs.realpathSync(dest) : dest;
     fs.cpSync(from, to, { recursive: true });
     copied.push({ skill: name, target: to });
   }
