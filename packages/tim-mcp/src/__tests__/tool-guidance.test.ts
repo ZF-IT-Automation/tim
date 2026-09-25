@@ -30,6 +30,7 @@ describe('MCP tool guidance', () => {
     expect(search.description).toContain('bounded excerpts');
     expect(search.description).toContain('tim_read');
     expect(search.description).toContain('full body');
+    expect(search.description).toContain('includeCommits');
     expect(search.schema.description).toContain('{results, returned, omitted, truncated}');
   });
 });

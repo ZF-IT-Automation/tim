@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import type Database from 'better-sqlite3';
 import { SCHEMA_KINDS, entrySearchStatusSql } from 'tim-core';
+import { KIND_COMMIT } from './commit-tree.js';
 import { buildTemporalEligibilitySql, temporalEligibilityParams } from './temporal.js';
 
 /** Text slice embedded by hooks and query encoding (device-local contract). */
@@ -90,6 +91,8 @@ export interface SearchEligibilityFilters {
   confidenceAbove?: number;
   visibilityMask?: number;
   asOfEpochMs?: number;
+  /** When set, metadata.kind "commit" stays eligible. Other schema kinds stay out. */
+  includeCommits?: boolean;
 }
 
 /**
@@ -115,10 +118,13 @@ export function buildSearchEligibilitySql(
     )`;
     params.push(filters.scopeRootId);
   }
-  const kindHoles = [...SCHEMA_KINDS].map(() => '?').join(', ');
+  const schemaKinds = filters.includeCommits
+    ? [...SCHEMA_KINDS].filter(kind => kind !== KIND_COMMIT)
+    : [...SCHEMA_KINDS];
+  const kindHoles = schemaKinds.map(() => '?').join(', ');
   sql += ` AND (json_extract(${entryAlias}.metadata, '$.kind') IS NULL
              OR json_extract(${entryAlias}.metadata, '$.kind') NOT IN (${kindHoles}))`;
-  params.push(...SCHEMA_KINDS);
+  params.push(...schemaKinds);
   if (filters.type) {
     sql += ` AND json_extract(${entryAlias}.metadata, '$.type') = ?`;
     params.push(filters.type);
