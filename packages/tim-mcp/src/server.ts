@@ -55,6 +55,7 @@ import { projectReadTemporal } from './temporal-presentation.js';
 import { captureProvenance } from './provenance.js';
 import { resolveCallerProjectPath } from './project-path.js';
 import { resolveEntryTaskStatus } from './task-status.js';
+import { suggestLooksDone, withRequestsLooksDone } from './looks-done.js';
 import {
   createProjectCoordinated,
   findMarker,
@@ -649,7 +650,7 @@ const TimShowSchema = z.object({
     'Project label/alias/name; "" or "all" = all projects; omit = active',
   ),
   with: z.string().optional().describe(
-    'comma-separated AND filters: open,done,urgent,recent,<tagname>,<free text>',
+    'comma-separated AND filters: open,done,urgent,recent,looks-done,<tagname>,<free text>. looks-done only suggests; it does not filter or write.',
   ),
   limit: z.number().min(1).max(100).optional().default(20),
 });
@@ -1020,7 +1021,8 @@ export const TOOL_DEFS: Array<{
     description:
       'Unified overview: tasks, errors, bugs, ideas, decisions, learnings, commits, sections, or all. ' +
       'Use root for project scope (omit=active, "all"=cross-project). ' +
-      'Use with for comma-separated AND filters (open,done,urgent,recent,<tag>,<free text>).',
+      'Use with for comma-separated AND filters (open,done,urgent,recent,looks-done,<tag>,<free text>). ' +
+      'looks-done is opt-in on what=tasks: a suggestion that some open tasks already look implemented, judged from evidence. It never writes status and does not run on project load or session start.',
     schema: TimShowSchema,
   },
   {
@@ -1631,6 +1633,10 @@ async function applyWith(
           return typeof task === 'object' && task !== null
             && (task as { subtype?: string }).subtype === 'coding';
         });
+        break;
+      case 'looks-done':
+        // Reserved word. The suggestion runs after this filter; treating it as a
+        // tag or an FTS term would hide every task that does not contain it.
         break;
       default: {
         const tagForm = t.startsWith('#') ? t : `#${t}`;
@@ -3908,12 +3914,18 @@ export async function createMcpServer(
               isError: true,
             };
           }
+          const looksDone = withRequestsLooksDone(withStr);
           let entries = await fetchByWhat(s, what, roots.labels!);
           entries = s.filterSuppressed(entries);
           entries = await applyWith(s, entries, withStr);
           entries = sortForShow(entries);
           entries = entries.slice(0, limit);
-          const formatted = await formatShowOutput(s, entries);
+          let formatted = await formatShowOutput(s, entries);
+          // Opt-in only. Project load and the session-start briefing must not
+          // pay for this (network + latency on the start path).
+          if (looksDone && what.toLowerCase() === 'tasks') {
+            formatted = `${formatted}\n\n${await suggestLooksDone(s, entries)}`;
+          }
           return {
             content: [{ type: 'text', text: formatted }],
           };

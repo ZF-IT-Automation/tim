@@ -506,4 +506,53 @@ describe('tim_show', () => {
     expect(text).toContain('Changes pending task');
     expect(text).not.toContain('Done task');
   });
+
+  it('looks-done is opt-in, leaves the listing unchanged, and does not write status', async () => {
+    const proj = await client.callTool('tim_create_project', {
+      label: 'P0480',
+      content: 'Looks Proj',
+      memoryOnly: true,
+    });
+    const project = JSON.parse(proj.result!.content[0].text);
+    const section = await client.callTool('tim_write', {
+      content: 'Tasks',
+      parentId: project.id,
+      metadata: { kind: 'section' },
+      tags: ['#section', '#schema'],
+    });
+    const sec = JSON.parse(section.result!.content[0].text);
+    const openWrite = await client.callTool('tim_write', {
+      content: 'Still open checkpoint task',
+      parentId: sec.id,
+      metadata: { task: { status: 'todo' } },
+      tags: ['#task', '#test'],
+    });
+    const openTask = JSON.parse(openWrite.result!.content[0].text);
+    await client.callTool('tim_write', {
+      content: 'Already closed checkpoint task',
+      parentId: sec.id,
+      metadata: { task: { status: 'done' } },
+      tags: ['#task', '#test'],
+    });
+
+    const plain = await client.callTool('tim_show', { what: 'tasks', root: 'P0480' });
+    const plainText = plain.result!.content[0].text;
+    const again = await client.callTool('tim_show', { what: 'tasks', root: 'P0480' });
+    expect(again.result!.content[0].text).toBe(plainText);
+    expect(plainText).not.toContain('could not judge');
+    expect(plainText).not.toContain('nothing was changed');
+
+    const judged = await client.callTool('tim_show', { what: 'tasks', root: 'P0480', with: 'looks-done' });
+    const judgedText = judged.result!.content[0].text;
+    expect(judgedText.startsWith(plainText)).toBe(true);
+    expect(judgedText).toContain('Still open checkpoint task');
+    expect(judgedText).toContain('Already closed checkpoint task');
+    expect(judgedText).toContain('nothing was changed');
+    expect(judgedText).toContain('could not judge 1 tasks (Jev unavailable)');
+
+    const read = await client.callTool('tim_read', { id: openTask.id });
+    const readPayload = JSON.parse(read.result!.content[0].text);
+    const entry = readPayload.entry ?? readPayload;
+    expect(entry.metadata.task.status).toBe('todo');
+  });
 });
