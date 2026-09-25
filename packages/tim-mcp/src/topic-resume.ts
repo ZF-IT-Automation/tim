@@ -116,6 +116,11 @@ function sessionDate(session: Entry): string {
 
 /** OR hits judged together. One HTTP call, eight sessions — measured on P0063. */
 const JEV_CHUNK = 8;
+/**
+ * Widened sessions judged per call, newest first — six chunks sent at once, so
+ * one topic costs about one Jev round-trip instead of up to 38 serial ones.
+ */
+const JEV_MAX_SESSIONS = 48;
 /** Below this the widened session stays out. 0.70 kept more noise than it saved. */
 const JEV_KEEP = 0.75;
 /** Rollup prefix Jev actually reads. Longer text did not change the decision. */
@@ -233,23 +238,28 @@ async function mergeJevWidenedSessions(
   }
   if (fresh.size === 0) return;
 
-  const ordered = [...fresh.entries()].sort((a, b) => a[0].localeCompare(b[0]));
-  for (let i = 0; i < ordered.length; i += JEV_CHUNK) {
-    const chunk = ordered.slice(i, i + JEV_CHUNK);
+  // Newest first: the recency cap renders the newest sessions, so older widened
+  // hits past the budget could not have been shown anyway.
+  const ordered = [...fresh.entries()]
+    .sort((a, b) => b[1].date.localeCompare(a[1].date) || b[0].localeCompare(a[0]))
+    .slice(0, JEV_MAX_SESSIONS);
+  const chunks: Array<typeof ordered> = [];
+  for (let i = 0; i < ordered.length; i += JEV_CHUNK) chunks.push(ordered.slice(i, i + JEV_CHUNK));
+  await Promise.all(chunks.map(async chunk => {
     const entries = chunk.map(([, rec], n) => `E${n}: ${jevJudgementText(rec)}`);
     const questions: Record<string, { type: 'noul'; instructions: string }> = {};
     chunk.forEach((_, n) => {
       questions[`e${n}`] = { type: 'noul', instructions: `Is entry E${n} about the topic?` };
     });
     const answers = await askJev('topic-recall', { topic, entries }, questions);
-    if (!answers) continue;
+    if (!answers) return;
     chunk.forEach(([id, rec], n) => {
       const noul = jevNoul(answers, `e${n}`);
       // Widened hits are not in `otherHits`. Counting them as absorbed would
       // shrink the remainder line and hide a note the tag scan actually found.
       if (noul !== undefined && noul >= JEV_KEEP) candidates.set(id, { ...rec, absorbed: 0 });
     });
-  }
+  }));
 }
 
 export async function collectTopicResume(

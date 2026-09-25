@@ -450,6 +450,34 @@ describe('tim_resume_topic Jev relevance filter', () => {
     expect(failed).toBe(without);
   });
 
+  it('judges at most 48 widened sessions, newest first, in one parallel round', async () => {
+    for (let i = 0; i < 50; i++) {
+      const d = String(i + 1).padStart(2, '0');
+      await seedSession({
+        id: `wide-${d}`, date: `2026-01-${String((i % 28) + 1).padStart(2, '0')}T${String(i % 24).padStart(2, '0')}:00:00.000Z`,
+        tag: '#other', summary: `alpha only ${d}`, rollup: `alpha only ${d}`,
+      });
+    }
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const calls: JevBody[] = [];
+    process.env.JEV_API_KEY = 'test-key';
+    vi.stubGlobal('fetch', vi.fn(async (_url: unknown, init?: { body?: string }) => {
+      const body = JSON.parse(String(init?.body)) as JevBody;
+      calls.push(body);
+      inFlight++;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise(resolve => setTimeout(resolve, 20));
+      inFlight--;
+      const answers = Object.fromEntries(Object.keys(body.questions).map(k => [k, { type: 'noul', noul: 0.1 }]));
+      return new Response(JSON.stringify({ answers }));
+    }));
+    await collectTopicResume(store, 'P0084', 'alpha-bravo');
+    expect(calls).toHaveLength(6);
+    expect(calls.reduce((n, c) => n + (c.state.entries?.length ?? 0), 0)).toBe(48);
+    expect(maxInFlight).toBe(6);
+  });
+
   it('keeps an OR-only session at noul 0.9 and drops one at 0.5', async () => {
     await seedSession({
       id: 'keep-or', date: '2026-03-01T10:00:00.000Z', tag: '#other',

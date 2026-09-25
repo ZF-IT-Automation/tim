@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3';
 import type { Entry } from 'tim-core';
-import { askJev, jevNoul, SCHEMA_KINDS } from 'tim-core';
+import { askJev, jevNoul, resolveJevApiKey, SCHEMA_KINDS } from 'tim-core';
 import type { TimStore } from './store.js';
 import { titleSimilarity, cosineSimilarity } from './store.js';
 import { parseAndCoerceMetadata } from './metadata-coerce.js';
@@ -21,7 +21,10 @@ export interface ConsolidationCandidate {
 export interface DuplicateCandidateList extends Array<ConsolidationCandidate> {
   confirmed: number;
   rejected: number;
+  /** Jev was configured but did not answer; these pairs were not queued and are asked again next run. */
   unconfirmed: number;
+  /** Over this run's Jev budget; left for the next run. */
+  deferred: number;
 }
 
 export interface CurationMetadata {
@@ -33,6 +36,8 @@ export interface CurationMetadata {
   score?: number;
   /** Jev noul when this pair was confirmed. Absent when confirmation was skipped or failed. */
   jev?: number;
+  /** Set when Jev rejected the pair; such rows suppress re-asking on later scans. */
+  rejected_by?: 'jev';
   reason: string;
   project_ref: string;
   dedup_key: string;
@@ -87,6 +92,9 @@ function pairDedupKey(id1: string, id2: string): string {
 
 const JEV_DUPLICATE_NOUL = 0.7;
 const JEV_CONFIRM_CONCURRENCY = 6;
+// One request per pair: a project with hundreds of title look-alikes (P0062's
+// post-mortem series had ~290) must not block the tool for minutes per scan.
+const JEV_MAX_PAIRS_PER_RUN = 60;
 const JEV_BODY_CHARS = 1500;
 const JEV_SAME_FACT =
   'Do A and B record the same fact or task, so that one can be dropped without losing a distinct fact? A different date, version, subject or a follow-up is not the same fact.';
@@ -104,6 +112,7 @@ function duplicateCandidateList(): DuplicateCandidateList {
   list.confirmed = 0;
   list.rejected = 0;
   list.unconfirmed = 0;
+  list.deferred = 0;
   return list;
 }
 
@@ -179,6 +188,19 @@ export class ConsolidationManager {
       );
     }
     return map;
+  }
+
+  private hasJevRejection(projectLabel: string, dedupKey: string): boolean {
+    return !!this.db.prepare(`
+      SELECT 1 FROM entries
+      WHERE json_extract(metadata, '$.kind') = 'curation'
+        AND json_extract(metadata, '$.project_ref') = ?
+        AND json_extract(metadata, '$.dedup_key') = ?
+        AND json_extract(metadata, '$.rejected_by') = 'jev'
+        AND tombstoned_at IS NULL
+        AND irrelevant = 0
+      LIMIT 1
+    `).get(projectLabel, dedupKey);
   }
 
   private async findExistingCuration(
@@ -296,7 +318,8 @@ export class ConsolidationManager {
   ): Promise<DuplicateCandidateList> {
     const titleThreshold = 0.6;
     const cosineThreshold = opts.threshold ?? 0.8;
-    const confirm = opts.confirm !== false;
+    // No key is the configured "off" state: exactly the pre-Jev queueing, not an outage.
+    const confirm = opts.confirm !== false && resolveJevApiKey() !== undefined;
     const project = await this.resolveProject(projectLabel);
     const entries = this.getProjectContentEntries(project.id);
     const vectors = this.loadVectors(entries.map(e => e.id));
@@ -336,9 +359,11 @@ export class ConsolidationManager {
     const candidates = duplicateCandidateList();
     const fresh: ScoredDuplicate[] = [];
     for (const item of scored) {
-      const existing = await this.findExistingCuration(projectLabel, pairDedupKey(item.pair[0], item.pair[1]));
+      const key = pairDedupKey(item.pair[0], item.pair[1]);
+      const existing = await this.findExistingCuration(projectLabel, key);
       if (!existing) {
-        fresh.push(item);
+        if (confirm && this.hasJevRejection(projectLabel, key)) candidates.rejected++;
+        else fresh.push(item);
         continue;
       }
       const storedScore = typeof existing.metadata.score === 'number' ? existing.metadata.score : item.score;
@@ -360,7 +385,8 @@ export class ConsolidationManager {
       return candidates;
     }
 
-    const decisions = await mapConcurrent(fresh, JEV_CONFIRM_CONCURRENCY, async item => {
+    candidates.deferred = Math.max(0, fresh.length - JEV_MAX_PAIRS_PER_RUN);
+    const decisions = await mapConcurrent(fresh.slice(0, JEV_MAX_PAIRS_PER_RUN), JEV_CONFIRM_CONCURRENCY, async item => {
       const answers = await askJev('find-duplicates', jevPairState(item.a, item.b), {
         same: { type: 'noul', instructions: JEV_SAME_FACT },
       });
@@ -371,22 +397,29 @@ export class ConsolidationManager {
     });
 
     for (const decision of decisions) {
+      if (decision.kind === 'unconfirmed') {
+        // Queued-but-unjudged pairs would never be asked again and could be merged
+        // by processCurationQueue; leave them for the next run instead.
+        candidates.unconfirmed++;
+        continue;
+      }
       if (decision.kind === 'rejected') {
+        // Remembered so the next scan neither re-queues nor re-bills the same no.
+        await this.enqueue(projectLabel, 'duplicate', {
+          consolidation: 'duplicate',
+          status: 'rejected',
+          pair: decision.item.pair,
+          score: decision.item.score,
+          reason: `${decision.item.reason} rejected by jev`,
+          rejected_by: 'jev',
+        });
         candidates.rejected++;
         continue;
       }
-      const reason = decision.kind === 'confirmed'
-        ? `${decision.item.reason} jev=${decision.noul.toFixed(2)}`
-        : `${decision.item.reason} unconfirmed`;
-      const queued = await this.enqueueScoredDuplicate(
-        projectLabel,
-        decision.item,
-        reason,
-        decision.kind === 'confirmed' ? decision.noul : undefined,
-      );
+      const reason = `${decision.item.reason} jev=${decision.noul.toFixed(2)}`;
+      const queued = await this.enqueueScoredDuplicate(projectLabel, decision.item, reason, decision.noul);
       if (!queued) continue;
-      if (decision.kind === 'confirmed') candidates.confirmed++;
-      else candidates.unconfirmed++;
+      candidates.confirmed++;
       candidates.push(queued);
     }
     return candidates;

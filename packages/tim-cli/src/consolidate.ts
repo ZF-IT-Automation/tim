@@ -53,6 +53,7 @@ export async function cmdConsolidate(args: string[]): Promise<void> {
           confirmed: hits.confirmed,
           rejectedByJev: hits.rejected,
           unconfirmed: hits.unconfirmed,
+          deferred: hits.deferred,
           candidates: hits,
         }, null, 2));
         break;
@@ -80,6 +81,7 @@ export async function cmdConsolidate(args: string[]): Promise<void> {
                 confirmed: dupes.confirmed,
                 rejectedByJev: dupes.rejected,
                 unconfirmed: dupes.unconfirmed,
+                deferred: dupes.deferred,
               },
               processed,
             },
