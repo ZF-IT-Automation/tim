@@ -19,12 +19,11 @@ import * as path from 'path';
 import * as os from 'os';
 import { execFileSync } from 'child_process';
 import { acquireMaintenanceLock } from 'tim-core';
-import { resolveDbPath, readFreeBytes } from './snapshot.js';
+import { defaultSnapshotDir, resolveDbPath, readFreeBytes } from './snapshot.js';
 import { parseArgs, valueOptionsFor } from './args.js';
 import { requireNoWriters } from './writers.js';
 import { checkpointOutputMeansFailure } from './wal-watchdog.js';
 
-const DEFAULT_SNAPSHOT_DIR = '/tmp/tim-snapshots';
 const MIN_AGE_MS = 3600 * 1000; // 1h safety: refuse restore if current db is younger
 
 export function shouldCopyLiveDbForSafety(
@@ -134,7 +133,7 @@ function resolveSource(flags: Record<string, string>): { source: string; isLates
   const from = flags.from;
 
   if (!from) {
-    const latest = path.join(DEFAULT_SNAPSHOT_DIR, 'latest.db');
+    const latest = path.join(defaultSnapshotDir(), 'latest.db');
     if (!fs.existsSync(latest)) {
       throw new Error(`no --from given and no latest.db at ${latest}`);
     }
@@ -151,11 +150,11 @@ function resolveSource(flags: Record<string, string>): { source: string; isLates
   }
 
   // Treat as timestamp suffix: tim-YYYYMMDD-HHMM.db
-  const candidates = listSnapshots(DEFAULT_SNAPSHOT_DIR);
+  const candidates = listSnapshots(defaultSnapshotDir());
   const match = candidates.find((c) => path.basename(c.path) === `tim-${from}.db`);
   if (!match) {
     throw new Error(
-      `no snapshot matching "tim-${from}.db" in ${DEFAULT_SNAPSHOT_DIR}\n` +
+      `no snapshot matching "tim-${from}.db" in ${defaultSnapshotDir()}\n` +
         `use --list to see available snapshots`
     );
   }
@@ -176,7 +175,7 @@ function runScript(script: string, args: string[] = []): { ok: boolean; stdout: 
 }
 
 export async function cmdRestoreList(): Promise<void> {
-  const dir = DEFAULT_SNAPSHOT_DIR;
+  const dir = defaultSnapshotDir();
   const snaps = listSnapshots(dir);
   if (snaps.length === 0) {
     console.log(`(no snapshots in ${dir})`);
@@ -257,7 +256,7 @@ export async function cmdRestore(args: string[]): Promise<void> {
     process.exit(1);
   }
 
-  const preRestore = path.join(DEFAULT_SNAPSHOT_DIR, `pre-restore-${Date.now()}.db`);
+  const preRestore = path.join(defaultSnapshotDir(), `pre-restore-${Date.now()}.db`);
 
   console.log(`# Restore plan`);
   console.log(`  source:    ${source}`);

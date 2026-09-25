@@ -1,14 +1,14 @@
 #!/bin/bash
 # tim-snapshot-prune.sh — Daily cleanup of old snapshots.
-# - On-host: remove snapshots older than 48h from /tmp/tim-snapshots/
-# - Off-host (pCloud): keep 7 daily snapshots, remove older via rclone
+# - On-host: remove snapshots older than 48h from ${HOME}/.tim/snapshots/
+# - Off-host (pCloud): upload the newest snapshot once a day, keep 7 days
 #
 # Cron: 17 3 * * * ~/.hermes/scripts/tim-snapshot-prune.sh
 # no_agent: runs without Hermes LLM involvement.
 
 set -euo pipefail
 
-SNAPSHOT_DIR="${TIM_SNAPSHOT_DIR:-/tmp/tim-snapshots}"
+SNAPSHOT_DIR="${TIM_SNAPSHOT_DIR:-${HOME}/.tim/snapshots}"
 RETENTION_HOURS="${TIM_ONHOST_RETENTION_HOURS:-48}"
 PCLOUD_REMOTE="${TIM_PCLOUD_REMOTE:-pcloud:}"
 PCLOUD_PATH="${TIM_PCLOUD_BACKUP_PATH:-tim-backup}"
@@ -73,7 +73,29 @@ prune_offhost() {
   echo "prune off-host: removed ${pruned} snapshots older than ${PCLOUD_RETENTION_DAYS}d" | tee -a "${LOG_FILE}"
 }
 
+# The only copy that survives losing this disk. Until 2026-09-25 nothing
+# uploaded, so prune_offhost pruned an empty folder every night.
+upload_offhost() {
+  if ! command -v rclone >/dev/null 2>&1; then
+    echo "upload off-host: rclone not available, skipping" | tee -a "${LOG_FILE}"
+    return 0
+  fi
+  local newest
+  newest=$(ls -t "${SNAPSHOT_DIR}"/tim-*.db 2>/dev/null | head -1 || true)
+  if [ -z "${newest}" ]; then
+    echo "upload off-host: no snapshot in ${SNAPSHOT_DIR}" | tee -a "${LOG_FILE}"
+    return 0
+  fi
+  local target="${PCLOUD_REMOTE}${PCLOUD_PATH}/tim-$(date +%Y%m%d).db"
+  if rclone copyto "${newest}" "${target}" >/dev/null 2>&1; then
+    echo "upload off-host: ${newest} -> ${target}" | tee -a "${LOG_FILE}"
+  else
+    echo "upload off-host: FAILED ${newest} -> ${target}" | tee -a "${LOG_FILE}"
+  fi
+}
+
 echo "[$(date -Iseconds)] prune start" >> "${LOG_FILE}"
+upload_offhost
 prune_onhost
 prune_offhost
 echo "[$(date -Iseconds)] prune complete" >> "${LOG_FILE}"

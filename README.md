@@ -209,7 +209,7 @@ node packages/tim-cli/dist/cli.js snapshot
 node packages/tim-cli/dist/cli.js restore --list
 ```
 
-The viewer listens on loopback and supports inspection and selected structural edits. Snapshots use SQLite's backup API. The default destination is temporary storage (`/tmp/tim-snapshots`); use `snapshot --out /durable/path/backup.db` for a durable copy and maintain independent backups.
+The viewer listens on loopback and supports inspection and selected structural edits. Snapshots use SQLite's backup API. The default destination is temporary storage (`~/.tim/snapshots`); use `snapshot --out /durable/path/backup.db` for a durable copy and maintain independent backups.
 
 Moving from hmem? Follow the [migration runbook](docs/hmem-to-tim-migration.md), including dry run and snapshot before import. See the [CLI reference](docs/tim-cli-reference.md) and each command's `--help`.
 

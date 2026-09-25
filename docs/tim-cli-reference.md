@@ -56,7 +56,7 @@ node packages/tim-cli/dist/cli.js statusline
 | 19 | `tim migrate-schema` | Apply pending database schema migrations (explicit opt-in) |
 | 20 | `tim migrate` | Metadata migrations (`tags-to-types`, `project-kind`, `retire-deprecated-tags`) |
 | 21 | `tim reap-checkpoints` | Reap checkpoints whose session already has a summarizer rollup |
-| 22 | `tim snapshot` | Snapshot live DB to `/tmp/tim-snapshots/` (SQLite backup) |
+| 22 | `tim snapshot` | Snapshot live DB to `~/.tim/snapshots/` (SQLite backup) |
 | 23 | `tim restore` | Restore DB from a snapshot |
 | 24 | `tim compact-error-log` | Rebuild a bloated error_log; refuses while writers hold the DB |
 | 25 | `tim release-check` | Verify release gates, beta smoke checks, and packaging safety |
@@ -502,14 +502,14 @@ tim migrate tags-to-types --dry-run --sample-limit 3
 
 ### 20. `tim snapshot`
 
-Create a safe backup of the live TIM database to `/tmp/tim-snapshots/`.
+Create a safe backup of the live TIM database to `~/.tim/snapshots/`.
 Uses SQLite backup API (safe for live DB — no corruption risk).
 
 ```
-snapshot: /tmp/tim-snapshots/tim-20260617-0956.db (67072000 bytes, 141ms)
+snapshot: ~/.tim/snapshots/tim-20260617-0956.db (67072000 bytes, 141ms)
 {
   "ok": true,
-  "target": "/tmp/tim-snapshots/tim-20260617-0956.db",
+  "target": "~/.tim/snapshots/tim-20260617-0956.db",
   "bytes": 67072000,
   "durationMs": 141,
   "pruned": 0
@@ -915,7 +915,7 @@ tim resolve-session --session $SESSION_ID --format json
 | `~/.tim/tim.db` | Main TIM database (SQLite) |
 | `~/.tim/mcp.json` | MCP server config for npx tim-mcp |
 | `~/.tim/sync.json` | Sync configuration |
-| `/tmp/tim-snapshots/` | Snapshot backup location |
+| `~/.tim/snapshots/` | Snapshot backup location |
 | `~/.tim/projects/<label>.json` | Per-project cache (created by MCP) |
 | `packages/tim-cli/dist/cli.js` | CLI entry point |
 | `packages/tim-mcp/dist/server.js` | MCP server entry point |

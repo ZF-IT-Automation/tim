@@ -3,12 +3,12 @@
 # no_agent cron (hourly). Writes alert to TIM P0062/Tasks via tim-wrap-cli.sh.
 #
 # Environment:
-#   TIM_SNAPSHOT_DIR — snapshot directory (default: /tmp/tim-snapshots)
+#   TIM_SNAPSHOT_DIR — snapshot directory (default: ${HOME}/.tim/snapshots)
 #   TIM_BACKUP_MAX_AGE_MIN — max age in minutes (default: 120 = 2h)
 
 set -euo pipefail
 
-SNAPSHOT_DIR="${TIM_SNAPSHOT_DIR:-/tmp/tim-snapshots}"
+SNAPSHOT_DIR="${TIM_SNAPSHOT_DIR:-${HOME}/.tim/snapshots}"
 MAX_AGE_MIN="${TIM_BACKUP_MAX_AGE_MIN:-120}"
 
 ROLE="[tim-snapshot-watchdog]"
