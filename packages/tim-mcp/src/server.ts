@@ -4038,7 +4038,7 @@ export async function createHttpServer(options?: {
   installProcessErrorGuards();
 
   startIdleSweepTimer(getStore());
-  startEmbeddingTimer(getStore());
+  startEmbeddingTimer(getStore(), DB_PATH);
 
   const httpServer = await new Promise<HttpServer>((resolve, reject) => {
     const listener = app.listen(port, host);
