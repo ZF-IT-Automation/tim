@@ -16,6 +16,7 @@ import {
   type TimStore,
 } from 'tim-store';
 import { isClosedBugStatus, taskPriorityRank, type Entry } from 'tim-core';
+import { loadBriefStalenessLines } from './brief-staleness.js';
 import type { DirectiveBriefing } from './marker.js';
 
 const CLOSED_TASK_STATUSES = new Set(['done', 'cancelled', 'closed', 'wontfix']);
@@ -618,6 +619,10 @@ export async function collectDirectiveBriefing(
   const maxChars = Math.max(0, Math.floor(maxTokens * CHARS_PER_TOKEN));
   if (maxChars === 0) return undefined;
 
+  // Outside the token split. A quiet project still needs the warning, and
+  // the lines must not shrink the previous-session or open-work budgets.
+  const staleBrief = await loadBriefStalenessLines(store, projectLabel);
+
   const summaryBudget = Math.floor(maxChars * PREVIOUS_SESSION_BUDGET_SHARE);
   const rawBudget = Math.floor(maxChars * RECENT_EXCHANGE_BUDGET_SHARE);
 
@@ -631,7 +636,7 @@ export async function collectDirectiveBriefing(
   const work = await openWork(store, projectLabel, Math.max(0, maxChars - spent)).catch(() => []);
 
   if (!previous.summary && recent.length === 0 && work.length === 0
-    && !previous.latestHandoffNote) {
+    && !previous.latestHandoffNote && staleBrief.length === 0) {
     return undefined;
   }
   return {
@@ -642,5 +647,6 @@ export async function collectDirectiveBriefing(
       ? { latestHandoffLabel: previous.latestHandoffLabel, latestHandoffNote: previous.latestHandoffNote }
       : {}),
     ...(work.length > 0 ? { openWork: work } : {}),
+    ...(staleBrief.length > 0 ? { staleBrief } : {}),
   };
 }
