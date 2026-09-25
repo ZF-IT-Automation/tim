@@ -9,7 +9,7 @@
 // inside a string value can never break the outer JSON.
 //
 // The risky path is formatProjectOutput() in tim-store, which emits
-// PLAIN TEXT for tim_load_project / tim_read_project — there the tags
+// PLAIN TEXT for tim_load_project — there the tags
 // are inlined as `#tag1 #tag2` in a header line. A downstream client
 // that takes the text response and tries to JSON.parse a substring
 // of it would fail. The fix is contractual: keep tags as a separate

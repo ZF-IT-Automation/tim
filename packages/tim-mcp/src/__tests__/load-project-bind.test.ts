@@ -1,4 +1,5 @@
-// TIM MCP — tim_load_project bind:false replaces tim_read_project.
+// TIM MCP — tim_load_project bind:false is the cross-project read.
+// tim_read_project is no longer registered.
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { spawn, type ChildProcess } from 'node:child_process';
@@ -86,6 +87,13 @@ class McpClient {
     return this.send('tools/call', { name, arguments: args });
   }
 
+  async listToolNames(): Promise<string[]> {
+    await this.init();
+    const resp = await this.send('tools/list', {});
+    const tools = (resp.result as unknown as { tools?: { name: string }[] } | undefined)?.tools ?? [];
+    return tools.map(tool => tool.name);
+  }
+
   kill(): void {
     this.proc.kill('SIGTERM');
     setTimeout(() => {
@@ -152,26 +160,6 @@ describe('tim_load_project bind:false', () => {
     expect(fs.statSync(markerPath, { bigint: true }).mtimeNs).toBe(beforeMtime);
   });
 
-  it('tim_read_project preserves marker bytes and mtime', async () => {
-    const markerPath = path.join(childServerCwd(), '.tim-project');
-    fs.writeFileSync(markerPath, JSON.stringify({
-      version: 2,
-      project: 'P8101',
-      session: 'read-project-session',
-      exchanges: 4,
-      batch_size: 5,
-      batches_summarized: 0,
-    }, null, 2));
-    const beforeBytes = fs.readFileSync(markerPath);
-    const beforeMtime = fs.statSync(markerPath, { bigint: true }).mtimeNs;
-
-    const response = await client.callTool('tim_read_project', { label: 'P8102' });
-
-    expect(response.result?.isError).toBeFalsy();
-    expect(fs.readFileSync(markerPath)).toEqual(beforeBytes);
-    expect(fs.statSync(markerPath, { bigint: true }).mtimeNs).toBe(beforeMtime);
-  });
-
   it('bind:false then bind:true binds only on the real bind', async () => {
     const sessionId = 'bind-after-read-session';
     const read = await client.callTool('tim_load_project', {
@@ -214,19 +202,15 @@ describe('tim_load_project bind:false', () => {
     expect(marker.project).toBe('P8101');
   });
 
-  it('tim_read_project still works as a deprecated alias for bind:false', async () => {
-    const sessionId = 'bind-after-deprecated-read-session';
+  it('tim_read_project is not registered and calling it errors', async () => {
+    const names = await client.listToolNames();
+    expect(names).not.toContain('tim_read_project');
+    expect(names).toContain('tim_load_project');
+
     const resp = await client.callTool('tim_read_project', { label: 'P8101' });
     expect(resp.error).toBeUndefined();
-    expect(resp.result!.isError).toBeFalsy();
-
-    // The alias read did not bind; the later load does.
-    const bind = await client.callTool('tim_load_project', { label: 'P8102', sessionId });
-    expect(bind.error).toBeUndefined();
-    expect(bind.result!.isError).toBeFalsy();
-
-    const session = await client.callTool('tim_read', { id: sessionId, includeChildren: false });
-    expect(session.result!.content[0].text).toContain('"project_ref": "P8102"');
+    expect(resp.result?.isError).toBe(true);
+    expect(resp.result?.content[0].text).toContain('Unknown tool: tim_read_project');
   });
 
   it('first tim_write binds an unbound session; a later cross-project write does not move it', async () => {

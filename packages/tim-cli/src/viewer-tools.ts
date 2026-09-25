@@ -28,7 +28,6 @@ import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
  */
 export const INSPECTOR_TOOLS: ReadonlySet<string> = new Set([
   'tim_read',
-  'tim_read_project',
   'tim_load_project',
   'tim_search',
   'tim_trace',

@@ -4,6 +4,10 @@ All notable changes to TIM are documented in this file.
 
 ## [Unreleased]
 
+### Removed
+
+- **`tim_read_project`** — removed from the MCP tool list. Cross-project reads use `tim_load_project(label, bind:false)`.
+
 ### Changed — session-start briefing and open work (briefing loop, 2026-09-24)
 
 - **Stale open work** — a task is stale after 7 days *of project work* (days with a logged exchange) without a touch, so a paused project does not age its backlog. A touch is a title/body/status change (`metadata.touched_at`), `tim_verify`, or new work logged under the task or pointing at it; reorders and bulk writes are not. Future clocks are capped at now; `touched_at`/`verified_at` are system-owned.

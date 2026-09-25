@@ -8,7 +8,7 @@ Both tools accept the same optional parameters:
 
 | Parameter | Type | Default | Notes |
 |-----------|------|---------|-------|
-| `tokenBudget` | integer 1–64000 | **12288** (12 KB) when omitted | Bounds the **rendered MCP text** for `tim_load_project`, `tim_read_project`, and `tim_preview_briefing` |
+| `tokenBudget` | integer 1–64000 | **12288** (12 KB) when omitted | Bounds the **rendered MCP text** for `tim_load_project` and `tim_preview_briefing` |
 | `query` | string | none | Adds project-scoped task context extras |
 | `ftsQueryMode` | `literal` \| `or-terms` | `literal` | Passed through to scoped FTS for `query` |
 
@@ -21,11 +21,7 @@ Both tools accept the same optional parameters:
 - Explicit `sections: ["Tasks"]` (or any named section) always renders that section's body even in load mode.
 - `budget` (existing) still limits how many child entries `loadProject` reads from the store; it is independent of `tokenBudget`.
 
-### `tim_read_project`
-
-- Uses the same default **12 KB** budget when `tokenBudget` is omitted.
-- **Read mode** renders section bodies (including Tasks and Overview) under their headings — not the load-only index layout.
-- `last activity` in the header uses the same project activity source as `tim_load_project`.
+Cross-project lookup is `tim_load_project` with `bind: false`. That call uses the same load layout and the same default **12 KB** budget, and it does not bind the session. The former `tim_read_project` tool (read-mode section bodies) is no longer registered.
 
 ### `tim_preview_briefing`
 
