@@ -22,6 +22,27 @@ export interface TimSearchToolResult {
 }
 
 /**
+ * Plain FTS does not consult the embedding provider. `requestedMode: fts` plus
+ * `providerState: not_used` and no degradation flags is the default payload —
+ * the configured model id on that path did not participate. Vector, hybrid,
+ * and any fallback stay on the response.
+ */
+export function semanticForAgent(
+  semantic: SearchSemanticInfo | null,
+): SearchSemanticInfo | undefined {
+  if (!semantic) return undefined;
+  if (
+    semantic.requestedMode === 'fts'
+    && semantic.providerState === 'not_used'
+    && semantic.degradedToLexical !== true
+    && semantic.vectorUnavailable !== true
+  ) {
+    return undefined;
+  }
+  return semantic;
+}
+
+/**
  * Shared tim_search execution path for MCP server and in-process tests (#33).
  */
 export async function executeTimSearch(
@@ -55,10 +76,11 @@ export async function executeTimSearch(
     semantic = searchResult.semantic;
   }
 
+  const agentSemantic = semanticForAgent(semantic);
   const response = {
     ...buildBoundedSearchResponse(results, excerptChars),
     ...(clamped ? { clamped } : {}),
-    ...(semantic ? { semantic } : {}),
+    ...(agentSemantic ? { semantic: agentSemantic } : {}),
   };
 
   return { response, results, semantic };

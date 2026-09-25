@@ -106,6 +106,9 @@ describe('tim_health memory diagnostics (MCP)', () => {
     const summary = memory.summaryCoverage as Record<string, unknown>;
     expect(summary.workState).toBe('no_sessions');
     expect(summary.observedExchangeCount).toBe(0);
+    expect(summary.pendingRanges).toEqual([]);
+    expect(summary.coveredRanges).toEqual([]);
+    expect(summary.more).toEqual({ pendingRanges: 0, coveredRanges: 0 });
   });
 
   it('tim_doctor includes memory coverage lines', async () => {
