@@ -319,3 +319,16 @@ it('reports a deadline when the server does not answer in time', async () => {
     await new Promise<void>((resolve, reject) => hanging.close((err) => (err ? reject(err) : resolve())));
   }
 });
+
+it('treats 401 from GET /files as permanent when no generation is stored yet', async () => {
+  const { config } = await hosted();
+  const db = openStore();
+  await db.write('needs-a-generation');
+  saveSyncState(freshBoundSyncState(config, db.getDatabasePath()), { replace: true });
+  const denied = buildSyncContext(db, { ...config, token: 'nope' }, 'pass', 'device-1');
+  denied.client = new TimSyncClient(config.serverUrl, 'nope');
+  const auth = await runPush(denied);
+  expect(auth.permanent).toBe(true);
+  expect(auth.errorCode).toContain('UNAUTHORIZED');
+  expect(syncCycleExitCode(auth)).toBe(3);
+});

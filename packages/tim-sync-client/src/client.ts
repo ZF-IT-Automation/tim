@@ -187,10 +187,7 @@ export class TimSyncClient {
 
   async listFiles(options?: SyncCallOptions): Promise<TimFile[]> {
     const r = await this.request<{ files: TimFile[] }>('/files', {}, options);
-    if (!r.ok) {
-      if (r.status === 402) throw new SyncApiError('Subscription required', 'PAYMENT_REQUIRED');
-      throw new Error(r.error);
-    }
+    if (!r.ok) throw failureFromResult(r.status, r.error, r.retryAfterMs);
     return r.data.files;
   }
 
