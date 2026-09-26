@@ -26,7 +26,7 @@ An empty queue removes the queue file. That delete happens only after the in-mem
 
 A queue item stores the staging rowids it captured, aligned with its envelopes, plus the envelopes and blobs from that moment. Those fields are the queued version. Later staging collapse or a same-millisecond insert must not change them. Retry keeps the same `idempotency_key` unless secret blocking changes which envelopes are in the item (existing secret split).
 
-Push reads unacked staging inside the mutation lock and enqueues a rowid only when no queue item already lists it. Ack is `UPDATE staging SET acked = 1 WHERE rowid = ?`. It is not `lww_timestamp <= ?`. A row inserted in the same millisecond, which collapse keeps under a new rowid, stays unacked. Placeholder secret rows that are intentionally not pushed are acked by their own rowids.
+Push reads unacked staging inside the mutation lock and enqueues a rowid only when no queue item already lists it. Ack is `UPDATE staging SET acked = 1 WHERE rowid = ?`. It is not `lww_timestamp <= ?`. A row inserted in the same millisecond, which collapse keeps under a new rowid, stays unacked. Locked secret rows are never acknowledged by a keyless client; they remain queued until key is supplied. `docs/sync/secrets.md` defines locked-state and legacy queue rules.
 
 Order after the server accepts a batch:
 
