@@ -51,6 +51,7 @@ metadata:
 ```json
 {
   "v": 2,
+  "id": "entry-id",
   "title": "private title",
   "content": "private content",
   "tags": "[\"#private\"]",
@@ -60,7 +61,8 @@ metadata:
 ```
 
 Complete JSON is authenticated by inner cipher. A v2 decrypt rejects malformed
-inner object; it never reinterprets it as plaintext or falls back to v1 fields.
+inner object or an `id` different from shell entry ID; it never reinterprets it
+as plaintext or falls back to v1 fields.
 Lock shell, including `_enc`, persists on keyless client. On later pull with
 secret key, client unlocks every persisted locked row before new cursor pages.
 Thus cursor already past envelope cannot prevent recovery. Wrong key fails before
@@ -70,18 +72,22 @@ state or cursor changes.
 
 Old encrypted entries have no `_enc_v` (or `_enc_v: 1`). Their `title` and
 `content` are individually encrypted, `_enc` encrypts only metadata, and tags
-remain in old outer payload. They are migration input, not plaintext. Readers
-accept and decrypt v1 exactly as stored. Writers never emit v1: next permitted
-secret write emits v2 envelope, encrypting tags and private metadata together.
+remain in old outer payload. Keyless shells retain those two ciphertexts as
+lock-internal `_enc_title` and `_enc_content`, so adding key later can unlock a
+cursor-past v1 row. They are migration input, not plaintext. Readers accept and
+decrypt v1 exactly as stored. Writers never emit v1: next permitted secret
+write emits v2 envelope, encrypting tags and private metadata together.
 
 ## Mutation and delivery rules
 
 Store mutation APIs reject changes to persisted locked row. This covers
 title/content changes, metadata and tag patches, deletes, and curation edits.
 Caller must unlock with secret key first. Secret marking is one-directional at
-store boundary: update cannot clear `secret: true`. Moving subtree under secret
-parent materializes marker before staging; moving or renaming locked subtree is
-rejected until unlock.
+store boundary: attempting to clear `secret: true` errors. `tim secret unlock`
+is offline and key-gated; it takes secret passphrase plus sync salt and needs no
+server connection. Moving or renaming a locked root is rejected until unlock.
+Moving an unlocked ancestor may structurally re-parent locked descendants; that
+is permitted because no descendant payload is changed.
 
 Push, mirror, and legacy-queue replay independently apply same rule. Locked or
 ciphertext payload is never acknowledged, transformed into plaintext, or sent as
@@ -100,4 +106,6 @@ create cross-boundary edges or use distinct future edge-encryption format.
 
 Logs, audits, errors, backups, and queues must never print decrypted inner
 payloads. Queue/config/state directories and files retain `0700`/`0600`
-contract in `client.md`.
+contract in `client.md`. Owner scope is limitation: key holder's local TIM DB
+and snapshots contain plaintext secrets. Protect that device and every snapshot
+destination as secret-bearing storage; snapshots are not encrypted by TIM.

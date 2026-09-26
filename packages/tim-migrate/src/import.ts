@@ -4,7 +4,7 @@ import Database from 'better-sqlite3';
 import { ulid } from 'ulid';
 import { mergeImportEvidence } from 'tim-core';
 import type { TimStore } from 'tim-store';
-import { splitTitleBody } from 'tim-store';
+import { assertNoLockInternalMetadata, splitTitleBody } from 'tim-store';
 import { detectHmemFormat, inspectHmemFile, parseLabel } from './hmem-format.js';
 
 function stampImportedEvidence(metadata: Record<string, unknown>): Record<string, unknown> {
@@ -187,6 +187,7 @@ function insertEntryDirect(
     metadata: Record<string, unknown>;
   },
 ): void {
+  assertNoLockInternalMetadata(params.metadata);
   const { title, body } = splitTitleBody(params.content);
   db.prepare(`
     INSERT INTO entries (

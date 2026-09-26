@@ -96,12 +96,23 @@ async function runOwnerCycle(options: SyncOwnerOptions, deadlineMs: number): Pro
   try {
     push = await runPush(ctx, { deadlineAt, sleep: options.sleep });
   } catch (err) {
-    return {
-      alreadyOwned: false,
-      exitCode: thrownSyncExitCode(err),
-      push: null,
-      pull: null,
-    };
+    if (err instanceof MissingSecretPassphraseError) {
+      push = {
+        pushed: err.pushedCount,
+        queued: true,
+        complete: false,
+        permanent: false,
+        errorCode: 'SECRET_KEY_REQUIRED',
+        oversized: [],
+      };
+    } else {
+      return {
+        alreadyOwned: false,
+        exitCode: thrownSyncExitCode(err),
+        push: null,
+        pull: null,
+      };
+    }
   }
   if (push.permanent && (push.errorCode?.startsWith('UNAUTHORIZED') || push.errorCode?.startsWith('REVOKED'))) {
     return { alreadyOwned: false, exitCode: 3, push, pull: null };

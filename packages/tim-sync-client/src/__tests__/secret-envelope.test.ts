@@ -110,4 +110,24 @@ describe('secret envelope encryption', () => {
     expect(restored.title).toBe('My secret title');
     expect(restored.tags).toBe('["#legacy-private"]');
   });
+
+  it('unlocks a v1 shell persisted without a secret key', () => {
+    const legacy = JSON.stringify({
+      ...JSON.parse(basePayload),
+      title: secretEncrypt('My secret title'),
+      content: secretEncrypt('Sensitive body text'),
+      metadata: JSON.stringify({ secret: true, _enc: secretEncrypt(JSON.stringify({ secret: true, kind: 'note' })) }),
+    });
+    const locked = decryptSecretPayload(legacy);
+    const lockMeta = JSON.parse(JSON.parse(locked).metadata);
+    expect(lockMeta._enc_title).toBeDefined();
+    expect(lockMeta._enc_content).toBeDefined();
+    expect(JSON.parse(decryptSecretPayload(locked, secretDecrypt)).content).toBe('Sensitive body text');
+  });
+
+  it('rejects v2 ciphertext copied to a different entry id', () => {
+    const copied = JSON.parse(encryptSecretPayload(basePayload, secretEncrypt));
+    copied.id = 'SEC-OTHER';
+    expect(() => decryptSecretPayload(JSON.stringify(copied), secretDecrypt)).toThrow('Malformed v2 secret payload');
+  });
 });

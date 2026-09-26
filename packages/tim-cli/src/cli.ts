@@ -213,10 +213,11 @@ const COMMAND_HELP: Record<string, string> = {
     'Usage: tim consolidate find-decay --project <P00XX> [--access-days <days>] [--access-count <count>] [--verified-days <days>]',
   'consolidate run': 'Usage: tim consolidate run --project <P00XX>',
   'consolidate status': 'Usage: tim consolidate status --project <P00XX>',
-  secret: 'Usage: tim secret <set|status|list> [args]',
+  secret: 'Usage: tim secret <set|status|list|unlock> [args]',
   'secret set': 'Usage: tim secret set <id>',
   'secret status': 'Usage: tim secret status <id>',
   'secret list': 'Usage: tim secret list',
+  'secret unlock': 'Usage: tim secret unlock [--secret-passphrase <text>] --salt <sync-salt>',
   viewer:
     'Usage: tim viewer [--port <number>] [--host 127.0.0.1] [--db <path>] [--show-secrets]',
   sessions: 'Usage: tim sessions reap [--dry-run] [--project <P00XX>] [--ids <file>]',

@@ -17,6 +17,26 @@ export class MissingSecretPassphraseError extends Error {
   }
 }
 
+/** A supplied secret key cannot decrypt a persisted or incoming secret payload. */
+export class SecretWrongKeyError extends Error {
+  readonly code = 'SECRET_WRONG_KEY';
+
+  constructor() {
+    super('Secret passphrase cannot decrypt locked entries');
+    this.name = 'SecretWrongKeyError';
+  }
+}
+
+/** A single corrupt secret payload is permanent, but must not expose its contents. */
+export class SecretUndecryptableError extends Error {
+  readonly code = 'SECRET_UNDECRYPTABLE';
+
+  constructor(readonly blobId: number | string) {
+    super(`SECRET_UNDECRYPTABLE blob ${blobId}`);
+    this.name = 'SecretUndecryptableError';
+  }
+}
+
 /** Resolve optional secret passphrase from CLI flags or environment. */
 export function resolveSecretPassphrase(flags?: Record<string, string>): string | undefined {
   const fromFlag = flags?.['secret-passphrase'];

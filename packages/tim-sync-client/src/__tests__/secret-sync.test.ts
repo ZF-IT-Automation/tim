@@ -11,6 +11,7 @@ import {
   runPush,
   runPull,
   autoPush,
+  pushCycle,
   resetSyncCooldowns,
   startDevServer,
   resetDevServer,
@@ -45,6 +46,32 @@ beforeEach(() => {
 });
 
 describe('secret sync fixes', () => {
+  it('rebuilds a re-pushed locked shell from lock fields only', async () => {
+    const store = new TimStore(':memory:');
+    const now = new Date().toISOString();
+    const payload = JSON.stringify({
+      id: 'LOCKED-SHELL', parent_id: null, title: 'leaked title', content: 'leaked content', tags: '["#leak"]',
+      content_type: 'text', depth: 1, confidence: 1, created_at: now, accessed_at: now, updated_at: now,
+      decay_rate: 0, visibility: 1, irrelevant: 0, favorite: 0, tombstoned_at: null,
+      metadata: JSON.stringify({ secret: true, _enc_v: 2, _enc: 'opaque', verified_at: now }),
+    });
+    store.getDb().prepare(`INSERT INTO staging (key, entity_type, operation, payload, lww_timestamp, lww_device, lww_confidence)
+      VALUES ('LOCKED-SHELL', 'entry', 'upsert', ?, 1, 'local', 1)`).run(payload);
+    const client = new TimSyncClient('http://127.0.0.1:1', 'test');
+    let sent: TimEnvelope | undefined;
+    vi.spyOn(client, 'push').mockImplementation(async (request) => {
+      sent = JSON.parse(request.blobs[0]!.data) as TimEnvelope;
+      return { mappings: [] };
+    });
+    await pushCycle(client, store, { fileGeneration: 'g', fileId: 'f', cursor: null, lastPush: null, lastPull: null }, 'd', value => value, value => value);
+    const shell = JSON.parse(sent!.payload) as Record<string, string>;
+    expect(shell.title).toBe(SECRET_PLACEHOLDER_TITLE);
+    expect(shell.content).toBe('');
+    expect(shell.tags).toBe('[]');
+    expect(JSON.parse(shell.metadata)).toEqual({ secret: true, _enc_v: 2, _enc: 'opaque' });
+    store.close();
+  });
+
   describe('isSecretPlaceholderPayload', () => {
     it('detects local placeholder rows', () => {
       const placeholder = JSON.stringify({

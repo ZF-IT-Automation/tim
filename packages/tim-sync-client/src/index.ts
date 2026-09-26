@@ -67,10 +67,13 @@ export {
   isLockedSecretPayload,
   isSecretPlaceholderPayload,
   SECRET_PLACEHOLDER_TITLE,
+  type SecretUnlockResult,
   type SyncCycleContext,
 } from './sync.js';
 export {
   MissingSecretPassphraseError,
+  SecretWrongKeyError,
+  SecretUndecryptableError,
   resolveSecretPassphrase,
 } from './credentials.js';
 export { autoPush, autoPull, resetSyncCooldowns, _peekCooldown } from './auto-sync.js';
