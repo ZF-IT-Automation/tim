@@ -184,7 +184,9 @@ describe('core MCP tool listing', () => {
     const configPath = path.join(process.env.HOME!, '.tim', 'config.json');
     fs.writeFileSync(configPath, JSON.stringify({ mcp: { tools: 'all' } }));
     const fromConfig = new McpClient(dbPath);
-    const overridden = new McpClient(dbPath, { TIM_MCP_TOOLS: 'core' });
+    // Separate test DBs keep the concurrent stdio servers from contending on
+    // SQLite startup; tool-list mode is independent of database contents.
+    const overridden = new McpClient(`${dbPath}.override`, { TIM_MCP_TOOLS: 'core' });
     try {
       const fromConfigNames = (await fromConfig.listTools()).map(t => t.name);
       expect(fromConfigNames).toEqual(TOOL_DEFS.map(def => def.name));
@@ -194,6 +196,7 @@ describe('core MCP tool listing', () => {
       fromConfig.kill();
       overridden.kill();
       fs.rmSync(configPath, { force: true });
+      fs.rmSync(`${dbPath}.override`, { force: true });
     }
   });
 

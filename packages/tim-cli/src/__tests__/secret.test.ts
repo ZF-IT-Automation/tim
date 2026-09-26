@@ -2,8 +2,9 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { TimStore } from 'tim-store';
+import { TimStore, applyRemoteEntry } from 'tim-store';
 import { cmdSecret } from '../secret.js';
+import { deriveKey, encrypt, encryptSecretPayload, generateSalt, SecretWrongKeyError } from 'tim-sync-client';
 
 describe('cmdSecret', () => {
   let dbPath: string;
@@ -59,5 +60,28 @@ describe('cmdSecret', () => {
     await expect(cmdSecret(['set', 'MISSING-ID'])).rejects.toThrow('process.exit');
     expect(errors.join('\n')).toContain('Entry not found: MISSING-ID');
     exitSpy.mockRestore();
+  });
+
+  it('unlock keeps row locked for wrong key, then restores it with right key', async () => {
+    const salt = generateSalt();
+    const rightKey = deriveKey('right-key', salt);
+    const store = new TimStore(dbPath);
+    const entry = await store.write('Private body', { id: 'LOCKED-1', title: 'Private title', metadata: { secret: true, kind: 'note' } });
+    const row = store.getDb().prepare('SELECT * FROM entries WHERE id=?').get(entry.id);
+    const encrypted = encryptSecretPayload(JSON.stringify(row), value => encrypt(value, rightKey));
+    applyRemoteEntry(store.getDb(), encrypted, Date.now() + 1, 'remote', false);
+    store.close();
+
+    await expect(cmdSecret(['unlock', '--secret-passphrase', 'wrong-key', '--salt', salt]))
+      .rejects.toBeInstanceOf(SecretWrongKeyError);
+    const locked = new TimStore(dbPath);
+    expect((locked.getDb().prepare('SELECT title FROM entries WHERE id=?').get('LOCKED-1') as { title: string }).title).toContain('🔒');
+    locked.close();
+
+    await cmdSecret(['unlock', '--secret-passphrase', 'right-key', '--salt', salt]);
+    const restored = new TimStore(dbPath);
+    expect(restored.getDb().prepare('SELECT title, content, metadata FROM entries WHERE id=?').get('LOCKED-1'))
+      .toMatchObject({ title: 'Private title', content: 'Private body', metadata: expect.stringContaining('"kind":"note"') });
+    restored.close();
   });
 });

@@ -72,6 +72,8 @@ export {
 } from './sync.js';
 export {
   MissingSecretPassphraseError,
+  SecretPayloadAuthenticationError,
+  SecretPayloadMalformedError,
   SecretWrongKeyError,
   SecretUndecryptableError,
   resolveSecretPassphrase,

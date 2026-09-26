@@ -81,7 +81,7 @@ write emits v2 envelope, encrypting tags and private metadata together.
 ## Mutation and delivery rules
 
 Store mutation APIs reject changes to persisted locked row. This covers
-title/content changes, metadata and tag patches, deletes, and curation edits.
+title/content changes, metadata and tag patches, soft deletes, and curation edits.
 Caller must unlock with secret key first. Secret marking is one-directional at
 store boundary: attempting to clear `secret: true` errors. `tim secret unlock`
 is offline and key-gated; it takes secret passphrase plus sync salt and needs no

@@ -68,7 +68,15 @@ describe('secret sync fixes', () => {
     expect(shell.title).toBe(SECRET_PLACEHOLDER_TITLE);
     expect(shell.content).toBe('');
     expect(shell.tags).toBe('[]');
-    expect(JSON.parse(shell.metadata)).toEqual({ secret: true, _enc_v: 2, _enc: 'opaque' });
+    const metadata = JSON.stringify({ secret: true, _enc_v: 2, _enc: 'opaque' });
+    expect(sent!.payload).toBe(JSON.stringify({
+      ...JSON.parse(payload),
+      title: SECRET_PLACEHOLDER_TITLE,
+      content: '',
+      tags: '[]',
+      metadata,
+      metadata_raw: metadata,
+    }));
     store.close();
   });
 

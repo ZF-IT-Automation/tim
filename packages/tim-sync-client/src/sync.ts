@@ -23,7 +23,13 @@ import {
 } from './config.js';
 import { randomUUID } from 'node:crypto';
 import { enqueue, loadQueue, queuedRevisions, saveQueue, PUSH_BATCH_MAX_BYTES, type QueueItem } from './queue.js';
-import { MissingSecretPassphraseError, SecretUndecryptableError, SecretWrongKeyError } from './credentials.js';
+import {
+  MissingSecretPassphraseError,
+  SecretPayloadAuthenticationError,
+  SecretPayloadMalformedError,
+  SecretUndecryptableError,
+  SecretWrongKeyError,
+} from './credentials.js';
 import { SyncLockBusyError, syncDbIdentity, withSyncMutationAsync } from './lock.js';
 
 export type { SyncState } from './config.js';
@@ -111,8 +117,8 @@ function lockedSecretMetadata(payload: Record<string, unknown>): LockedSecretMet
   if (metadata.secret !== true || typeof metadata._enc !== 'string' || !metadata._enc) return undefined;
   return {
     secret: true,
-    _enc: metadata._enc,
     ...(typeof metadata._enc_v === 'number' ? { _enc_v: metadata._enc_v } : {}),
+    _enc: metadata._enc,
     ...(typeof metadata._enc_title === 'string' ? { _enc_title: metadata._enc_title } : {}),
     ...(typeof metadata._enc_content === 'string' ? { _enc_content: metadata._enc_content } : {}),
   };
@@ -169,18 +175,31 @@ export function decryptSecretPayload(
   payloadJson: string,
   secretDecrypt?: (data: string) => string,
 ): string {
-  const payload = JSON.parse(payloadJson) as Record<string, unknown>;
+  let payload: Record<string, unknown>;
+  try {
+    payload = JSON.parse(payloadJson) as Record<string, unknown>;
+  } catch {
+    throw new SecretPayloadMalformedError();
+  }
   const lock = lockedSecretMetadata(payload);
 
+  const decryptCiphertext = (ciphertext: string): string => {
+    try {
+      return secretDecrypt!(ciphertext);
+    } catch {
+      throw new SecretPayloadAuthenticationError();
+    }
+  };
+
   if (!secretDecrypt) {
-    if (!lock) throw new Error('Encrypted secret payload has no ciphertext marker');
+    if (!lock) throw new SecretPayloadMalformedError();
     const placeholderLock = lock._enc_v === 2
       ? lock
       : {
         ...lock,
         _enc_v: 1,
-        _enc_title: String(payload.title ?? ''),
-        _enc_content: String(payload.content ?? ''),
+        _enc_title: lock._enc_title ?? String(payload.title ?? ''),
+        _enc_content: lock._enc_content ?? String(payload.content ?? ''),
       };
     const placeholderMetadata = JSON.stringify(placeholderLock);
     const placeholder = {
@@ -194,13 +213,19 @@ export function decryptSecretPayload(
     return JSON.stringify(placeholder);
   }
 
-  if (!lock) throw new Error('Encrypted secret payload has no ciphertext marker');
+  if (!lock) throw new SecretPayloadMalformedError();
   if (lock._enc_v === 2) {
-    const inner = JSON.parse(secretDecrypt(lock._enc)) as Record<string, unknown>;
+    let inner: Record<string, unknown>;
+    try {
+      inner = JSON.parse(decryptCiphertext(lock._enc)) as Record<string, unknown>;
+    } catch (err) {
+      if (err instanceof SecretPayloadAuthenticationError) throw err;
+      throw new SecretPayloadMalformedError();
+    }
     if (inner.v !== 2 || inner.id !== payload.id || typeof inner.title !== 'string' || typeof inner.content !== 'string'
       || typeof inner.tags !== 'string' || typeof inner.metadata !== 'string'
       || typeof inner.metadata_raw !== 'string') {
-      throw new Error('Malformed v2 secret payload');
+      throw new SecretPayloadMalformedError();
     }
     return JSON.stringify({
       ...payload,
@@ -213,12 +238,12 @@ export function decryptSecretPayload(
   }
 
   // v1 is migration input: title/content and metadata were encrypted separately.
-  const fullMetadata = secretDecrypt(lock._enc);
+  const fullMetadata = decryptCiphertext(lock._enc);
 
   const decrypted = {
     ...payload,
-    title: secretDecrypt(lock._enc_title ?? String(payload.title ?? '')),
-    content: secretDecrypt(lock._enc_content ?? String(payload.content ?? '')),
+    title: decryptCiphertext(lock._enc_title ?? String(payload.title ?? '')),
+    content: decryptCiphertext(lock._enc_content ?? String(payload.content ?? '')),
     metadata: fullMetadata,
     metadata_raw: fullMetadata,
   };
@@ -244,6 +269,9 @@ function transformEnvelopeForPush(
   if (env.type === 'entry' && !env.deleted && isLockedSecretPayload(env.payload)) {
     const payload = JSON.parse(env.payload) as Record<string, unknown>;
     const lock = lockedSecretMetadata(payload)!;
+    // v1's outer title/content are ciphertext. Preserve its exact envelope and
+    // idempotency key: rebuilding it as a v2-shaped shell would destroy them.
+    if (lock._enc_v !== 2) return env;
     const metadata = JSON.stringify(lock);
     return {
       ...env,
@@ -306,6 +334,7 @@ export function unlockPersistedSecretEntries(
   const db = store.getDb();
   let unlocked = 0;
   let skipped = 0;
+  let lockedCount = 0;
   const skippedIds: string[] = [];
   const update = db.prepare(
     'UPDATE entries SET title=?, content=?, tags=?, metadata=? WHERE id=?',
@@ -313,13 +342,7 @@ export function unlockPersistedSecretEntries(
   db.transaction(() => {
     const rows = db.prepare('SELECT * FROM entries WHERE metadata LIKE \'%"_enc"%\'').all() as Record<string, unknown>[];
     const lockedRows = rows.filter((row) => isLockedSecretPayload(JSON.stringify(row)));
-    if (lockedRows.length > 0) {
-      try {
-        decryptSecretPayload(JSON.stringify(lockedRows[0]), secretDecrypt);
-      } catch {
-        throw new SecretWrongKeyError();
-      }
-    }
+    lockedCount = lockedRows.length;
     for (const candidate of lockedRows) {
       const row = db.prepare('SELECT * FROM entries WHERE id = ?').get(candidate.id) as Record<string, unknown> | undefined;
       if (!row || !isLockedSecretPayload(JSON.stringify(row))) continue;
@@ -334,6 +357,7 @@ export function unlockPersistedSecretEntries(
       }
     }
   })();
+  if (lockedCount > 0 && unlocked === 0) throw new SecretWrongKeyError();
   if (skipped > 0) console.warn(`Skipped ${skipped} undecryptable locked secret ${skipped === 1 ? 'entry' : 'entries'}: ${skippedIds.join(', ')}`);
   return { unlocked, skipped, skippedIds };
 }
@@ -699,11 +723,9 @@ async function pullCycleUnlocked(
             env = transformEnvelopeForPull(env,secretDecrypt);
           } catch (err) {
             if (err instanceof SecretWrongKeyError || err instanceof SecretUndecryptableError) throw err;
-            const message = err instanceof Error ? err.message : '';
-            if (!/Encrypted secret payload has no ciphertext marker|Malformed v2 secret payload|Unexpected token/.test(message)) {
-              throw new SecretWrongKeyError();
-            }
-            throw new SecretUndecryptableError(blob.id);
+            if (err instanceof SecretPayloadAuthenticationError) throw new SecretWrongKeyError();
+            if (err instanceof SecretPayloadMalformedError) throw new SecretUndecryptableError(blob.id);
+            throw err;
           }
           const envelope = env as TimEnvelope;
           const remote = envelopeToStaging(envelope,blob.lww_device!);
