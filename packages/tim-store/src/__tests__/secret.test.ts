@@ -94,4 +94,11 @@ describe('secret nodes', () => {
     expect(() => db.prepare('SELECT count(*) AS c FROM fts_entries').get()).not.toThrow();
     expect(await store.read(entry.id)).toBeNull();
   });
+
+  it('does not permit clearing secret marker through metadata patch', async () => {
+    const entry = await store.write('Secret marker', { metadata: { secret: true, kind: 'note' } });
+    const updated = await store.update(entry.id, { metadata: { secret: false, kind: 'other' } });
+    expect(updated.metadata.secret).toBe(true);
+    expect(updated.metadata.kind).toBe('other');
+  });
 });

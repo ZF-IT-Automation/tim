@@ -48,7 +48,7 @@ import {
   recordFromPayload,
   remoteEdgeWins,
 } from './sync-methods.js';
-import { parentIsSecret } from './secret.js';
+import { assertEntryUnlocked, parentIsSecret } from './secret.js';
 import {
   assertValidEvidenceMetadata,
   assertValidCallerTemporalMetadata,
@@ -2223,6 +2223,7 @@ ${zeroExchangeFilter}
   updateSync(id: string, patch: Partial<Entry>, options?: UpdateOptions): Entry {
     const existing = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(id) as RowEntry | undefined;
     if (!existing) throw new Error(`Entry not found: ${id}`);
+    assertEntryUnlocked(existing.metadata, id);
 
     if (patch.tags !== undefined) {
       const { clean: cleanTags, removed: removedTags } = stripDeprecatedTags(patch.tags);
@@ -2367,6 +2368,9 @@ ${zeroExchangeFilter}
         for (const [k, v] of Object.entries(patchMeta)) {
           if (v === null && k !== 'provenance') delete merged[k];
         }
+        // Secret marking is one-directional. Removing it would turn a secret
+        // row into a plaintext sync candidate before the client boundary sees it.
+        if (existingMeta.secret === true) merged.secret = true;
         // Legacy/peer metadata remains readable and editable until explicitly replaced.
         assertValidEvidenceMetadata(patchMeta);
 
@@ -2648,6 +2652,7 @@ ${zeroExchangeFilter}
   async delete(id: string, hard: boolean = false): Promise<void> {
     const existing = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(id) as RowEntry | undefined;
     if (!existing) return;
+    assertEntryUnlocked(existing.metadata, id);
 
     const now = new Date().toISOString();
     this.db.transaction(() => {
@@ -2688,6 +2693,7 @@ ${zeroExchangeFilter}
       for (const id of uniqueIds) {
         const existing = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(id) as RowEntry | undefined;
         if (!existing || existing.tombstoned_at) continue;
+        assertEntryUnlocked(existing.metadata, id);
         this.deleteEntrySync(existing, hard);
         rows.push(existing);
       }

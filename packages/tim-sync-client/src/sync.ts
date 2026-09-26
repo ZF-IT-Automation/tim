@@ -98,21 +98,29 @@ function entryRequiresSecretPassphrase(
 
 export const SECRET_PLACEHOLDER_TITLE = '🔒 [secret]';
 
-export function isSecretPlaceholderPayload(payloadJson: string): boolean {
+type LockedSecretMetadata = { secret: true; _enc: string; _enc_v?: number };
+
+function lockedSecretMetadata(payload: Record<string, unknown>): LockedSecretMetadata | undefined {
+  const metadata = parsePayloadMetadata(payload.metadata) as Record<string, unknown>;
+  if (metadata.secret !== true || typeof metadata._enc !== 'string' || !metadata._enc) return undefined;
+  return {
+    secret: true,
+    _enc: metadata._enc,
+    ...(typeof metadata._enc_v === 'number' ? { _enc_v: metadata._enc_v } : {}),
+  };
+}
+
+/** Ciphertext marker, not display text, decides whether a payload is locked. */
+export function isLockedSecretPayload(payloadJson: string): boolean {
   try {
-    const payload = JSON.parse(payloadJson) as {
-      title?: string;
-      content?: string;
-      metadata?: unknown;
-    };
-    return (
-      payload.title === SECRET_PLACEHOLDER_TITLE &&
-      payload.content === '' &&
-      parsePayloadMetadata(payload.metadata).secret === true
-    );
+    return lockedSecretMetadata(JSON.parse(payloadJson) as Record<string, unknown>) !== undefined;
   } catch {
     return false;
   }
+}
+
+export function isSecretPlaceholderPayload(payloadJson: string): boolean {
+  return isLockedSecretPayload(payloadJson);
 }
 
 export function encryptSecretPayload(
@@ -126,13 +134,21 @@ export function encryptSecretPayload(
     : typeof metaRaw === 'string'
       ? metaRaw
       : JSON.stringify(metaRaw ?? {});
-  const encMeta = secretEncrypt(rawMetadata);
-  const encryptedMetadata = JSON.stringify({ secret: true, _enc: encMeta });
+  const inner = JSON.stringify({
+    v: 2,
+    title: String(payload.title ?? ''),
+    content: String(payload.content ?? ''),
+    tags: typeof payload.tags === 'string' ? payload.tags : '[]',
+    metadata: rawMetadata,
+    metadata_raw: rawMetadata,
+  });
+  const encryptedMetadata = JSON.stringify({ secret: true, _enc_v: 2, _enc: secretEncrypt(inner) });
 
   const encrypted = {
     ...payload,
-    title: secretEncrypt(String(payload.title ?? '')),
-    content: secretEncrypt(String(payload.content ?? '')),
+    title: SECRET_PLACEHOLDER_TITLE,
+    content: '',
+    tags: '[]',
     metadata: encryptedMetadata,
     metadata_raw: encryptedMetadata,
   };
@@ -145,42 +161,42 @@ export function decryptSecretPayload(
   secretDecrypt?: (data: string) => string,
 ): string {
   const payload = JSON.parse(payloadJson) as Record<string, unknown>;
+  const lock = lockedSecretMetadata(payload);
 
   if (!secretDecrypt) {
-    const metaRaw = payload.metadata;
-    let enc: unknown;
-    if (typeof metaRaw === 'string') {
-      try {
-        enc = (JSON.parse(metaRaw) as { _enc?: unknown })._enc;
-      } catch {
-        enc = undefined;
-      }
-    } else if (metaRaw && typeof metaRaw === 'object') {
-      enc = (metaRaw as { _enc?: unknown })._enc;
-    }
-
-    const placeholderMetadata = JSON.stringify(
-      enc !== undefined ? { secret: true, _enc: enc } : { secret: true },
-    );
+    if (!lock) throw new Error('Encrypted secret payload has no ciphertext marker');
+    const placeholderMetadata = JSON.stringify(lock);
     const placeholder = {
       ...payload,
       title: '🔒 [secret]',
       content: '',
+      tags: '[]',
       metadata: placeholderMetadata,
       metadata_raw: placeholderMetadata,
     };
     return JSON.stringify(placeholder);
   }
 
-  const metaRaw = payload.metadata;
-  let encBlob: string | undefined;
-  if (typeof metaRaw === 'string') {
-    encBlob = (JSON.parse(metaRaw) as { _enc?: string })._enc;
-  } else if (metaRaw && typeof metaRaw === 'object') {
-    encBlob = (metaRaw as { _enc?: string })._enc;
+  if (!lock) throw new Error('Encrypted secret payload has no ciphertext marker');
+  if (lock._enc_v === 2) {
+    const inner = JSON.parse(secretDecrypt(lock._enc)) as Record<string, unknown>;
+    if (inner.v !== 2 || typeof inner.title !== 'string' || typeof inner.content !== 'string'
+      || typeof inner.tags !== 'string' || typeof inner.metadata !== 'string'
+      || typeof inner.metadata_raw !== 'string') {
+      throw new Error('Malformed v2 secret payload');
+    }
+    return JSON.stringify({
+      ...payload,
+      title: inner.title,
+      content: inner.content,
+      tags: inner.tags,
+      metadata: inner.metadata,
+      metadata_raw: inner.metadata_raw,
+    });
   }
 
-  const fullMetadata = encBlob ? secretDecrypt(encBlob) : JSON.stringify({ secret: true });
+  // v1 is migration input: title/content and metadata were encrypted separately.
+  const fullMetadata = secretDecrypt(lock._enc);
 
   const decrypted = {
     ...payload,
@@ -198,8 +214,8 @@ function envelopeBlocksWithoutSecretKey(
   db: ReturnType<TimStore['getDb']>,
 ): boolean {
   if (env.type !== 'entry' || env.deleted) return false;
-  if (isSecretPlaceholderPayload(env.payload)) return true;
-  if (env.is_encrypted) return false;
+  if (isLockedSecretPayload(env.payload)) return true;
+  if (env.is_encrypted) return true;
   return entryRequiresSecretPassphrase(db, env.payload, env.key);
 }
 
@@ -208,6 +224,11 @@ function transformEnvelopeForPush(
   secretEncrypt?: (data: string) => string,
   db?: ReturnType<TimStore['getDb']>,
 ): TimEnvelope {
+  if (env.type === 'entry' && !env.deleted && isLockedSecretPayload(env.payload)) {
+    // A queued locked payload is opaque. It may only travel as its preserved
+    // ciphertext; runPush unlocks local rows before creating new envelopes.
+    return { ...env, is_encrypted: true };
+  }
   const needsSecret = db
     ? entryRequiresSecretPassphrase(db, env.payload, env.key)
     : payloadIsSecret(env.payload);
@@ -240,6 +261,29 @@ function transformEnvelopeForPull(
     ...env,
     payload: decryptSecretPayload(env.payload, secretDecrypt),
   };
+}
+
+/** Unlock locally retained shells before cursor-based pull so old pages recover too. */
+export function unlockPersistedSecretEntries(
+  store: TimStore,
+  secretDecrypt: (data: string) => string,
+): number {
+  const db = store.getDb();
+  const rows = db.prepare('SELECT * FROM entries WHERE metadata LIKE \'%"_enc"%\'').all() as Record<string, unknown>[];
+  let unlocked = 0;
+  const update = db.prepare(
+    'UPDATE entries SET title=?, content=?, tags=?, metadata=? WHERE id=?',
+  );
+  db.transaction(() => {
+    for (const row of rows) {
+      const payload = JSON.stringify(row);
+      if (!isLockedSecretPayload(payload)) continue;
+      const decrypted = JSON.parse(decryptSecretPayload(payload, secretDecrypt)) as Record<string, unknown>;
+      update.run(decrypted.title, decrypted.content, decrypted.tags, decrypted.metadata_raw, row.id);
+      unlocked++;
+    }
+  })();
+  return unlocked;
 }
 
 function blobForEnvelope(
@@ -336,7 +380,9 @@ function prepareQueueForPush(
           };
         }),
         revisions: hasRevisions ? blockRevisions : item.revisions,
-        idempotency_key: membershipChanged ? randomUUID() : item.idempotency_key,
+        // A blocked item has not changed its sendable version. Preserve its
+        // idempotency key and ciphertext exactly until a key can unlock it.
+        idempotency_key: item.idempotency_key,
       });
     }
   }
@@ -409,11 +455,10 @@ async function pushCycleUnlocked(
   const db = store.getDb();
   const deadlineAt = options?.deadlineAt;
   const allRows = getUnackedStaging(db);
-  const placeholderRevisions: number[] = [];
   let blockedSecretCount = 0;
   const rows = allRows.filter((row) => {
-    if (row.entity_type === 'entry' && isSecretPlaceholderPayload(row.payload)) {
-      placeholderRevisions.push(row.rowid);
+    if (row.entity_type === 'entry' && isLockedSecretPayload(row.payload) && !secretEncrypt) {
+      blockedSecretCount++;
       return false;
     }
     if (row.entity_type === 'entry' && row.operation !== 'delete' && !secretEncrypt && entryRequiresSecretPassphrase(db, row.payload, row.key)) {
@@ -515,8 +560,6 @@ async function pushCycleUnlocked(
     }
   }
 
-  if (placeholderRevisions.length > 0) ackStaging(db, placeholderRevisions);
-
   const partialSend = !ok || readyToSend.length > 0;
   const now = new Date().toISOString();
   state.lastPushAttempt = now;
@@ -583,6 +626,7 @@ async function pullCycleUnlocked(
   const call: SyncCallOptions = { deadlineAt };
   let pulled = 0; let conflicts = 0;
   try {
+    if (secretDecrypt) unlockPersistedSecretEntries(store, secretDecrypt);
     if (pastDeadline(deadlineAt)) throw new SyncApiError('Deadline exceeded', 'DEADLINE');
     await bindFileGeneration(client, state, deadlineAt);
     const generation = state.fileGeneration!;
@@ -666,8 +710,12 @@ export async function runPush(
   const secretEnc = ctx.secretPassphrase
     ? makeSecretEncrypt(ctx.secretPassphrase, ctx.salt)
     : undefined;
+  const secretDec = ctx.secretPassphrase
+    ? makeSecretDecrypt(ctx.secretPassphrase, ctx.salt)
+    : undefined;
   return withSyncMutationAsync(async () => {
     ctx.state = reloadBoundState(ctx);
+    if (secretDec) unlockPersistedSecretEntries(ctx.store, secretDec);
     return pushCycleUnlocked(
       ctx.client, ctx.store, ctx.state, ctx.deviceId, enc, secretEnc, options,
     );
@@ -684,6 +732,7 @@ export async function runPull(
     : undefined;
   return withSyncMutationAsync(async () => {
     ctx.state = reloadBoundState(ctx);
+    if (secretDec) unlockPersistedSecretEntries(ctx.store, secretDec);
     return pullCycleUnlocked(
       ctx.client, ctx.store, ctx.state, dec, secretDec, ctx.deviceId, options,
     );
