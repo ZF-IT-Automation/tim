@@ -225,6 +225,8 @@ export {
   isLockedSecretMetadata,
   LockedSecretEntryError,
   assertEntryUnlocked,
+  assertNoLockInternalMetadata,
+  LOCK_INTERNAL_METADATA_KEYS,
 } from './secret.js';
 export {
   ensureHumanProfile,

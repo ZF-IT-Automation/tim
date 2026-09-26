@@ -231,6 +231,7 @@ export class CurateManager {
         `).all(newParentId, id) as { id: string; metadata: string }[];
 
         for (const sibling of siblings) {
+          assertEntryUnlocked(sibling.metadata, sibling.id);
           const sibMeta = JSON.parse(sibling.metadata) as Record<string, unknown>;
           const sibOrder = Number(sibMeta.order);
           if (Number.isFinite(sibOrder) && sibOrder >= order) {

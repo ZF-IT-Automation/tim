@@ -1,5 +1,7 @@
 import { TimStore, setSecretSubtree, isSecret, findSecretSource, parentIsSecret } from 'tim-store';
 import { loadConfig, type TimConfigFile } from 'tim-core';
+import { decrypt, deriveKey, resolveSecretPassphrase, unlockPersistedSecretEntries } from 'tim-sync-client';
+import { parseArgs, valueOptionsFor } from './args.js';
 import * as path from 'path';
 import * as os from 'os';
 
@@ -8,7 +10,8 @@ function getDbPath(config: TimConfigFile): string {
 }
 
 export async function cmdSecret(args: string[]): Promise<void> {
-  const sub = args[0];
+  const { flags, positional } = parseArgs(args, { valueOptions: valueOptionsFor('secret', args[0]) });
+  const sub = positional[0];
   const config = loadConfig();
   const store = new TimStore(getDbPath(config));
   const db = store.getDb();
@@ -16,7 +19,7 @@ export async function cmdSecret(args: string[]): Promise<void> {
   try {
     switch (sub) {
       case 'set': {
-        const id = args[1];
+        const id = positional[1];
         if (!id) {
           console.error('Usage: tim secret set <id>');
           process.exit(1);
@@ -31,7 +34,7 @@ export async function cmdSecret(args: string[]): Promise<void> {
         break;
       }
       case 'status': {
-        const id = args[1];
+        const id = positional[1];
         if (!id) {
           console.error('Usage: tim secret status <id>');
           process.exit(1);
@@ -77,8 +80,21 @@ export async function cmdSecret(args: string[]): Promise<void> {
         }
         break;
       }
+      case 'unlock': {
+        const secretPassphrase = resolveSecretPassphrase(flags);
+        const salt = flags.salt ?? process.env.TIM_SECRET_SALT;
+        if (!secretPassphrase || !salt) {
+          console.error('Usage: tim secret unlock --secret-passphrase <text> --salt <sync-salt>');
+          console.error('Set TIM_SECRET_PASSPHRASE and TIM_SECRET_SALT instead to avoid command-line secrets.');
+          process.exit(1);
+        }
+        const key = deriveKey(secretPassphrase, salt);
+        const result = unlockPersistedSecretEntries(store, (ciphertext) => decrypt(ciphertext, key));
+        console.log(`Unlocked ${result.unlocked} secret ${result.unlocked === 1 ? 'entry' : 'entries'}${result.skipped ? `; skipped ${result.skipped} undecryptable` : ''}`);
+        break;
+      }
       default:
-        console.error('Usage: tim secret <set|status|list> ...');
+        console.error('Usage: tim secret <set|status|list|unlock> ...');
         console.error('Note: secret is one-directional — there is no unset command.');
         process.exit(1);
     }

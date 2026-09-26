@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { TimStore } from 'tim-store';
@@ -80,9 +80,21 @@ it('keyless hosted client retains v2 ciphertext, cannot edit it, then unlocks af
   expect(() => keyless.curate().tagAdd(locked!.id, ['#leak'])).toThrow(/locked secret/i);
 
   const cursorBeforeWrongKey = loadBoundSyncState(config, keyless.getDatabasePath()).cursor;
+  const keylessState = readFileSync(join(home, '.tim', 'sync-state.json'), 'utf8');
+  clearSyncState();
+  const writerAgain = new TimStore(join(root, 'writer.db'));
+  await writerAgain.write('second private body', {
+    id: 'SECRET-LATER', title: 'second private title', metadata: { secret: true },
+  });
+  await runPush(buildSyncContext(writerAgain, config, passphrase, 'writer', secretPassphrase));
+  writerAgain.close();
+  writeFileSync(join(home, '.tim', 'sync-state.json'), keylessState);
   await expect(runPull(buildSyncContext(keyless, config, passphrase, 'keyless', 'wrong-inner-key')))
-    .rejects.toThrow();
-  expect(loadBoundSyncState(config, keyless.getDatabasePath()).cursor).toBe(cursorBeforeWrongKey);
+    .rejects.toThrow('Secret passphrase cannot decrypt locked entries');
+  const afterWrongKey = loadBoundSyncState(config, keyless.getDatabasePath());
+  expect(afterWrongKey.cursor).toBe(cursorBeforeWrongKey);
+  expect(afterWrongKey.lastPullError).toBe('Secret passphrase cannot decrypt locked entries');
+  expect(await keyless.read('SECRET-LATER')).toBeNull();
 
   await runPull(buildSyncContext(keyless, config, passphrase, 'keyless', secretPassphrase));
   const restored = await keyless.read('SECRET-CHILD');

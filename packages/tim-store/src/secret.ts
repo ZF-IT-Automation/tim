@@ -1,6 +1,20 @@
 import type Database from 'better-sqlite3';
 import type { TimStore } from './store.js';
 
+/** Sync client owns these ciphertext fields; callers must never persist them. */
+export const LOCK_INTERNAL_METADATA_KEYS = new Set([
+  '_enc', '_enc_v', '_enc_title', '_enc_content',
+]);
+
+export function assertNoLockInternalMetadata(metadata: Record<string, unknown> | undefined): void {
+  if (!metadata) return;
+  for (const key of LOCK_INTERNAL_METADATA_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(metadata, key)) {
+      throw new Error(`Metadata key ${key} is reserved for sync secret locking`);
+    }
+  }
+}
+
 function rowHasSecret(metadataJson: string): boolean {
   try {
     const meta = JSON.parse(metadataJson) as { secret?: boolean | number };

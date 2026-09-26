@@ -49,6 +49,7 @@ const COMMAND_VALUE_OPTIONS: Record<string, ReadonlySet<string>> = {
   'sync audit': new Set<string>(),
   'sync repair': new Set<string>(),
   'sync dev': new Set(['port']),
+  'secret unlock': new Set(['secret-passphrase', 'salt']),
   'root-entries': new Set(['type', 'tag', 'format']),
   consolidate: new Set(['project', 'threshold', 'access-days', 'access-count', 'verified-days']),
   viewer: new Set(['port', 'host', 'db']),

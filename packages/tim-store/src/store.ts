@@ -48,7 +48,7 @@ import {
   recordFromPayload,
   remoteEdgeWins,
 } from './sync-methods.js';
-import { assertEntryUnlocked, parentIsSecret } from './secret.js';
+import { assertEntryUnlocked, assertNoLockInternalMetadata, parentIsSecret } from './secret.js';
 import {
   assertValidEvidenceMetadata,
   assertValidCallerTemporalMetadata,
@@ -1878,6 +1878,7 @@ ${zeroExchangeFilter}
 
   /** Synchronous write for use inside `runExclusive` transactions. */
   writeSync(content: string, options: WriteOptions = {}): Entry {
+    assertNoLockInternalMetadata(options.metadata);
     if (options.parentId && parentIsSecret(this.db, options.parentId)) {
       options = {
         ...options,
@@ -2225,6 +2226,8 @@ ${zeroExchangeFilter}
     if (!existing) throw new Error(`Entry not found: ${id}`);
     assertEntryUnlocked(existing.metadata, id);
 
+    assertNoLockInternalMetadata(patch.metadata);
+
     if (patch.tags !== undefined) {
       const { clean: cleanTags, removed: removedTags } = stripDeprecatedTags(patch.tags);
       if (removedTags.length > 0) {
@@ -2370,6 +2373,9 @@ ${zeroExchangeFilter}
         }
         // Secret marking is one-directional. Removing it would turn a secret
         // row into a plaintext sync candidate before the client boundary sees it.
+        if (existingMeta.secret === true && patchMeta.secret !== undefined && patchMeta.secret !== true) {
+          throw new Error('Cannot remove secret marker; no secret unset command exists');
+        }
         if (existingMeta.secret === true) merged.secret = true;
         // Legacy/peer metadata remains readable and editable until explicitly replaced.
         assertValidEvidenceMetadata(patchMeta);
@@ -2616,6 +2622,7 @@ ${zeroExchangeFilter}
   }
 
   async write(content: string, options: WriteOptions = {}): Promise<Entry> {
+    assertNoLockInternalMetadata(options.metadata);
     const { clean: cleanTags, removed: removedTags } = stripDeprecatedTags(options.tags ?? []);
     if (removedTags.length > 0) {
       console.warn(`[tim-store] Deprecated status/priority tags stripped: ${removedTags.join(', ')}`);
@@ -2652,7 +2659,7 @@ ${zeroExchangeFilter}
   async delete(id: string, hard: boolean = false): Promise<void> {
     const existing = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(id) as RowEntry | undefined;
     if (!existing) return;
-    assertEntryUnlocked(existing.metadata, id);
+    if (!hard) assertEntryUnlocked(existing.metadata, id);
 
     const now = new Date().toISOString();
     this.db.transaction(() => {
@@ -2693,7 +2700,7 @@ ${zeroExchangeFilter}
       for (const id of uniqueIds) {
         const existing = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(id) as RowEntry | undefined;
         if (!existing || existing.tombstoned_at) continue;
-        assertEntryUnlocked(existing.metadata, id);
+        if (!hard) assertEntryUnlocked(existing.metadata, id);
         this.deleteEntrySync(existing, hard);
         rows.push(existing);
       }
@@ -3289,6 +3296,8 @@ ${zeroExchangeFilter}
 
       const sourceExisting = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(sourceId) as RowEntry;
       const targetExisting = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(targetId) as RowEntry;
+      assertEntryUnlocked(sourceExisting.metadata, sourceId);
+      assertEntryUnlocked(targetExisting.metadata, targetId);
       const sourceMeta = JSON.parse(sourceExisting.metadata || '{}') as Record<string, unknown>;
       const targetMeta = JSON.parse(targetExisting.metadata || '{}') as Record<string, unknown>;
       const snapshots = captureSupersessionSnapshots(sourceMeta, targetMeta);
@@ -4267,6 +4276,7 @@ ${zeroExchangeFilter}
           missing.push(id);
           continue;
         }
+        assertEntryUnlocked(existing.metadata, id);
         const metadata = JSON.stringify({
           ...JSON.parse(existing.metadata || '{}'),
           verified_at: now,
