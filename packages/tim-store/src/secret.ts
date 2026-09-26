@@ -10,6 +10,27 @@ function rowHasSecret(metadataJson: string): boolean {
   }
 }
 
+/** Persisted ciphertext marks a keyless locked row; display title is irrelevant. */
+export function isLockedSecretMetadata(metadataJson: string): boolean {
+  try {
+    const meta = JSON.parse(metadataJson) as { secret?: unknown; _enc?: unknown };
+    return meta.secret === true && typeof meta._enc === 'string' && meta._enc.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+export class LockedSecretEntryError extends Error {
+  constructor(id: string) {
+    super(`Cannot modify locked secret entry ${id}: unlock with secret key first`);
+    this.name = 'LockedSecretEntryError';
+  }
+}
+
+export function assertEntryUnlocked(metadataJson: string, id: string): void {
+  if (isLockedSecretMetadata(metadataJson)) throw new LockedSecretEntryError(id);
+}
+
 /** Walk parent chain; true if any ancestor has metadata.secret=true. */
 export function parentIsSecret(db: Database.Database, parentId: string | null): boolean {
   if (!parentId) return false;

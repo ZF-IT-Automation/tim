@@ -59,6 +59,10 @@ describe('secret envelope encryption', () => {
     expect(parsed.accessed_at).toBe('2026-01-01T00:00:00.000Z');
     expect(parsed.tags).toBe('[]');
     expect(JSON.parse(parsed.metadata).secret).toBe(true);
+    expect(JSON.parse(parsed.metadata)._enc_v).toBe(2);
+    expect(encryptedPayload).not.toContain('My secret title');
+    expect(encryptedPayload).not.toContain('Sensitive body text');
+    expect(encryptedPayload).not.toContain('kind');
 
     const wire: TimEnvelope = { ...env, payload: encryptedPayload, is_encrypted: true };
     expect(wire.is_encrypted).toBe(true);
@@ -89,5 +93,21 @@ describe('secret envelope encryption', () => {
     const meta = JSON.parse(parsed.metadata);
     expect(meta.secret).toBe(true);
     expect(meta._enc).toBeDefined();
+  });
+
+  it('reads v1 as encrypted migration input and never treats its fields as plaintext', () => {
+    const legacy = JSON.stringify({
+      ...JSON.parse(basePayload),
+      title: secretEncrypt('My secret title'),
+      content: secretEncrypt('Sensitive body text'),
+      metadata: JSON.stringify({ secret: true, _enc: secretEncrypt(JSON.stringify({ secret: true, kind: 'note' })) }),
+      tags: '["#legacy-private"]',
+    });
+    const locked = JSON.parse(decryptSecretPayload(legacy));
+    expect(locked.title).toBe('🔒 [secret]');
+    expect(locked.tags).toBe('[]');
+    const restored = JSON.parse(decryptSecretPayload(legacy, secretDecrypt));
+    expect(restored.title).toBe('My secret title');
+    expect(restored.tags).toBe('["#legacy-private"]');
   });
 });

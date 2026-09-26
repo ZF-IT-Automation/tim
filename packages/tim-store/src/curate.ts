@@ -4,7 +4,7 @@
 import Database from 'better-sqlite3';
 import type { Entry } from 'tim-core';
 import { parseAndCoerceMetadata } from './metadata-coerce.js';
-import { materializeSecretSubtreeSync, parentIsSecret } from './secret.js';
+import { assertEntryUnlocked, materializeSecretSubtreeSync, parentIsSecret } from './secret.js';
 
 // ─── Internal Row Type ────────────────────────────────────
 
@@ -108,6 +108,7 @@ export class CurateManager {
     const transaction = this.db.transaction(() => {
       const existing = getEntry(this.db, oldId);
       if (!existing) throw new Error(`Entry not found: ${oldId}`);
+      assertEntryUnlocked(existing.metadata, oldId);
 
       const collision = getEntry(this.db, newId);
       if (collision) throw new Error(`Entry already exists: ${newId}`);
@@ -205,6 +206,7 @@ export class CurateManager {
     const transaction = this.db.transaction(() => {
       const entry = getEntry(this.db, id);
       if (!entry) throw new Error(`Entry not found: ${id}`);
+      assertEntryUnlocked(entry.metadata, id);
 
       if (newParentId !== null) {
         const parent = getEntry(this.db, newParentId);
@@ -298,6 +300,7 @@ export class CurateManager {
       for (const id of ids) {
         const entry = getEntry(this.db, id);
         if (!entry) throw new Error(`Entry not found: ${id}`);
+        assertEntryUnlocked(entry.metadata, id);
 
         const sets: string[] = [];
         const params: unknown[] = [];
@@ -328,6 +331,7 @@ export class CurateManager {
   tagAdd(id: string, tags: string[]): Entry {
     const entry = getEntry(this.db, id);
     if (!entry) throw new Error(`Entry not found: ${id}`);
+    assertEntryUnlocked(entry.metadata, id);
 
     let tagJson = entry.tags;
     for (const tag of tags) {
@@ -348,6 +352,7 @@ export class CurateManager {
   tagRemove(id: string, tags: string[]): Entry {
     const entry = getEntry(this.db, id);
     if (!entry) throw new Error(`Entry not found: ${id}`);
+    assertEntryUnlocked(entry.metadata, id);
 
     let tagJson = entry.tags;
     for (const tag of tags) {
@@ -399,6 +404,9 @@ export class CurateManager {
     const transaction = this.db.transaction(() => {
       let count = 0;
       for (const row of rows) {
+        const existing = getEntry(this.db, row.id);
+        if (!existing) continue;
+        assertEntryUnlocked(existing.metadata, row.id);
         const tags = JSON.parse(row.tags) as string[];
         let changed = false;
         // Deduplicated: an entry already carrying the target keeps one copy of

@@ -181,7 +181,7 @@ describe('secret sync fixes', () => {
       vi.restoreAllMocks();
     });
 
-    it('does not push placeholder rows to server but acks them locally', async () => {
+    it('does not push or acknowledge locked placeholder rows without key', async () => {
       const store = new TimStore(dbPath);
       const client = new TimSyncClient(`http://127.0.0.1:${port}`, 'test-token');
       const pushSpy = vi.spyOn(client, 'push');
@@ -200,10 +200,9 @@ describe('secret sync fixes', () => {
         client,
       };
 
-      const { pushed } = await runPush(ctx);
-      expect(pushed).toBe(0);
+      await expect(runPush(ctx)).rejects.toBeInstanceOf(MissingSecretPassphraseError);
       expect(pushSpy).not.toHaveBeenCalled();
-      expect(getUnackedStaging(store.getDb()).length).toBe(0);
+      expect(getUnackedStaging(store.getDb()).length).toBe(1);
       store.close();
     });
   });

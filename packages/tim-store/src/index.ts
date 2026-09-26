@@ -222,6 +222,9 @@ export {
   setSecretSubtree,
   ensureSecretInheritance,
   materializeSecretSubtreeSync,
+  isLockedSecretMetadata,
+  LockedSecretEntryError,
+  assertEntryUnlocked,
 } from './secret.js';
 export {
   ensureHumanProfile,

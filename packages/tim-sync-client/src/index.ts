@@ -63,6 +63,8 @@ export {
   type SyncCycleOptions,
   encryptSecretPayload,
   decryptSecretPayload,
+  unlockPersistedSecretEntries,
+  isLockedSecretPayload,
   isSecretPlaceholderPayload,
   SECRET_PLACEHOLDER_TITLE,
   type SyncCycleContext,
