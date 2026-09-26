@@ -1,8 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { stagingToEnvelope } from '../envelope.js';
+import { TimStore, applyRemoteEntry } from 'tim-store';
 import {
   encryptSecretPayload,
   decryptSecretPayload,
+  unlockPersistedSecretEntries,
+  SecretPayloadMalformedError,
+  SECRET_PLACEHOLDER_TITLE,
 } from '../sync.js';
 import { deriveKey, encrypt, decrypt, generateSalt } from '../crypto.js';
 import type { TimEnvelope } from '../envelope.js';
@@ -125,9 +129,46 @@ describe('secret envelope encryption', () => {
     expect(JSON.parse(decryptSecretPayload(locked, secretDecrypt)).content).toBe('Sensitive body text');
   });
 
+  it('keeps v1 ciphertext already retained by a keyless relay', () => {
+    const titleCiphertext = secretEncrypt('My secret title');
+    const contentCiphertext = secretEncrypt('Sensitive body text');
+    const legacy = JSON.stringify({
+      ...JSON.parse(basePayload),
+      title: SECRET_PLACEHOLDER_TITLE,
+      content: '',
+      metadata: JSON.stringify({
+        secret: true,
+        _enc: secretEncrypt(JSON.stringify({ secret: true, kind: 'note' })),
+        _enc_title: titleCiphertext,
+        _enc_content: contentCiphertext,
+      }),
+    });
+    const relayed = JSON.parse(decryptSecretPayload(legacy));
+    const lock = JSON.parse(relayed.metadata);
+    expect(lock._enc_title).toBe(titleCiphertext);
+    expect(lock._enc_content).toBe(contentCiphertext);
+    expect(JSON.parse(decryptSecretPayload(JSON.stringify(relayed), secretDecrypt)).content).toBe('Sensitive body text');
+  });
+
+  it('unlocks later valid rows when corrupt locked row comes first', () => {
+    const store = new TimStore(':memory:');
+    const valid = encryptSecretPayload(basePayload, secretEncrypt);
+    const corrupt = JSON.parse(valid) as Record<string, unknown>;
+    corrupt.id = 'CORRUPT-FIRST';
+    corrupt.metadata = JSON.stringify({ secret: true, _enc_v: 2, _enc: 'not-ciphertext' });
+    corrupt.metadata_raw = corrupt.metadata;
+    applyRemoteEntry(store.getDb(), JSON.stringify(corrupt), 1, 'remote', false);
+    applyRemoteEntry(store.getDb(), valid, 2, 'remote', false);
+
+    const result = unlockPersistedSecretEntries(store, secretDecrypt);
+    expect(result).toMatchObject({ unlocked: 1, skipped: 1, skippedIds: ['CORRUPT-FIRST'] });
+    expect(store.getDb().prepare('SELECT title FROM entries WHERE id=?').get('SEC-001')).toMatchObject({ title: 'My secret title' });
+    store.close();
+  });
+
   it('rejects v2 ciphertext copied to a different entry id', () => {
     const copied = JSON.parse(encryptSecretPayload(basePayload, secretEncrypt));
     copied.id = 'SEC-OTHER';
-    expect(() => decryptSecretPayload(JSON.stringify(copied), secretDecrypt)).toThrow('Malformed v2 secret payload');
+    expect(() => decryptSecretPayload(JSON.stringify(copied), secretDecrypt)).toThrow(SecretPayloadMalformedError);
   });
 });

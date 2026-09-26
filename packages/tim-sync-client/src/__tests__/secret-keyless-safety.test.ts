@@ -7,9 +7,14 @@ import { startHostedSyncServer, type HostedServerHandle } from '../../../tim-syn
 import {
   buildSyncContext,
   clearSyncState,
+  deriveKey,
+  encrypt,
+  encryptSecretPayload,
   generateSalt,
   runPull,
   runPush,
+  runSyncOwner,
+  SecretUndecryptableError,
   TimSyncClient,
 } from '../index.js';
 import { loadBoundSyncState } from '../config.js';
@@ -104,4 +109,102 @@ it('keyless hosted client retains v2 ciphertext, cannot edit it, then unlocks af
   expect(restored!.tags).toEqual(['#private-child']);
   expect(restored!.metadata.kind).toBe('note');
   keyless.close();
+});
+
+it('wrong secret key on a fresh database leaves page cursor and entry unchanged', async () => {
+  server = await startHostedSyncServer({ port: 0, dataDir: root });
+  const tenant = server.registry.register('free');
+  const salt = generateSalt();
+  const config = { serverUrl: `http://127.0.0.1:${server.port}`, userId: tenant.id, token: tenant.token, salt, fileId: 'fresh-wrong-key' };
+  const client = new TimSyncClient(config.serverUrl, config.token);
+  await client.createFile(config.fileId, salt);
+  const writer = new TimStore(join(root, 'writer.db'));
+  await writer.write('private body', { id: 'PAGE-SECRET', title: 'private title', metadata: { secret: true } });
+  await runPush(buildSyncContext(writer, config, 'outer', 'writer', 'right-inner'));
+  writer.close();
+
+  clearSyncState();
+  const receiver = new TimStore(join(root, 'fresh.db'));
+  await expect(runPull(buildSyncContext(receiver, config, 'outer', 'receiver', 'wrong-inner')))
+    .rejects.toThrow('Secret passphrase cannot decrypt locked entries');
+  const state = loadBoundSyncState(config, receiver.getDatabasePath());
+  expect(state.cursor).toBeNull();
+  expect(await receiver.read('PAGE-SECRET')).toBeNull();
+  receiver.close();
+});
+
+it('owner pulls after a missing secret passphrase push result', async () => {
+  server = await startHostedSyncServer({ port: 0, dataDir: root });
+  const tenant = server.registry.register('free');
+  const salt = generateSalt();
+  const config = { serverUrl: `http://127.0.0.1:${server.port}`, userId: tenant.id, token: tenant.token, salt, fileId: 'owner-missing-secret' };
+  const client = new TimSyncClient(config.serverUrl, config.token);
+  await client.createFile(config.fileId, salt);
+  const remote = new TimStore(join(root, 'remote.db'));
+  await remote.write('public body', { id: 'REMOTE-PUBLIC', title: 'public title' });
+  await runPush(buildSyncContext(remote, config, 'outer', 'remote'));
+  remote.close();
+
+  clearSyncState();
+  const owner = new TimStore(join(root, 'owner.db'));
+  await owner.write('private body', { id: 'LOCAL-SECRET', metadata: { secret: true } });
+  const result = await runSyncOwner({ store: owner, config, passphrase: 'outer', deviceId: 'owner', once: true, sleep: async () => undefined });
+  expect(result.push?.errorCode).toBe('SECRET_KEY_REQUIRED');
+  expect(result.pull?.complete).toBe(true);
+  expect(await owner.read('REMOTE-PUBLIC')).not.toBeNull();
+  owner.close();
+});
+
+it('owner treats pull-side wrong secret key as permanent', async () => {
+  server = await startHostedSyncServer({ port: 0, dataDir: root });
+  const tenant = server.registry.register('free');
+  const salt = generateSalt();
+  const config = { serverUrl: `http://127.0.0.1:${server.port}`, userId: tenant.id, token: tenant.token, salt, fileId: 'owner-wrong-secret' };
+  const client = new TimSyncClient(config.serverUrl, config.token);
+  await client.createFile(config.fileId, salt);
+  const writer = new TimStore(join(root, 'writer.db'));
+  await writer.write('private body', { id: 'OWNER-SECRET', metadata: { secret: true } });
+  await runPush(buildSyncContext(writer, config, 'outer', 'writer', 'right-inner'));
+  writer.close();
+
+  clearSyncState();
+  const owner = new TimStore(join(root, 'owner.db'));
+  const result = await runSyncOwner({ store: owner, config, passphrase: 'outer', secretPassphrase: 'wrong-inner', deviceId: 'owner', once: true, sleep: async () => undefined });
+  expect(result.exitCode).toBe(3);
+  expect(result.pull).toMatchObject({ permanent: true, errorCode: 'Secret passphrase cannot decrypt locked entries' });
+  owner.close();
+});
+
+it('malformed secret blob is permanent and identifies its blob id', async () => {
+  server = await startHostedSyncServer({ port: 0, dataDir: root });
+  const tenant = server.registry.register('free');
+  const salt = generateSalt();
+  const config = { serverUrl: `http://127.0.0.1:${server.port}`, userId: tenant.id, token: tenant.token, salt, fileId: 'malformed-secret' };
+  const client = new TimSyncClient(config.serverUrl, config.token);
+  const file = await client.createFile(config.fileId, salt);
+  const source = new TimStore(join(root, 'source.db'));
+  await source.write('private body', { id: 'MALFORMED-SECRET', title: 'private title', metadata: { secret: true } });
+  const payload = JSON.stringify(source.getDb().prepare('SELECT * FROM entries WHERE id=?').get('MALFORMED-SECRET'));
+  source.close();
+  const innerKey = deriveKey('inner', salt);
+  const outerKey = deriveKey('outer', salt);
+  const secretPayload = encryptSecretPayload(payload, () => encrypt('not-json', innerKey));
+  const updatedAt = '2026-09-01T00:00:00.000Z';
+  const envelope = { v: 1, type: 'entry' as const, key: 'MALFORMED-SECRET', lww: updatedAt, device: 'writer', deleted: false, payload: secretPayload, is_encrypted: true };
+  await client.push({
+    file_id: config.fileId, file_generation: file.generation, protocol_generation: 1, client_schema_major: 1, idempotency_key: 'malformed-secret',
+    blobs: [{ proposed_id: 'MALFORMED-SECRET', entity_key: 'MALFORMED-SECRET', entity_type: 'entry', lww_device: 'writer', data: encrypt(JSON.stringify(envelope), outerKey), device_id: 'writer', updated_at: updatedAt }],
+  });
+
+  clearSyncState();
+  const receiver = new TimStore(join(root, 'receiver.db'));
+  await expect(runPull(buildSyncContext(receiver, config, 'outer', 'receiver', 'inner')))
+    .rejects.toBeInstanceOf(SecretUndecryptableError);
+  const state = loadBoundSyncState(config, receiver.getDatabasePath());
+  expect(state.cursor).toBeNull();
+  expect(state.lastPullError).toMatch(/^SECRET_UNDECRYPTABLE blob \d+$/);
+  expect(await receiver.read('MALFORMED-SECRET')).toBeNull();
+  const ownerResult = await runSyncOwner({ store: receiver, config, passphrase: 'outer', secretPassphrase: 'inner', deviceId: 'owner', once: true, sleep: async () => undefined });
+  expect(ownerResult.exitCode).toBe(3);
+  receiver.close();
 });

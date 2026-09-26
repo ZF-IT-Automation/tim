@@ -37,6 +37,22 @@ export class SecretUndecryptableError extends Error {
   }
 }
 
+/** Ciphertext decrypted, but secret envelope has an invalid shape or plaintext. */
+export class SecretPayloadMalformedError extends Error {
+  constructor() {
+    super('Malformed secret payload');
+    this.name = 'SecretPayloadMalformedError';
+  }
+}
+
+/** A ciphertext could not be authenticated with the supplied secret key. */
+export class SecretPayloadAuthenticationError extends Error {
+  constructor() {
+    super('Secret payload authentication failed');
+    this.name = 'SecretPayloadAuthenticationError';
+  }
+}
+
 /** Resolve optional secret passphrase from CLI flags or environment. */
 export function resolveSecretPassphrase(flags?: Record<string, string>): string | undefined {
   const fromFlag = flags?.['secret-passphrase'];

@@ -2,7 +2,7 @@ import type { TimStore } from 'tim-store';
 import type { SyncConfig } from './config.js';
 import { getDeviceId } from './config.js';
 import { SyncApiError, PERMANENT_SYNC_CODES } from './client.js';
-import { MissingSecretPassphraseError } from './credentials.js';
+import { MissingSecretPassphraseError, SecretUndecryptableError, SecretWrongKeyError } from './credentials.js';
 import {
   syncDbIdentity,
   syncOwnerLockName,
@@ -122,7 +122,9 @@ async function runOwnerCycle(options: SyncOwnerOptions, deadlineMs: number): Pro
     const result = await runPull(ctx, { deadlineAt });
     pull = { ...result, complete: true, permanent: false, errorCode: null };
   } catch (err) {
-    const permanent = err instanceof SyncApiError && PERMANENT_SYNC_CODES.has(err.code);
+    const permanent = (err instanceof SyncApiError && PERMANENT_SYNC_CODES.has(err.code))
+      || err instanceof SecretWrongKeyError
+      || err instanceof SecretUndecryptableError;
     pull = {
       pulled: 0,
       conflicts: 0,

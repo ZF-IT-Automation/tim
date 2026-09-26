@@ -272,6 +272,38 @@ describe('legacy secret retry queue', () => {
     }
   });
 
+  it('replays a queued v1 envelope byte-for-byte and retains its idempotency key', async () => {
+    isolated.queue = freshQueuePath();
+    const store = new TimStore(':memory:');
+    const client = new TimSyncClient('http://127.0.0.1:1', 'test');
+    const salt = generateSalt();
+    const syncKey = deriveKey('sync-pass', salt);
+    const secretKey = deriveKey('secret-pass', salt);
+    const encryptFn = (s: string) => encrypt(s, syncKey);
+    const secretEncrypt = (s: string) => encrypt(s, secretKey);
+    const legacyPayload = JSON.stringify({
+      ...JSON.parse(makeSecretEnvelope('queued-v1', 'Sensitive title', 'Sensitive content').payload),
+      title: secretEncrypt('Sensitive title'),
+      content: secretEncrypt('Sensitive content'),
+      metadata: JSON.stringify({ secret: true, _enc: secretEncrypt(JSON.stringify({ secret: true })) }),
+    });
+    const envelope: TimEnvelope = {
+      ...makeSecretEnvelope('queued-v1'), payload: legacyPayload, is_encrypted: true,
+    };
+    saveQueue(isolated.queue, [queueItem('v1-attempt', [envelope])]);
+    const push = vi.spyOn(client, 'push').mockImplementation(async (request) => ({
+      mappings: request.blobs.map((blob) => ({ proposed_id: blob.proposed_id, final_id: blob.proposed_id })),
+    }));
+    try {
+      await pushCycle(client, store, { fileGeneration: 'test-generation', fileId: 'isolated-test', cursor: null, lastPush: null, lastPull: null }, 'test', encryptFn, secretEncrypt);
+      expect(push.mock.calls[0]![0].idempotency_key).toBe('v1-attempt');
+      const wire = JSON.parse(decrypt(push.mock.calls[0]![0].blobs[0]!.data, syncKey)) as TimEnvelope;
+      expect(wire.payload).toBe(legacyPayload);
+    } finally {
+      store.close();
+    }
+  });
+
   it('keeps blocked legacy items on disk while a push is in flight', async () => {
     isolated.queue = freshQueuePath();
     const store = new TimStore(':memory:');

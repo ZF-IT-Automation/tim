@@ -97,8 +97,7 @@ describe('secret nodes', () => {
 
   it('does not permit clearing secret marker through metadata patch', async () => {
     const entry = await store.write('Secret marker', { metadata: { secret: true, kind: 'note' } });
-    const updated = await store.update(entry.id, { metadata: { secret: false, kind: 'other' } });
-    expect(updated.metadata.secret).toBe(true);
-    expect(updated.metadata.kind).toBe('other');
+    await expect(store.update(entry.id, { metadata: { secret: false, kind: 'other' } }))
+      .rejects.toThrow('Cannot remove secret marker');
   });
 });
