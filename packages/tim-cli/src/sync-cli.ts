@@ -30,6 +30,7 @@ import {
   repairSyncState,
   collectSyncAudit,
   SyncStateRejectedError,
+  SyncLockBusyError,
   classifySyncStateFile,
   bindingFor,
 } from 'tim-sync-client';
@@ -181,7 +182,7 @@ export async function cmdSyncPush(args: string[]): Promise<void> {
     const code = syncCycleExitCode(result);
     if (code !== 0) process.exit(code);
   } catch (err) {
-    if (err instanceof MissingSecretPassphraseError || err instanceof SyncStateRejectedError || err instanceof SyncApiError) {
+    if (err instanceof MissingSecretPassphraseError || err instanceof SyncStateRejectedError || err instanceof SyncApiError || err instanceof SyncLockBusyError) {
       console.error(err.message);
       process.exit(thrownSyncExitCode(err));
     }
@@ -208,7 +209,7 @@ export async function cmdSyncPull(args: string[]): Promise<void> {
     const { pulled, conflicts } = await runPull(ctx, { deadlineAt: cycleDeadline(flags) });
     console.log(`Pulled ${pulled} records, ${conflicts} conflicts`);
   } catch (err) {
-    if (err instanceof SyncStateRejectedError || err instanceof SyncApiError) {
+    if (err instanceof SyncStateRejectedError || err instanceof SyncApiError || err instanceof SyncLockBusyError) {
       console.error(err.message);
       process.exit(thrownSyncExitCode(err));
     }

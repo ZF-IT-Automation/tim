@@ -2144,12 +2144,17 @@ const READ_TOOLS = new Set([
 
 const REMEMBER_TOOLS = new Set(['tim_remember']);
 
+/** Best effort: a sync problem must never fail the tool call. */
 function scheduleAutoSync(toolName: string, s: TimStore): void {
-  if (syncOwnerActive(syncDbIdentity(s.getDatabasePath()))) return;
-  if (WRITE_TOOLS.has(toolName)) {
-    void autoPush(s);
-  } else if (READ_TOOLS.has(toolName)) {
-    void autoPull(s);
+  try {
+    if (syncOwnerActive(syncDbIdentity(s.getDatabasePath()))) return;
+    if (WRITE_TOOLS.has(toolName)) {
+      void autoPush(s);
+    } else if (READ_TOOLS.has(toolName)) {
+      void autoPull(s);
+    }
+  } catch {
+    // skip auto-sync for this call
   }
 }
 

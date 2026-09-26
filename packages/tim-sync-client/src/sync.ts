@@ -394,7 +394,7 @@ export async function pushCycle(
 ): Promise<PushCycleResult> {
   return withSyncMutationAsync(() => pushCycleUnlocked(
     client, store, state, deviceId, encryptFn, secretEncrypt, options,
-  ));
+  ), options?.deadlineAt);
 }
 
 async function pushCycleUnlocked(
@@ -569,7 +569,7 @@ export async function pullCycle(
 ): Promise<{ pulled: number; conflicts: number }> {
   return withSyncMutationAsync(() => pullCycleUnlocked(
     client, store, state, decryptFn, secretDecrypt, deviceId, options,
-  ));
+  ), options?.deadlineAt);
 }
 
 async function pullCycleUnlocked(
@@ -671,7 +671,7 @@ export async function runPush(
     return pushCycleUnlocked(
       ctx.client, ctx.store, ctx.state, ctx.deviceId, enc, secretEnc, options,
     );
-  });
+  }, options?.deadlineAt);
 }
 
 export async function runPull(
@@ -687,7 +687,7 @@ export async function runPull(
     return pullCycleUnlocked(
       ctx.client, ctx.store, ctx.state, dec, secretDec, ctx.deviceId, options,
     );
-  });
+  }, options?.deadlineAt);
 }
 
 export function buildSyncContext(

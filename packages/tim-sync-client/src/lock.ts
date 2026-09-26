@@ -5,10 +5,12 @@ import {
   closeSync,
   existsSync,
   fsyncSync,
+  linkSync,
   openSync,
   readFileSync,
   realpathSync,
   renameSync,
+  statSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -17,6 +19,9 @@ import { getTimDir } from 'tim-core';
 import { ensurePrivateDir } from './private-file.js';
 
 export const SYNC_MUTATION_LOCK = 'mutation';
+const DEFAULT_LOCK_WAIT_MS = 30_000;
+/** An unreadable lock is live until this old; after that it is a crash leftover. */
+const UNREADABLE_LOCK_STALE_MS = 60_000;
 
 const mutationAls = new AsyncLocalStorage<true>();
 
@@ -99,6 +104,8 @@ function holderAlive(record: LockRecord): boolean {
     if (code === 'EPERM') return true;
     return false;
   }
+  // ponytail: without /proc (non-Linux) a reused pid keeps the lock alive until
+  // someone deletes the file by hand; we prefer that over two holders.
   if (record.starttime) {
     const current = processStartTime(record.pid);
     if (current && current !== record.starttime) return false;
@@ -106,30 +113,53 @@ function holderAlive(record: LockRecord): boolean {
   return true;
 }
 
+/** Publish the lock name only with a complete record: write a temp inode, then link(2). */
 function writeLockFile(file: string, record: LockRecord): boolean {
   ensurePrivateDir(dirname(file));
-  let fd: number;
+  const tmp = `${file}.tmp.${process.pid}.${randomUUID()}`;
   try {
-    fd = openSync(file, 'wx', 0o600);
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'EEXIST') return false;
-    throw err;
-  }
-  try {
-    writeFileSync(fd, JSON.stringify(record));
-    fsyncSync(fd);
+    const fd = openSync(tmp, 'wx', 0o600);
+    try {
+      writeFileSync(fd, JSON.stringify(record));
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
+    chmodSync(tmp, 0o600);
+    try {
+      linkSync(tmp, file);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'EEXIST') return false;
+      throw err;
+    }
+    return true;
   } finally {
-    closeSync(fd);
+    try { unlinkSync(tmp); } catch { /* already gone */ }
   }
-  chmodSync(file, 0o600);
-  return true;
 }
 
-/** Rename a dead lock aside. Returns true when the path is free to create. */
+function lockAgeMs(file: string): number | null {
+  try {
+    return Date.now() - statSync(file).mtimeMs;
+  } catch {
+    return null;
+  }
+}
+
+function lockLive(file: string, record: LockRecord | null): boolean {
+  if (record) return holderAlive(record);
+  const age = lockAgeMs(file);
+  return age !== null && age < UNREADABLE_LOCK_STALE_MS;
+}
+
+/**
+ * Rename a dead lock aside. Returns true when the path is free to create.
+ * ponytail: two recoverers racing on the same dead lock can still move each
+ * other's fresh lock aside; close it with a recovery lock if that ever shows up.
+ */
 function recoverStale(file: string): boolean {
   if (!existsSync(file)) return true;
-  const current = readLock(file);
-  if (current && holderAlive(current)) return false;
+  if (lockLive(file, readLock(file))) return false;
   const doomed = `${file}.stale.${process.pid}.${randomUUID()}`;
   try {
     renameSync(file, doomed);
@@ -137,8 +167,7 @@ function recoverStale(file: string): boolean {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return true;
     return false;
   }
-  const moved = readLock(doomed);
-  if (moved && holderAlive(moved)) {
+  if (lockLive(doomed, readLock(doomed))) {
     try { renameSync(doomed, file); } catch { /* a new lock won the path */ }
     return false;
   }
@@ -202,12 +231,14 @@ async function acquireOrWaitAsync(name: string, timeoutMs: number): Promise<Sync
   for (;;) {
     const lock = tryAcquireSyncLock(name);
     if (lock) return lock;
-    if (Date.now() - start >= timeoutMs) throw new SyncLockBusyError(name);
+    if (holderIsThisProcess(name) || Date.now() - start >= timeoutMs) {
+      throw new SyncLockBusyError(name);
+    }
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
 }
 
-export function withSyncMutationSync<T>(fn: () => T, timeoutMs = 30_000): T {
+export function withSyncMutationSync<T>(fn: () => T, timeoutMs = DEFAULT_LOCK_WAIT_MS): T {
   if (insideSyncMutation()) return fn();
   const lock = acquireOrWaitSync(SYNC_MUTATION_LOCK, timeoutMs);
   try {
@@ -219,9 +250,12 @@ export function withSyncMutationSync<T>(fn: () => T, timeoutMs = 30_000): T {
 
 export async function withSyncMutationAsync<T>(
   fn: () => Promise<T>,
-  timeoutMs = 30_000,
+  deadlineAt?: number,
 ): Promise<T> {
   if (insideSyncMutation()) return fn();
+  const timeoutMs = deadlineAt === undefined
+    ? DEFAULT_LOCK_WAIT_MS
+    : Math.min(DEFAULT_LOCK_WAIT_MS, Math.max(0, deadlineAt - Date.now()));
   const lock = await acquireOrWaitAsync(SYNC_MUTATION_LOCK, timeoutMs);
   try {
     return await mutationAls.run(true, fn);

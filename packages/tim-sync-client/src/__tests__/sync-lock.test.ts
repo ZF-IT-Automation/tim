@@ -5,8 +5,11 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  processStartTime,
+  SyncLockBusyError,
   syncLockPath,
   tryAcquireSyncLock,
+  withSyncMutationAsync,
   withSyncMutationSync,
 } from '../lock.js';
 
@@ -99,6 +102,51 @@ describe('sync locks', () => {
         cursor = 'second';
       });
       expect(cursor).toBe('second');
+    } finally {
+      process.env.HOME = previous;
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+  it('does not steal a fresh unreadable lock, but recovers one past the age bound', () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tim-lock-empty-'));
+    const previous = process.env.HOME;
+    process.env.HOME = home;
+    try {
+      const file = syncLockPath('mutation');
+      fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+      fs.writeFileSync(file, '');
+      expect(tryAcquireSyncLock('mutation')).toBeNull();
+      expect(fs.readFileSync(file, 'utf8')).toBe('');
+      const old = new Date(Date.now() - 120_000);
+      fs.utimesSync(file, old, old);
+      const lock = tryAcquireSyncLock('mutation');
+      expect(lock).not.toBeNull();
+      expect(JSON.parse(fs.readFileSync(file, 'utf8')).pid).toBe(process.pid);
+      lock!.release();
+      expect(fs.readdirSync(path.dirname(file))).toEqual([]);
+    } finally {
+      process.env.HOME = previous;
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('gives up the async lock wait at the cycle deadline', async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tim-lock-deadline-'));
+    const previous = process.env.HOME;
+    process.env.HOME = home;
+    try {
+      const file = syncLockPath('mutation');
+      fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+      fs.writeFileSync(file, JSON.stringify({
+        pid: process.ppid,
+        starttime: processStartTime(process.ppid),
+        token: 'parent',
+        acquiredAt: new Date().toISOString(),
+      }));
+      const start = Date.now();
+      await expect(withSyncMutationAsync(async () => 'ran', Date.now() + 100))
+        .rejects.toBeInstanceOf(SyncLockBusyError);
+      expect(Date.now() - start).toBeLessThan(2_000);
     } finally {
       process.env.HOME = previous;
       fs.rmSync(home, { recursive: true, force: true });
