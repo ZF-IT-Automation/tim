@@ -127,6 +127,28 @@ describe('legacy secret retry queue', () => {
     }
   });
 
+  it('preserves an already locked queue payload and idempotency key without the secret key', async () => {
+    isolated.queue = freshQueuePath();
+    const store = new TimStore(':memory:');
+    const client = new TimSyncClient('http://127.0.0.1:1', 'test');
+    const push = vi.spyOn(client, 'push').mockResolvedValue({} as Awaited<ReturnType<TimSyncClient['push']>>);
+    const envelope = makeSecretEnvelope('locked-legacy');
+    const payload = encryptSecretPayload(envelope.payload, value => value);
+    const locked = { ...envelope, payload, is_encrypted: true };
+    saveQueue(isolated.queue, [queueItem('locked-attempt', [locked])]);
+    try {
+      await expect(
+        pushCycle(client, store, { fileGeneration: 'test-generation', fileId: 'isolated-test', cursor: null, lastPush: null, lastPull: null }, 'test', value => value),
+      ).rejects.toThrow(MissingSecretPassphraseError);
+      expect(push).not.toHaveBeenCalled();
+      const [remaining] = loadQueue(isolated.queue);
+      expect(remaining.idempotency_key).toBe('locked-attempt');
+      expect(remaining.envelopes[0].payload).toBe(payload);
+    } finally {
+      store.close();
+    }
+  });
+
   it('still syncs non-secret queue items when legacy secrets are blocked', async () => {
     isolated.queue = freshQueuePath();
     const store = new TimStore(':memory:');
@@ -335,7 +357,7 @@ describe('legacy secret retry queue', () => {
     }
   });
 
-  it('assigns fresh idempotency keys when a mixed queue item is split', async () => {
+  it('keeps blocked ciphertext idempotency key when a mixed queue item is split', async () => {
     isolated.queue = freshQueuePath();
     const store = new TimStore(':memory:');
     const client = new TimSyncClient('http://127.0.0.1:1', 'test');
@@ -364,7 +386,7 @@ describe('legacy secret retry queue', () => {
       expect(sentKey).not.toBe(originalKey);
       const remaining = loadQueue(isolated.queue);
       expect(remaining).toHaveLength(1);
-      expect(remaining[0].idempotency_key).not.toBe(originalKey);
+      expect(remaining[0].idempotency_key).toBe(originalKey);
       expect(remaining[0].idempotency_key).not.toBe(sentKey);
     } finally {
       store.close();
