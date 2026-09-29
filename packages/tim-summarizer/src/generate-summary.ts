@@ -353,8 +353,8 @@ export async function tryCli(
   timeoutSec: number,
   onError?: ErrorLogFn,
   extraArgs: string[] = [],
-  /** Sees the raw stdout of a successful run, before parsing (eval token counts). */
-  onStdout?: (stdout: string) => void,
+  /** Sees the raw output of a successful run, before parsing (eval token counts; codex prints them on stderr). */
+  onRaw?: (stdout: string, stderr: string) => void,
 ): Promise<string | null> {
   const label = provider ? `${cli}/${provider}/${model}` : `${cli}/${model}`;
   let command: string;
@@ -429,7 +429,7 @@ export async function tryCli(
       return null;
     }
 
-    onStdout?.(stdout);
+    onRaw?.(stdout, stderr);
     let text = stdout.trim();
     if (cli === 'codex') {
       // Parse: ...\ncodex\n<response>\ntokens used\n...
