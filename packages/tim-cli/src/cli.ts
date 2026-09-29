@@ -266,6 +266,7 @@ Commands:
   resolve-session          Resolve a session's project
   bind-project             Bind a directory to a project
   new-project              Create and bind a TIM project
+  project                  Relate projects, describe them, set their Interfaces
   record-commit            Record a git commit
   hook session-start       Start a new session
   hook session-end         End a session and run checkpoint
