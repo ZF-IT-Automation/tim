@@ -588,50 +588,8 @@ export class SessionManager {
         ? exchangeBatches.find(b => b.metadata.batch_index === targetBatchIndex)
         : exchangeBatches.find(b => b.metadata.batch_index === batchIndex)) ?? null;
 
-    const exchanges: UnsummarizedExchange[] = [];
-    if (batchNode && targetBatchIndex != null) {
-      const users = (await this.store.getChildrenBySeq(batchNode.id)).filter(
-        u => u.metadata.role === 'user',
-      );
-      let lastCountable: UnsummarizedExchange | null = null;
-      let pendingAgent: string | null = null;
-      for (const u of users) {
-        const seq = Number(u.metadata.seq);
-        if (seq <= seqFloor) continue;
-        const replies = await this.store.getChildren(u.id);
-        const agent = replies.find(r => r.metadata.role === 'agent') ?? null;
-        if (!isCountableUserExchange(u)) {
-          // Harness-only user turn: skip counting it, but fold its agent reply
-          // into the previous countable exchange so summarizer sees the work.
-          if (agent) {
-            const extra = exchangeText(agent);
-            if (lastCountable) {
-              lastCountable.agentContent = lastCountable.agentContent
-                ? `${lastCountable.agentContent}\n${extra}`
-                : extra;
-            } else {
-              pendingAgent = pendingAgent ? `${pendingAgent}\n${extra}` : extra;
-            }
-          }
-          continue;
-        }
-        const entry: UnsummarizedExchange = {
-          seq,
-          userId: u.id,
-          userContent: exchangeText(u),
-          agentId: agent?.id ?? null,
-          agentContent: agent ? exchangeText(agent) : null,
-        };
-        if (pendingAgent) {
-          entry.agentContent = entry.agentContent
-            ? `${entry.agentContent}\n${pendingAgent}`
-            : pendingAgent;
-          pendingAgent = null;
-        }
-        lastCountable = entry;
-        exchanges.push(entry);
-      }
-    }
+    const exchanges: UnsummarizedExchange[] =
+      batchNode && targetBatchIndex != null ? await this.batchExchanges(batchNode.id, seqFloor) : [];
 
     const hasMore = await (async () => {
       for (const b of exchangeBatches) {
@@ -697,6 +655,56 @@ export class SessionManager {
       sessionMeta,
       ...(vocabulary.length > 0 ? { vocabulary } : {}),
     };
+  }
+
+  /**
+   * One exchange batch as the summarizer sees it: countable user turns with their
+   * agent reply; a harness-only turn's reply folds into the previous exchange.
+   */
+  async batchExchanges(batchNodeId: string, seqFloor = 0): Promise<UnsummarizedExchange[]> {
+    const exchanges: UnsummarizedExchange[] = [];
+    const users = (await this.store.getChildrenBySeq(batchNodeId)).filter(
+      u => u.metadata.role === 'user',
+    );
+    let lastCountable: UnsummarizedExchange | null = null;
+    let pendingAgent: string | null = null;
+    for (const u of users) {
+      const seq = Number(u.metadata.seq);
+      if (seq <= seqFloor) continue;
+      const replies = await this.store.getChildren(u.id);
+      const agent = replies.find(r => r.metadata.role === 'agent') ?? null;
+      if (!isCountableUserExchange(u)) {
+        // Harness-only user turn: skip counting it, but fold its agent reply
+        // into the previous countable exchange so summarizer sees the work.
+        if (agent) {
+          const extra = exchangeText(agent);
+          if (lastCountable) {
+            lastCountable.agentContent = lastCountable.agentContent
+              ? `${lastCountable.agentContent}\n${extra}`
+              : extra;
+          } else {
+            pendingAgent = pendingAgent ? `${pendingAgent}\n${extra}` : extra;
+          }
+        }
+        continue;
+      }
+      const entry: UnsummarizedExchange = {
+        seq,
+        userId: u.id,
+        userContent: exchangeText(u),
+        agentId: agent?.id ?? null,
+        agentContent: agent ? exchangeText(agent) : null,
+      };
+      if (pendingAgent) {
+        entry.agentContent = entry.agentContent
+          ? `${entry.agentContent}\n${pendingAgent}`
+          : pendingAgent;
+        pendingAgent = null;
+      }
+      lastCountable = entry;
+      exchanges.push(entry);
+    }
+    return exchanges;
   }
 
   async writeBatchSummary(

@@ -353,6 +353,8 @@ export async function tryCli(
   timeoutSec: number,
   onError?: ErrorLogFn,
   extraArgs: string[] = [],
+  /** Sees the raw stdout of a successful run, before parsing (eval token counts). */
+  onStdout?: (stdout: string) => void,
 ): Promise<string | null> {
   const label = provider ? `${cli}/${provider}/${model}` : `${cli}/${model}`;
   let command: string;
@@ -427,6 +429,7 @@ export async function tryCli(
       return null;
     }
 
+    onStdout?.(stdout);
     let text = stdout.trim();
     if (cli === 'codex') {
       // Parse: ...\ncodex\n<response>\ntokens used\n...
@@ -538,7 +541,7 @@ export async function generateSessionRollup(
 /** Hard ceiling for a project summary; the briefing renders it every load. */
 export const PROJECT_SUMMARY_MAX_CHARS = 800;
 
-function buildProjectSummaryPrompt(sessionSummaries: string[], maxChars: number): string {
+export function buildProjectSummaryPrompt(sessionSummaries: string[], maxChars: number): string {
   const joined = sessionSummaries.join('\n\n---\n\n');
   return (
     `${ENGLISH_SUMMARY_INSTRUCTION} ` +
@@ -551,7 +554,7 @@ function buildProjectSummaryPrompt(sessionSummaries: string[], maxChars: number)
   );
 }
 
-function buildCompressPrompt(summary: string, maxChars: number): string {
+export function buildCompressPrompt(summary: string, maxChars: number): string {
   return (
     `${ENGLISH_SUMMARY_INSTRUCTION} ` +
     `Shorten this project summary to ${maxChars} characters or fewer. Keep 2-3 bullet ` +
