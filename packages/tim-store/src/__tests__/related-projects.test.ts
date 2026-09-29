@@ -7,8 +7,7 @@ import {
   listRelatedProjects,
   setProjectDescription,
   formatRelatedProjectLine,
-  findNewestSubstantiveSession,
-  collectNewerNeighbourHandoffs,
+  collectNeighbourActivity,
   newestSubstantiveSession,
   RELATED_EDGE_TYPE,
   findChildByKind,
@@ -93,7 +92,13 @@ describe('newer neighbour handoffs', () => {
 
   afterEach(() => store.close());
 
-  async function substantiveSession(projectId: string, sessionId: string, date: string, note?: string) {
+  async function substantiveSession(
+    projectId: string,
+    sessionId: string,
+    date: string,
+    note?: string,
+    summary?: string,
+  ) {
     await sessions.startProjectSession({
       sessionId,
       projectId,
@@ -108,6 +113,8 @@ describe('newer neighbour handoffs', () => {
       { role: 'agent', content: 'two' },
       { role: 'user', content: 'three' },
       { role: 'agent', content: 'four' },
+      { role: 'user', content: 'five' },
+      { role: 'agent', content: 'six' },
     ]);
     if (note) {
       await sessions.checkpoint(sessionId, {
@@ -115,37 +122,59 @@ describe('newer neighbour handoffs', () => {
         handoffNote: note,
       });
     }
+    if (summary) await sessions.updateSessionSummary(sessionId, summary);
   }
 
-  it('collectNewerNeighbourHandoffs includes neighbour only when newer', async () => {
-    await substantiveSession('P0910', 'home-old', '2026-01-01T10:00:00.000Z', 'home note');
-    await substantiveSession('P0911', 'nb-new', '2026-02-01T10:00:00.000Z', 'neighbour note');
+  it('shows every newer neighbour session summary, not its handoff note', async () => {
+    await substantiveSession('P0910', 'home', '2026-01-01T10:00:00.000Z', 'home note');
+    await substantiveSession('P0911', 'nb-1', '2026-02-01T10:00:00.000Z', 'NB HANDOFF', 'first summary');
+    await substantiveSession('P0911', 'nb-2', '2026-02-02T10:00:00.000Z', undefined, 'second summary');
 
-    const blocks = await collectNewerNeighbourHandoffs(store, 'P0910', 200);
-    expect(blocks).toHaveLength(1);
-    expect(blocks[0]!.handoffNote).toContain('neighbour note');
-
-    const own = await findNewestSubstantiveSession(store, 'P0910');
-    const theirs = await findNewestSubstantiveSession(store, 'P0911');
-    expect(theirs!.lastActivity > own!.lastActivity).toBe(true);
+    const out = await collectNeighbourActivity(store, 'P0910');
+    expect(out).toHaveLength(1);
+    expect(out[0]!.sessions.map(s => s.summary)).toEqual(['second summary', 'first summary']);
+    expect(JSON.stringify(out)).not.toContain('NB HANDOFF');
   });
 
-  it('skips neighbour when own substantive session is newer', async () => {
-    await substantiveSession('P0911', 'nb-old', '2026-01-01T10:00:00.000Z', 'old neighbour');
-    await substantiveSession('P0910', 'home-new', '2026-03-01T10:00:00.000Z', 'fresh home');
+  it('skips neighbour sessions older than own newest substantive session', async () => {
+    await substantiveSession('P0911', 'nb-old', '2026-01-01T10:00:00.000Z', undefined, 'old neighbour');
+    await substantiveSession('P0910', 'home', '2026-02-01T10:00:00.000Z', 'home');
+    await substantiveSession('P0911', 'nb-new', '2026-03-01T10:00:00.000Z', undefined, 'new neighbour');
 
-    const blocks = await collectNewerNeighbourHandoffs(store, 'P0910', 200);
-    expect(blocks).toEqual([]);
+    const out = await collectNeighbourActivity(store, 'P0910');
+    expect(out[0]!.sessions.map(s => s.summary)).toEqual(['new neighbour']);
   });
 
-  it('returns no handoffs without listing neighbours when the project has none', async () => {
+  it('returns nothing without neighbours or without newer sessions', async () => {
     await store.createProject('P0912', { content: 'Solo' });
     await substantiveSession('P0912', 'solo', '2026-04-01T10:00:00.000Z', 'solo note');
-    const blocks = await collectNewerNeighbourHandoffs(store, 'P0912', 200);
-    expect(blocks).toEqual([]);
+    expect(await collectNeighbourActivity(store, 'P0912')).toEqual([]);
+
+    await substantiveSession('P0911', 'nb', '2026-01-01T10:00:00.000Z', undefined, 'nb');
+    await substantiveSession('P0910', 'home', '2026-02-01T10:00:00.000Z', 'home');
+    expect(await collectNeighbourActivity(store, 'P0910')).toEqual([]);
   });
 
-  it('ignores a newer non-substantive neighbour session for the comparison', async () => {
+  it('caps at three summaries per neighbour with an overflow count', async () => {
+    await substantiveSession('P0910', 'home', '2026-01-01T10:00:00.000Z', 'home');
+    for (let i = 1; i <= 5; i++) {
+      await substantiveSession('P0911', `nb-${i}`, `2026-02-0${i}T10:00:00.000Z`, undefined, `summary ${i}`);
+    }
+    const out = await collectNeighbourActivity(store, 'P0910');
+    expect(out[0]!.sessions.map(s => s.summary)).toEqual(['summary 5', 'summary 4', 'summary 3']);
+    expect(out[0]!.more).toBe(2);
+  });
+
+  it('counts newer sessions the summarizer has not reached yet', async () => {
+    await substantiveSession('P0910', 'home', '2026-01-01T10:00:00.000Z', 'home');
+    await substantiveSession('P0911', 'nb-raw-1', '2026-02-01T10:00:00.000Z');
+    await substantiveSession('P0911', 'nb-raw-2', '2026-02-02T10:00:00.000Z');
+    const out = await collectNeighbourActivity(store, 'P0910');
+    expect(out[0]!.sessions).toEqual([]);
+    expect(out[0]!.unsummarized).toBe(2);
+  });
+
+  it('excludes non-substantive neighbour sessions', async () => {
     await substantiveSession('P0910', 'home', '2026-01-01T10:00:00.000Z', 'home note');
     await sessions.startProjectSession({
       sessionId: 'nb-auto',
@@ -164,32 +193,18 @@ describe('newer neighbour handoffs', () => {
     if (summaryNode) {
       await store.update(summaryNode.id, { metadata: { substance: 'none' } });
     }
-    const blocks = await collectNewerNeighbourHandoffs(store, 'P0910', 200);
-    expect(blocks).toEqual([]);
+    expect(await collectNeighbourActivity(store, 'P0910')).toEqual([]);
   });
 
-  it('orders neighbour handoffs by neighbour last activity', async () => {
-    await store.createProject('P0913', { content: 'Third neighbour' });
-    await relateProjects(store, 'P0910', 'P0913');
+  it('truncates long neighbour summaries', async () => {
     await substantiveSession('P0910', 'home', '2026-01-01T10:00:00.000Z', 'home');
-    await substantiveSession('P0911', 'nb-mid', '2026-02-15T10:00:00.000Z', 'mid neighbour');
-    await substantiveSession('P0913', 'nb-new', '2026-03-20T10:00:00.000Z', 'newest neighbour');
-
-    const blocks = await collectNewerNeighbourHandoffs(store, 'P0910', 200);
-    expect(blocks.map(b => b.label)).toEqual(['P0913', 'P0911']);
-  });
-
-  it('truncates neighbour handoff notes to maxNoteChars', async () => {
-    const long = 'x'.repeat(80);
-    await substantiveSession('P0910', 'home', '2026-01-01T10:00:00.000Z', 'home');
-    await substantiveSession('P0911', 'nb', '2026-02-01T10:00:00.000Z', long);
-    const blocks = await collectNewerNeighbourHandoffs(store, 'P0910', 20);
-    expect(blocks[0]!.handoffNote.length).toBeLessThanOrEqual(20);
-    expect(blocks[0]!.handoffNote.endsWith('…')).toBe(true);
+    await substantiveSession('P0911', 'nb', '2026-02-01T10:00:00.000Z', undefined, 'x'.repeat(500));
+    const out = await collectNeighbourActivity(store, 'P0910');
+    expect(out[0]!.sessions[0]!.summary.length).toBeLessThanOrEqual(300);
+    expect(out[0]!.sessions[0]!.summary.endsWith('…')).toBe(true);
   });
 
   it('picks the newest child checkpoint handoff when the summary root has no note', async () => {
-    await substantiveSession('P0910', 'home', '2026-01-01T10:00:00.000Z', 'home');
     await substantiveSession('P0911', 'nb', '2026-02-01T10:00:00.000Z');
     const summaryNode = await findChildByKind(store, 'nb', KIND_SUMMARY_ROOT);
     expect(summaryNode).toBeTruthy();
@@ -207,7 +222,5 @@ describe('newer neighbour handoffs', () => {
 
     const head = await newestSubstantiveSession(store, 'P0911');
     expect(head?.handoffNote).toBe('SECOND note');
-    const blocks = await collectNewerNeighbourHandoffs(store, 'P0910', 200);
-    expect(blocks[0]!.handoffNote).toContain('SECOND note');
   });
 });

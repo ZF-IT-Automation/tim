@@ -58,16 +58,18 @@ export {
   unrelateProjects,
   setProjectDescription,
   findNewestSubstantiveSession,
-  collectNewerNeighbourHandoffs,
+  collectNeighbourActivity,
   type RelatedProjectInfo,
   type SubstantiveSessionHead,
-  type NewerNeighbourHandoff,
-  type CollectNewerNeighbourHandoffsOptions,
+  type NeighbourActivity,
+  type CollectNeighbourActivityOptions,
 } from './related-projects.js';
 export {
   latestCheckpoint,
   newestSubstantiveSession,
+  substantiveSessionsSince,
   type NewestSubstantiveSession,
+  type SubstantiveSessionSummary,
 } from './newest-substantive-session.js';
 export {
   stripHarnessBlocks,

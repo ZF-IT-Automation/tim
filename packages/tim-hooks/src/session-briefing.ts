@@ -13,7 +13,7 @@ import {
   parseSessionSubstance,
   isCountableUserExchange,
   taskLastTouch,
-  collectNewerNeighbourHandoffs,
+  collectNeighbourActivity,
   latestCheckpoint,
   newestSubstantiveSession,
   formatRelatedProjectLine,
@@ -609,21 +609,16 @@ export async function collectDirectiveBriefing(
 
   const neighbours = await listRelatedProjects(store, projectLabel).catch(() => []);
   const relatedProjectLines = neighbours.map(formatRelatedProjectLine);
-  const newerNeighbourHandoffs = includePastWork && neighbours.length > 0
-    ? await collectNewerNeighbourHandoffs(
-      store,
-      projectLabel,
-      Math.floor(maxChars * HANDOFF_NOTE_BUDGET_SHARE),
-      {
-        neighbours,
-        ownHead: previous.ownSubstantiveHead ?? null,
-      },
-    ).catch(() => [])
+  const neighbourActivity = includePastWork && neighbours.length > 0
+    ? await collectNeighbourActivity(store, projectLabel, {
+      neighbours,
+      ownHead: previous.ownSubstantiveHead ?? null,
+    }).catch(() => [])
     : [];
 
   if (!previous.summary && recent.length === 0 && work.length === 0
     && !previous.latestHandoffNote && staleBrief.length === 0
-    && relatedProjectLines.length === 0 && newerNeighbourHandoffs.length === 0) {
+    && relatedProjectLines.length === 0 && neighbourActivity.length === 0) {
     return undefined;
   }
   return {
@@ -636,6 +631,6 @@ export async function collectDirectiveBriefing(
     ...(work.length > 0 ? { openWork: work } : {}),
     ...(staleBrief.length > 0 ? { staleBrief } : {}),
     ...(relatedProjectLines.length > 0 ? { relatedProjectLines } : {}),
-    ...(newerNeighbourHandoffs.length > 0 ? { newerNeighbourHandoffs } : {}),
+    ...(neighbourActivity.length > 0 ? { neighbourActivity } : {}),
   };
 }

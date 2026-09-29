@@ -493,12 +493,16 @@ export interface DirectiveBriefing {
   reapedNotice?: string;
   /** Related project neighbours (label, name, description, load hint). */
   relatedProjectLines?: string[];
-  /** Handoffs from related projects whose newest substantive session beats this project's. */
-  newerNeighbourHandoffs?: Array<{
+  /**
+   * Related-project session summaries newer than this project's newest
+   * substantive session. Context only — never neighbour handoff notes.
+   */
+  neighbourActivity?: Array<{
     label: string;
     displayName: string;
-    date: string;
-    handoffNote: string;
+    sessions: Array<{ date: string; summary: string }>;
+    more: number;
+    unsummarized: number;
   }>;
 }
 
@@ -547,14 +551,21 @@ function briefingBlock(briefing?: DirectiveBriefing): string[] {
     out.push('', '── Related projects ──', ...related);
   }
 
-  for (const n of briefing.newerNeighbourHandoffs ?? []) {
-    const note = n.handoffNote.trim();
+  const activity = briefing.neighbourActivity ?? [];
+  if (activity.length > 0) {
     out.push(
       '',
-      `── Related project ${n.label} — ${n.displayName} (${n.date}) ──`,
-      note || '(no handoff note)',
-      'Detail on a topic: /tim-resume-topic <subject>',
+      '## Meanwhile in related projects',
+      "context only — your next step is this project's handoff above",
     );
+    for (const n of activity) {
+      out.push('', `${n.label} — ${n.displayName}`);
+      for (const s of n.sessions) out.push(`- ${s.date} · ${s.summary}`);
+      if (n.more > 0) out.push(`- +${n.more} more — /tim-resume-topic <topic>`);
+      if (n.unsummarized > 0) {
+        out.push(`- ${n.unsummarized} session${n.unsummarized === 1 ? '' : 's'}, not yet summarized`);
+      }
+    }
   }
 
   return out;

@@ -17,8 +17,10 @@ in this directory.
 2. **Render:** Call `tim_preview_briefing` with that `project`.
 3. **Use the `── directive ──` block as context.** It carries the previous
    session's summary, its handoff note, and the not-yet-summarized raw turns.
-   When a related project's newest substantive session is newer than this one's,
-   a short neighbour handoff block appears — use `tim_resume_topic` for detail.
+   Related projects that worked since this project's last session appear under
+   `## Meanwhile in related projects`: their session summaries, never their
+   handoff notes. That is background only — this project's handoff stays the
+   one next step. Use `tim_resume_topic` for detail.
    - Do NOT paraphrase it back in full.
    - Confirm in one or two lines: where things stand and the next step.
 4. **Continue the work.**
@@ -33,7 +35,7 @@ in this directory.
 - No topic argument and no session picker: this is the newest *substantive*
   session (≥ 3 turns, a handoff note, or judged real by the summarizer — worker
   and automation sessions never count), plus the newest handoff note from another
-  session when it belongs elsewhere. For anything older or subject-specific, use
+  session of this project when it belongs elsewhere. For anything older or subject-specific, use
   `/tim-resume-topic`.
 - If the previous session left no handoff note, say so plainly rather than
   presenting its summary as a plan.

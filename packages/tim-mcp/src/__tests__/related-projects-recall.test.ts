@@ -154,7 +154,7 @@ describe('related project briefing surfaces', () => {
     expect(preview.directive).toContain('Sidecar');
   });
 
-  it('continue shows neighbour handoff only when neighbour is newer', async () => {
+  it('continue shows newer neighbour summaries under Meanwhile, never their handoff', async () => {
     const sessions = new SessionManager(store);
     async function substantive(projectId: string, sessionId: string, date: string, note: string) {
       await sessions.startProjectSession({
@@ -179,15 +179,16 @@ describe('related project briefing surfaces', () => {
     }
     await substantive('P0930', 'anchor', '2026-01-01T10:00:00.000Z', 'anchor handoff');
     await substantive('P0931', 'side', '2026-02-01T10:00:00.000Z', 'newer neighbour handoff');
+    await sessions.updateSessionSummary('side', 'neighbour shipped the widget');
 
     const preview = await previewSessionStart(store, {
       projectId: 'P0930',
       maxTokens: 8000,
       cwd: '/tmp',
     });
-    expect(preview.directive).toContain('newer neighbour handoff');
-    expect(preview.directive).toContain('P0931');
-    expect(preview.directive).toContain('/tim-resume-topic <subject>');
+    expect(preview.directive).toContain('## Meanwhile in related projects');
+    expect(preview.directive).toContain('neighbour shipped the widget');
+    expect(preview.directive).not.toContain('newer neighbour handoff');
   });
 
   it('continue preview omits neighbour handoff when neighbour is older', async () => {
@@ -222,7 +223,7 @@ describe('related project briefing surfaces', () => {
       cwd: '/tmp',
     });
     expect(preview.directive).not.toContain('stale neighbour');
-    expect(preview.directive).not.toContain('── Related project P0931');
+    expect(preview.directive).not.toContain('## Meanwhile in related projects');
   });
 
   it('hides archived neighbours in load-project briefing', async () => {
