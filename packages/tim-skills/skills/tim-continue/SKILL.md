@@ -1,41 +1,37 @@
 ---
 name: tim-continue
-description: Render the previous session's briefing on demand — its summary, its handoff note, and the turns no summary covers yet. Use when the user says /tim-continue, "weitermachen wo wir waren", "what were we working on", "pick up where we left off", or asks for the last session's state without naming a topic.
+description: Brief the human on where this project's work stands — the previous session's summary, handoff note and not-yet-summarized turns — then wait for direction. Use when the user says /tim-continue, "weitermachen wo wir waren", "what were we working on", "pick up where we left off", or asks for the last session's state without naming a topic.
 ---
 
 # TIM Continue
 
-The briefing that used to arrive automatically at session start, now asked for
-deliberately. Same text, same source — the difference is that it appears when
-the work actually continues, instead of in every session that happens to start
-in this directory.
+Loads the previous session's state and hands it to the human. What happens
+next is their call.
 
 ## Steps
 
-1. **Get the project label.** The bound project, from the session-start
-   directive or `tim_load_project`. If none is bound, bind first.
-2. **Render:** Call `tim_preview_briefing` with that `project`.
-3. **Use the `── directive ──` block as context.** It carries the previous
-   session's summary, its handoff note, and the not-yet-summarized raw turns.
-   Related projects that worked since this project's last session appear under
-   `## Meanwhile in related projects`: their session summaries, never their
-   handoff notes. That is background only — this project's handoff stays the
-   one next step. Use `tim_resume_topic` for detail.
-   - Do NOT paraphrase it back in full.
-   - Confirm in one or two lines: where things stand and the next step.
-4. **Continue the work.**
+1. **Bind.** Use the bound project label, from the session-start directive or
+   `tim_load_project`. If none is bound, bind first.
+2. **Render.** Call `tim_preview_briefing` with that `project`. It is a pure
+   read: the running session keeps its identity and keeps logging to itself.
+3. **Brief the human** from the `── directive ──` block, short and structured:
+   - where the work stands (2–4 bullets)
+   - the handoff note's next step, or plainly "no handoff note" when there is
+     none
+   - what is still open
+   - when `## Meanwhile in related projects` is present: one line on what the
+     neighbours did. It is background; this project's handoff stays the only
+     next step.
+4. **Ask how to proceed, then end the turn.** Ask in plain text. The handoff
+   note is a proposal until the human confirms it, so the turn ends at the
+   question — before any file read, edit, test or tool call.
 
-## Rules
+## Reference
 
-- `tim_preview_briefing` is a pure read: no session, no marker, no hooks. The
-  current session keeps its own identity and its exchanges keep appending to it.
-- Do **not** merge the running session onto an older session node. That is a
-  session merge, not a briefing, and it fails once this session has logged an
-  exchange.
-- No topic argument and no session picker: this is the newest *substantive*
-  session (≥ 3 turns, a handoff note, or judged real by the summarizer — worker
-  and automation sessions never count), plus the newest handoff note from another
-  session of this project when it belongs elsewhere. For anything older or subject-specific, use
-  `/tim-resume-topic`.
-- If the previous session left no handoff note, say so plainly rather than
-  presenting its summary as a plan.
+- **Which session:** the newest *substantive* one (≥ 3 turns, a handoff note,
+  or judged real by the summarizer; worker and automation sessions never
+  count), plus this project's newest handoff note from another session when it
+  sits elsewhere. Older or subject-specific work → `/tim-resume-topic`.
+- **Briefing, not merge:** the running session stays its own node. Merging it
+  onto the old session node is a different operation, and it fails once this
+  session has logged an exchange.
