@@ -17,6 +17,8 @@ in this directory.
 2. **Render:** Call `tim_preview_briefing` with that `project`.
 3. **Use the `── directive ──` block as context.** It carries the previous
    session's summary, its handoff note, and the not-yet-summarized raw turns.
+   When a related project's newest substantive session is newer than this one's,
+   a short neighbour handoff block appears — use `tim_resume_topic` for detail.
    - Do NOT paraphrase it back in full.
    - Confirm in one or two lines: where things stand and the next step.
 4. **Continue the work.**

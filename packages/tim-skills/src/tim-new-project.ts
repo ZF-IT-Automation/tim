@@ -13,7 +13,8 @@ For a disk-backed repository or workspace:
    Example: \`TIM_DB_PATH='/srv/Agent DB'"'"'s/tim.db' tim new-project --path
    '/absolute/repository' --name 'Project name'\`. The CLI owns label allocation/retry,
    creation, marker publication, and sections.
-4. Call \`tim_load_project\`, then fill the appropriate seeded sections with TIM tools.
+4. Set a stable description: \`tim project describe <label> "1–3 sentences: what this project IS."\`
+5. Call \`tim_load_project\`, then fill the appropriate seeded sections with TIM tools.
 
 If \`tim_doctor\` cannot provide a persistent database path, do not guess. Ask the user.
 

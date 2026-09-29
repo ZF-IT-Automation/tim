@@ -9,7 +9,7 @@ description: TIM session lifecycle — start, bind project, log exchanges.
 1. **Start** — the host hook does this. From a shell: `tim hook session-start --session <id> [--project <label>] [--cwd <path>] [--harness <name>]`.
    It returns the session node and binds the project when `--project` or a cwd `.tim-project` is present.
 2. **Load brief** — `tim_load_project({ label: "P0063", bind: true, sessionId })`
-   Loading another project re-binds the session there (follow the work); an unbound session binds on its first `tim_write`. Cross-project read without re-binding → `bind: false`.
+   Loading another project re-binds the session there (follow the work); an unbound session binds on its first `tim_write`. Cross-project read without re-binding → `bind: false`. Related neighbours appear as one line each in the brief and in the start directive.
 3. **End** — the harness session-end hook checkpoints automatically. To leave a note yourself, use
    the CLI: `tim checkpoint --session <sessionId> --handoff-note "…"`.
 
