@@ -85,10 +85,7 @@ import { promptSubmitEnvelope, sessionStartEnvelope, readJsonStdin } from './cla
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-
-function getDbPath(config: TimConfigFile): string {
-  return process.env.TIM_DB_PATH || config.dbPath || path.join(os.homedir(), '.tim', 'tim.db');
-}
+import { getDbPath } from './db-path.js';
 
 function defaultLiveDbPath(): string {
   return path.resolve(path.join(os.homedir(), '.tim', 'tim.db'));

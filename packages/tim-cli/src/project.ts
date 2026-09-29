@@ -1,6 +1,3 @@
-import * as os from 'os';
-import * as path from 'path';
-import { loadConfig } from 'tim-core';
 import {
   TimStore,
   listRelatedProjects,
@@ -9,12 +6,7 @@ import {
   setProjectDescription,
   formatRelatedProjectLine,
 } from 'tim-store';
-
-function resolveDbPath(): string {
-  if (process.env.TIM_DB_PATH) return process.env.TIM_DB_PATH;
-  const config = loadConfig();
-  return config.dbPath || path.join(os.homedir(), '.tim', 'tim.db');
-}
+import { getDbPath } from './db-path.js';
 
 function usage(): void {
   console.error(
@@ -35,7 +27,7 @@ export async function cmdProject(args: string[]): Promise<void> {
     return;
   }
 
-  const store = new TimStore(resolveDbPath());
+  const store = new TimStore(getDbPath());
   try {
     switch (sub) {
       case 'relate': {

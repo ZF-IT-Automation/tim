@@ -29,4 +29,39 @@ describe('tim project CLI', () => {
     store.close();
     expect(neighbours.map(n => n.label)).toEqual(['P0941']);
   });
+
+  it('unrelate, related empty message, describe, and relate no-ops', async () => {
+    const { spawnSync } = await import('node:child_process');
+    const run = (args: string[]) =>
+      spawnSync(process.execPath, [path.resolve(__dirname, '../../dist/cli.js'), 'project', ...args], {
+        encoding: 'utf8',
+        env: { ...process.env, TIM_DB_PATH: dbPath },
+      });
+
+    let out = run(['relate', 'P0940', 'P0940']);
+    expect(out.status).toBe(0);
+    expect(out.stdout).toContain('same project');
+
+    out = run(['relate', 'P0940', 'P0941']);
+    expect(out.stdout).toContain('Related');
+
+    out = run(['relate', 'P0941', 'P0940']);
+    expect(out.stdout).toContain('Already related');
+
+    out = run(['related', 'P0940']);
+    expect(out.stdout).toContain('P0941');
+
+    out = run(['describe', 'P0940', 'Alpha tooling']);
+    expect(out.status).toBe(0);
+    expect(out.stdout).toContain('Description set');
+
+    out = run(['unrelate', 'P0940', 'P0941']);
+    expect(out.stdout).toContain('Unrelated');
+
+    out = run(['related', 'P0940']);
+    expect(out.stdout).toContain('No related projects');
+
+    out = run(['unrelate', 'P0940', 'P0941']);
+    expect(out.stdout).toContain('No related edge');
+  });
 });

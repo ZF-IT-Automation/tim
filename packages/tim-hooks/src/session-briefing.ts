@@ -14,6 +14,8 @@ import {
   isCountableUserExchange,
   taskLastTouch,
   collectNewerNeighbourHandoffs,
+  latestCheckpoint,
+  newestSubstantiveSession,
   formatRelatedProjectLine,
   listRelatedProjects,
   type TimStore,
@@ -162,35 +164,6 @@ function oneLine(text: string, maxChars: number): string {
  * so any future writer is picked up; the text's is `kind` because only a checkpoint
  * body is a session summary.
  */
-async function latestCheckpoint(
-  store: TimStore,
-  summaryNode: Entry,
-): Promise<{ note: string; text: string }> {
-  const rootNote = typeof summaryNode.metadata.handoff_note === 'string'
-    ? summaryNode.metadata.handoff_note.trim()
-    : '';
-  const children = await store.getChildren(summaryNode.id);
-  let note = rootNote;
-  let text = '';
-  let newestChildNoteAt = '';
-  for (const child of children) {
-    const childNote = typeof child.metadata.handoff_note === 'string'
-      ? child.metadata.handoff_note.trim()
-      : '';
-    if (!rootNote && childNote) {
-      const at = child.updatedAt || child.createdAt;
-      if (!note || at.localeCompare(newestChildNoteAt) >= 0) {
-        note = childNote;
-        newestChildNoteAt = at;
-      }
-    }
-    if (child.metadata.kind === 'checkpoint' && child.content.trim()) {
-      text = child.content.trim();
-    }
-  }
-  return { note, text };
-}
-
 /** Title and body of an exchange node, the way the summarizer reads it. */
 function entryText(entry: Entry): string {
   const title = entry.title.trim();
@@ -333,6 +306,11 @@ interface PreviousSessionResult {
   sessionId?: string;
   latestHandoffLabel?: string;
   latestHandoffNote?: string;
+  ownSubstantiveHead?: {
+    sessionId: string;
+    date: string;
+    lastActivity: string;
+  };
 }
 
 /** Newest substantive session; non-substantive sessions are not candidates. */
@@ -342,10 +320,6 @@ async function previousSession(
   maxChars: number,
   rawMaxChars: number,
 ): Promise<PreviousSessionResult> {
-  const sessions = new SessionManager(store);
-  // Scan past bursts of short automation sessions: a fixed window of 50 was filled
-  // entirely by summarizer/automation sessions on a live DB and hid everything.
-  const listed = await sessions.listResumableSessions(projectLabel, 1000);
   const projectHandoff = await findLatestProjectHandoff(store, projectLabel);
   const handoffOnly = (excludeSessionId?: string): PreviousSessionResult =>
     projectHandoff && projectHandoff.sessionId !== excludeSessionId
@@ -357,32 +331,27 @@ async function previousSession(
           ),
         }
       : {};
-  if (listed.length === 0) return handoffOnly();
 
-  let chosen: (typeof listed)[number] | undefined;
-  for (const candidate of listed) {
-    const summaryNode = await findChildByKind(store, candidate.sessionId, KIND_SUMMARY_ROOT);
-    const note = await sessionHandoffNote(store, candidate.sessionId);
-    const substance = parseSessionSubstance(summaryNode?.metadata.substance);
-    if (isSubstantiveSession(candidate.exchangeCount, Boolean(note), substance)) {
-      chosen = candidate;
-      break;
-    }
-  }
-  if (!chosen) return handoffOnly();
+  const found = await newestSubstantiveSession(store, projectLabel);
+  if (!found) return handoffOnly();
 
-  const content = await sessionBriefingContent(store, chosen.sessionId, maxChars, rawMaxChars);
+  const content = await sessionBriefingContent(store, found.sessionId, maxChars, rawMaxChars);
   if (!content.summary && !content.recent?.length) return handoffOnly();
 
-  const date = (chosen.date ?? chosen.lastActivity).slice(0, 10);
-  const bits = [date, `${chosen.exchangeCount} exchanges`];
-  if (chosen.tool) bits.push(chosen.tool);
+  const date = found.date.slice(0, 10);
+  const bits = [date, `${found.exchangeCount} exchanges`];
+  if (found.tool) bits.push(found.tool);
 
   return {
-    sessionId: chosen.sessionId,
+    sessionId: found.sessionId,
+    ownSubstantiveHead: {
+      sessionId: found.sessionId,
+      date: found.date,
+      lastActivity: found.lastActivity,
+    },
     label: bits.join(' · '),
     ...content,
-    ...handoffOnly(chosen.sessionId),
+    ...handoffOnly(found.sessionId),
   };
 }
 
@@ -640,11 +609,15 @@ export async function collectDirectiveBriefing(
 
   const neighbours = await listRelatedProjects(store, projectLabel).catch(() => []);
   const relatedProjectLines = neighbours.map(formatRelatedProjectLine);
-  const newerNeighbourHandoffs = includePastWork
+  const newerNeighbourHandoffs = includePastWork && neighbours.length > 0
     ? await collectNewerNeighbourHandoffs(
       store,
       projectLabel,
       Math.floor(maxChars * HANDOFF_NOTE_BUDGET_SHARE),
+      {
+        neighbours,
+        ownHead: previous.ownSubstantiveHead ?? null,
+      },
     ).catch(() => [])
     : [];
 

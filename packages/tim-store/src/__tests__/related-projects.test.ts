@@ -9,6 +9,10 @@ import {
   formatRelatedProjectLine,
   findNewestSubstantiveSession,
   collectNewerNeighbourHandoffs,
+  newestSubstantiveSession,
+  RELATED_EDGE_TYPE,
+  findChildByKind,
+  KIND_SUMMARY_ROOT,
 } from '../index.js';
 
 describe('related projects', () => {
@@ -40,6 +44,17 @@ describe('related projects', () => {
   it('unrelate removes edge regardless of direction', async () => {
     await relateProjects(store, 'P0900', 'P0901');
     expect(await unrelateProjects(store, 'P0901', 'P0900')).toBe(true);
+    expect(await listRelatedProjects(store, 'P0900')).toEqual([]);
+  });
+
+  it('unrelate removes both directed related edges between a pair', async () => {
+    const a = await store.requireProject('P0900');
+    const b = await store.requireProject('P0901');
+    await store.link(a.id, b.id, RELATED_EDGE_TYPE);
+    await store.link(b.id, a.id, RELATED_EDGE_TYPE);
+    expect(await unrelateProjects(store, 'P0900', 'P0901')).toBe(true);
+    const edges = await store.getEdges(a.id, 'both');
+    expect(edges.filter(e => e.type === RELATED_EDGE_TYPE)).toHaveLength(0);
     expect(await listRelatedProjects(store, 'P0900')).toEqual([]);
   });
 
@@ -121,5 +136,78 @@ describe('newer neighbour handoffs', () => {
 
     const blocks = await collectNewerNeighbourHandoffs(store, 'P0910', 200);
     expect(blocks).toEqual([]);
+  });
+
+  it('returns no handoffs without listing neighbours when the project has none', async () => {
+    await store.createProject('P0912', { content: 'Solo' });
+    await substantiveSession('P0912', 'solo', '2026-04-01T10:00:00.000Z', 'solo note');
+    const blocks = await collectNewerNeighbourHandoffs(store, 'P0912', 200);
+    expect(blocks).toEqual([]);
+  });
+
+  it('ignores a newer non-substantive neighbour session for the comparison', async () => {
+    await substantiveSession('P0910', 'home', '2026-01-01T10:00:00.000Z', 'home note');
+    await sessions.startProjectSession({
+      sessionId: 'nb-auto',
+      projectId: 'P0911',
+      agentName: 'test',
+      cwd: '/tmp',
+      harness: 'test',
+      batchSize: 2,
+    });
+    await store.update('nb-auto', { metadata: { date: '2026-06-01T10:00:00.000Z' } });
+    await sessions.logExchange('nb-auto', [
+      { role: 'user', content: 'ping' },
+      { role: 'agent', content: 'pong' },
+    ]);
+    const summaryNode = await findChildByKind(store, 'nb-auto', KIND_SUMMARY_ROOT);
+    if (summaryNode) {
+      await store.update(summaryNode.id, { metadata: { substance: 'none' } });
+    }
+    const blocks = await collectNewerNeighbourHandoffs(store, 'P0910', 200);
+    expect(blocks).toEqual([]);
+  });
+
+  it('orders neighbour handoffs by neighbour last activity', async () => {
+    await store.createProject('P0913', { content: 'Third neighbour' });
+    await relateProjects(store, 'P0910', 'P0913');
+    await substantiveSession('P0910', 'home', '2026-01-01T10:00:00.000Z', 'home');
+    await substantiveSession('P0911', 'nb-mid', '2026-02-15T10:00:00.000Z', 'mid neighbour');
+    await substantiveSession('P0913', 'nb-new', '2026-03-20T10:00:00.000Z', 'newest neighbour');
+
+    const blocks = await collectNewerNeighbourHandoffs(store, 'P0910', 200);
+    expect(blocks.map(b => b.label)).toEqual(['P0913', 'P0911']);
+  });
+
+  it('truncates neighbour handoff notes to maxNoteChars', async () => {
+    const long = 'x'.repeat(80);
+    await substantiveSession('P0910', 'home', '2026-01-01T10:00:00.000Z', 'home');
+    await substantiveSession('P0911', 'nb', '2026-02-01T10:00:00.000Z', long);
+    const blocks = await collectNewerNeighbourHandoffs(store, 'P0910', 20);
+    expect(blocks[0]!.handoffNote.length).toBeLessThanOrEqual(20);
+    expect(blocks[0]!.handoffNote.endsWith('…')).toBe(true);
+  });
+
+  it('picks the newest child checkpoint handoff when the summary root has no note', async () => {
+    await substantiveSession('P0910', 'home', '2026-01-01T10:00:00.000Z', 'home');
+    await substantiveSession('P0911', 'nb', '2026-02-01T10:00:00.000Z');
+    const summaryNode = await findChildByKind(store, 'nb', KIND_SUMMARY_ROOT);
+    expect(summaryNode).toBeTruthy();
+    await store.update(summaryNode!.id, { metadata: { handoff_note: undefined } });
+    const older = await store.write('older cp', {
+      parentId: summaryNode!.id,
+      metadata: { kind: 'checkpoint', handoff_note: 'FIRST note' },
+    });
+    const newer = await store.write('newer cp', {
+      parentId: summaryNode!.id,
+      metadata: { kind: 'checkpoint', handoff_note: 'SECOND note' },
+    });
+    await store.update(older.id, { updatedAt: '2026-01-01T10:00:00.000Z' });
+    await store.update(newer.id, { updatedAt: '2026-02-01T10:00:00.000Z' });
+
+    const head = await newestSubstantiveSession(store, 'P0911');
+    expect(head?.handoffNote).toBe('SECOND note');
+    const blocks = await collectNewerNeighbourHandoffs(store, 'P0910', 200);
+    expect(blocks[0]!.handoffNote).toContain('SECOND note');
   });
 });
