@@ -300,16 +300,36 @@ export function acquireLock(cwd: string): boolean {
     fs.writeFileSync(lock, JSON.stringify({ pid: process.pid, ts: Date.now() }), { flag: 'wx' });
     return true;
   } catch {
-    try {
-      const raw = JSON.parse(fs.readFileSync(lock, 'utf8')) as { ts: number };
-      if (Date.now() - raw.ts > LOCK_TTL_MS) {
+    const age = lockAgeMs(lock);
+    if (age !== null && age > LOCK_TTL_MS) {
+      try {
         fs.writeFileSync(lock, JSON.stringify({ pid: process.pid, ts: Date.now() }));
         return true;
+      } catch {
+        /* fall through: held */
       }
-    } catch {
-      /* unreadable lock → treat as held */
     }
     return false;
+  }
+}
+
+/**
+ * Age of a lock from its `ts`, or from the file's mtime when the body is
+ * unreadable. An empty lock (a writer killed between create and write) was
+ * once treated as held forever: ~/projects/tim carried one from 2026-09-21 to
+ * 09-29 and no batch summary was spawned there in all that time.
+ */
+function lockAgeMs(lock: string): number | null {
+  try {
+    const raw = JSON.parse(fs.readFileSync(lock, 'utf8')) as { ts: number };
+    if (typeof raw.ts === 'number') return Date.now() - raw.ts;
+  } catch {
+    /* unreadable body → mtime below */
+  }
+  try {
+    return Date.now() - fs.statSync(lock).mtimeMs;
+  } catch {
+    return null;
   }
 }
 
@@ -317,12 +337,8 @@ export function acquireLock(cwd: string): boolean {
 export function isSessionLocked(cwd: string): boolean {
   const lock = summarizerLockPath(cwd);
   if (!fs.existsSync(lock)) return false;
-  try {
-    const raw = JSON.parse(fs.readFileSync(lock, 'utf8')) as { ts: number };
-    return Date.now() - raw.ts <= LOCK_TTL_MS;
-  } catch {
-    return true;
-  }
+  const age = lockAgeMs(lock);
+  return age === null || age <= LOCK_TTL_MS;
 }
 
 export function releaseLock(cwd: string): void {
