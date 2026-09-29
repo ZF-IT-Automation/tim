@@ -5,88 +5,111 @@ import {
   unrelateProjects,
   setProjectDescription,
   formatRelatedProjectLine,
+  projectDisplayNameFromEntry,
 } from 'tim-store';
+import { findMarker, findMarkerOptionsFromEnv } from 'tim-hooks';
 import { getDbPath } from './db-path.js';
 
-function usage(): void {
-  console.error(
-    'Usage: tim project <relate|unrelate|related|describe> ...\n' +
-      '  tim project relate <A> <B>\n' +
-      '  tim project unrelate <A> <B>\n' +
-      '  tim project related <A>\n' +
-      '  tim project describe <P> "<text>"',
-  );
+const USAGE =
+  'Usage: tim project <relate|unrelate|related|describe> ...\n' +
+  '  tim project relate [<A>] <B>        link two projects (A defaults to this directory\'s project)\n' +
+  '  tim project unrelate [<A>] <B>\n' +
+  '  tim project related [<A>]\n' +
+  '  tim project describe [<P>] "<text>"  1–3 sentences: what the project IS\n' +
+  'A project is a label (P0054), an alias or a name ("MAIMO", "game harness").';
+
+class ProjectArgError extends Error {}
+
+/** Label + readable name for any query the user could have typed. */
+async function resolve(store: TimStore, query: string): Promise<{ label: string; name: string }> {
+  const r = await store.resolveProjectLabel(query);
+  if (r.status === 'found') {
+    const entry = await store.requireProject(r.label);
+    return { label: r.label, name: projectDisplayNameFromEntry(entry) };
+  }
+  const all = await store.listProjects();
+  const named = (labels: string[]) => labels
+    .map(l => `  ${l} ${all.find(p => p.label === l)?.title.split('|')[0]!.trim() ?? ''}`)
+    .join('\n');
+  if (r.status === 'ambiguous') {
+    throw new ProjectArgError(`"${query}" matches several projects — pass the label:\n${named(r.labels)}`);
+  }
+  throw new ProjectArgError(`No project matches "${query}". Known projects:\n${named(all.map(p => p.label).sort())}`);
 }
 
-export async function cmdProject(args: string[]): Promise<void> {
-  const sub = args[0];
-  const rest = args.slice(1);
+/** The project this directory is bound to (.tim-project), for the omitted first argument. */
+function currentProject(): string {
+  const found = findMarker(process.cwd(), { ...(findMarkerOptionsFromEnv() ?? {}), walkUp: true });
+  if (!found) {
+    throw new ProjectArgError('No project given and this directory has no .tim-project marker — name the project.');
+  }
+  return found.marker.project;
+}
 
+const show = (p: { label: string; name: string }) => `${p.label} ${p.name}`;
+
+export async function cmdProject(args: string[]): Promise<void> {
+  const [sub, ...rest] = args;
   if (!sub || sub === 'help' || sub === '--help') {
-    usage();
+    console.error(USAGE);
     return;
   }
 
   const store = new TimStore(getDbPath());
   try {
     switch (sub) {
-      case 'relate': {
-        const [a, b] = rest;
-        if (!a || !b) {
-          usage();
-          process.exit(1);
-        }
-        const result = await relateProjects(store, a, b);
-        if (result === 'noop-self') {
-          console.log(`No change: ${a} and ${b} are the same project`);
-        } else if (result === 'noop-exists') {
-          console.log(`Already related: ${a} ↔ ${b}`);
-        } else {
-          console.log(`Related ${a} ↔ ${b}`);
-        }
-        break;
-      }
+      case 'relate':
       case 'unrelate': {
-        const [a, b] = rest;
-        if (!a || !b) {
-          usage();
-          process.exit(1);
+        if (rest.length < 1 || rest.length > 2) throw new ProjectArgError(USAGE);
+        const [qa, qb] = rest.length === 2 ? rest : [currentProject(), rest[0]!];
+        const a = await resolve(store, qa!);
+        const b = await resolve(store, qb!);
+        if (sub === 'relate') {
+          const result = await relateProjects(store, a.label, b.label);
+          console.log(
+            result === 'noop-self' ? `No change: ${show(a)} is the same project on both sides`
+              : result === 'noop-exists' ? `Already related: ${show(a)} ↔ ${show(b)}`
+                : `Related ${show(a)} ↔ ${show(b)}`,
+          );
+        } else {
+          const removed = await unrelateProjects(store, a.label, b.label);
+          console.log(removed
+            ? `Unrelated ${show(a)} ↔ ${show(b)}`
+            : `No related edge between ${show(a)} and ${show(b)}`);
         }
-        const removed = await unrelateProjects(store, a, b);
-        console.log(removed ? `Unrelated ${a} ↔ ${b}` : `No related edge between ${a} and ${b}`);
         break;
       }
       case 'related': {
-        const [a] = rest;
-        if (!a) {
-          usage();
-          process.exit(1);
-        }
-        const neighbours = await listRelatedProjects(store, a);
-        if (neighbours.length === 0) {
-          console.log(`No related projects for ${a}`);
-        } else {
-          for (const n of neighbours) {
-            console.log(formatRelatedProjectLine(n));
-          }
-        }
+        const a = await resolve(store, rest[0] ?? currentProject());
+        const neighbours = await listRelatedProjects(store, a.label);
+        if (neighbours.length === 0) console.log(`No related projects for ${show(a)}`);
+        for (const n of neighbours) console.log(formatRelatedProjectLine(n));
         break;
       }
       case 'describe': {
-        const label = rest[0];
-        const text = rest.slice(1).join(' ').trim();
-        if (!label || !text) {
-          usage();
-          process.exit(1);
+        if (rest.length === 0) throw new ProjectArgError(USAGE);
+        // Two or more args: the first is the project when it names one;
+        // otherwise everything is the text for this directory's project.
+        let target: { label: string; name: string } | null = null;
+        let words = rest;
+        if (rest.length >= 2) {
+          target = await resolve(store, rest[0]!).catch(() => null);
+          if (target) words = rest.slice(1);
         }
-        await setProjectDescription(store, label, text);
-        console.log(`Description set for ${label}`);
+        target ??= await resolve(store, currentProject());
+        const text = words.join(' ').trim();
+        if (!text) throw new ProjectArgError(USAGE);
+        await setProjectDescription(store, target.label, text);
+        console.log(`Description set for ${show(target)}`);
         break;
       }
       default:
-        usage();
-        process.exit(1);
+        throw new ProjectArgError(USAGE);
     }
+  } catch (err) {
+    if (!(err instanceof ProjectArgError)) throw err;
+    console.error(err.message);
+    process.exitCode = 1;
   } finally {
     store.close();
   }
