@@ -78,6 +78,7 @@ import { runReleaseCheck } from './release-check.js';
 import { cmdMigrateFromHmem } from './migrate-from-hmem.js';
 import { cmdSetupAgent } from './setup-agent.js';
 import { cmdViewer } from './viewer.js';
+import { cmdOpenWork } from './open-work.js';
 import { NEW_PROJECT_ALIASES, MissingOptionValueError, hasBooleanFlag, parseArgs, valueOptionsFor } from './args.js';
 import { promptSubmitEnvelope, sessionStartEnvelope, readJsonStdin } from './claude-hook-io.js';
 import * as fs from 'fs';
@@ -218,6 +219,7 @@ const COMMAND_HELP: Record<string, string> = {
   'secret status': 'Usage: tim secret status <id>',
   'secret list': 'Usage: tim secret list',
   'secret unlock': 'Usage: tim secret unlock [--secret-passphrase <text>] --salt <sync-salt>',
+  'open-work': 'Usage: tim open-work',
   viewer:
     'Usage: tim viewer [--port <number>] [--host 127.0.0.1] [--db <path>] [--show-secrets]',
   sessions: 'Usage: tim sessions reap [--dry-run] [--project <P00XX>] [--ids <file>]',
@@ -295,6 +297,7 @@ Commands:
   secret                   Manage secret entry metadata
   viewer                   Browse the entry tree in a local read-only web UI
   sessions reap            Reap empty session skeletons
+  open-work                List every project's open tasks, bugs and ideas as JSON
   --help                   Show this help`);
 }
 
@@ -1534,6 +1537,9 @@ async function main() {
       break;
     case 'secret':
       await cmdSecret(rest);
+      break;
+    case 'open-work':
+      await cmdOpenWork(rest);
       break;
     case 'viewer':
       await cmdViewer(rest);

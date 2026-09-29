@@ -4,6 +4,10 @@ All notable changes to TIM are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **`tim open-work`** — prints every project's open tasks, bugs and ideas as one JSON document: the read surface for outside tools (the team-up dashboard's TIM panel) so they never open the TIM database themselves. Open means a task that is not done/cancelled/closed/wontfix, a bug that is not closed, and an idea that is neither rejected nor already promoted to a task. Secret entries are left out.
+
 ### Removed
 
 - Removed the vector index (FTS only); see docs/research/2026-09-multilingual-embeddings.md
