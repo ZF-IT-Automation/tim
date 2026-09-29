@@ -4,6 +4,8 @@ import {
   relateProjects,
   unrelateProjects,
   setProjectDescription,
+  getProjectInterfaces,
+  setProjectInterfaces,
   formatRelatedProjectLine,
   projectDisplayNameFromEntry,
 } from 'tim-store';
@@ -11,11 +13,12 @@ import { findMarker, findMarkerOptionsFromEnv } from 'tim-hooks';
 import { getDbPath } from './db-path.js';
 
 const USAGE =
-  'Usage: tim project <relate|unrelate|related|describe> ...\n' +
+  'Usage: tim project <relate|unrelate|related|describe|interfaces> ...\n' +
   '  tim project relate [<A>] <B>        link two projects (A defaults to this directory\'s project)\n' +
   '  tim project unrelate [<A>] <B>\n' +
   '  tim project related [<A>]\n' +
   '  tim project describe [<P>] "<text>"  1–3 sentences: what the project IS\n' +
+  '  tim project interfaces [<P>] [--set "<text>"]  what the project exposes (CLI, MCP, files, env, APIs)\n' +
   'A project is a label (P0054), an alias or a name ("MAIMO", "game harness").';
 
 class ProjectArgError extends Error {}
@@ -101,6 +104,26 @@ export async function cmdProject(args: string[]): Promise<void> {
         if (!text) throw new ProjectArgError(USAGE);
         await setProjectDescription(store, target.label, text);
         console.log(`Description set for ${show(target)}`);
+        break;
+      }
+      case 'interfaces': {
+        const setAt = rest.indexOf('--set');
+        const head = setAt === -1 ? rest : rest.slice(0, setAt);
+        if (head.length > 1) throw new ProjectArgError(USAGE);
+        const target = await resolve(store, head[0] ?? currentProject());
+        if (setAt === -1) {
+          const entry = await getProjectInterfaces(store, target.label);
+          if (!entry) {
+            console.log(`No interfaces recorded for ${show(target)} — tim project interfaces ${target.label} --set "<text>"`);
+          } else {
+            console.log(`${entry.id} · ${show(target)}\n${entry.content}`);
+          }
+          break;
+        }
+        const text = rest.slice(setAt + 1).join(' ').trim();
+        if (!text) throw new ProjectArgError(USAGE);
+        const entry = await setProjectInterfaces(store, target.label, text);
+        console.log(`Interfaces set for ${show(target)}: ${entry.id}`);
         break;
       }
       default:

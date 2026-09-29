@@ -959,7 +959,7 @@ function formatProjectOutputWithTokenBudget(
 
   if (projectSummary) {
     const summaryBody = options.tokenBudget != null
-      ? clampSummaryHead(projectSummary, 2000)
+      ? clampSummaryHead(projectSummary, 800)
       : projectSummary;
     blocks.push({
       id: 'project-summary',
