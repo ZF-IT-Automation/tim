@@ -17,7 +17,13 @@
 import type { Entry } from 'tim-core';
 import { askJev, jevNoul, resolveEntrySearchStatus, resolveJevApiKey, truncateSummary } from 'tim-core';
 import type { TimStore } from 'tim-store';
-import { KIND_BATCH, KIND_SESSION, KIND_SUMMARY_ROOT } from 'tim-store';
+import {
+  KIND_BATCH,
+  KIND_SESSION,
+  KIND_SUMMARY_ROOT,
+  listRelatedProjects,
+  projectDisplayNameFromEntry,
+} from 'tim-store';
 import { recentExchanges } from 'tim-hooks';
 
 /** How much raw tail to render. Same order of magnitude as the old briefing's. */
@@ -44,9 +50,17 @@ const DEFAULT_SESSION_LIMIT = 10;
  * superseded, while the two superseded ones were rendered above it with equal
  * authority.
  */
+export interface TopicWorkHit {
+  entry: Entry;
+  /** Project display name for cross-project recall lines. */
+  projectTag: string;
+}
+
 export interface TopicSessionHit {
   sessionId: string;
   date: string;
+  /** Project display name when sessions come from related projects. */
+  projectTag: string;
   summary: string;
   /**
    * `rollup` — the session's own summary, written across all its batches, which
@@ -73,7 +87,7 @@ export interface TopicResume {
   /** Matched entries absorbed into the rendered session blocks, for the remainder line. */
   matchedEntries: number;
   /** Tasks, bugs and ideas matching the topic. */
-  work: Entry[];
+  work: TopicWorkHit[];
   /** The newest session among the hits — the only one whose note and turns are shown. */
   newest?: { sessionId: string; date: string; handoffNote?: string; rawTurns: string[] };
   /** Total entries matched, including the kinds this view does not render. */
@@ -262,6 +276,37 @@ async function mergeJevWidenedSessions(
   }));
 }
 
+type TaggedSessionCandidate = SessionCandidate & { projectLabel: string };
+
+async function gatherTopicForProject(
+  store: TimStore,
+  projectLabel: string,
+  topic: string,
+  needle: string,
+  words: string,
+): Promise<{ candidates: Map<string, SessionCandidate>; hits: Entry[] }> {
+  const [tagged, matched] = await Promise.all([
+    store.searchByTag(needle, MAX_TAG_HITS, projectLabel, { skipTemporalEligibility: true }),
+    store.searchFts(words, MAX_FTS_HITS, {
+      project: projectLabel,
+      excludeKinds: FLOODING_KINDS,
+    }),
+  ]);
+  const hits = [...new Map([...tagged, ...matched].map(e => [e.id, e])).values()];
+  const candidates = new Map<string, SessionCandidate>();
+  for (const hit of hits) await absorbHit(store, candidates, hit);
+  await mergeJevWidenedSessions(store, projectLabel, topic, candidates);
+  return { candidates, hits };
+}
+
+async function projectDisplayTag(store: TimStore, projectLabel: string): Promise<string> {
+  const entry = await store.read(projectLabel);
+  if (entry && entry.metadata.kind === 'project') {
+    return projectDisplayNameFromEntry(entry);
+  }
+  return projectLabel;
+}
+
 export async function collectTopicResume(
   store: TimStore,
   projectLabel: string,
@@ -276,25 +321,33 @@ export async function collectTopicResume(
   // separate terms matched several. Splitting them turns the phrase into an AND,
   // which is what a two-word topic actually means.
   const words = topic.replace(/^#/, '').replace(/[-_]+/g, ' ');
-  const [tagged, matched] = await Promise.all([
-    store.searchByTag(needle, MAX_TAG_HITS, projectLabel, { skipTemporalEligibility: true }),
-    store.searchFts(words, MAX_FTS_HITS, {
-      project: projectLabel,
-      excludeKinds: FLOODING_KINDS,
-    }),
-  ]);
-  // Tag hits first so the exhaustive scan wins ties; dedupe on id, since an
-  // entry that both carries the tag and names it in the body is one entry.
-  const hits = [...new Map([...tagged, ...matched].map(e => [e.id, e])).values()];
 
-  // Keyed by session id: every matching batch of one session collapses into that
-  // session's single entry, and a matching Summary root reaches the same entry
-  // from the other direction.
-  const candidates = new Map<string, SessionCandidate>();
-  for (const hit of hits) await absorbHit(store, candidates, hit);
-  await mergeJevWidenedSessions(store, projectLabel, topic, candidates);
+  const neighbours = await listRelatedProjects(store, projectLabel);
+  const projectLabels = [projectLabel, ...neighbours.map(n => n.label)];
+  const tagByLabel = new Map<string, string>();
+  tagByLabel.set(projectLabel, await projectDisplayTag(store, projectLabel));
+  for (const n of neighbours) tagByLabel.set(n.label, n.displayName);
 
-  const byRecency = [...candidates.entries()].sort(
+  const merged = new Map<string, TaggedSessionCandidate>();
+  const hits: Entry[] = [];
+  const hitIds = new Set<string>();
+  const work: TopicWorkHit[] = [];
+
+  for (const label of projectLabels) {
+    const projectTag = tagByLabel.get(label) ?? label;
+    const gathered = await gatherTopicForProject(store, label, topic, needle, words);
+    for (const hit of gathered.hits) {
+      if (hitIds.has(hit.id)) continue;
+      hitIds.add(hit.id);
+      hits.push(hit);
+      if (isWorkEntry(hit)) work.push({ entry: hit, projectTag });
+    }
+    for (const [sessionId, rec] of gathered.candidates) {
+      merged.set(sessionId, { ...rec, projectLabel: label });
+    }
+  }
+
+  const byRecency = [...merged.entries()].sort(
     (a, b) => b[1].date.localeCompare(a[1].date) || b[0].localeCompare(a[0]),
   );
 
@@ -306,12 +359,14 @@ export async function collectTopicResume(
   const matchedEntries = keptRecords.reduce((n, [, rec]) => n + rec.absorbed, 0);
   const rendered: TopicSessionHit[] = keptRecords
     .reverse()
-    .map(([sessionId, { date, summaryRoot, batches }]) => {
+    .map(([sessionId, { date, summaryRoot, batches, projectLabel: srcLabel }]) => {
+      const projectTag = tagByLabel.get(srcLabel) ?? srcLabel;
       const rollup = (summaryRoot.content ?? '').trim();
       if (rollup) {
         return {
           sessionId,
           date,
+          projectTag,
           summary: truncateSummary(rollup, summaryRoot.id),
           source: 'rollup' as const,
           batchCount: batches.length,
@@ -325,6 +380,7 @@ export async function collectTopicResume(
       return {
         sessionId,
         date,
+        projectTag,
         summary: ordered
           .map(b => truncateSummary((b.content ?? '').trim(), b.id))
           .join('\n'),
@@ -357,7 +413,7 @@ export async function collectTopicResume(
     sessions: rendered,
     sessionsMatched,
     matchedEntries,
-    work: hits.filter(isWorkEntry),
+    work,
     newest,
     otherHits: hits.length,
   };
@@ -395,7 +451,8 @@ export function formatTopicResume(r: TopicResume): string {
       const from = s.source === 'batches'
         ? ` · no session summary, ${s.batchCount} ${s.batchCount === 1 ? 'batch' : 'batches'}`
         : '';
-      out.push(`▸ ${s.date.slice(0, 16).replace('T', ' ')} · ${s.sessionId}${from}`);
+      const tag = s.projectTag ? `[${s.projectTag}] ` : '';
+      out.push(`▸ ${tag}${s.date.slice(0, 16).replace('T', ' ')} · ${s.sessionId}${from}`);
       if (s.summary) out.push(`  ${s.summary}`);
     }
   }
@@ -404,9 +461,10 @@ export function formatTopicResume(r: TopicResume): string {
     out.push('', `── Tasks, bugs and ideas on this topic (${r.work.length}) ──`);
     for (const w of r.work) {
       // Object-form tasks keep their status in task.status (and bugs in bug.status).
-      const resolved = resolveEntrySearchStatus(w.metadata);
+      const resolved = resolveEntrySearchStatus(w.entry.metadata);
       const status = resolved ? ` [${resolved}]` : '';
-      out.push(`- ${w.title}${status}`);
+      const tag = w.projectTag ? `[${w.projectTag}] ` : '';
+      out.push(`- ${tag}${w.entry.title}${status}`);
     }
   }
 

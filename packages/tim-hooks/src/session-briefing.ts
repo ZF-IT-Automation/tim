@@ -13,6 +13,9 @@ import {
   parseSessionSubstance,
   isCountableUserExchange,
   taskLastTouch,
+  collectNewerNeighbourHandoffs,
+  formatRelatedProjectLine,
+  listRelatedProjects,
   type TimStore,
 } from 'tim-store';
 import { isClosedBugStatus, taskPriorityRank, type Entry } from 'tim-core';
@@ -635,8 +638,19 @@ export async function collectDirectiveBriefing(
     + recent.reduce((n, block) => n + block.length + 1, 0);
   const work = await openWork(store, projectLabel, Math.max(0, maxChars - spent)).catch(() => []);
 
+  const neighbours = await listRelatedProjects(store, projectLabel).catch(() => []);
+  const relatedProjectLines = neighbours.map(formatRelatedProjectLine);
+  const newerNeighbourHandoffs = includePastWork
+    ? await collectNewerNeighbourHandoffs(
+      store,
+      projectLabel,
+      Math.floor(maxChars * HANDOFF_NOTE_BUDGET_SHARE),
+    ).catch(() => [])
+    : [];
+
   if (!previous.summary && recent.length === 0 && work.length === 0
-    && !previous.latestHandoffNote && staleBrief.length === 0) {
+    && !previous.latestHandoffNote && staleBrief.length === 0
+    && relatedProjectLines.length === 0 && newerNeighbourHandoffs.length === 0) {
     return undefined;
   }
   return {
@@ -648,5 +662,7 @@ export async function collectDirectiveBriefing(
       : {}),
     ...(work.length > 0 ? { openWork: work } : {}),
     ...(staleBrief.length > 0 ? { staleBrief } : {}),
+    ...(relatedProjectLines.length > 0 ? { relatedProjectLines } : {}),
+    ...(newerNeighbourHandoffs.length > 0 ? { newerNeighbourHandoffs } : {}),
   };
 }

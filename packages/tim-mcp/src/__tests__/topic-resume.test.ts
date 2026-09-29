@@ -176,7 +176,7 @@ describe('tim_resume_topic (criteria 5, 6, 7)', () => {
     });
 
     const topic = await collectTopicResume(store, 'P0082', '#recall');
-    expect(topic.work.map(w => w.title).sort()).toEqual([
+    expect(topic.work.map(w => w.entry.title).sort()).toEqual([
       'Ship topic recall',
       'Tag lookup under-reports',
     ]);

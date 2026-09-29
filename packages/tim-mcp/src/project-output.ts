@@ -32,6 +32,8 @@ export interface BriefingRenderContext {
   openTaskCounts?: { open: number; stale: number };
   /** Open-bug count from store.getBugs — same source as the Sections index line. */
   openBugCount?: number;
+  /** One line per related project neighbour (newest activity first). */
+  relatedProjectLines?: string[];
 }
 
 export interface FormatProjectOutputOptions {
@@ -59,6 +61,7 @@ const LOAD_BLOCK_ORDER = {
   header: 0,
   now: 10,
   rules: 20,
+  relatedProjects: 25,
   projectSummary: 30,
   sectionsIndex: 40,
   sectionBodyBase: 100,
@@ -943,6 +946,15 @@ function formatProjectOutputWithTokenBudget(
         drillDown: `tim_read("${rulesSection.id}")`,
       });
     }
+  }
+
+  if (ctx?.relatedProjectLines && ctx.relatedProjectLines.length > 0) {
+    blocks.push({
+      id: 'related-projects',
+      priority: BRIEFING_PRIORITY.header,
+      order: LOAD_BLOCK_ORDER.relatedProjects,
+      lines: ['', '── Related projects ──', '', ...ctx.relatedProjectLines],
+    });
   }
 
   if (projectSummary) {
