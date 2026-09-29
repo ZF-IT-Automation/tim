@@ -71,7 +71,8 @@ export interface Entry {
 
 export type EdgeType = 'relates' | 'extends' | 'contradicts' | 'implements' |
                        'blocks' | 'leases' | 'tagged' | 'summarizes' |
-                       'session_exchange' | 'contradicted_by' | 'supersedes';
+                       'session_exchange' | 'contradicted_by' | 'supersedes' |
+                       'related';
 
 export interface Edge {
   id: string;                    // ULID
