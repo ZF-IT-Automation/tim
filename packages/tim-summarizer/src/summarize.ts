@@ -92,29 +92,35 @@ function resolveDbPath(): string {
  * into project.content under `## Project Summary`. Returns true when written,
  * false when skipped (no sessions, or every CLI failed → leave content as-is).
  */
+/** The newest substantive sessions' summaries — what a project summary is made from. */
+export async function collectProjectSummaryInput(
+  store: TimStore,
+  projectId: string,
+): Promise<Array<{ date: string; summaries: string[] }>> {
+  const picked: Array<{ date: string; summaries: string[] }> = [];
+  for (const { id } of store.listProjectSessionsByActivity(projectId, 1000)) {
+    if (picked.length >= PROJECT_SUMMARY_SESSION_LIMIT) break;
+    const session = await store.read(id);
+    if (!session || session.metadata.kind !== KIND_SESSION) continue;
+    const summaryNode = await findChildByKind(store, id, KIND_SUMMARY_ROOT);
+    const handoff = typeof summaryNode?.metadata.handoff_note === 'string'
+      ? summaryNode.metadata.handoff_note.trim()
+      : '';
+    const exchangeCount = Number(session.metadata.exchange_count) || 0;
+    const substance = parseSessionSubstance(summaryNode?.metadata.substance);
+    if (!isSubstantiveSession(exchangeCount, Boolean(handoff), substance)) continue;
+    const summaries = await sessionSummaryTexts(store, id);
+    if (summaries.length === 0) continue;
+    picked.push({ date: sessionDateLabel(session), summaries });
+  }
+  return picked;
+}
+
 export async function runProjectSummary(label: string): Promise<boolean> {
   const store = new TimStore(resolveDbPath());
   try {
     const project = await store.requireProject(label);
-    const rows = store.listProjectSessionsByActivity(project.id, 1000);
-    if (rows.length === 0) return false;
-
-    const picked: Array<{ date: string; summaries: string[] }> = [];
-    for (const { id } of rows) {
-      if (picked.length >= PROJECT_SUMMARY_SESSION_LIMIT) break;
-      const session = await store.read(id);
-      if (!session || session.metadata.kind !== KIND_SESSION) continue;
-      const summaryNode = await findChildByKind(store, id, KIND_SUMMARY_ROOT);
-      const handoff = typeof summaryNode?.metadata.handoff_note === 'string'
-        ? summaryNode.metadata.handoff_note.trim()
-        : '';
-      const exchangeCount = Number(session.metadata.exchange_count) || 0;
-      const substance = parseSessionSubstance(summaryNode?.metadata.substance);
-      if (!isSubstantiveSession(exchangeCount, Boolean(handoff), substance)) continue;
-      const summaries = await sessionSummaryTexts(store, id);
-      if (summaries.length === 0) continue;
-      picked.push({ date: sessionDateLabel(session), summaries });
-    }
+    const picked = await collectProjectSummaryInput(store, project.id);
     if (picked.length === 0) return false;
 
     const dates = picked.map(p => p.date).sort();
