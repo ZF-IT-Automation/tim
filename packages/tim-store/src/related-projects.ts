@@ -164,6 +164,20 @@ export async function setProjectInterfaces(
   });
 }
 
+/**
+ * `Interfaces: <id> (<name>)` for a neighbour whose content a recall shows —
+ * the node ID only, so the agent can read it or hand it to a worker. Null when
+ * the project has no Interfaces entry.
+ */
+export async function interfacesPointerLine(
+  store: TimStore,
+  projectLabel: string,
+  displayName: string,
+): Promise<string | null> {
+  const entry = await getProjectInterfaces(store, projectLabel).catch(() => null);
+  return entry ? `Interfaces: ${entry.id} (${displayName})` : null;
+}
+
 export interface SubstantiveSessionHead {
   sessionId: string;
   date: string;
@@ -197,6 +211,8 @@ export interface NeighbourActivity {
   more: number;
   /** Substantive sessions the summarizer has not reached yet. */
   unsummarized: number;
+  /** `Interfaces: <id> (<name>)` when the neighbour has an Interfaces entry. */
+  interfacesLine?: string;
 }
 
 export interface CollectNeighbourActivityOptions {
@@ -232,9 +248,11 @@ export async function collectNeighbourActivity(
     const newer = await substantiveSessionsSince(store, n.label, since);
     const summarized = newer.filter(s => s.summary);
     if (newer.length === 0) continue;
+    const interfacesLine = await interfacesPointerLine(store, n.label, n.displayName);
     out.push({
       label: n.label,
       displayName: n.displayName,
+      ...(interfacesLine ? { interfacesLine } : {}),
       sessions: summarized.slice(0, NEIGHBOUR_SESSION_CAP).map(s => ({
         date: s.date.slice(0, 10),
         summary: clipOneLine(s.summary, NEIGHBOUR_SUMMARY_MAX_CHARS),

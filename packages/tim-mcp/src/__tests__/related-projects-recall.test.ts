@@ -4,6 +4,7 @@ import {
   SessionManager,
   relateProjects,
   setProjectDescription,
+  setProjectInterfaces,
 } from 'tim-store';
 import { collectTopicResume, formatTopicResume } from '../topic-resume.js';
 import { previewSessionStart } from 'tim-hooks';
@@ -108,6 +109,22 @@ describe('cross-project topic resume', () => {
     expect(text).toContain('[Game-Harness] Fix jev harness');
   });
 
+  it('points to a neighbour Interfaces entry only when that neighbour contributed', async () => {
+    const iface = await setProjectInterfaces(store, 'P0921', 'CLI: harness run');
+    await store.createProject('P0922', { content: 'Lonely' });
+    await setProjectInterfaces(store, 'P0922', 'CLI: lonely');
+    await seedTaggedSession('P0922', 'lonely', '#jev', 'isolated');
+
+    const none = formatTopicResume(await collectTopicResume(store, 'P0920', 'jev'));
+    expect(none).not.toContain('Interfaces:');
+
+    await seedTaggedSession('P0921', 'b-sess', '#jev', 'harness work on jev');
+    const text = formatTopicResume(await collectTopicResume(store, 'P0920', 'jev'));
+    expect(text).toContain(`Interfaces: ${iface.id} (Game-Harness)`);
+    expect(text).not.toContain('CLI: harness run');
+    expect(text.match(/Interfaces:/g)).toHaveLength(1);
+  });
+
   it('hides archived neighbours in resume-topic', async () => {
     await store.createProject('P0922', { content: 'Gone', metadata: { status: 'archived' } });
     await relateProjects(store, 'P0920', 'P0922');
@@ -189,6 +206,11 @@ describe('related project briefing surfaces', () => {
     expect(preview.directive).toContain('## Meanwhile in related projects');
     expect(preview.directive).toContain('neighbour shipped the widget');
     expect(preview.directive).not.toContain('newer neighbour handoff');
+    expect(preview.directive).not.toContain('Interfaces:');
+
+    const iface = await setProjectInterfaces(store, 'P0931', 'MCP: side_tool');
+    const withIface = await previewSessionStart(store, { projectId: 'P0930', maxTokens: 8000, cwd: '/tmp' });
+    expect(withIface.directive).toContain(`Interfaces: ${iface.id} (Sidecar)`);
   });
 
   it('continue preview omits neighbour handoff when neighbour is older', async () => {
