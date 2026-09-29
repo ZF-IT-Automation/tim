@@ -36,7 +36,9 @@ export function createTimMcpTransport(): StdioClientTransport {
   const serverPath = process.env.TIM_MCP_PATH
     || path.resolve(__dirname, '..', '..', 'tim-mcp', 'dist', 'server.js');
   return new StdioClientTransport({
-    command: 'node',
+    // The running node, not PATH's: under tim-mcp.service (nvm node, no PATH)
+    // a bare 'node' failed with spawn ENOENT and the batch was lost.
+    command: process.execPath,
     args: [serverPath],
     env: { ...process.env, TIM_DB_PATH: dbPathFromEnv() },
   });

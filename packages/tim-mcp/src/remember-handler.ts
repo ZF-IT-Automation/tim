@@ -228,7 +228,7 @@ function spawnRememberSubprocessImpl(
       'dist',
       'remember-query.js',
     );
-    const child = spawn('node', [subprocessPath], { stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn(process.execPath, [subprocessPath], { stdio: ['pipe', 'pipe', 'pipe'] });
 
     let stdout = '';
     let stderr = '';

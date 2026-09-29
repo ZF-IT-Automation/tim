@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { perCliTimeoutSec, tryCli } from '../generate-summary.js';
+import { createTimMcpTransport } from '../mcp-client.js';
 
 // The summarizer's own LLM calls must run as team-up workers, or each CLI's TIM
 // hooks log the call as a new project session (97 junk sessions in one backfill).
@@ -39,6 +40,12 @@ describe('summarizer CLI spawn', () => {
       process.env.PATH = oldPath;
       fs.rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  // Under tim-mcp.service there is no node on PATH (nvm); a bare 'node' was ENOENT.
+  it('starts the TIM MCP server with the running node binary', () => {
+    const params = (createTimMcpTransport() as unknown as { _serverParams: { command: string } })._serverParams;
+    expect(params.command).toBe(process.execPath);
   });
 
   it('returns after its timeout even when a grandchild holds stdout', async () => {
