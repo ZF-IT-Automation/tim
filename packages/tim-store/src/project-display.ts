@@ -3,10 +3,11 @@ import type { TimStore } from './store.js';
 
 const PROJECT_SUMMARY_MARKER = '## Project Summary';
 
+// The header line only: a title without "|" used to swallow the whole body
+// ("Game Harness\n## Project Stats\n455 entries …").
 function parseHeaderTitle(title: string, content: string): string {
-  const combined = content ? `${title}\n${content}` : title;
-  const parts = combined.split('|').map(p => p.trim());
-  return (parts[0] || title).trim();
+  const header = title.trim() || content.split('\n').find(l => l.trim()) || '';
+  return header.split('|')[0]!.trim();
 }
 
 function stripLabelPrefix(name: string, label: string): string {

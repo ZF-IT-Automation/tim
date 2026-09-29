@@ -13,6 +13,7 @@ describe('tim project CLI', () => {
     const store = new TimStore(dbPath);
     await store.createProject('P0940', { content: 'One' });
     await store.createProject('P0941', { content: 'Two' });
+    await store.createProject('P0942', { content: 'Game Harness\n## Project Stats\n9 entries' });
     store.close();
     process.env.TIM_DB_PATH = dbPath;
   });
@@ -63,5 +64,39 @@ describe('tim project CLI', () => {
 
     out = run(['unrelate', 'P0940', 'P0941']);
     expect(out.stdout).toContain('No related edge');
+  }, 30_000);
+
+  it('takes names in any spelling, lists candidates on a miss, defaults to the marker project', async () => {
+    const { spawnSync } = await import('node:child_process');
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'tim-project-cli-repo-'));
+    const inner = path.join(repo, 'src');
+    fs.mkdirSync(inner);
+    fs.writeFileSync(path.join(repo, '.tim-project'), JSON.stringify({ version: 3, project: 'P0940' }));
+    const run = (args: string[], cwd = process.cwd()) =>
+      spawnSync(process.execPath, [path.resolve(__dirname, '../../dist/cli.js'), 'project', ...args], {
+        encoding: 'utf8',
+        cwd,
+        env: { ...process.env, TIM_DB_PATH: dbPath },
+      });
+    try {
+      let out = run(['relate', 'one', 'GAME-harness']);
+      expect(out.status).toBe(0);
+      expect(out.stdout).toContain('Related P0940 One ↔ P0942 Game Harness');
+
+      out = run(['relate', 'one', 'nope']);
+      expect(out.status).toBe(1);
+      expect(out.stderr).toContain('No project matches "nope"');
+      expect(out.stderr).toContain('P0942 Game Harness');
+
+      out = run(['related'], inner);
+      expect(out.status).toBe(0);
+      expect(out.stdout).toContain('P0942 — Game Harness ·');
+      expect(out.stdout).not.toContain('Project Stats');
+
+      out = run(['describe', 'The first test project.'], inner);
+      expect(out.stdout).toContain('Description set for P0940 One');
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
   }, 30_000); // eight sequential CLI spawns exceed the 5s default under a loaded full run
 });

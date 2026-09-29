@@ -34,6 +34,15 @@ describe('project-display', () => {
     expect(projectDisplayNameFromEntry(entry)).toBe('TIM');
   });
 
+  it('projectDisplayNameFromEntry keeps a pipe-less title and ignores the body', async () => {
+    dbPath = path.join(os.tmpdir(), `tim-pd4-${Date.now()}.db`);
+    store = new TimStore(dbPath);
+    const entry = await store.createProject('P0076', {
+      content: 'Game Harness\n## Project Stats\n455 entries',
+    });
+    expect(projectDisplayNameFromEntry(entry)).toBe('Game Harness');
+  });
+
   it('resolveProjectDisplayName resolves alias and crops', async () => {
     dbPath = path.join(os.tmpdir(), `tim-pd2-${Date.now()}.db`);
     store = new TimStore(dbPath);

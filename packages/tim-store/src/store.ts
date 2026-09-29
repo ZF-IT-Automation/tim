@@ -629,7 +629,9 @@ export class TimStore implements MemoryInterface {
       return { status: 'found', label };
     }
 
-    const needle = q.toLowerCase();
+    // "Game-Harness", "game_harness" and "game harness" name one project.
+    const fold = (text: string) => text.toLowerCase().replace(/[\s_-]+/g, ' ').trim();
+    const needle = fold(q);
     const rows = this.db.prepare(`
       SELECT metadata, title FROM entries
       WHERE json_extract(metadata, '$.kind') = 'project'
@@ -648,11 +650,11 @@ export class TimStore implements MemoryInterface {
       const label = typeof meta.label === 'string' ? meta.label : '';
       if (!label) continue;
       const aliases = Array.isArray(meta.aliases) ? meta.aliases : [];
-      if (aliases.some(a => String(a).toLowerCase() === needle)) {
+      if (aliases.some(a => fold(String(a)) === needle)) {
         if (!matches.includes(label)) matches.push(label);
         continue;
       }
-      const name = projectDisplayName(row.title);
+      const name = fold(projectDisplayName(row.title));
       if (!name) continue;
       if (name === needle) {
         if (!exactName.includes(label)) exactName.push(label);

@@ -11,13 +11,18 @@ Use when work spans repositories that should recall each other's sessions (e.g. 
 
 ## CLI (no MCP tool)
 \`\`\`bash
-tim project describe P00XX "One to three sentences: what this project IS."
-tim project relate P00AA P00BB
-tim project related P00AA
-tim project unrelate P00AA P00BB
+tim project related                       # neighbours of this directory's project
+tim project relate game-harness           # this project ↔ Game Harness
+tim project relate MAIMO "game harness"   # any two projects
+tim project describe "One to three sentences: what this project IS."
+tim project unrelate game-harness
 \`\`\`
-- \`relate\` no-ops when already linked (either direction) or when A == B.
-- \`unrelate\` drops the edge either way. Archived neighbours stay hidden in briefings.
+- Name projects by label (P0054), alias or name — case, \`-\`, \`_\` and spaces don't matter. No label lookup needed first.
+- An omitted first project is the one this directory is bound to (\`.tim-project\`).
+- No match or several matches → the CLI lists the candidates with label + name; pick one and rerun.
+- Output always shows label + name: \`Related P0054 MAIMO-RPG ↔ P0076 Game Harness\`.
+- \`relate\` no-ops when already linked (either direction) or when A == B. \`unrelate\` drops the edge either way.
+- Archived neighbours stay hidden in briefings.
 
 ## After relating
 - \`tim_load_project\` and session-start directives list neighbours (label, name, optional description).
