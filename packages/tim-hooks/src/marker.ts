@@ -553,7 +553,7 @@ function briefingBlock(briefing?: DirectiveBriefing): string[] {
       '',
       `── Related project ${n.label} — ${n.displayName} (${n.date}) ──`,
       note || '(no handoff note)',
-      `Detail on a topic: tim_resume_topic({ topic: "<subject>" })`,
+      'Detail on a topic: /tim-resume-topic <subject>',
     );
   }
 

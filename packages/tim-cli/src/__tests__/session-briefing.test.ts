@@ -112,6 +112,18 @@ describe('session-start directive carries content', () => {
     }
   }
 
+  it('resolve-project directive lists related projects on the automatic path', async () => {
+    await seed();
+    const store = new TimStore(dbPath);
+    await store.createProject('P0064', { content: 'Neighbour for directive' });
+    const { relateProjects } = await import('tim-store');
+    await relateProjects(store, 'P0063', 'P0064');
+    store.close();
+    const out = run(['resolve-project', '--cwd', cwd, '--format', 'directive']).stdout;
+    expect(out).toContain('── Related projects ──');
+    expect(out).toContain('P0064');
+  });
+
   it('resolve-project --format directive carries open work but no past work', async () => {
     await seed();
     const out = run(['resolve-project', '--cwd', cwd, '--format', 'directive']).stdout;

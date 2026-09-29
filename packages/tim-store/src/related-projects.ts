@@ -1,13 +1,7 @@
 import type { Edge, Entry } from 'tim-core';
 import type { TimStore } from './store.js';
-import { findChildByKind, KIND_SUMMARY_ROOT } from './session-tree.js';
-import { SessionManager } from './session.js';
-import {
-  isSubstantiveSession,
-  parseSessionSubstance,
-  sessionHasHandoffNote,
-} from './substantive-session.js';
 import { projectDisplayNameFromEntry } from './project-display.js';
+import { newestSubstantiveSession } from './newest-substantive-session.js';
 
 export const RELATED_EDGE_TYPE = 'related' as const;
 
@@ -33,6 +27,12 @@ function relatedPairEdge(edges: Edge[], aId: string, bId: string): Edge | undefi
     e => e.type === RELATED_EDGE_TYPE
       && ((e.sourceId === aId && e.targetId === bId) || (e.sourceId === bId && e.targetId === aId)),
   );
+}
+
+function isRelatedPairEdge(edge: Edge, aId: string, bId: string): boolean {
+  return edge.type === RELATED_EDGE_TYPE
+    && ((edge.sourceId === aId && edge.targetId === bId)
+      || (edge.sourceId === bId && edge.targetId === aId));
 }
 
 async function neighbourEntryFromEdge(
@@ -108,9 +108,11 @@ export async function unrelateProjects(
   const a = await store.requireProject(labelA);
   const b = await store.requireProject(labelB);
   const edgesA = await store.getEdges(a.id, 'both');
-  const edge = relatedPairEdge(edgesA, a.id, b.id);
-  if (!edge) return false;
-  await store.unlink(edge.id);
+  const matches = edgesA.filter(e => isRelatedPairEdge(e, a.id, b.id));
+  if (matches.length === 0) return false;
+  for (const edge of matches) {
+    await store.unlink(edge.id);
+  }
   return true;
 }
 
@@ -131,46 +133,18 @@ export interface SubstantiveSessionHead {
   lastActivity: string;
 }
 
-async function sessionHandoffNote(store: TimStore, sessionId: string): Promise<string> {
-  const summaryNode = await findChildByKind(store, sessionId, KIND_SUMMARY_ROOT);
-  if (!summaryNode) return '';
-  if (sessionHasHandoffNote(summaryNode.metadata)) {
-    const note = summaryNode.metadata.handoff_note;
-    return typeof note === 'string' ? note.trim() : '';
-  }
-  const children = await store.getChildren(summaryNode.id);
-  for (const child of children) {
-    if (sessionHasHandoffNote(child.metadata)) {
-      const note = child.metadata.handoff_note;
-      return typeof note === 'string' ? note.trim() : '';
-    }
-  }
-  return '';
-}
-
-/** Newest substantive session for a project; worker/automation sessions excluded. */
+/** @deprecated Prefer `newestSubstantiveSession` for handoff-aware selection. */
 export async function findNewestSubstantiveSession(
   store: TimStore,
   projectLabel: string,
 ): Promise<SubstantiveSessionHead | null> {
-  const sessions = new SessionManager(store);
-  const listed = await sessions.listResumableSessions(projectLabel, 1000);
-  for (const candidate of listed) {
-    const summaryNode = await findChildByKind(store, candidate.sessionId, KIND_SUMMARY_ROOT);
-    const note = await sessionHandoffNote(store, candidate.sessionId);
-    const substance = parseSessionSubstance(summaryNode?.metadata.substance);
-    if (isSubstantiveSession(candidate.exchangeCount, Boolean(note), substance)) {
-      const date = typeof candidate.date === 'string'
-        ? candidate.date
-        : candidate.lastActivity;
-      return {
-        sessionId: candidate.sessionId,
-        date,
-        lastActivity: candidate.lastActivity,
-      };
-    }
-  }
-  return null;
+  const found = await newestSubstantiveSession(store, projectLabel);
+  if (!found) return null;
+  return {
+    sessionId: found.sessionId,
+    date: found.date,
+    lastActivity: found.lastActivity,
+  };
 }
 
 export interface NewerNeighbourHandoff {
@@ -180,22 +154,32 @@ export interface NewerNeighbourHandoff {
   handoffNote: string;
 }
 
+export interface CollectNewerNeighbourHandoffsOptions {
+  neighbours?: RelatedProjectInfo[];
+  ownHead?: SubstantiveSessionHead | null;
+}
+
 export async function collectNewerNeighbourHandoffs(
   store: TimStore,
   projectLabel: string,
   maxNoteChars: number,
+  options: CollectNewerNeighbourHandoffsOptions = {},
 ): Promise<NewerNeighbourHandoff[]> {
-  const own = await findNewestSubstantiveSession(store, projectLabel);
+  const neighbours = options.neighbours ?? await listRelatedProjects(store, projectLabel);
+  if (neighbours.length === 0) return [];
+
+  const own = options.ownHead !== undefined
+    ? options.ownHead
+    : await findNewestSubstantiveSession(store, projectLabel);
   const ownActivity = own?.lastActivity ?? '';
-  const neighbours = await listRelatedProjects(store, projectLabel);
   const out: NewerNeighbourHandoff[] = [];
 
   for (const n of neighbours) {
-    const theirs = await findNewestSubstantiveSession(store, n.label);
+    const theirs = await newestSubstantiveSession(store, n.label);
     if (!theirs) continue;
     if (ownActivity && theirs.lastActivity <= ownActivity) continue;
 
-    const note = await sessionHandoffNote(store, theirs.sessionId);
+    const note = theirs.handoffNote;
     const clipped = note.length > maxNoteChars
       ? `${note.slice(0, Math.max(0, maxNoteChars - 1)).trimEnd()}…`
       : note;

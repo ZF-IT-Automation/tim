@@ -62,7 +62,13 @@ export {
   type RelatedProjectInfo,
   type SubstantiveSessionHead,
   type NewerNeighbourHandoff,
+  type CollectNewerNeighbourHandoffsOptions,
 } from './related-projects.js';
+export {
+  latestCheckpoint,
+  newestSubstantiveSession,
+  type NewestSubstantiveSession,
+} from './newest-substantive-session.js';
 export {
   stripHarnessBlocks,
   isHarnessOnlyPrompt,

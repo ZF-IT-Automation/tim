@@ -323,19 +323,26 @@ export async function collectTopicResume(
   const words = topic.replace(/^#/, '').replace(/[-_]+/g, ' ');
 
   const neighbours = await listRelatedProjects(store, projectLabel);
+  const tagNeighbours = neighbours.length > 0;
   const projectLabels = [projectLabel, ...neighbours.map(n => n.label)];
   const tagByLabel = new Map<string, string>();
-  tagByLabel.set(projectLabel, await projectDisplayTag(store, projectLabel));
-  for (const n of neighbours) tagByLabel.set(n.label, n.displayName);
+  if (tagNeighbours) {
+    tagByLabel.set(projectLabel, await projectDisplayTag(store, projectLabel));
+    for (const n of neighbours) tagByLabel.set(n.label, n.displayName);
+  }
 
   const merged = new Map<string, TaggedSessionCandidate>();
   const hits: Entry[] = [];
   const hitIds = new Set<string>();
   const work: TopicWorkHit[] = [];
 
-  for (const label of projectLabels) {
-    const projectTag = tagByLabel.get(label) ?? label;
-    const gathered = await gatherTopicForProject(store, label, topic, needle, words);
+  const gatheredByLabel = await Promise.all(
+    projectLabels.map(label => gatherTopicForProject(store, label, topic, needle, words)),
+  );
+  for (let i = 0; i < projectLabels.length; i++) {
+    const label = projectLabels[i]!;
+    const projectTag = tagNeighbours ? (tagByLabel.get(label) ?? label) : '';
+    const gathered = gatheredByLabel[i]!;
     for (const hit of gathered.hits) {
       if (hitIds.has(hit.id)) continue;
       hitIds.add(hit.id);
@@ -360,7 +367,7 @@ export async function collectTopicResume(
   const rendered: TopicSessionHit[] = keptRecords
     .reverse()
     .map(([sessionId, { date, summaryRoot, batches, projectLabel: srcLabel }]) => {
-      const projectTag = tagByLabel.get(srcLabel) ?? srcLabel;
+      const projectTag = tagNeighbours ? (tagByLabel.get(srcLabel) ?? srcLabel) : '';
       const rollup = (summaryRoot.content ?? '').trim();
       if (rollup) {
         return {
