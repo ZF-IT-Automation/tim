@@ -503,6 +503,7 @@ export interface DirectiveBriefing {
     sessions: Array<{ date: string; summary: string }>;
     more: number;
     unsummarized: number;
+    interfacesLine?: string;
   }>;
 }
 
@@ -565,6 +566,7 @@ function briefingBlock(briefing?: DirectiveBriefing): string[] {
       if (n.unsummarized > 0) {
         out.push(`- ${n.unsummarized} session${n.unsummarized === 1 ? '' : 's'}, not yet summarized`);
       }
+      if (n.interfacesLine) out.push(n.interfacesLine);
     }
   }
 

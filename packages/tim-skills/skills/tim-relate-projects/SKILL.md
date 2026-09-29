@@ -33,3 +33,4 @@ tim project unrelate game-harness
 - `tim_load_project` and session-start directives list neighbours (label, name, optional description).
 - `/tim-resume-topic` merges matching sessions across neighbours, tagged by project name.
 - `/tim-continue` lists neighbour session summaries newer than this project's last session under `## Meanwhile in related projects` — context, never their handoff notes.
+- Both recalls add `Interfaces: <node id> (<name>)` for each neighbour they show content from and that has an Interfaces entry — read it with `tim_read` or pass the ID to a worker.

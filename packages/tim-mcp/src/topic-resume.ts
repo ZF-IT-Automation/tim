@@ -21,6 +21,7 @@ import {
   KIND_BATCH,
   KIND_SESSION,
   KIND_SUMMARY_ROOT,
+  interfacesPointerLine,
   listRelatedProjects,
   projectDisplayNameFromEntry,
 } from 'tim-store';
@@ -92,6 +93,8 @@ export interface TopicResume {
   newest?: { sessionId: string; date: string; handoffNote?: string; rawTurns: string[] };
   /** Total entries matched, including the kinds this view does not render. */
   otherHits: number;
+  /** `Interfaces: <id> (<name>)` for each neighbour whose sessions or work are shown. */
+  neighbourInterfaces?: string[];
 }
 
 /**
@@ -335,6 +338,7 @@ export async function collectTopicResume(
   const hits: Entry[] = [];
   const hitIds = new Set<string>();
   const work: TopicWorkHit[] = [];
+  const workLabels = new Set<string>();
 
   const gatheredByLabel = await Promise.all(
     projectLabels.map(label => gatherTopicForProject(store, label, topic, needle, words)),
@@ -347,7 +351,10 @@ export async function collectTopicResume(
       if (hitIds.has(hit.id)) continue;
       hitIds.add(hit.id);
       hits.push(hit);
-      if (isWorkEntry(hit)) work.push({ entry: hit, projectTag });
+      if (isWorkEntry(hit)) {
+        work.push({ entry: hit, projectTag });
+        workLabels.add(label);
+      }
     }
     for (const [sessionId, rec] of gathered.candidates) {
       merged.set(sessionId, { ...rec, projectLabel: label });
@@ -413,10 +420,19 @@ export async function collectTopicResume(
     };
   }
 
+  const shownLabels = new Set([...workLabels, ...keptRecords.map(([, rec]) => rec.projectLabel)]);
+  const neighbourInterfaces: string[] = [];
+  for (const n of neighbours) {
+    if (!shownLabels.has(n.label)) continue;
+    const line = await interfacesPointerLine(store, n.label, n.displayName);
+    if (line) neighbourInterfaces.push(line);
+  }
+
   return {
     topic,
     tag: needle,
     projectLabel,
+    ...(neighbourInterfaces.length > 0 ? { neighbourInterfaces } : {}),
     sessions: rendered,
     sessionsMatched,
     matchedEntries,
@@ -473,6 +489,10 @@ export function formatTopicResume(r: TopicResume): string {
       const tag = w.projectTag ? `[${w.projectTag}] ` : '';
       out.push(`- ${tag}${w.entry.title}${status}`);
     }
+  }
+
+  if (r.neighbourInterfaces?.length) {
+    out.push('', ...r.neighbourInterfaces);
   }
 
   if (r.newest) {

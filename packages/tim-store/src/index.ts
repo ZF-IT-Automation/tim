@@ -60,6 +60,7 @@ export {
   KIND_INTERFACES,
   getProjectInterfaces,
   setProjectInterfaces,
+  interfacesPointerLine,
   findNewestSubstantiveSession,
   collectNeighbourActivity,
   type RelatedProjectInfo,
