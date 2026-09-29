@@ -1,7 +1,7 @@
 import type { Edge, Entry } from 'tim-core';
 import type { TimStore } from './store.js';
 import { projectDisplayNameFromEntry } from './project-display.js';
-import { newestSubstantiveSession } from './newest-substantive-session.js';
+import { newestSubstantiveSession, substantiveSessionsSince } from './newest-substantive-session.js';
 
 export const RELATED_EDGE_TYPE = 'related' as const;
 
@@ -147,48 +147,63 @@ export async function findNewestSubstantiveSession(
   };
 }
 
-export interface NewerNeighbourHandoff {
+/** Summaries shown per neighbour before the overflow line. */
+const NEIGHBOUR_SESSION_CAP = 3;
+const NEIGHBOUR_SUMMARY_MAX_CHARS = 300;
+
+export interface NeighbourActivity {
   label: string;
   displayName: string;
-  date: string;
-  handoffNote: string;
+  /** Newest first, at most NEIGHBOUR_SESSION_CAP. */
+  sessions: Array<{ date: string; summary: string }>;
+  /** Summarized sessions beyond the cap. */
+  more: number;
+  /** Substantive sessions the summarizer has not reached yet. */
+  unsummarized: number;
 }
 
-export interface CollectNewerNeighbourHandoffsOptions {
+export interface CollectNeighbourActivityOptions {
   neighbours?: RelatedProjectInfo[];
   ownHead?: SubstantiveSessionHead | null;
 }
 
-export async function collectNewerNeighbourHandoffs(
+function clipOneLine(text: string, max: number): string {
+  const flat = text.replace(/\s+/g, ' ').trim();
+  return flat.length > max ? `${flat.slice(0, max - 1).trimEnd()}…` : flat;
+}
+
+/**
+ * What happened in related projects since this project's newest substantive
+ * session: summaries only. Neighbour handoff notes are next-steps for another
+ * repo and are never returned.
+ */
+export async function collectNeighbourActivity(
   store: TimStore,
   projectLabel: string,
-  maxNoteChars: number,
-  options: CollectNewerNeighbourHandoffsOptions = {},
-): Promise<NewerNeighbourHandoff[]> {
+  options: CollectNeighbourActivityOptions = {},
+): Promise<NeighbourActivity[]> {
   const neighbours = options.neighbours ?? await listRelatedProjects(store, projectLabel);
   if (neighbours.length === 0) return [];
 
   const own = options.ownHead !== undefined
     ? options.ownHead
     : await findNewestSubstantiveSession(store, projectLabel);
-  const ownActivity = own?.lastActivity ?? '';
-  const out: NewerNeighbourHandoff[] = [];
+  const since = own?.lastActivity ?? '';
+  const out: NeighbourActivity[] = [];
 
   for (const n of neighbours) {
-    const theirs = await newestSubstantiveSession(store, n.label);
-    if (!theirs) continue;
-    if (ownActivity && theirs.lastActivity <= ownActivity) continue;
-
-    const note = theirs.handoffNote;
-    const clipped = note.length > maxNoteChars
-      ? `${note.slice(0, Math.max(0, maxNoteChars - 1)).trimEnd()}…`
-      : note;
-
+    const newer = await substantiveSessionsSince(store, n.label, since);
+    const summarized = newer.filter(s => s.summary);
+    if (newer.length === 0) continue;
     out.push({
       label: n.label,
       displayName: n.displayName,
-      date: theirs.date.slice(0, 10),
-      handoffNote: clipped,
+      sessions: summarized.slice(0, NEIGHBOUR_SESSION_CAP).map(s => ({
+        date: s.date.slice(0, 10),
+        summary: clipOneLine(s.summary, NEIGHBOUR_SUMMARY_MAX_CHARS),
+      })),
+      more: Math.max(0, summarized.length - NEIGHBOUR_SESSION_CAP),
+      unsummarized: newer.length - summarized.length,
     });
   }
 

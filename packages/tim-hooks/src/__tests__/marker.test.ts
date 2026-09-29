@@ -347,6 +347,26 @@ describe('marker', () => {
     expect(d).not.toContain('do NOT re-fetch');
   });
 
+  it('buildLoadDirective renders neighbour activity as context with overflow and pending lines', () => {
+    const d = buildLoadDirective('P0063', '/repo', undefined, {
+      neighbourActivity: [{
+        label: 'P0076',
+        displayName: 'Game Harness',
+        sessions: [{ date: '2026-09-28', summary: 'shipped the adapter' }],
+        more: 2,
+        unsummarized: 1,
+      }],
+    });
+    expect(d).toContain('## Meanwhile in related projects');
+    expect(d).toContain("context only — your next step is this project's handoff above");
+    expect(d).toContain('P0076 — Game Harness');
+    expect(d).toContain('- 2026-09-28 · shipped the adapter');
+    expect(d).toContain('- +2 more — /tim-resume-topic <topic>');
+    expect(d).toContain('- 1 session, not yet summarized');
+    expect(buildLoadDirective('P0063', '/repo', undefined, { neighbourActivity: [] }))
+      .not.toContain('Meanwhile');
+  });
+
   it('buildLoadDirective names reaped empty sessions only when some were reaped', () => {
     const plain = buildLoadDirective('P0063', '/repo');
     expect(buildLoadDirective('P0063', '/repo', undefined, {})).toBe(plain);
