@@ -248,6 +248,18 @@ describe('related project briefing surfaces', () => {
     expect(preview.directive).not.toContain('## Meanwhile in related projects');
   });
 
+  it('load-project briefing points to its own Interfaces entry only when one exists', async () => {
+    const project = await store.requireProject('P0930');
+    const render = async () => {
+      const loaded = await store.loadProject('P0930', { depth: 1, budget: 50 });
+      const ctx = await buildBriefingRenderContext(store, 'P0930', project.id, 3);
+      return formatProjectOutput(loaded!, 500, undefined, 'load', 3, { briefingContext: ctx, tokenBudget: 8000 });
+    };
+    expect(await render()).not.toContain('Interfaces:');
+    const iface = await setProjectInterfaces(store, 'P0930', 'CLI: anchor');
+    expect(await render()).toContain(`Interfaces: tim_read("${iface.id}")`);
+  });
+
   it('hides archived neighbours in load-project briefing', async () => {
     await store.createProject('P0932', { content: 'Archived', metadata: { status: 'archived' } });
     await relateProjects(store, 'P0930', 'P0932');

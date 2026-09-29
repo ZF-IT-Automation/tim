@@ -34,6 +34,8 @@ export interface BriefingRenderContext {
   openBugCount?: number;
   /** One line per related project neighbour (newest activity first). */
   relatedProjectLines?: string[];
+  /** Node ID of this project's Interfaces entry, when it has one. */
+  interfacesId?: string;
 }
 
 export interface FormatProjectOutputOptions {
@@ -61,6 +63,7 @@ const LOAD_BLOCK_ORDER = {
   header: 0,
   now: 10,
   rules: 20,
+  interfaces: 24,
   relatedProjects: 25,
   projectSummary: 30,
   sectionsIndex: 40,
@@ -946,6 +949,19 @@ function formatProjectOutputWithTokenBudget(
         drillDown: `tim_read("${rulesSection.id}")`,
       });
     }
+  }
+
+  if (ctx?.interfacesId) {
+    blocks.push({
+      id: 'interfaces',
+      priority: BRIEFING_PRIORITY.header,
+      order: LOAD_BLOCK_ORDER.interfaces,
+      lines: [
+        '',
+        `Interfaces: tim_read("${ctx.interfacesId}") — what this project exposes; ` +
+          'update it when you change CLI, MCP tools, env, endpoints or files.',
+      ],
+    });
   }
 
   if (ctx?.relatedProjectLines && ctx.relatedProjectLines.length > 0) {
