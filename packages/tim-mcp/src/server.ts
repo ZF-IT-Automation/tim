@@ -311,6 +311,7 @@ const TimLinkSchema = z.object({
   type: z.enum([
     'relates', 'extends', 'contradicts', 'implements',
     'blocks', 'leases', 'tagged', 'summarizes', 'contradicted_by', 'supersedes',
+    'related',
   ]),
   weight: z.number().min(0).max(1).optional().default(1.0),
   metadata: z.record(z.unknown()).optional().default({}),

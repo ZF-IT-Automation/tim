@@ -51,6 +51,19 @@ export {
   type SessionSubstance,
 } from './substantive-session.js';
 export {
+  RELATED_EDGE_TYPE,
+  listRelatedProjects,
+  formatRelatedProjectLine,
+  relateProjects,
+  unrelateProjects,
+  setProjectDescription,
+  findNewestSubstantiveSession,
+  collectNewerNeighbourHandoffs,
+  type RelatedProjectInfo,
+  type SubstantiveSessionHead,
+  type NewerNeighbourHandoff,
+} from './related-projects.js';
+export {
   stripHarnessBlocks,
   isHarnessOnlyPrompt,
   shouldSkipPromptRecall,
