@@ -50,3 +50,25 @@ calls each, always a batch), so the chain stays as it is (`gpt-6-luna` medium).
   (`ubun-0929-ns-01M3PHEME0PRESHNTRKSW9MHPN`), not model selection.
 - Reliability 100 % across all 264 calls. The production codex failures of 2026-09-29 are
   therefore not the model's fault, see the health check (deleted spawn cwd).
+
+## Run 3: after the fixes (`d5089ab`)
+
+Vocabulary filter, cost tie band (±10 %), spawn cwd = home. Prompt hash `b44e00d88c87`
+(new, because the vocabulary block shrank). Run `~/.tim/bench/runs/2026-09-29T13-40-07-168Z`:
+
+| Candidate | Reliability | Latency med / p90 s | Tokens med | Contract | English | ID recall | Invented IDs | Must-keep | Substance |
+|---|---|---|---|---|---|---|---|---|---|
+| luna-low | 100 % | 6.0 / 11.0 | 1110 | 96 % | 100 % | 29 % | 0 | 84.7 % | 19/20 |
+| luna-medium (control) | 100 % | 6.5 / 10.2 | 728 | 100 % | 100 % | 33 % | 0 | 84.7 % | 19/20 |
+| luna-high | 100 % | 9.8 / 17.0 | 1177 | 100 % | 100 % | 32 % | 0 | 89.8 % | 18/20 |
+
+**Winner by the rule: luna-high.** `#decision` no longer appears. Low's break is a real model error
+(4 subject tags). Medium misses the 5-point band by 0.14 points and is out, so high wins
+without a cost comparison.
+
+Caveats:
+- Must-keep is stable across all three runs: high 90 %, medium 84–86 %.
+- Tokens are not stable (high 2363 → 1177, medium 1178 → 728 between runs 2 and 3; codex does
+  not count cached input). "High costs twice as much" therefore does not hold as a measurement,
+  only as a tendency.
+- Latency: high has the longer p90 (17–19 s vs. 10–11 s), which does not matter for a background job.
