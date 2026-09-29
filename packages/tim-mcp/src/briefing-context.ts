@@ -8,6 +8,7 @@ import {
   type TimStore,
 } from 'tim-store';
 import { buildNowBlock, countProjectOpenBugs, countProjectOpenTasks } from 'tim-hooks';
+import { formatRelatedProjectLine, listRelatedProjects } from 'tim-store';
 import type { BriefingRenderContext, RecentSessionLine } from './project-output.js';
 
 async function sessionHasHandoffInTree(store: TimStore, sessionId: string): Promise<boolean> {
@@ -70,6 +71,9 @@ export async function buildBriefingRenderContext(
     ? Math.max(3, recentSessionsCount)
     : substantiveTotal;
 
+  const neighbours = await listRelatedProjects(store, projectLabel);
+  const relatedProjectLines = neighbours.map(formatRelatedProjectLine);
+
   return {
     lastActivityDate: stats.lastActivity,
     nowBlockLines,
@@ -78,5 +82,6 @@ export async function buildBriefingRenderContext(
     recentSessions: substantiveSessions.slice(0, showCount),
     totalSessionCount: substantiveTotal,
     hiddenShortSessionCount: hiddenShortCount,
+    relatedProjectLines,
   };
 }

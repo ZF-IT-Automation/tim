@@ -491,6 +491,15 @@ export interface DirectiveBriefing {
    * nothing was reaped, so the directive text stays unchanged.
    */
   reapedNotice?: string;
+  /** Related project neighbours (label, name, description, load hint). */
+  relatedProjectLines?: string[];
+  /** Handoffs from related projects whose newest substantive session beats this project's. */
+  newerNeighbourHandoffs?: Array<{
+    label: string;
+    displayName: string;
+    date: string;
+    handoffNote: string;
+  }>;
 }
 
 /** Renders the content half of a directive; empty when there is nothing to say. */
@@ -532,6 +541,22 @@ function briefingBlock(briefing?: DirectiveBriefing): string[] {
 
   const notice = briefing.reapedNotice?.trim();
   if (notice) out.push('', notice);
+
+  const related = (briefing.relatedProjectLines ?? []).map(l => l.trimEnd()).filter(l => l.trim());
+  if (related.length > 0) {
+    out.push('', '── Related projects ──', ...related);
+  }
+
+  for (const n of briefing.newerNeighbourHandoffs ?? []) {
+    const note = n.handoffNote.trim();
+    out.push(
+      '',
+      `── Related project ${n.label} — ${n.displayName} (${n.date}) ──`,
+      note || '(no handoff note)',
+      `Detail on a topic: tim_resume_topic({ topic: "<subject>" })`,
+    );
+  }
+
   return out;
 }
 
