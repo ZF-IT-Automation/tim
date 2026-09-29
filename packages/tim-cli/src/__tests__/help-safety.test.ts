@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -93,6 +93,21 @@ function snapshotTree(root: string): Record<string, string> {
   return snapshot;
 }
 
+// Async on purpose: 242 back-to-back spawnSync calls kept this file's event loop
+// blocked for ~60 s on CI, past vitest's 60 s worker RPC timeout ("Timeout calling
+// onTaskUpdate", 2026-09-29) — every test passed and the run still failed.
+function runCli(args: string[], opts: { cwd: string; env: NodeJS.ProcessEnv }) {
+  return new Promise<{ status: number | null; stdout: string; stderr: string }>((resolve, reject) => {
+    const child = spawn('node', [CLI, ...args], opts);
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', d => (stdout += d));
+    child.stderr.on('data', d => (stderr += d));
+    child.on('error', reject);
+    child.on('close', status => resolve({ status, stdout, stderr }));
+  });
+}
+
 describe('tim CLI help safety', () => {
   let caseRoot: string;
   let homeDir: string;
@@ -119,11 +134,10 @@ describe('tim CLI help safety', () => {
   for (const { args, usage } of HELP_CASES) {
     for (const helpFlag of ['-h', '--help']) {
       const invocation = [...args, helpFlag];
-      it(`${invocation.join(' ')} exits zero and makes no filesystem changes`, () => {
+      it(`${invocation.join(' ')} exits zero and makes no filesystem changes`, async () => {
         const before = snapshotTree(caseRoot);
-        const result = spawnSync('node', [CLI, ...invocation], {
+        const result = await runCli(invocation, {
           cwd,
-          encoding: 'utf8',
           env: {
             ...process.env,
             HOME: homeDir,
