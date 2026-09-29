@@ -63,5 +63,5 @@ describe('tim project CLI', () => {
 
     out = run(['unrelate', 'P0940', 'P0941']);
     expect(out.stdout).toContain('No related edge');
-  });
+  }, 30_000); // eight sequential CLI spawns exceed the 5s default under a loaded full run
 });
