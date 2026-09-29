@@ -122,6 +122,17 @@ describe('marker', () => {
     expect(acquireLock(dir)).toBe(true);
   });
 
+  it('acquireLock takes over an empty lock once its mtime is past the TTL', () => {
+    const lock = summarizerLockPath(dir);
+    fs.mkdirSync(path.dirname(lock), { recursive: true });
+    fs.writeFileSync(lock, '');
+    expect(acquireLock(dir)).toBe(false); // fresh empty lock: a writer may still be mid-write
+    const old = new Date(Date.now() - 24 * 3600_000);
+    fs.utimesSync(lock, old, old);
+    expect(acquireLock(dir)).toBe(true);
+    expect(JSON.parse(fs.readFileSync(lock, 'utf8')).pid).toBe(process.pid);
+  });
+
   it('acquireLock ignores a leftover .tim-project.lock at cwd root', () => {
     fs.writeFileSync(
       path.join(dir, '.tim-project.lock'),
