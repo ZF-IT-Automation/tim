@@ -29,7 +29,7 @@ node packages/tim-cli/dist/cli.js statusline
 
 ---
 
-## Command Overview (45 commands)
+## Command Overview (46 commands)
 
 ### Top-Level Summary
 
@@ -42,44 +42,45 @@ node packages/tim-cli/dist/cli.js statusline
 | 5 | `tim resolve-session` | Print project_ref for a TIM session |
 | 6 | `tim bind-project` | Safely recover a missing `.tim-project` for an existing project |
 | 7 | `tim new-project` | Create a path-bound project with coordinated label allocation and marker publication |
-| 8 | `tim record-commit` | Record a git commit to the project's Commits section |
-| 9 | `tim hook session-start` | Start a new session |
-| 10 | `tim hook session-end` | End a session and run checkpoint |
-| 11 | `tim hook log` | Log a single exchange to a session |
-| 12 | `tim checkpoint` | Manual checkpoint for a session |
-| 13 | `tim rebalance` | Rebalance exchange batches at boundaries |
-| 14 | `tim statusline` | Status text or Hermes JSON for UI display |
-| 15 | `tim setup-hermes-statusline` | Install Hermes TUI status bar integration |
-| 16 | `tim export` | Export TIM DB to `.hmem` or text format |
-| 17 | `tim import` | Import from `.hmem` file |
-| 18 | `tim migrate-from-hmem` | Guided hmem-to-TIM migration with dry-run, snapshot, import, audit handoff |
-| 19 | `tim migrate-schema` | Apply pending database schema migrations (explicit opt-in) |
-| 20 | `tim migrate` | Metadata migrations (`tags-to-types`, `project-kind`, `retire-deprecated-tags`) |
-| 21 | `tim reap-checkpoints` | Reap checkpoints whose session already has a summarizer rollup |
-| 22 | `tim snapshot` | Snapshot live DB to `~/.tim/snapshots/` (SQLite backup) |
-| 23 | `tim restore` | Restore DB from a snapshot |
-| 24 | `tim compact-error-log` | Rebuild a bloated error_log; refuses while writers hold the DB |
-| 25 | `tim release-check` | Verify release gates, beta smoke checks, and packaging safety |
-| 26 | `tim setup-agent` | Install TIM MCP, skills, hooks, and smoke guidance for one agent host |
-| 27 | `tim sync connect` | Connect to o9k-sync server |
-| 28 | `tim sync disconnect` | Remove local sync configuration |
-| 29 | `tim sync push` | Push unacked staging to server |
-| 30 | `tim sync pull` | Pull remote changes |
-| 31 | `tim sync owner` | Drain sync on an interval; one owner per database |
-| 32 | `tim sync status` | Show sync configuration and health |
-| 33 | `tim sync audit` | Read-only sync diagnostic (`--json`) |
-| 34 | `tim sync repair` | Archive unbound state and write a new null cursor |
-| 35 | `tim sync dev` | Start local dev sync server (port 3100) |
-| 36 | `tim user init` | Create the human profile scaffold |
-| 37 | `tim user profile` | Show the human profile tree summary |
-| 38 | `tim update-skills` | Copy bundled TIM skills to detected agent hosts |
-| 39 | `tim root-entries` | List root entries |
-| 40 | `tim consolidate` | Run memory consolidation |
-| 41 | `tim secret` | Manage secret entry metadata |
-| 42 | `tim viewer` | Browse the entry tree in a local web UI; move and soft-delete nodes |
-| 43 | `tim sessions reap` | Reap empty session skeletons that never logged an exchange |
-| 44 | `tim open-work` | Print every project's open tasks, bugs and ideas as JSON |
-| 45 | `tim --help` | Show top-level help |
+| 8 | `tim project` | Relate projects, set their description and Interfaces entry |
+| 9 | `tim record-commit` | Record a git commit to the project's Commits section |
+| 10 | `tim hook session-start` | Start a new session |
+| 11 | `tim hook session-end` | End a session and run checkpoint |
+| 12 | `tim hook log` | Log a single exchange to a session |
+| 13 | `tim checkpoint` | Manual checkpoint for a session |
+| 14 | `tim rebalance` | Rebalance exchange batches at boundaries |
+| 15 | `tim statusline` | Status text or Hermes JSON for UI display |
+| 16 | `tim setup-hermes-statusline` | Install Hermes TUI status bar integration |
+| 17 | `tim export` | Export TIM DB to `.hmem` or text format |
+| 18 | `tim import` | Import from `.hmem` file |
+| 19 | `tim migrate-from-hmem` | Guided hmem-to-TIM migration with dry-run, snapshot, import, audit handoff |
+| 20 | `tim migrate-schema` | Apply pending database schema migrations (explicit opt-in) |
+| 21 | `tim migrate` | Metadata migrations (`tags-to-types`, `project-kind`, `retire-deprecated-tags`) |
+| 22 | `tim reap-checkpoints` | Reap checkpoints whose session already has a summarizer rollup |
+| 23 | `tim snapshot` | Snapshot live DB to `~/.tim/snapshots/` (SQLite backup) |
+| 24 | `tim restore` | Restore DB from a snapshot |
+| 25 | `tim compact-error-log` | Rebuild a bloated error_log; refuses while writers hold the DB |
+| 26 | `tim release-check` | Verify release gates, beta smoke checks, and packaging safety |
+| 27 | `tim setup-agent` | Install TIM MCP, skills, hooks, and smoke guidance for one agent host |
+| 28 | `tim sync connect` | Connect to o9k-sync server |
+| 29 | `tim sync disconnect` | Remove local sync configuration |
+| 30 | `tim sync push` | Push unacked staging to server |
+| 31 | `tim sync pull` | Pull remote changes |
+| 32 | `tim sync owner` | Drain sync on an interval; one owner per database |
+| 33 | `tim sync status` | Show sync configuration and health |
+| 34 | `tim sync audit` | Read-only sync diagnostic (`--json`) |
+| 35 | `tim sync repair` | Archive unbound state and write a new null cursor |
+| 36 | `tim sync dev` | Start local dev sync server (port 3100) |
+| 37 | `tim user init` | Create the human profile scaffold |
+| 38 | `tim user profile` | Show the human profile tree summary |
+| 39 | `tim update-skills` | Copy bundled TIM skills to detected agent hosts |
+| 40 | `tim root-entries` | List root entries |
+| 41 | `tim consolidate` | Run memory consolidation |
+| 42 | `tim secret` | Manage secret entry metadata |
+| 43 | `tim viewer` | Browse the entry tree in a local web UI; move and soft-delete nodes |
+| 44 | `tim sessions reap` | Reap empty session skeletons that never logged an exchange |
+| 45 | `tim open-work` | Print every project's open tasks, bugs and ideas as JSON |
+| 46 | `tim --help` | Show top-level help |
 
 ---
 
@@ -300,6 +301,18 @@ same database used for creation. If a different marker already exists, reconcile
 explicitly; neither `new-project` nor recovery-only `bind-project` overwrites it.
 
 ---
+
+### `tim project <relate|unrelate|related|describe|interfaces>`
+
+```bash
+tim project related [<P>]                       # neighbours (label, name, description)
+tim project relate [<A>] <B>                    # symmetric related edge; A defaults to this directory's project
+tim project unrelate [<A>] <B>
+tim project describe [<P>] "<1-3 sentences>"    # metadata.description, shown in briefing lines
+tim project interfaces [<P>] [--set "<text>"]   # show / upsert the Interfaces child entry (metadata.kind = interfaces)
+```
+
+Projects are named by label, alias or name in any spelling. Agents maintain these; the Interfaces entry is refreshed in the `tim-handoff` step when a session changes what the project exposes.
 
 ### 8. `tim record-commit --cwd <dir> --hash <sha> --message <msg> [--diff <path>]`
 
