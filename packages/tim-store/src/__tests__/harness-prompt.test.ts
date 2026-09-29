@@ -172,3 +172,12 @@ describe('logExchange harness filtering', () => {
     store.close();
   });
 });
+
+describe('slash-command plumbing', () => {
+  it('treats a bare slash command as harness-only and keeps typed args', () => {
+    const bare = '<command-message>tim-continue</command-message>\n<command-name>/tim-continue</command-name>\n<command-args></command-args>';
+    expect(isHarnessOnlyPrompt(bare)).toBe(true);
+    const withArgs = '<command-name>/tim-resume-topic</command-name><command-args>sync</command-args>';
+    expect(stripHarnessBlocks(withArgs)).toContain('sync');
+  });
+});

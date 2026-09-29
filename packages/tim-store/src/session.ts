@@ -28,7 +28,7 @@ import {
 } from './session-tree.js';
 import { ensureProjectSchema } from './project-schema-init.js';
 import { aggregateSubstance, parseSessionSubstance } from './substantive-session.js';
-import { isCountableUserExchange, sanitizeUserExchangeContent } from './harness-prompt.js';
+import { isCountableUserExchange, sanitizeUserExchangeContent, stripHarnessBlocks } from './harness-prompt.js';
 
 export type ExchangeRole = 'user' | 'agent';
 
@@ -218,7 +218,7 @@ const DEFAULT_SUMMARIZER: Summarizer = async (exchanges) => {
   const topics = userMsgs
     .slice(0, 5)
     .map(e => {
-      const text = exchangeText(e);
+      const text = stripHarnessBlocks(exchangeText(e));
       // Extract first sentence or first 120 chars as topic indicator
       const firstSentence = text.split(/[.!?\n]/)[0]?.trim() ?? text;
       return firstSentence.length > 120 ? firstSentence.slice(0, 117) + '…' : firstSentence;

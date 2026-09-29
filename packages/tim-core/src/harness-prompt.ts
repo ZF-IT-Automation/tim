@@ -4,6 +4,8 @@ export const HARNESS_BLOCK_TAGS = [
   'system-reminder',
   'local-command-caveat',
   'command-name',
+  'command-message',
+  'local-command-stdout',
 ] as const;
 
 function blockPattern(tag: string): RegExp {
@@ -16,6 +18,8 @@ export function stripHarnessBlocks(text: string): string {
   for (const tag of HARNESS_BLOCK_TAGS) {
     out = out.replace(blockPattern(tag), '');
   }
+  // Empty args are plumbing; non-empty args are what the human typed after the command.
+  out = out.replace(/<command-args\b[^>]*>\s*<\/command-args>/gi, '');
   // Only complete blocks are removed; an unclosed tag may be followed by human text.
   return out.trim();
 }
