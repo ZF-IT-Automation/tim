@@ -288,7 +288,7 @@ async function call(
     cand.cli, cand.model, cand.provider, prompt, PROBE_TIMEOUT_SEC,
     (_label, detail) => { error = detail; },
     cand.args ?? [],
-    raw => { tokens = parseTokens(raw); },
+    (stdout, stderr) => { tokens = parseTokens(`${stdout}\n${stderr}`); },
   );
   return { text, tokens, ms: Date.now() - t0, error, timedOut: /timeout=/.test(error ?? '') };
 }
