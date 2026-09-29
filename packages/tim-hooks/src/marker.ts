@@ -502,7 +502,7 @@ export interface DirectiveBriefing {
     displayName: string;
     sessions: Array<{ date: string; summary: string }>;
     more: number;
-    unsummarized: number;
+    unsummarized: string[];
     interfacesLine?: string;
   }>;
 }
@@ -563,8 +563,8 @@ function briefingBlock(briefing?: DirectiveBriefing): string[] {
       out.push('', `${n.label} — ${n.displayName}`);
       for (const s of n.sessions) out.push(`- ${s.date} · ${s.summary}`);
       if (n.more > 0) out.push(`- +${n.more} more — /tim-resume-topic <topic>`);
-      if (n.unsummarized > 0) {
-        out.push(`- ${n.unsummarized} session${n.unsummarized === 1 ? '' : 's'}, not yet summarized`);
+      if (n.unsummarized.length > 0) {
+        out.push(`- not yet summarized: ${n.unsummarized.join(', ')}`);
       }
       if (n.interfacesLine) out.push(n.interfacesLine);
     }

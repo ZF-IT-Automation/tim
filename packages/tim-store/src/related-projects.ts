@@ -165,7 +165,7 @@ export async function setProjectInterfaces(
 }
 
 /**
- * `Interfaces: <id> (<name>)` for a neighbour whose content a recall shows —
+ * `Interfaces: tim_read("<id>") — what <name> exposes …` for a neighbour whose content a recall shows —
  * the node ID only, so the agent can read it or hand it to a worker. Null when
  * the project has no Interfaces entry.
  */
@@ -175,7 +175,9 @@ export async function interfacesPointerLine(
   displayName: string,
 ): Promise<string | null> {
   const entry = await getProjectInterfaces(store, projectLabel).catch(() => null);
-  return entry ? `Interfaces: ${entry.id} (${displayName})` : null;
+  return entry
+    ? `Interfaces: tim_read("${entry.id}") — what ${displayName} exposes (CLI, MCP tools, env, endpoints)`
+    : null;
 }
 
 export interface SubstantiveSessionHead {
@@ -209,8 +211,8 @@ export interface NeighbourActivity {
   sessions: Array<{ date: string; summary: string }>;
   /** Summarized sessions beyond the cap. */
   more: number;
-  /** Substantive sessions the summarizer has not reached yet. */
-  unsummarized: number;
+  /** Dates of substantive sessions the summarizer has not reached yet. */
+  unsummarized: string[];
   /** `Interfaces: <id> (<name>)` when the neighbour has an Interfaces entry. */
   interfacesLine?: string;
 }
@@ -220,9 +222,15 @@ export interface CollectNeighbourActivityOptions {
   ownHead?: SubstantiveSessionHead | null;
 }
 
-function clipOneLine(text: string, max: number): string {
+/** First sentence, flattened; cut at a word boundary when the sentence alone is too long. */
+function firstSentence(text: string, max: number): string {
   const flat = text.replace(/\s+/g, ' ').trim();
-  return flat.length > max ? `${flat.slice(0, max - 1).trimEnd()}…` : flat;
+  const end = flat.search(/[.!?](\s|$)/);
+  const sentence = end === -1 ? flat : flat.slice(0, end + 1);
+  if (sentence.length <= max) return sentence;
+  const cut = sentence.slice(0, max - 1);
+  const space = cut.lastIndexOf(' ');
+  return `${(space > max / 2 ? cut.slice(0, space) : cut).trimEnd()}…`;
 }
 
 /**
@@ -255,10 +263,10 @@ export async function collectNeighbourActivity(
       ...(interfacesLine ? { interfacesLine } : {}),
       sessions: summarized.slice(0, NEIGHBOUR_SESSION_CAP).map(s => ({
         date: s.date.slice(0, 10),
-        summary: clipOneLine(s.summary, NEIGHBOUR_SUMMARY_MAX_CHARS),
+        summary: firstSentence(s.summary, NEIGHBOUR_SUMMARY_MAX_CHARS),
       })),
       more: Math.max(0, summarized.length - NEIGHBOUR_SESSION_CAP),
-      unsummarized: newer.length - summarized.length,
+      unsummarized: newer.filter(s => !s.summary).map(s => s.date.slice(0, 10)),
     });
   }
 

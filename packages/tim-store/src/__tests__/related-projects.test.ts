@@ -184,7 +184,7 @@ describe('newer neighbour handoffs', () => {
     await substantiveSession('P0911', 'nb-raw-2', '2026-02-02T10:00:00.000Z');
     const out = await collectNeighbourActivity(store, 'P0910');
     expect(out[0]!.sessions).toEqual([]);
-    expect(out[0]!.unsummarized).toBe(2);
+    expect(out[0]!.unsummarized).toEqual(['2026-02-02', '2026-02-01']);
   });
 
   it('excludes non-substantive neighbour sessions', async () => {
@@ -207,6 +207,15 @@ describe('newer neighbour handoffs', () => {
       await store.update(summaryNode.id, { metadata: { substance: 'none' } });
     }
     expect(await collectNeighbourActivity(store, 'P0910')).toEqual([]);
+  });
+
+  it('shows the first sentence and never a default checkpoint topic list', async () => {
+    await substantiveSession('P0910', 'home', '2026-01-01T10:00:00.000Z', 'home');
+    await substantiveSession('P0911', 'nb-s', '2026-02-01T10:00:00.000Z', undefined, 'Shipped the adapter. Then more detail.');
+    await substantiveSession('P0911', 'nb-h', '2026-02-02T10:00:00.000Z', 'note only');
+    const out = await collectNeighbourActivity(store, 'P0910');
+    expect(out[0]!.sessions.map(s => s.summary)).toEqual(['Shipped the adapter.']);
+    expect(out[0]!.unsummarized).toEqual(['2026-02-02']);
   });
 
   it('truncates long neighbour summaries', async () => {

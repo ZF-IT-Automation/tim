@@ -120,7 +120,7 @@ describe('cross-project topic resume', () => {
 
     await seedTaggedSession('P0921', 'b-sess', '#jev', 'harness work on jev');
     const text = formatTopicResume(await collectTopicResume(store, 'P0920', 'jev'));
-    expect(text).toContain(`Interfaces: ${iface.id} (Game-Harness)`);
+    expect(text).toContain(`Interfaces: tim_read("${iface.id}") — what Game-Harness exposes`);
     expect(text).not.toContain('CLI: harness run');
     expect(text.match(/Interfaces:/g)).toHaveLength(1);
   });
@@ -210,7 +210,7 @@ describe('related project briefing surfaces', () => {
 
     const iface = await setProjectInterfaces(store, 'P0931', 'MCP: side_tool');
     const withIface = await previewSessionStart(store, { projectId: 'P0930', maxTokens: 8000, cwd: '/tmp' });
-    expect(withIface.directive).toContain(`Interfaces: ${iface.id} (Sidecar)`);
+    expect(withIface.directive).toContain(`Interfaces: tim_read("${iface.id}") — what Sidecar exposes`);
   });
 
   it('continue preview omits neighbour handoff when neighbour is older', async () => {

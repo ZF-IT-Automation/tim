@@ -122,14 +122,15 @@ export async function substantiveSessionsSince(
   const out: SubstantiveSessionSummary[] = [];
   for (const candidate of listed) {
     if (since && candidate.lastActivity <= since) break;
-    const { text, summaryNode, substantive } = await inspectSession(
+    const { summaryNode, substantive } = await inspectSession(
       store, candidate.sessionId, candidate.exchangeCount,
     );
     if (!substantive) continue;
     let summary = typeof summaryNode?.metadata.summary === 'string'
       ? summaryNode.metadata.summary.trim()
       : '';
-    if (!summary) summary = text;
+    // Checkpoint text is skipped: the default checkpoint writes a topic list of raw
+    // prompts, not a summary. Real summaries live on the root or in batch summaries.
     if (!summary && summaryNode) {
       const batches = await store.getChildByKind(summaryNode.id, KIND_BATCH).catch(() => []);
       summary = batches
