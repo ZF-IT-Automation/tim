@@ -64,6 +64,7 @@ import {
   cmdSetupHermesStatusline,
 } from './hermes-statusline-install.js';
 import { cmdConsolidate } from './consolidate.js';
+import { cmdProject } from './project.js';
 import { auditSummarizerHealth } from './summarizer-health.js';
 import { auditHarnessDbPaths } from './harness-db-audit.js';
 import {
@@ -149,6 +150,12 @@ const COMMAND_HELP: Record<string, string> = {
   'bind-project': 'Usage: tim bind-project --label <P00XX> [--cwd <dir>]',
   'new-project':
     'Usage: tim new-project --path <dir> --name <string> [--no-git] [--confirm]',
+  project:
+    'Usage: tim project <relate|unrelate|related|describe> ...',
+  'project relate': 'Usage: tim project relate <A> <B>',
+  'project unrelate': 'Usage: tim project unrelate <A> <B>',
+  'project related': 'Usage: tim project related <A>',
+  'project describe': 'Usage: tim project describe <P> "<text>"',
   'record-commit':
     'Usage: tim record-commit [--cwd <dir>] [--project <label>] [--session <id>] [--hash <sha>] [--message <text>] [--diff <stat>] [--author <name>] [--date <iso>] [--branch <name>]',
   hook: 'Usage: tim hook <session-start|session-end|log|prompt-submit|claude-session-start|claude-session-end|claude-stop|cursor-stop|codex-notify> [options]',
@@ -1444,6 +1451,9 @@ async function main() {
       break;
     case 'new-project':
       await cmdNewProject(rest);
+      break;
+    case 'project':
+      await cmdProject(rest);
       break;
     case 'record-commit':
       await cmdRecordCommit(rest);
