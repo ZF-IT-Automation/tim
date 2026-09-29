@@ -29,7 +29,7 @@ node packages/tim-cli/dist/cli.js statusline
 
 ---
 
-## Command Overview (44 commands)
+## Command Overview (45 commands)
 
 ### Top-Level Summary
 
@@ -78,7 +78,8 @@ node packages/tim-cli/dist/cli.js statusline
 | 41 | `tim secret` | Manage secret entry metadata |
 | 42 | `tim viewer` | Browse the entry tree in a local web UI; move and soft-delete nodes |
 | 43 | `tim sessions reap` | Reap empty session skeletons that never logged an exchange |
-| 44 | `tim --help` | Show top-level help |
+| 44 | `tim open-work` | Print every project's open tasks, bugs and ideas as JSON |
+| 45 | `tim --help` | Show top-level help |
 
 ---
 
@@ -738,7 +739,27 @@ Deleting a node with children asks first, because a delete does not cascade:
 either the children are moved up to the deleted node's parent, or the whole
 subtree is flagged. There is no third option that leaves them reachable.
 
-### 37. `tim --help`
+### 37. `tim open-work`
+
+Print every project's open tasks, bugs and ideas as one JSON document — the read
+surface outside tools use instead of opening the TIM database themselves. Open
+means: a task whose status is not done/cancelled/closed/wontfix, a bug that is
+not closed, and an idea that is neither rejected nor already promoted to a task.
+Secret entries are left out.
+
+```json
+{
+  "projects": [{ "label": "P0073", "title": "team-up" }],
+  "items": [
+    { "id": "ubun-0927-ns-01M3…", "kind": "task", "title": "…", "status": "todo",
+      "priority": "P2", "project": "P0073" }
+  ]
+}
+```
+
+---
+
+### 38. `tim --help`
 
 Print the top-level command inventory without opening the TIM database.
 
