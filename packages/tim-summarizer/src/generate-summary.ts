@@ -62,15 +62,30 @@ export const ENGLISH_SUMMARY_INSTRUCTION =
   'Write your entire response in English, regardless of the conversation language. ' +
   'Keep quoted identifiers, commands, file paths, and code verbatim.';
 
+/** The closed activity facet the batch prompt allows. */
+export const ACTIVITY_TAGS = ['#design', '#implementation', '#debugging', '#review'];
+
+/**
+ * Tags the batch prompt forbids: the project itself, containers, and activity
+ * respellings of the closed list. They are dropped from the vocabulary too —
+ * P0063's list carried #decision, #tim and #tasks, and "use them verbatim" beat
+ * the prohibition in every model the eval tried (2026-09-29).
+ */
+export const FORBIDDEN_TAGS = [
+  '#tim', '#hermes', '#queue', '#tasks', '#tim-project',
+  '#bugfix', '#bugfixing', '#bug-fixing', '#codefix', '#decision',
+];
+
 export function buildPrompt(batch: UnsummarizedBatch): string {
+  const reusable = (batch.vocabulary ?? []).filter(t => !FORBIDDEN_TAGS.includes(t));
   // Only tags the project reused, frequency-ordered (the caller drops
   // singletons and the machine-stamped commit tags). "Verbatim" is the load
   // bearing word: the drift being fixed is not only invented topics but
   // respellings of agreed ones — #bugfix, #bugfixing and #bug-fixing all exist
   // side by side in P0062, and each new spelling splits the topic again.
-  const vocabulary = batch.vocabulary?.length
+  const vocabulary = reusable.length
     ? `\n\nTags this project already reuses, most used first: ` +
-      `${batch.vocabulary.join(' ')}\n` +
+      `${reusable.join(' ')}\n` +
       `If one of them fits, use it verbatim — same spelling, same hyphens. ` +
       // Measured on the re-tagging run: two summaries that both carried
       // #schema-migrations came back as #schema-migrations and #schema, and
@@ -286,7 +301,13 @@ function runCliProcess(
     // hooks log the call as a new session (97 junk sessions from one backfill run).
     // TIM_SUMMARIZER also keeps the session-start briefing out of the prompt — set
     // here, not only by the supervisor, since the classifier runs outside it.
+    // cwd pinned to home: an inherited cwd can be a worktree that was removed
+    // since the supervisor started, and codex and opencode both exit 1 there
+    // ("No such file or directory" / "The current working directory was
+    // deleted") — every summary failed that way on 2026-09-29. A repo cwd would
+    // also make codex read that repo's AGENTS.md into a summarizer prompt.
     const child = spawn(command, args, {
+      cwd: os.homedir(),
       stdio: ['pipe', 'pipe', 'pipe'],
       env: { ...process.env, TEAMUP_WORKER: '1', TIM_SUMMARIZER: '1' },
     });

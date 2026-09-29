@@ -33,7 +33,9 @@ import {
   buildSessionRollupPrompt,
   buildSubstanceVerdictPrompt,
   clampToWholeBullets,
+  ACTIVITY_TAGS,
   extractTags,
+  FORBIDDEN_TAGS,
   parseSubstanceLine,
   PROJECT_SUMMARY_MAX_CHARS,
   tryCli,
@@ -99,13 +101,6 @@ export interface Score {
 const BENCH_DIR = path.join(getTimDir(), 'bench');
 const FIXTURE_PATH = path.join(BENCH_DIR, 'summarizer-fixtures.json');
 const CANDIDATES_PATH = path.join(BENCH_DIR, 'summarizer-candidates.json');
-const ACTIVITY_TAGS = ['#design', '#implementation', '#debugging', '#review'];
-// Containers and project names the batch prompt forbids, plus the activity
-// respellings the closed list exists to stop (see buildPrompt).
-const FORBIDDEN_TAGS = [
-  '#tim', '#hermes', '#queue', '#tasks', '#tim-project',
-  '#bugfix', '#bugfixing', '#bug-fixing', '#codefix', '#decision',
-];
 const ROLLUP_MAX_WORDS = 200;
 const PROBE_TIMEOUT_SEC = 300;
 
@@ -255,22 +250,25 @@ export function aggregate(results: CallResult[]): Aggregate[] {
   });
 }
 
+/** Costs within this band count as equal; latency decides between them (Benni 2026-09-29). */
+export const COST_TIE_BAND = 0.1;
+
 /**
  * The decision rule, fixed before any run: among candidates with 100 % reliability
  * and 100 % contract compliance whose must-keep score is at most 5 points below the
- * best, the cheapest (median tokens) wins, then the fastest (median latency).
+ * best, the cheapest (median tokens) wins. Candidates within COST_TIE_BAND of the
+ * cheapest tie on cost, and the fastest (median latency) of them wins.
  */
 export function pickWinner(aggs: Aggregate[]): Aggregate | null {
   const best = Math.max(...aggs.map(a => a.mustKeep ?? 0));
   const eligible = aggs.filter(
     a => a.reliability === 1 && a.contract === 1 && (a.mustKeep ?? 0) >= best - 0.05,
   );
-  eligible.sort(
-    (a, b) =>
-      (a.tokensMedian ?? 0) - (b.tokensMedian ?? 0) ||
-      (a.latencyMedianS ?? Infinity) - (b.latencyMedianS ?? Infinity),
-  );
-  return eligible[0] ?? null;
+  if (eligible.length === 0) return null;
+  const cheapest = Math.min(...eligible.map(a => a.tokensMedian ?? 0));
+  const tied = eligible.filter(a => (a.tokensMedian ?? 0) <= cheapest * (1 + COST_TIE_BAND));
+  tied.sort((a, b) => (a.latencyMedianS ?? Infinity) - (b.latencyMedianS ?? Infinity));
+  return tied[0]!;
 }
 
 // ── run ──────────────────────────────────────────────────────────────────────

@@ -73,7 +73,9 @@ Fixed before any run and implemented in `pickWinner`:
 
 1. Eligible are candidates with **100 % reliability** and **100 % contract compliance**,
    whose must-keep score is **at most 5 percentage points** below the best.
-2. Among these, the **cheapest** wins (median tokens), then the **fastest** (median latency).
+2. Among these, the **cheapest** wins (median tokens). Candidates within **±10 %** of the
+   cheapest count as equal in cost, and the **fastest** of them wins (median latency).
+   Otherwise a few tokens of noise would decide (2026-09-29: low 1174 vs. medium 1178).
 3. No candidate eligible → the chain stays as it is, and the report says what failed.
 
 A winner goes to the head of the chain. Whether the previous head stays behind it as a

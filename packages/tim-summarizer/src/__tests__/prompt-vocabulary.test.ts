@@ -24,6 +24,12 @@ describe('buildPrompt vocabulary hint (criteria 1 + 2)', () => {
     expect(prompt).toMatch(/use it verbatim/);
   });
 
+  it('drops tags the prompt itself forbids from the vocabulary', () => {
+    const prompt = buildPrompt({ ...base, vocabulary: ['#sync', '#decision', '#tim', '#tasks'] });
+    expect(prompt).toContain('reuses, most used first: #sync\n');
+    expect(buildPrompt({ ...base, vocabulary: ['#decision'] })).toBe(buildPrompt(base));
+  });
+
   // Criterion 2: a vocabulary lookup that fails must cost nothing. Both the
   // missing and the empty case have to produce the same prompt, or a failed
   // lookup would silently change how sessions get summarized.

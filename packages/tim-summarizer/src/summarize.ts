@@ -59,14 +59,19 @@ async function sessionSummaryTexts(
     : '';
   if (stored) return [stored];
 
+  // Checkpoints carry the same tags as batch summaries but hold the heuristic
+  // "Topics: … Agent responses hint at …" text, one per checkpoint call — fed in,
+  // they made P0063's project summary out of repeated heuristics (2026-09-29).
+  // Titles ("Summary", "Batch N") carry no information either.
   const children = await store.getChildren(summaryNode.id);
   const batchSummaries = children
+    .filter(c => c.metadata.kind !== 'checkpoint')
     .filter(c => c.tags.includes('#batch-summary') || c.metadata.kind === KIND_BATCH)
     .sort((a, b) => (Number(a.metadata.batch_index) || 0) - (Number(b.metadata.batch_index) || 0))
-    .map(c => (c.content ?? '').trim() || c.title.trim())
+    .map(c => (c.content ?? '').trim())
     .filter(Boolean);
   if (batchSummaries.length > 0) return batchSummaries;
-  const body = summaryNode.content?.trim() || summaryNode.title.trim();
+  const body = summaryNode.content?.trim();
   return body ? [body] : [];
 }
 
