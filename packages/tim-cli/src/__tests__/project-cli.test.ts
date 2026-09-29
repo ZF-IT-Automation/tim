@@ -56,6 +56,13 @@ describe('tim project CLI', () => {
     expect(out.status).toBe(0);
     expect(out.stdout).toContain('Description set');
 
+    out = run(['interfaces', 'P0940']);
+    expect(out.stdout).toContain('No interfaces recorded');
+    out = run(['interfaces', 'P0940', '--set', 'CLI: one run']);
+    expect(out.stdout).toContain('Interfaces set');
+    out = run(['interfaces', 'P0940']);
+    expect(out.stdout).toContain('CLI: one run');
+
     out = run(['unrelate', 'P0940', 'P0941']);
     expect(out.stdout).toContain('Unrelated');
 

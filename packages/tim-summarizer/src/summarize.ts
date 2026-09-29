@@ -18,6 +18,7 @@ import {
   generateSummary,
   generateSummaryDetailed,
   generateProjectSummary,
+  PROJECT_SUMMARY_MAX_CHARS,
   generateSessionRollup,
   generateSummaryHeuristic,
   generateSubstanceVerdict,
@@ -116,11 +117,16 @@ export async function runProjectSummary(label: string): Promise<boolean> {
     }
     if (picked.length === 0) return false;
 
-    const generated = await generateProjectSummary(picked.flatMap(p => p.summaries));
-    if (!generated) return false;
-
     const dates = picked.map(p => p.date).sort();
     const coverage = `_Covers ${picked.length} sessions, ${dates[0]} – ${dates[dates.length - 1]}_`;
+    // The coverage line counts toward the limit the briefing renders.
+    const generated = await generateProjectSummary(
+      picked.flatMap(p => p.summaries),
+      undefined,
+      PROJECT_SUMMARY_MAX_CHARS - coverage.length - 1,
+    );
+    if (!generated) return false;
+
     const summary = `${coverage}\n${generated.trim()}`;
     const newContent = mergeProjectSummary(project.content, summary);
     await store.update(project.id, {

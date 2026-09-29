@@ -8,6 +8,7 @@ import {
   parseSubstanceLine,
   toSingleLineSummary,
   tryCli,
+  clampToWholeBullets,
   FALLBACK_MARKER,
 } from '../generate-summary.js';
 import type { UnsummarizedBatch } from '../mcp-client.js';
@@ -140,5 +141,14 @@ describe('tryCli argv', () => {
     ]);
     expect(out).toContain('--model gpt-5.6-luna');
     expect(out).toContain('-c model_reasoning_effort=max');
+  });
+});
+
+describe('clampToWholeBullets', () => {
+  it('keeps text under the limit and cuts at the last whole bullet above it', () => {
+    expect(clampToWholeBullets('- a\n- b', 800)).toBe('- a\n- b');
+    const text = `- ${'x'.repeat(40)}\n  continued\n- ${'y'.repeat(40)}`;
+    expect(clampToWholeBullets(text, 60)).toBe(`- ${'x'.repeat(40)}\n  continued`);
+    expect(clampToWholeBullets(`- ${'z'.repeat(90)}`, 50)).toBe('');
   });
 });

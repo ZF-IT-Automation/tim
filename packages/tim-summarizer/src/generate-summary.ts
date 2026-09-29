@@ -535,31 +535,58 @@ export async function generateSessionRollup(
   return null;
 }
 
-function buildProjectSummaryPrompt(sessionSummaries: string[]): string {
+/** Hard ceiling for a project summary; the briefing renders it every load. */
+export const PROJECT_SUMMARY_MAX_CHARS = 800;
+
+function buildProjectSummaryPrompt(sessionSummaries: string[], maxChars: number): string {
   const joined = sessionSummaries.join('\n\n---\n\n');
   return (
     `${ENGLISH_SUMMARY_INSTRUCTION} ` +
     `You are summarizing a project's progress across multiple sessions.\n` +
-    `Below are summaries of the last N sessions. Produce a concise project-level summary.\n\n` +
-    `Focus on:\n` +
-    `- Overall progress toward project goals\n` +
-    `- Key decisions made\n` +
-    `- Recurring patterns or themes\n` +
-    `- Current blockers or open items\n` +
-    `- What changed since the last project summary\n\n` +
-    `Format: 3-5 bullet points, 200 words max. Output ONLY the bullets, no preamble.\n\n` +
+    `Below are summaries of the last N sessions. Produce a project-level summary ` +
+    `of the project's CURRENT STATE: what works, what is in progress, what blocks.\n\n` +
+    `Format: 2-3 terse bullet points, ${maxChars} characters total at most. ` +
+    `Output ONLY the bullets, no preamble.\n\n` +
     `Session summaries:\n${joined}`
   );
+}
+
+function buildCompressPrompt(summary: string, maxChars: number): string {
+  return (
+    `${ENGLISH_SUMMARY_INSTRUCTION} ` +
+    `Shorten this project summary to ${maxChars} characters or fewer. Keep 2-3 bullet ` +
+    `points and the most important facts. Output ONLY the bullets, no preamble.\n\n${summary}`
+  );
+}
+
+/**
+ * Cut at the last whole bullet that fits. A leading line without a bullet
+ * marker counts as its own block. Empty when not even the first bullet fits.
+ */
+export function clampToWholeBullets(text: string, maxChars: number): string {
+  const trimmed = text.trim();
+  if (trimmed.length <= maxChars) return trimmed;
+  const blocks = trimmed.split(/\n(?=\s*[-*•] )/);
+  let out = '';
+  for (const block of blocks) {
+    const next = out ? `${out}\n${block}` : block;
+    if (next.length > maxChars) break;
+    out = next;
+  }
+  return out;
 }
 
 /**
  * Aggregate session summaries into a project-level summary via the CLI chain.
  * Returns null on total failure (no chain, no input, or every CLI failed) —
  * caller must then write NOTHING, never a fallback marker into project content.
+ * The result is at most `maxChars`: one compress pass when the model overshoots,
+ * then a cut at the last whole bullet.
  */
 export async function generateProjectSummary(
   sessionSummaries: string[],
   onError?: ErrorLogFn,
+  maxChars = PROJECT_SUMMARY_MAX_CHARS,
 ): Promise<string | null> {
   const config = loadConfig();
   const chain = config.summarizer?.chain;
@@ -569,19 +596,26 @@ export async function generateProjectSummary(
   }
   if (sessionSummaries.length === 0) return null;
 
-  const prompt = buildProjectSummaryPrompt(sessionSummaries);
   const timeoutSec = perCliTimeoutSec(config.summarizer?.timeout_sec, chain.length);
-
-  for (const entry of chain) {
-    const result = await tryCli(entry.cli, entry.model, entry.provider, prompt, timeoutSec, onError, entry.args);
-    if (result) {
-      if (process.env.TIM_SUMMARIZER_VERBOSE) {
-        console.error(`tim-summarizer: project summary via ${entry.label || entry.cli}/${entry.model}`);
+  const runChain = async (prompt: string): Promise<string | null> => {
+    for (const entry of chain) {
+      const result = await tryCli(entry.cli, entry.model, entry.provider, prompt, timeoutSec, onError, entry.args);
+      if (result) {
+        if (process.env.TIM_SUMMARIZER_VERBOSE) {
+          console.error(`tim-summarizer: project summary via ${entry.label || entry.cli}/${entry.model}`);
+        }
+        return result.trim();
       }
-      return result;
     }
+    return null;
+  };
+
+  let summary = await runChain(buildProjectSummaryPrompt(sessionSummaries, maxChars));
+  if (!summary) return null;
+  if (summary.length > maxChars) {
+    summary = (await runChain(buildCompressPrompt(summary, maxChars))) ?? summary;
   }
-  return null;
+  return clampToWholeBullets(summary, maxChars) || null;
 }
 
 /**

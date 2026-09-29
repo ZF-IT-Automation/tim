@@ -15,6 +15,8 @@ tim project related                       # neighbours of this directory's proje
 tim project relate game-harness           # this project ↔ Game Harness
 tim project relate MAIMO "game harness"   # any two projects
 tim project describe "One to three sentences: what this project IS."
+tim project interfaces                    # show this project's Interfaces entry (node ID + text)
+tim project interfaces MAIMO --set "CLI: …; MCP tools: …; files: …; env: …"
 tim project unrelate game-harness
 \`\`\`
 - Name projects by label (P0054), alias or name — case, \`-\`, \`_\` and spaces don't matter. No label lookup needed first.
@@ -23,10 +25,11 @@ tim project unrelate game-harness
 - Output always shows label + name: \`Related P0054 MAIMO-RPG ↔ P0076 Game Harness\`.
 - \`relate\` no-ops when already linked (either direction) or when A == B. \`unrelate\` drops the edge either way.
 - Archived neighbours stay hidden in briefings.
+- Interfaces = what the project exposes (CLI, MCP tools, files, env, APIs), kept in one child entry of the project root. Hand its node ID to workers; \`--set\` replaces the text in place.
 
 ## After relating
 - \`tim_load_project\` and session-start directives list neighbours (label, name, optional description).
 - \`/tim-resume-topic\` merges matching sessions across neighbours, tagged by project name.
-- \`/tim-continue\` may show a neighbour's handoff only when that project's newest substantive session is newer than this one's.
+- \`/tim-continue\` lists neighbour session summaries newer than this project's last session under \`## Meanwhile in related projects\` — context, never their handoff notes.
 `,
 };

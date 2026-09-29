@@ -6,6 +6,9 @@ import {
   unrelateProjects,
   listRelatedProjects,
   setProjectDescription,
+  getProjectInterfaces,
+  setProjectInterfaces,
+  KIND_INTERFACES,
   formatRelatedProjectLine,
   collectNeighbourActivity,
   newestSubstantiveSession,
@@ -68,6 +71,16 @@ describe('related projects', () => {
     const line = formatRelatedProjectLine((await listRelatedProjects(store, 'P0900'))[0]!);
     expect(line).toContain('Companion tooling for Alpha.');
     expect(line).toContain('bind: false');
+  });
+
+  it('interfaces live in one child entry of the project root, upserted', async () => {
+    expect(await getProjectInterfaces(store, 'P0900')).toBeNull();
+    const first = await setProjectInterfaces(store, 'P0900', 'CLI: alpha run');
+    const second = await setProjectInterfaces(store, 'P0900', 'CLI: alpha run, alpha stop');
+    expect(second.id).toBe(first.id);
+    expect(second.metadata.kind).toBe(KIND_INTERFACES);
+    expect(second.parentId).toBe((await store.requireProject('P0900')).id);
+    expect((await getProjectInterfaces(store, 'P0900'))!.content).toBe('CLI: alpha run, alpha stop');
   });
 
   it('briefing line omits description when unset', async () => {

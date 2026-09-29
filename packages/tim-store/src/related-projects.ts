@@ -2,6 +2,7 @@ import type { Edge, Entry } from 'tim-core';
 import type { TimStore } from './store.js';
 import { projectDisplayNameFromEntry } from './project-display.js';
 import { newestSubstantiveSession, substantiveSessionsSince } from './newest-substantive-session.js';
+import { findChildByKind } from './session-tree.js';
 
 export const RELATED_EDGE_TYPE = 'related' as const;
 
@@ -125,6 +126,42 @@ export async function setProjectDescription(
   const text = description.trim();
   if (!text) throw new Error('description must be non-empty');
   await store.update(project.id, { metadata: { description: text } });
+}
+
+export const KIND_INTERFACES = 'interfaces' as const;
+
+/**
+ * The project's Interfaces entry: what it exposes (CLI, MCP tools, files, env,
+ * APIs). A child of the project root, one per project, so its node ID can be
+ * handed to workers.
+ */
+export async function getProjectInterfaces(
+  store: TimStore,
+  projectLabel: string,
+): Promise<Entry | null> {
+  const project = await store.requireProject(projectLabel);
+  return findChildByKind(store, project.id, KIND_INTERFACES);
+}
+
+/** Create or replace the project's Interfaces entry; returns it. */
+export async function setProjectInterfaces(
+  store: TimStore,
+  projectLabel: string,
+  text: string,
+): Promise<Entry> {
+  const body = text.trim();
+  if (!body) throw new Error('interfaces text must be non-empty');
+  const existing = await getProjectInterfaces(store, projectLabel);
+  if (existing) {
+    await store.update(existing.id, { content: body });
+    return (await store.read(existing.id))!;
+  }
+  const project = await store.requireProject(projectLabel);
+  return store.write(body, {
+    parentId: project.id,
+    title: 'Interfaces',
+    metadata: { kind: KIND_INTERFACES },
+  });
 }
 
 export interface SubstantiveSessionHead {

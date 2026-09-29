@@ -148,11 +148,12 @@ const COMMAND_HELP: Record<string, string> = {
   'new-project':
     'Usage: tim new-project --path <dir> --name <string> [--no-git] [--confirm]',
   project:
-    'Usage: tim project <relate|unrelate|related|describe> ...',
+    'Usage: tim project <relate|unrelate|related|describe|interfaces> ...',
   'project relate': 'Usage: tim project relate [<A>] <B>  (A defaults to this directory\'s project; label, alias or name)',
   'project unrelate': 'Usage: tim project unrelate [<A>] <B>',
   'project related': 'Usage: tim project related [<A>]',
   'project describe': 'Usage: tim project describe [<P>] "<text>"',
+  'project interfaces': 'Usage: tim project interfaces [<P>] [--set "<text>"]',
   'record-commit':
     'Usage: tim record-commit [--cwd <dir>] [--project <label>] [--session <id>] [--hash <sha>] [--message <text>] [--diff <stat>] [--author <name>] [--date <iso>] [--branch <name>]',
   hook: 'Usage: tim hook <session-start|session-end|log|prompt-submit|claude-session-start|claude-session-end|claude-stop|cursor-stop|codex-notify> [options]',
