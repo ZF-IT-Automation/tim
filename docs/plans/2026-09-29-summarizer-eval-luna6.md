@@ -21,23 +21,28 @@ before run 2) matches it: must-keep 82 / 84 / 90 %, contract 96 / 100 / 100 %.
 
 Tokens are the count codex reports as `tokens used`, not the raw prompt size.
 
-**Winner by the fixed rule: none.** Every candidate has one contract break in 27 batch
-calls, so the chain stays as it is (`gpt-6-luna` medium).
+**Winner by the fixed rule: none.** Every candidate has one contract break (1 of 24 scored
+calls each, always a batch), so the chain stays as it is (`gpt-6-luna` medium).
 
 ## Findings
 
-- **No difference between low and medium.** Across two runs they are equal on tokens, latency and
-  must-keep (85–86 %). Low broke the contract more often in run 1.
-- **High keeps more (90 % vs. 84–86 %), at twice the tokens and a longer p90.** The gain is in
-  the batch summaries: high drops no identifiers and no commands (`codex-poke`,
-  `migrate-schema`, `grate`, `h.264`), where low and medium sometimes do. On rollups and the
-  project summary all three are equal.
+- **No difference between low and medium.** Across two runs they are equal on tokens (1174 vs. 1178),
+  latency and must-keep (82–86 %).
+- **High keeps +4–6 points more (90 % in both runs), at twice the tokens and a longer p90.**
+  Stable across both runs only in the large batches: `batch/434546a4` high 100 % in every trial,
+  `batch/7c186cd3` high ≥ the others. On rollups and project summaries the misses scatter across all
+  three without a pattern.
 - **The contract break is a prompt bug, not a model bug.** All three emitted `#decision`, always
-  on the same case. `#decision` is on P0063's vocabulary list (it has been used ≥ 2×), and
-  `buildPrompt` says "use them verbatim". The same prompt forbids it as an activity word. `#tim`
+  on the same case (`batch/434546a4`). `#decision` is on P0063's vocabulary list (it has been used ≥ 2×),
+  and `buildPrompt` says "use them verbatim". The same prompt forbids it as an activity word. `#tim`
   and `#tasks`, which the prompt forbids as project and container tags, are on the list too. The
-  vocabulary has to be filtered against the prompt's own prohibitions. After that fix, run the
-  protocol again: high would then win on must-keep, medium if high's extra cost is not wanted.
+  vocabulary has to be filtered against the prompt's own prohibitions (task
+  `ubun-0929-ns-01M3PMQM3MT7S9BBMM86T6WBNK`).
+- **The decision rule has a gap.** With contract at 100 %, all three would be eligible on run 2's
+  numbers (low 85, medium 86, high 90 % — all within 5 points). `pickWinner` would then pick **low** because
+  it is 4 tokens cheaper than medium: noise, especially since codex's `tokens used` does not count
+  cached input. In run 1 medium (84 %) would have been out and low (82 %) too. The rule needs a
+  tie band on cost (open, Benni decides).
 - **Substance:** all three miss the same session (`2026-09-10-1921`). That points to the label or
   the prompt, not to a model.
 - **Project summary input for P0063 is polluted** (heuristic checkpoint text, duplicates). All
