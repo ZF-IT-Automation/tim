@@ -1,5 +1,39 @@
 export const TIM_CONTINUE_SKILL = {
-  name: "tim-continue",
+  name: 'tim-continue',
   description: "Render the previous session's briefing on demand — its summary, its handoff note, and the turns no summary covers yet. Use when the user says /tim-continue, \"weitermachen wo wir waren\", \"what were we working on\", \"pick up where we left off\", or asks for the last session's state without naming a topic.",
-  content: "# TIM Continue\n\nThe briefing that used to arrive automatically at session start, now asked for\ndeliberately. Same text, same source — the difference is that it appears when\nthe work actually continues, instead of in every session that happens to start\nin this directory.\n\n## Steps\n\n1. **Get the project label.** The bound project, from the session-start\n   directive or `tim_load_project`. If none is bound, bind first.\n2. **Render:** Call `tim_preview_briefing` with that `project`.\n3. **Use the `── directive ──` block as context.** It carries the previous\n   session's summary, its handoff note, and the not-yet-summarized raw turns.\n   - Do NOT paraphrase it back in full.\n   - Confirm in one or two lines: where things stand and the next step.\n4. **Continue the work.**\n\n## Rules\n\n- `tim_preview_briefing` is a pure read: no session, no marker, no hooks. The\n  current session keeps its own identity and its exchanges keep appending to it.\n- Do **not** merge the running session onto an older session node. That is a\n  session merge, not a briefing, and it fails once this session has logged an\n  exchange.\n- No topic argument and no session picker: this is the newest *substantive*\n  session (≥ 3 turns, a handoff note, or judged real by the summarizer — worker\n  and automation sessions never count), plus the newest handoff note from another\n  session when it belongs elsewhere. For anything older or subject-specific, use\n  `/tim-resume-topic`.\n- If the previous session left no handoff note, say so plainly rather than\n  presenting its summary as a plan.\n",
+  content: `# TIM Continue
+
+The briefing that used to arrive automatically at session start, now asked for
+deliberately. Same text, same source — the difference is that it appears when
+the work actually continues, instead of in every session that happens to start
+in this directory.
+
+## Steps
+
+1. **Get the project label.** The bound project, from the session-start
+   directive or \`tim_load_project\`. If none is bound, bind first.
+2. **Render:** Call \`tim_preview_briefing\` with that \`project\`.
+3. **Use the \`── directive ──\` block as context.** It carries the previous
+   session's summary, its handoff note, and the not-yet-summarized raw turns.
+   When a related project's newest substantive session is newer than this one's,
+   a short neighbour handoff block appears — use \`tim_resume_topic\` for detail.
+   - Do NOT paraphrase it back in full.
+   - Confirm in one or two lines: where things stand and the next step.
+4. **Continue the work.**
+
+## Rules
+
+- \`tim_preview_briefing\` is a pure read: no session, no marker, no hooks. The
+  current session keeps its own identity and its exchanges keep appending to it.
+- Do **not** merge the running session onto an older session node. That is a
+  session merge, not a briefing, and it fails once this session has logged an
+  exchange.
+- No topic argument and no session picker: this is the newest *substantive*
+  session (≥ 3 turns, a handoff note, or judged real by the summarizer — worker
+  and automation sessions never count), plus the newest handoff note from another
+  session when it belongs elsewhere. For anything older or subject-specific, use
+  \`/tim-resume-topic\`.
+- If the previous session left no handoff note, say so plainly rather than
+  presenting its summary as a plan.
+`,
 };

@@ -189,7 +189,7 @@ describe('weak-model skills', () => {
     }
   });
 
-  it('listSkills returns all sixteen skills', () => {
+  it('listSkills returns all seventeen skills', () => {
     expect(listSkills().map(s => s.name)).toEqual([
       'tim-handoff',
       'tim-explain',
@@ -207,6 +207,7 @@ describe('weak-model skills', () => {
       'tim-resume-topic',
       'tim-continue',
       'tim-tag-inventory',
+      'tim-relate-projects',
     ]);
   });
 });
