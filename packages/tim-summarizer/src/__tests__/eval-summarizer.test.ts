@@ -60,14 +60,19 @@ describe('eval-summarizer scoring', () => {
     expect(parseTokens('plain output')).toBeNull();
   });
 
-  it('picks the cheapest eligible candidate', () => {
+  it('picks the cheapest eligible candidate; near-equal costs go to the faster one', () => {
     const score = { contract: true, violations: [], english: true, idRecall: 1, hallucinatedIds: [], mustKeep: 1, missedFacts: [] };
-    const r = (candidate: string, tokens: number, ok = true, mustKeep = 1): CallResult => ({
+    const r = (candidate: string, tokens: number, latencyMs = 1000, ok = true, mustKeep = 1): CallResult => ({
       candidate, caseId: 'c', kind: 'batch', trial: 1, promptHash: 'h', ok, timedOut: false,
-      latencyMs: 1000, tokens, output: 'x', score: { ...score, mustKeep },
+      latencyMs, tokens, output: 'x', score: { ...score, mustKeep },
     });
-    const aggs = aggregate([r('high', 9000), r('low', 3000, true, 0.5), r('med', 5000), r('flaky', 1000, false)]);
-    // low is cheapest but drops facts; flaky fails a call; med beats high on tokens.
-    expect(pickWinner(aggs)?.candidate).toBe('med');
+    // cheap drops facts, flaky fails a call; med beats high on tokens.
+    expect(pickWinner(aggregate([
+      r('high', 9000), r('cheap', 3000, 1000, true, 0.5), r('med', 5000), r('flaky', 1000, 1000, false),
+    ]))?.candidate).toBe('med');
+    // 1174 vs 1178 tokens is a tie (within 10 %): the faster one wins.
+    expect(pickWinner(aggregate([r('low', 1174, 6700), r('medium', 1178, 6200), r('high', 2363, 7600)]))?.candidate)
+      .toBe('medium');
+    expect(pickWinner(aggregate([r('flaky', 1000, 1000, false)]))).toBeNull();
   });
 });

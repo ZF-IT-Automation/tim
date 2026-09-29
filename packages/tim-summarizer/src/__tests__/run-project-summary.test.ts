@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { TimStore, SessionManager } from 'tim-store';
 import * as generateSummary from '../generate-summary.js';
-import { mergeProjectSummary, runProjectSummary } from '../summarize.js';
+import { collectProjectSummaryInput, mergeProjectSummary, runProjectSummary } from '../summarize.js';
 
 describe('runProjectSummary session sourcing', () => {
   let store: TimStore;
@@ -69,5 +69,30 @@ describe('runProjectSummary session sourcing', () => {
     expect(generateSummary.generateProjectSummary).toHaveBeenCalled();
     const arg = vi.mocked(generateSummary.generateProjectSummary).mock.calls[0][0];
     expect(arg.length).toBeGreaterThanOrEqual(4);
+  });
+
+  it('feeds neither checkpoint heuristics nor bare titles into the project summary', async () => {
+    const s = new TimStore(dbPath);
+    const sessions = new SessionManager(s);
+    for (const id of ['sess-checkpoint-only', 'sess-empty']) {
+      await sessions.startProjectSession({
+        sessionId: id, projectId: 'P0099', agentName: 'test', cwd: '/tmp', harness: 'test',
+      });
+      for (let e = 1; e <= 3; e++) {
+        await sessions.logExchange(id, [
+          { role: 'user', content: `q-${id}-${e}` },
+          { role: 'agent', content: `a-${id}-${e}` },
+        ]);
+      }
+    }
+    await sessions.checkpoint('sess-checkpoint-only');
+    await sessions.checkpoint('sess-checkpoint-only');
+
+    const project = await s.requireProject('P0099');
+    const texts = (await collectProjectSummaryInput(s, project.id)).flatMap(p => p.summaries);
+    s.close();
+
+    expect(texts.length).toBe(4);
+    expect(texts.every(t => /^summary for session \d$/.test(t))).toBe(true);
   });
 });

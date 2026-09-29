@@ -27,6 +27,20 @@ describe('summarizer CLI spawn', () => {
     }
   });
 
+  // An inherited cwd can be a deleted worktree; codex and opencode exit 1 there.
+  it('runs the CLI in the home directory, not the inherited cwd', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tim-cwd-'));
+    fs.writeFileSync(path.join(dir, 'codex'), '#!/bin/sh\ncat >/dev/null\necho "- cwd: [$(pwd)]"\n', { mode: 0o755 });
+    const oldPath = process.env.PATH;
+    process.env.PATH = `${dir}:${oldPath}`;
+    try {
+      expect(await tryCli('codex', 'any-model', undefined, 'prompt', 10)).toContain(`cwd: [${os.homedir()}]`);
+    } finally {
+      process.env.PATH = oldPath;
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('returns after its timeout even when a grandchild holds stdout', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tim-hang-'));
     const fake = path.join(dir, 'codex');
