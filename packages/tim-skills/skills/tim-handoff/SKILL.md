@@ -17,7 +17,11 @@ Before `/clear`, leave a durable handoff so the next session starts better.
    Get the session id from
    `~/.tim/claude-session`, or from the newest session of the bound project.
 3. **Tasks:** Update the project's Tasks section via `tim_update` (read → merge → update).
-4. Tell the user to `/clear` when the checkpoint confirms.
+4. **Interfaces:** If this session changed what the project exposes — CLI commands or flags, MCP
+   tools, env vars, endpoints or ports, files other tools read — bring the project's Interfaces
+   entry up to date: `tim project interfaces` shows it, `tim project interfaces --set "<full text>"`
+   replaces it (and creates it on first use). Done when the entry matches the code.
+5. Tell the user to `/clear` when the checkpoint confirms.
 
 ## What must survive
 
