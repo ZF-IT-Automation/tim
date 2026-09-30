@@ -84,7 +84,7 @@ describe('tim-session-start.sh output envelopes', () => {
       conversation_id: 'c-1',
       cwd: tmpDir,
     })));
-    expect(out).toEqual({ additional_context: 'TIM DIRECTIVE' });
+    expect(out.additional_context).toMatch(/^TIM DIRECTIVE\nTIM session id: c-1 — pass it as sessionId/);
   });
 
   it('emits JSON {context} for Hermes/Codex payloads with session_id (PITFALLS-45)', () => {
@@ -92,7 +92,7 @@ describe('tim-session-start.sh output envelopes', () => {
       session_id: 's-hermes',
       cwd: tmpDir,
     })));
-    expect(out).toEqual({ context: 'TIM DIRECTIVE' });
+    expect(out.context).toMatch(/^TIM DIRECTIVE\nTIM session id: s-hermes — pass it as sessionId/);
   });
 
   it('falls back to Cursor-safe envelope on empty stdin', () => {
@@ -237,6 +237,6 @@ exec ${JSON.stringify(systemReadlink)} "$@"
       encoding: 'utf8',
     });
 
-    expect(JSON.parse(out)).toEqual({ additional_context: 'FALLBACK DIRECTIVE' });
+    expect(JSON.parse(out).additional_context).toMatch(/^FALLBACK DIRECTIVE\n/);
   });
 });
