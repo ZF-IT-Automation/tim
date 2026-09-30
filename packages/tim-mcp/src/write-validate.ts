@@ -14,9 +14,6 @@ const ENTRY_TYPE_MARKERS: Record<SectionEntryType, { field: string; defaults: Re
   idea: { field: 'idea', defaults: { status: 'new' } },
 };
 
-/** Bug statuses that mean the bug is no longer open. */
-export const CLOSED_BUG_STATUSES = new Set(['fixed', 'documented', 'wontfix', 'duplicate']);
-
 /**
  * Stamp the section's declared entry type on a new child.
  *
