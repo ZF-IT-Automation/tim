@@ -15,8 +15,14 @@ describe('bug status resolution', () => {
     expect(resolveBugStatusFromMetadata({ type: 'bug', status: 'fixed' })).toBe('fixed');
   });
 
+  it('lets a terminal task.status close the bug', () => {
+    expect(resolveBugStatusFromMetadata({ type: 'bug', task: { status: 'done' } })).toBe('done');
+    expect(isClosedBugMetadata({ bug: { status: 'open' }, task: { status: 'cancelled' } })).toBe(true);
+    expect(resolveBugStatusFromMetadata({ bug: { status: 'open' }, task: { status: 'todo' } })).toBe('open');
+  });
+
   it('classifies closed statuses', () => {
-    for (const status of ['fixed', 'closed', 'resolved', 'wontfix', 'done']) {
+    for (const status of ['fixed', 'closed', 'resolved', 'wontfix', 'done', 'documented', 'duplicate', 'cancelled']) {
       expect(isClosedBugStatus(status)).toBe(true);
       expect(isClosedBugMetadata({ bug: { status } })).toBe(true);
     }

@@ -18,6 +18,7 @@ import {
   stripDeprecatedTags, resolveLWW, SCHEMA_KINDS, staleDays,
   loadConfig as loadTimConfig,
   resolveEntrySearchStatus,
+  resolveBugStatusFromMetadata,
   entrySearchStatusSql,
 } from 'tim-core';
 import {
@@ -1623,16 +1624,13 @@ ${zeroExchangeFilter}
     return rows.map(row => {
       const meta = JSON.parse(row.metadata) as Record<string, unknown>;
       let severity: string | null = null;
-      let status: string | null = null;
+      const status = resolveBugStatusFromMetadata(meta);
 
       const bug = meta.bug;
       if (typeof bug === 'object' && bug !== null && !Array.isArray(bug)) {
-        const bm = bug as Record<string, unknown>;
-        severity = (bm.severity as string | undefined) ?? null;
-        status = (bm.status as string | undefined) ?? null;
+        severity = ((bug as Record<string, unknown>).severity as string | undefined) ?? null;
       } else if (meta.type === 'bug') {
         severity = (meta.severity as string | undefined) ?? null;
-        status = (meta.status as string | undefined) ?? null;
       }
 
       return {
