@@ -353,6 +353,10 @@ export interface TimConfig {
       interval_minutes?: number;
       idle_minutes?: number;
       max_spawns_per_pass?: number;
+      /** Pending exchanges idle this long count as a summarizer outage (default 60). */
+      stale_minutes?: number;
+      /** argv run with the alert text appended when an outage starts or clears. */
+      alert_command?: string[];
     };
   };
   projectSummary?: {

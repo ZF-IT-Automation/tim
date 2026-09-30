@@ -46,6 +46,7 @@ import {
   maybeSpawnSummarizer,
   isSummarizerChild,
   isTeamupWorker,
+  readSummarizerHealth,
   type ProjectMarker,
 } from 'tim-hooks';
 import { buildTimMcpEntry, installMcpEntryForHosts } from './install.js';
@@ -396,6 +397,14 @@ async function cmdDoctor(args: string[] = []) {
     for (const line of formatMemoryHealthLines(health.memory)) {
       console.log(`  ${line}`);
     }
+  }
+  const watch = readSummarizerHealth();
+  if (watch) {
+    console.log(
+      `  Summarizer watch (${watch.checkedAt}): ${watch.staleSessions} stale session(s), ` +
+      `${watch.staleExchanges} exchange(s)` + (watch.oldestIdleSince ? `, idle since ${watch.oldestIdleSince}` : '') +
+      (watch.staleSessions > 0 && watch.lastFail ? `\n    last failure: ${watch.lastFail}` : ''),
+    );
   }
   if (health.issues.length) {
     console.log('\n⚠ Issues:');

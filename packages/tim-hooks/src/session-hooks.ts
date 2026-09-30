@@ -20,6 +20,7 @@ import {
   summarizerLockPath,
 } from './marker.js';
 import { DEFAULT_SUMMARIZER_TIMEOUT_SEC } from './constants.js';
+import { DEFAULT_STALE_MINUTES, recordSummarizerHealth, type AlertSender } from './summarizer-health.js';
 import {
   buildProjectSummarySpawnRequest,
   buildSummarizerSpawnRequest,
@@ -182,7 +183,22 @@ export interface IdleSweepOptions {
   maxAttempts?: number;
   spawn?: Spawner;
   now?: () => number;
+  /** Measure stale pending work and alert on it. Omitted: no health file is written. */
+  health?: {
+    staleMinutes?: number;
+    alertCommand?: string[];
+    file?: string;
+    send?: AlertSender;
+  };
 }
+
+/**
+ * An exhausted mark this old is retried: the usual cause is an infra fault
+ * (lock, PATH, cwd) that has since been fixed, and nobody re-runs by hand.
+ * ponytail: a session that can never be summarized costs 3 spawns every 6 h;
+ * add a give-up counter on the mark if that shows up in the log.
+ */
+const EXHAUSTED_RETRY_MS = 6 * 3_600_000;
 
 export type IdleSweepReason =
   | SessionStopReason
@@ -266,18 +282,36 @@ export async function sweepIdleSessions(
   const maxAttempts = opts.maxAttempts ?? 3;
   const nowMs = opts.now ?? (() => Date.now());
   const idleCutoff = new Date(nowMs() - idleMinutes * 60_000).toISOString();
+  const staleCutoff = new Date(
+    nowMs() - (opts.health?.staleMinutes ?? DEFAULT_STALE_MINUTES) * 60_000,
+  ).toISOString();
+  const stale = { sessions: 0, exchanges: 0, oldest: null as string | null };
   const errorLogger = new ErrorLogger(store.getDb());
   const results: IdleSweepResult[] = [];
   let spawns = 0;
 
   const sessions = await store.getByMetadataKind(KIND_SESSION, ALL_SESSIONS);
+  // Every session is scanned even once the spawn budget is spent: the health
+  // numbers must cover the whole backlog, not the part before the third spawn.
   for (const session of sessions) {
-    if (spawns >= maxSpawns) break;
-
     const sessionId = session.id;
     const coverage = await deriveSessionCoverage(store, sessionId);
     const { batchesSummarized } = coverage;
-    if (isSummarySkipCurrent(session.metadata, coverage.exchangeCount)) {
+    const lastAt = coverage.hasPendingSummarization
+      ? await getSessionLastExchangeAt(store, sessionId)
+      : null;
+    // Exhausted sessions count too: hiding them is what kept 197 exchanges invisible.
+    if (lastAt && lastAt <= staleCutoff) {
+      stale.sessions++;
+      stale.exchanges += coverage.uncovered.length;
+      if (!stale.oldest || lastAt < stale.oldest) stale.oldest = lastAt;
+    }
+
+    const skip = readSummarySkipped(session.metadata);
+    if (
+      isSummarySkipCurrent(session.metadata, coverage.exchangeCount)
+      && nowMs() - Date.parse(skip!.at) < EXHAUSTED_RETRY_MS
+    ) {
       results.push({ sessionId, reason: 'skipped' });
       continue;
     }
@@ -286,11 +320,11 @@ export async function sweepIdleSessions(
       continue;
     }
 
-    const lastAt = await getSessionLastExchangeAt(store, sessionId);
     if (!lastAt || lastAt > idleCutoff) {
       results.push({ sessionId, reason: 'not-idle' });
       continue;
     }
+    if (spawns >= maxSpawns) continue;
 
     const cwdRaw = session.metadata.cwd;
     if (typeof cwdRaw !== 'string' || !cwdRaw.trim()) {
@@ -324,8 +358,9 @@ export async function sweepIdleSessions(
 
     let sessionMeta = session.metadata as Record<string, unknown>;
     let attempts = getSweepAttempts(sessionMeta);
-    // The session grew after a give-up: start over. A legacy mark without a
-    // count keeps its attempts and is re-marked with the count below.
+    // The session grew after a give-up, or the mark is old enough to retry:
+    // start over. A legacy mark without a count keeps its attempts and is
+    // re-marked with the count below.
     if (typeof readSummarySkipped(sessionMeta)?.exchanges === 'number') {
       attempts = 0;
       await store.update(sessionId, { metadata: { summary_skipped: null } });
@@ -375,6 +410,15 @@ export async function sweepIdleSessions(
         sweepBatchesAtSpawn: batchesSummarized,
       });
     }
+  }
+
+  if (opts.health) {
+    await recordSummarizerHealth({
+      checkedAt: new Date(nowMs()).toISOString(),
+      staleSessions: stale.sessions,
+      staleExchanges: stale.exchanges,
+      oldestIdleSince: stale.oldest,
+    }, opts.health);
   }
 
   return results;
