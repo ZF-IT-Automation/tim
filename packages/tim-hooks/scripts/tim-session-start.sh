@@ -67,6 +67,14 @@ if printf '%s' "$payload" | jq -e \
     '{hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: $ctx}}'
 fi
 
+# Outside Claude Code the MCP server cannot see the harness session id, so an agent
+# would invent one for tim_session_start and split the session from the node the
+# turn-end hooks log under. Hand the agent the id the hooks use.
+sid=$(printf '%s' "$payload" | jq -r '.conversation_id // .session_id // empty' 2>/dev/null || true)
+if [[ -n "$sid" ]]; then
+  directive="$directive"$'\n'"TIM session id: $sid — pass it as sessionId to tim_session_start / tim_load_project; never invent one."
+fi
+
 # Cursor sends payload with .conversation_id or .additional_context
 if printf '%s' "$payload" | jq -e '(.conversation_id // empty) or (.additional_context // empty)' >/dev/null 2>&1; then
   # Cursor format
