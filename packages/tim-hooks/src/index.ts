@@ -183,3 +183,10 @@ export {
   type BindingReport,
   type BindOutcome,
 } from './project-binding-health.js';
+export {
+  readSummarizerHealth,
+  summarizerHealthLines,
+  summarizerHealthPath,
+  DEFAULT_STALE_MINUTES,
+  type SummarizerHealth,
+} from './summarizer-health.js';

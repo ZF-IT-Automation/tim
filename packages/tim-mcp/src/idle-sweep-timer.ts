@@ -15,11 +15,16 @@ export function startIdleSweepTimer(store: TimStore): void {
   const intervalMinutes = config.summarizer?.idle_sweep?.interval_minutes ?? 5;
   const idleMinutes = config.summarizer?.idle_sweep?.idle_minutes ?? 15;
   const maxSpawnsPerPass = config.summarizer?.idle_sweep?.max_spawns_per_pass ?? 3;
+  const health = {
+    staleMinutes: config.summarizer?.idle_sweep?.stale_minutes,
+    alertCommand: config.summarizer?.idle_sweep?.alert_command,
+  };
 
   idleSweepTimer = setInterval(() => {
     void sweepIdleSessions(store, {
       idleMinutes,
       maxSpawnsPerPass,
+      health,
     }).catch(() => {
       /* best-effort — never crash the MCP server */
     });

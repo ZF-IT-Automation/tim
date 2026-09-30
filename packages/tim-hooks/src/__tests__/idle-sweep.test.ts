@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { sweepIdleSessions } from '../session-hooks.js';
+import { readSummarizerHealth, summarizerHealthLines } from '../summarizer-health.js';
 import { writeMarker, releaseLock } from '../marker.js';
 import { runCheckpointWithSummarizerSpawn, runSessionEnd } from '../checkpoint.js';
 import {
@@ -511,5 +512,135 @@ describe('sweepIdleSessions (criterion 10 — attempt cap)', () => {
     releaseLock(dir);
     await runCheckpointWithSummarizerSpawn(store, 'hooks-s', dir, { spawn: checkpointSpawn });
     expect(checkpointSpawn).toHaveBeenCalledOnce();
+  });
+});
+
+describe('sweepIdleSessions — summarizer watch', () => {
+  let store: TimStore;
+  let sessions: SessionManager;
+  let healthFile: string;
+
+  beforeEach(async () => {
+    fs.mkdirSync(TEST_ROOT, { recursive: true });
+    store = new TimStore(':memory:');
+    sessions = new SessionManager(store);
+    await store.createProject('P0100');
+    healthFile = path.join(fs.mkdtempSync(path.join(TEST_ROOT, 'health-')), 'h.json');
+  });
+
+  afterEach(() => {
+    store.close();
+  });
+
+  it('counts exhausted sessions as stale and alerts once per outage and once on recovery', async () => {
+    const dir = fs.mkdtempSync(path.join(TEST_ROOT, 'watch-'));
+    writeMarker(dir, { project: 'P0100' });
+    await startSession(sessions, store, {
+      sessionId: 'watch-s', projectId: 'P0100', cwd: dir, backdateTo: '2026-01-01T10:00:00.000Z',
+    });
+    let nowMs = new Date('2026-08-12T16:20:00.000Z').getTime();
+    const now = () => nowMs;
+    const send = vi.fn(async () => true);
+    const health = { file: healthFile, alertCommand: ['alert'], send };
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    try {
+      for (let pass = 0; pass < 5; pass++) {
+        releaseLock(dir);
+        await sweepIdleSessions(store, { spawn: vi.fn(), now, health });
+      }
+    } finally {
+      info.mockRestore();
+    }
+    expect((await store.read('watch-s'))?.metadata.summary_skipped).toMatchObject({ reason: 'exhausted' });
+    const h = readSummarizerHealth(healthFile)!;
+    expect(h).toMatchObject({ staleSessions: 1, staleExchanges: 2, alerted: true });
+    expect(send).toHaveBeenCalledOnce();
+    expect(String(send.mock.calls[0]![1])).toContain('failing');
+
+    // The outage clears: the session is summarized by hand.
+    await store.update('watch-s', { metadata: { summary_skipped: null } });
+    await sweepIdleSessions(store, {
+      spawn: vi.fn(), now, health: { ...health, staleMinutes: 60 * 24 * 365 },
+    });
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(String(send.mock.calls[1]![1])).toContain('recovered');
+    expect(readSummarizerHealth(healthFile)).toMatchObject({ staleSessions: 0, alerted: false });
+
+    // A failed send is retried on the next pass.
+    nowMs += 1;
+    const failing = vi.fn(async () => false);
+    await sweepIdleSessions(store, { spawn: vi.fn(), now, health: { ...health, send: failing } });
+    await sweepIdleSessions(store, { spawn: vi.fn(), now, health: { ...health, send: failing } });
+    expect(failing).toHaveBeenCalledTimes(2);
+    expect(readSummarizerHealth(healthFile)!.alerted).toBe(false);
+  });
+
+  it('retries an exhausted mark after six hours', async () => {
+    const dir = fs.mkdtempSync(path.join(TEST_ROOT, 'retry-'));
+    writeMarker(dir, { project: 'P0100' });
+    await startSession(sessions, store, {
+      sessionId: 'retry-s', projectId: 'P0100', cwd: dir, backdateTo: '2026-01-01T10:00:00.000Z',
+    });
+    await store.update('retry-s', {
+      metadata: {
+        summary_skipped: { reason: 'exhausted', at: '2026-08-12T12:00:00.000Z', exchanges: 2 },
+        sweep_attempts: 3,
+      },
+    });
+    const spawn = vi.fn();
+    const early = await sweepIdleSessions(store, {
+      spawn, now: () => new Date('2026-08-12T17:00:00.000Z').getTime(),
+    });
+    expect(early.find(r => r.sessionId === 'retry-s')?.reason).toBe('skipped');
+    expect(spawn).not.toHaveBeenCalled();
+
+    await sweepIdleSessions(store, { spawn, now: () => new Date('2026-08-12T18:30:00.000Z').getTime() });
+    expect(spawn).toHaveBeenCalledOnce();
+    const meta = (await store.read('retry-s'))!.metadata;
+    expect(meta.summary_skipped ?? null).toBeNull();
+  });
+
+  it('measures the whole backlog even after the spawn budget is spent', async () => {
+    for (let i = 0; i < 5; i++) {
+      const d = fs.mkdtempSync(path.join(TEST_ROOT, `budget-${i}-`));
+      writeMarker(d, { project: 'P0100' });
+      await startSession(sessions, store, {
+        sessionId: `budget-${i}`, projectId: 'P0100', cwd: d, backdateTo: '2026-01-01T10:00:00.000Z',
+      });
+    }
+    const spawn = vi.fn();
+    await sweepIdleSessions(store, {
+      spawn,
+      now: () => new Date('2026-08-12T16:20:00.000Z').getTime(),
+      maxSpawnsPerPass: 2,
+      health: { file: healthFile },
+    });
+    expect(spawn).toHaveBeenCalledTimes(2);
+    expect(readSummarizerHealth(healthFile)).toMatchObject({ staleSessions: 5, staleExchanges: 10 });
+  });
+});
+
+describe('summarizerHealthLines', () => {
+  const base = {
+    checkedAt: '2026-08-12T16:00:00.000Z', staleSessions: 0, staleExchanges: 0,
+    oldestIdleSince: null, lastFail: null, alerted: false,
+  };
+  const at = (iso: string) => new Date(iso).getTime();
+
+  it('is silent when healthy and fresh', () => {
+    expect(summarizerHealthLines(base, 20, at('2026-08-12T16:10:00.000Z'))).toEqual([]);
+    expect(summarizerHealthLines(null, 20)).toEqual([]);
+  });
+
+  it('warns about a dead sweeper and about stale exchanges', () => {
+    expect(summarizerHealthLines(base, 20, at('2026-08-12T17:00:00.000Z'))[0]).toContain('has not run for 60 min');
+    const lines = summarizerHealthLines(
+      { ...base, staleSessions: 2, staleExchanges: 7, lastFail: 'FAIL codex: spawn node ENOENT' },
+      20,
+      at('2026-08-12T16:05:00.000Z'),
+    );
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('7 exchange(s) in 2 session(s)');
+    expect(lines[0]).toContain('spawn node ENOENT');
   });
 });

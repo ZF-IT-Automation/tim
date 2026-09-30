@@ -20,8 +20,9 @@ import {
   listRelatedProjects,
   type TimStore,
 } from 'tim-store';
-import { isClosedBugStatus, taskPriorityRank, type Entry } from 'tim-core';
+import { isClosedBugStatus, loadConfig, taskPriorityRank, type Entry } from 'tim-core';
 import { loadBriefStalenessLines } from './brief-staleness.js';
+import { readSummarizerHealth, summarizerHealthLines } from './summarizer-health.js';
 import type { DirectiveBriefing } from './marker.js';
 
 const CLOSED_TASK_STATUSES = new Set(['done', 'cancelled', 'closed', 'wontfix']);
@@ -582,6 +583,14 @@ async function openWork(
  * now (`tim_resume_topic`), not injected by recency into every session that
  * happens to start in this directory.
  */
+/** Summarizer outage lines; silent when the sweep is switched off. */
+function summarizerWatchLines(): string[] {
+  const sweep = loadConfig().summarizer?.idle_sweep;
+  if (sweep?.enabled === false) return [];
+  // Three missed passes before the sweeper counts as dead.
+  return summarizerHealthLines(readSummarizerHealth(), 3 * (sweep?.interval_minutes ?? 5) + 5);
+}
+
 export async function collectDirectiveBriefing(
   store: TimStore,
   projectLabel: string,
@@ -593,7 +602,10 @@ export async function collectDirectiveBriefing(
 
   // Outside the token split. A quiet project still needs the warning, and
   // the lines must not shrink the previous-session or open-work budgets.
-  const staleBrief = await loadBriefStalenessLines(store, projectLabel);
+  const staleBrief = [
+    ...await loadBriefStalenessLines(store, projectLabel),
+    ...summarizerWatchLines(),
+  ];
 
   const summaryBudget = Math.floor(maxChars * PREVIOUS_SESSION_BUDGET_SHARE);
   const rawBudget = Math.floor(maxChars * RECENT_EXCHANGE_BUDGET_SHARE);
