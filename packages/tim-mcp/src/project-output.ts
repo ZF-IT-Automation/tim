@@ -36,6 +36,8 @@ export interface BriefingRenderContext {
   relatedProjectLines?: string[];
   /** Node ID of this project's Interfaces entry, when it has one. */
   interfacesId?: string;
+  /** P0000/Rules and its children — rules that bind every project. */
+  globalRules?: { section: Entry; children: Entry[] };
 }
 
 export interface FormatProjectOutputOptions {
@@ -62,6 +64,7 @@ const RULE_LINE_MAX = 160;
 const LOAD_BLOCK_ORDER = {
   header: 0,
   now: 10,
+  globalRules: 15,
   rules: 20,
   interfaces: 24,
   relatedProjects: 25,
@@ -936,6 +939,20 @@ function formatProjectOutputWithTokenBudget(
       order: LOAD_BLOCK_ORDER.now,
       lines: ctx.nowBlockLines,
     });
+  }
+
+  if (ctx?.globalRules) {
+    const { section, children } = ctx.globalRules;
+    const body = renderRulesBlock(section, new Map([[section.id, children]]));
+    if (body.length > 0) {
+      blocks.push({
+        id: 'global-rules',
+        priority: BRIEFING_PRIORITY.activeRules,
+        order: LOAD_BLOCK_ORDER.globalRules,
+        lines: ['', '── Global rules (a project rule below wins on conflict) ──', '', ...body],
+        drillDown: `tim_read("${section.id}")`,
+      });
+    }
   }
 
   if (rulesSection) {

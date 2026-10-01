@@ -11,6 +11,22 @@ import { buildNowBlock, countProjectOpenBugs, countProjectOpenTasks } from 'tim-
 import { formatRelatedProjectLine, getProjectInterfaces, listRelatedProjects } from 'tim-store';
 import type { BriefingRenderContext, RecentSessionLine } from './project-output.js';
 
+/** Project whose Rules section binds every project's briefing. */
+const GLOBAL_RULES_PROJECT = 'P0000';
+
+async function loadGlobalRules(
+  store: TimStore,
+  projectLabel: string,
+): Promise<BriefingRenderContext['globalRules']> {
+  // P0000's own load already shows these as its project rules.
+  if (projectLabel === GLOBAL_RULES_PROJECT) return undefined;
+  const found = await store.resolveSectionByTitle(GLOBAL_RULES_PROJECT, 'Rules').catch(() => null);
+  if (found?.status !== 'found') return undefined;
+  const section = await store.read(found.id);
+  if (!section) return undefined;
+  return { section, children: await store.getChildren(section.id) };
+}
+
 async function sessionHasHandoffInTree(store: TimStore, sessionId: string): Promise<boolean> {
   const summaryNode = await findChildByKind(store, sessionId, KIND_SUMMARY_ROOT);
   if (!summaryNode) return false;
@@ -74,9 +90,11 @@ export async function buildBriefingRenderContext(
   const neighbours = await listRelatedProjects(store, projectLabel);
   const relatedProjectLines = neighbours.map(formatRelatedProjectLine);
   const interfaces = await getProjectInterfaces(store, projectLabel).catch(() => null);
+  const globalRules = await loadGlobalRules(store, projectLabel);
 
   return {
     ...(interfaces ? { interfacesId: interfaces.id } : {}),
+    ...(globalRules ? { globalRules } : {}),
     lastActivityDate: stats.lastActivity,
     nowBlockLines,
     openTaskCounts,
