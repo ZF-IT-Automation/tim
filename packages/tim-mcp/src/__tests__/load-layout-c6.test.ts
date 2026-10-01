@@ -132,6 +132,40 @@ describe('tim_load_project layout (C6)', () => {
     expect(out).toContain('Stale = untouched over 7+ days');
   });
 
+  it('renders global rules from briefingContext before the project rules', () => {
+    const globalSection = {
+      id: 'g-rules', parentId: 'P0000', title: 'Rules',
+      metadata: { kind: 'section' }, tags: [], content: '', createdAt: '2026-06-01T00:00:00Z',
+    } as any;
+    const globalChild = (id: string, title: string) => ({
+      id, parentId: 'g-rules', title, metadata: { type: 'rule' }, tags: [],
+      content: 'why', createdAt: '2026-06-01T00:00:00Z',
+    }) as any;
+    const projectRule = {
+      id: 'rule-1', parentId: 'rules', title: 'Project rule', metadata: { type: 'rule' },
+      tags: [], content: 'x', createdAt: '2026-06-01T00:00:00Z',
+    } as any;
+
+    const out = formatProjectOutput(
+      { project, children: [overview, rules, projectRule], truncated: false },
+      200, undefined, 'load', 3,
+      {
+        tokenBudget: 12000,
+        briefingContext: {
+          globalRules: {
+            section: globalSection,
+            children: [globalChild('g1', 'German to Benni'), globalChild('g2', '[superseded by x] Old rule')],
+          },
+        },
+      },
+    );
+
+    expect(lineIndex(out, '── Global rules')).toBeLessThan(lineIndex(out, '── Rules ──'));
+    expect(out).toContain('German to Benni');
+    expect(out).not.toContain('Old rule');
+    expect(out).toContain('(+ 1 superseded rule kept for history — tim_read("g-rules"))');
+  });
+
   it('counts open bugs from briefingContext when section children are not loaded', () => {
     const out = formatProjectOutput(
       { project, children: [overview, bugs], truncated: false },
