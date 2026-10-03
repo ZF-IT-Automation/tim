@@ -1702,9 +1702,17 @@ function sortForShow(entries: Entry[]): Entry[] {
   });
 }
 
+/** Tasks and bugs carry a status; anything else (sections, notes, decisions) would read as an open todo. */
+function isTrackedItem(metadata: Record<string, unknown>): boolean {
+  return isTaskMarker(metadata.task)
+    || (typeof metadata.bug === 'object' && metadata.bug !== null)
+    || metadata.type === 'task' || metadata.type === 'bug'
+    || typeof metadata.status === 'string';
+}
+
 function formatShowLine(entry: Entry): string {
   const status = resolveEntryTaskStatus(entry.metadata) ?? null;
-  const icon = taskStatusIcon(status);
+  const icon = isTrackedItem(entry.metadata) ? taskStatusIcon(status) : ' · ';
   const order = resolveEntryTaskOrder(entry.metadata);
   const orderPrefix =
     status !== 'done' && status !== 'cancelled' && order < 999999 ? `[${order}] ` : '';
@@ -1747,7 +1755,7 @@ async function formatShowOutput(store: TimStore, entries: Entry[]): Promise<stri
     lines.push('');
   }
 
-  lines.push('[!]=in_progress [ ]=todo [x]=done [-]=cancelled');
+  lines.push('[!]=in_progress [ ]=todo [x]=done [-]=cancelled  · =not a task');
   return lines.join('\n').trimEnd();
 }
 

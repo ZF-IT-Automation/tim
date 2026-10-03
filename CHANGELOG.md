@@ -4,6 +4,23 @@ All notable changes to TIM are documented in this file.
 
 ## [Unreleased]
 
+### Install and setup (2026-10-03)
+
+- **One-command install** — `scripts/install.sh` (also `curl … | bash`) clones or fast-forwards TIM, builds it, links `tim` into `~/.local/bin`, runs `tim init` and connects every detected host (Claude Code, Codex, Cursor). Rerun to update; it repairs hook and MCP paths in place.
+- **Hooks no longer need `tim` or node on PATH** — `setup-agent --host claude` wrote bare `tim hook …` commands, which exit 127 after a source install (no briefing, no capture, no recall — silently). All hosts now get quoted absolute node + `cli.js` commands. Codex/Cursor session start runs through the new `tim hook agent-session-start` instead of `bash tim-session-start.sh`, which broke on paths with spaces and needed jq.
+- **Reruns repair, never duplicate** — older TIM hook entries (bare `tim`, moved checkouts, an upgraded node, the checkout's own `tim-session-start.sh`, Codex `notify`) are rewritten in place per entry; other tools' hooks and matchers stay untouched.
+- **A summarizer that runs** — `claude` is a summarizer chain CLI (isolated `claude -p`: no MCP servers, tools, hooks or saved session). `tim init` writes `[{cli: claude, model: haiku}]` when Claude Code is installed and no chain is configured; `doctor` names the same fix.
+- **Sandbox release gate** — `scripts/sandbox/run.sh` installs a committed ref into a throwaway `node:22` container (source install into a path with a space; installer virgin/rerun/moved) and runs every host hook verbatim without node on PATH, plus an MCP round trip.
+
+### Fixed (2026-10-03)
+
+- `tim_show decisions`/`learnings` also find entries typed by `metadata.type` (the README's way); non-task entries no longer show a todo box.
+- hmem import types a project's direct children as sections.
+- New projects get English section descriptions; `tim_remember` parameters are described in English.
+- `tim --version` and the MCP server report the package version; `tim init` says where the MCP config went and whether the database was kept or created; an unopenable database error names its path.
+- Sync server: `X-Forwarded-For` is trusted only with `TIM_SYNC_TRUST_PROXY=1` (last hop), the registration limiter no longer grows without bound, the admin token is compared in constant time, and the server binds `127.0.0.1` by default (`TIM_SYNC_HOST`). See `docs/sync/self-hosting.md`.
+- Dependencies: seven transitive advisories fixed by patch/minor updates, vitest 4.1.11 — `npm audit` reports 0 (#40).
+
 ### Added
 
 - **`tim open-work`** — prints every project's open tasks, bugs and ideas as one JSON document: the read surface for outside tools (the team-up dashboard's TIM panel) so they never open the TIM database themselves. Open means a task that is not done/cancelled/closed/wontfix, a bug that is not closed, and an idea that is neither rejected nor already promoted to a task. Secret entries are left out.

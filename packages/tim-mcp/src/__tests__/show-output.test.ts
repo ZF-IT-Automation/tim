@@ -250,6 +250,16 @@ describe('tim_show', () => {
     expect(text).toContain('Use SQLite');
   });
 
+  it('marks only tasks and bugs with a status box', async () => {
+    await client.callTool('tim_create_project', { label: 'P0443', content: 'Mixed Proj', memoryOnly: true });
+    await client.callTool('tim_write', { where: 'P0443/Decisions', title: 'Plain decision', content: 'x', tags: ['#a', '#b'], metadata: { type: 'decision' } });
+    await client.callTool('tim_write', { where: 'P0443/Tasks', title: 'Real task', content: 'y', tags: ['#a', '#b'], metadata: { task: { status: 'todo' } } });
+
+    const text = (await client.callTool('tim_show', { what: 'all', root: 'P0443' })).result!.content[0].text;
+    expect(text).toMatch(/ · +Plain decision/);
+    expect(text).toMatch(/\[ \] Real task/);
+  });
+
   it('what:Ideas returns section children only', async () => {
     const proj = await client.callTool('tim_create_project', {
       label: 'P0420',
