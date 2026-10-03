@@ -66,7 +66,16 @@ node packages/tim-cli/dist/cli.js setup-agent --host claude --dry-run
 node packages/tim-cli/dist/cli.js setup-agent --host claude
 ```
 
-`npm ci` runs the workspace prepare/build lifecycle. To call it as `tim`, link it: `ln -s "$PWD/packages/tim-cli/dist/cli.js" ~/.local/bin/tim`. Set `TIM_DB_PATH` to use a database other than `~/.tim/tim.db`. Supported hosts: `claude`, `codex`, `cursor`, `hermes`. Hooks are written with absolute paths to node and the CLI, so they do not depend on `tim` being on `PATH`.
+`npm ci` runs the workspace prepare/build lifecycle. To call it as `tim`, link it: `ln -s "$PWD/packages/tim-cli/dist/cli.js" ~/.local/bin/tim`. Set `TIM_DB_PATH` to use a database other than `~/.tim/tim.db`. Supported hosts: `claude`, `codex`, `cursor`, `hermes`. Hooks are written with absolute paths to node and the CLI, so they do not depend on `tim` being on `PATH`. For Hermes, setup-agent installs skills and the statusline hooks only; add the MCP server to `~/.hermes/config.yaml` yourself:
+
+```yaml
+mcp_servers:
+  tim:
+    command: /absolute/path/to/node
+    args: ["/absolute/path/to/tim/packages/tim-mcp/dist/server.js"]
+    env:
+      TIM_DB_PATH: /home/you/.tim/tim.db
+```
 
 For manual MCP setup, use **absolute paths** to the built server and database. Adapt the surrounding configuration to your client:
 
