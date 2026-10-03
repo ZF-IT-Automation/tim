@@ -29,7 +29,7 @@ matching entry, so the two cannot drift silently.
 
 Only the third line is new (review Finding 3). The other jobs
 (`tim-snapshot-watchdog.sh`, `tim-snapshot-prune.sh`,
-`tim-single-instance-check.sh`, the DB header watchdog) are already registered;
+`tim-single-instance-check.sh`, `tim-db-header-watchdog.sh`) are already registered;
 `crontab -l` is authoritative for their exact schedules.
 
 ### Why `tim-compact-error-log.sh` needs an entry

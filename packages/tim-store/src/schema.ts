@@ -479,56 +479,78 @@ function backupBeforeMigration(db: Database.Database, fromVersion: number): void
   }
 }
 
-export function createTriggers(db: Database.Database): void {
+// Statement text exactly as SQLite stores it in sqlite_master.sql (no
+// trailing semicolon), so an installed trigger can be compared verbatim.
+const TRIGGERS: Record<string, string> = {
   // FTS5 sync triggers — skip secret entries (metadata.secret=true)
-  db.exec(`
-    DROP TRIGGER IF EXISTS entries_ai;
-    DROP TRIGGER IF EXISTS entries_ad;
-    DROP TRIGGER IF EXISTS entries_au;
-    DROP TRIGGER IF EXISTS entries_au_del;
-    DROP TRIGGER IF EXISTS entries_au_ins;
-
-    CREATE TRIGGER entries_ai AFTER INSERT ON entries
+  entries_ai: `CREATE TRIGGER entries_ai AFTER INSERT ON entries
     WHEN json_extract(new.metadata,'$.secret') IS NULL OR json_extract(new.metadata,'$.secret')=0
     BEGIN
       INSERT INTO fts_entries(rowid, title, content, tags)
       VALUES (new.rowid, new.title, new.content, new.tags);
-    END;
+    END`,
 
-    CREATE TRIGGER entries_ad AFTER DELETE ON entries
+  entries_ad: `CREATE TRIGGER entries_ad AFTER DELETE ON entries
     WHEN json_extract(old.metadata,'$.secret') IS NULL OR json_extract(old.metadata,'$.secret')=0
     BEGIN
       INSERT INTO fts_entries(fts_entries, rowid, title, content, tags)
       VALUES ('delete', old.rowid, old.title, old.content, old.tags);
-    END;
+    END`,
 
-    CREATE TRIGGER entries_au AFTER UPDATE ON entries BEGIN
+  entries_au: `CREATE TRIGGER entries_au AFTER UPDATE ON entries BEGIN
       INSERT INTO fts_entries(fts_entries, rowid, title, content, tags)
       SELECT 'delete', old.rowid, old.title, old.content, old.tags
       WHERE json_extract(old.metadata,'$.secret') IS NULL OR json_extract(old.metadata,'$.secret')=0;
       INSERT INTO fts_entries(rowid, title, content, tags)
       SELECT new.rowid, new.title, new.content, new.tags
       WHERE json_extract(new.metadata,'$.secret') IS NULL OR json_extract(new.metadata,'$.secret')=0;
-    END;
-  `);
+    END`,
 
   // Keep at most one unpushed staging record per object. The payload is a
   // full snapshot and the merge is last-writer-wins, so an older unacked
   // record for the same key is dead weight the moment a newer one is staged.
   // Acked records are left alone (gcStaging collects those), and a record
   // that arrives out of order with an older timestamp evicts nothing.
-  db.exec(`
-    DROP TRIGGER IF EXISTS staging_collapse;
-
-    CREATE TRIGGER staging_collapse AFTER INSERT ON staging BEGIN
+  staging_collapse: `CREATE TRIGGER staging_collapse AFTER INSERT ON staging BEGIN
       DELETE FROM staging
        WHERE key = new.key
          AND entity_type = new.entity_type
          AND acked = 0
          AND rowid <> new.rowid
          AND lww_timestamp <= new.lww_timestamp;
-    END;
-  `);
+    END`,
+};
+
+const LEGACY_TRIGGERS = ['entries_au_del', 'entries_au_ins'];
+
+/**
+ * Install the triggers above, touching only those that are missing or differ.
+ *
+ * Every store open calls this, and every DDL statement bumps the schema cookie
+ * and invalidates the prepared statements of all other connections. Rewriting
+ * unchanged triggers on each open pushed the live cookie past 550,000 (hooks
+ * open a store per prompt) and tripped the header watchdog every 15 minutes.
+ */
+export function createTriggers(db: Database.Database): void {
+  const stale = (): string[] => {
+    const installed = new Map(
+      (db.prepare("SELECT name, sql FROM sqlite_master WHERE type = 'trigger'").all() as
+        Array<{ name: string; sql: string }>).map(r => [r.name, r.sql]),
+    );
+    return [
+      ...LEGACY_TRIGGERS.filter(name => installed.has(name)),
+      ...Object.keys(TRIGGERS).filter(name => installed.get(name) !== TRIGGERS[name]),
+    ];
+  };
+  if (stale().length === 0) return;
+
+  // Re-check under the write lock: another process may have fixed it meanwhile.
+  db.transaction(() => {
+    for (const name of stale()) {
+      db.exec(`DROP TRIGGER IF EXISTS ${name}`);
+      if (TRIGGERS[name]) db.exec(TRIGGERS[name]);
+    }
+  }).immediate();
 }
 
 /**
