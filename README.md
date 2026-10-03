@@ -40,7 +40,21 @@ Local storage does not mean every optional operation stays local: the configured
 
 ## Get started
 
-TIM is a **public beta**. Interfaces can change. Start from source with **Node.js 22+** and **npm 10+**:
+TIM is a **public beta**. Interfaces can change. You need **Node.js 22+**, **npm 10+** and **git**. One command installs or updates it:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ZF-IT-Automation/tim/master/scripts/install.sh | bash
+```
+
+The installer clones TIM to `~/.local/share/tim` (or uses the checkout it runs from, as in `./scripts/install.sh`), builds it, links `tim` into `~/.local/bin`, creates the database at `~/.tim/tim.db`, and connects every agent host it finds — Claude Code, Codex, Cursor: MCP server, skills and session hooks. Rerun it to update; it fast-forwards the checkout and repairs hook and MCP paths in place. Restart running agents afterwards.
+
+If Claude Code is installed and no summarizer chain is configured, `tim init` sets `claude`/`haiku` as the summarizer. Check everything with:
+
+```bash
+tim doctor
+```
+
+### Install by hand
 
 ```bash
 git clone https://github.com/ZF-IT-Automation/tim.git
@@ -48,21 +62,11 @@ cd tim
 npm ci
 
 node packages/tim-cli/dist/cli.js init
-node packages/tim-cli/dist/cli.js doctor
-```
-
-`npm ci` runs the workspace prepare/build lifecycle. The default database is `~/.tim/tim.db`; set `TIM_DB_PATH` to choose another.
-
-### Connect an agent
-
-Preview setup, then apply it:
-
-```bash
 node packages/tim-cli/dist/cli.js setup-agent --host claude --dry-run
 node packages/tim-cli/dist/cli.js setup-agent --host claude
 ```
 
-Supported hosts: `claude`, `codex`, `cursor`, `hermes`. Restart or reconnect the client afterwards. Configure an available summarizer chain and check it with `doctor` before relying on automatic summaries.
+`npm ci` runs the workspace prepare/build lifecycle. To call it as `tim`, link it: `ln -s "$PWD/packages/tim-cli/dist/cli.js" ~/.local/bin/tim`. Set `TIM_DB_PATH` to use a database other than `~/.tim/tim.db`. Supported hosts: `claude`, `codex`, `cursor`, `hermes`. Hooks are written with absolute paths to node and the CLI, so they do not depend on `tim` being on `PATH`.
 
 For manual MCP setup, use **absolute paths** to the built server and database. Adapt the surrounding configuration to your client:
 
@@ -85,7 +89,7 @@ Agents see eleven core tools by default (`tim_load_project`, `tim_read`, `tim_se
 ### Create a project
 
 ```bash
-node packages/tim-cli/dist/cli.js new-project \
+tim new-project \
   --path /absolute/path/to/my-project \
   --name "My Project"
 ```
@@ -225,11 +229,11 @@ Built-in memory is convenient and may be sufficient. A small graph server may be
 ## Inspect, back up and migrate
 
 ```bash
-node packages/tim-cli/dist/cli.js doctor
-node packages/tim-cli/dist/cli.js stats
-node packages/tim-cli/dist/cli.js viewer
-node packages/tim-cli/dist/cli.js snapshot
-node packages/tim-cli/dist/cli.js restore --list
+tim doctor
+tim stats
+tim viewer
+tim snapshot
+tim restore --list
 ```
 
 The viewer listens on loopback and supports inspection and selected structural edits. Snapshots use SQLite's backup API. The default destination is temporary storage (`~/.tim/snapshots`); use `snapshot --out /durable/path/backup.db` for a durable copy and maintain independent backups.
