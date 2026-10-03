@@ -262,7 +262,8 @@ export function extractTags(text: string): { body: string; tags: string[]; subst
     }
   }
 
-  const body = lines.filter((_, i) => !stripIdx.has(i)).join('\n').trimEnd();
+  // Models often set the trailer off with a rule; once the trailer is gone the rule dangles.
+  const body = lines.filter((_, i) => !stripIdx.has(i)).join('\n').trimEnd().replace(/\n+[-*_]{3,}$/, '');
   return { body, tags: tags.slice(0, 5), ...(substance ? { substance } : {}) };
 }
 
