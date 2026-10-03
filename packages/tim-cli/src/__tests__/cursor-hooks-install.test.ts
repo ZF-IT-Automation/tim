@@ -70,6 +70,23 @@ describe('cursor hooks install', () => {
       .toEqual([`'${process.execPath}' '/opt/tim/cli.js' hook agent-session-start`]);
   });
 
+  it('repoints older TIM entries after the checkout moved', () => {
+    fs.writeFileSync(hooksPath, JSON.stringify({
+      version: 1,
+      hooks: {
+        stop: [{ command: "'/old/node' '/old/tim/packages/tim-cli/dist/cli.js' hook cursor-stop", timeout: 10 }],
+        sessionStart: [{ command: 'bash /old/tim/packages/tim-hooks/scripts/tim-session-start.sh', timeout: 10 }],
+      },
+    }));
+    installCursorTurnEndHooks({ hooksPath, cli });
+    installCursorSessionStartHook({ hooksPath, cli });
+    const file = read();
+    expect(file.hooks?.stop?.map(h => h.command)).toEqual([cursorStopCommand(cli)]);
+    expect(file.hooks?.sessionEnd?.map(h => h.command)).toEqual([cursorStopCommand(cli)]);
+    expect(file.hooks?.sessionStart?.map(h => h.command))
+      .toEqual([`'${process.execPath}' '/opt/tim/cli.js' hook agent-session-start`]);
+  });
+
   it('recognizes a hand-placed session-start hook instead of adding a second one', () => {
     fs.writeFileSync(hooksPath, JSON.stringify({
       version: 1,

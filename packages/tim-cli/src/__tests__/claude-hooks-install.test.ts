@@ -31,7 +31,7 @@ describe('mergeClaudeHooks', () => {
         SessionStart: [{
           matcher: 'startup|clear|compact',
           hooks: [
-            { type: 'command', command: 'bash /old/tim/packages/tim-hooks/scripts/tim-session-start.sh', timeout: 10 },
+            { type: 'command', command: 'bash /home/u/.claude/hooks/tim-session-start.sh', timeout: 10 },
             { type: 'command', command: 'bash /home/u/.claude/hooks/agent-role.sh', timeout: 5 },
           ],
         }],
@@ -48,8 +48,17 @@ describe('mergeClaudeHooks', () => {
     };
     const next = mergeClaudeHooks(existing);
 
-    // The hand-placed session-start script already briefs: kept, nothing added.
+    // A hand-placed session-start script already briefs: kept, nothing added.
     expect(next.hooks?.SessionStart).toEqual(existing.hooks?.SessionStart);
+    // The checkout's own script (older installs) moves to the node command, in its group.
+    const shipped = mergeClaudeHooks({ hooks: { SessionStart: [{ matcher: 'startup|clear|compact', hooks: [
+      { type: 'command', command: 'bash /old/tim/packages/tim-hooks/scripts/tim-session-start.sh', timeout: 10 },
+      { type: 'command', command: 'bash /home/u/.claude/hooks/agent-role.sh', timeout: 5 },
+    ] }] } });
+    expect(shipped.hooks?.SessionStart).toEqual([{ matcher: 'startup|clear|compact', hooks: [
+      { type: 'command', command: timHookCommand('claude-session-start'), timeout: 10 },
+      { type: 'command', command: 'bash /home/u/.claude/hooks/agent-role.sh', timeout: 5 },
+    ] }]);
     expect(next.hooks?.UserPromptSubmit).toEqual([{
       matcher: '',
       hooks: [

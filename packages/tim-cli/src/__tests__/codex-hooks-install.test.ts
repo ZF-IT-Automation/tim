@@ -41,6 +41,13 @@ describe('codex notify install', () => {
     expect(fs.readFileSync(configPath, 'utf8').match(/notify = /g)).toHaveLength(1);
   });
 
+  it('repoints its own notify line when node or the checkout moved', () => {
+    fs.writeFileSync(configPath, `${codexNotifyLine('/old/cli.js', '/old/node')}\nmodel = "x"\n`);
+    expect(installCodexNotify({ configPath, cli })).toMatchObject({ status: 'installed' });
+    expect(fs.readFileSync(configPath, 'utf8')).toBe(`${codexNotifyLine(cli)}\nmodel = "x"\n`);
+    expect(installCodexNotify({ configPath, cli })).toMatchObject({ status: 'unchanged' });
+  });
+
   it('leaves a notify claimed by another owner alone', () => {
     fs.writeFileSync(configPath, 'notify = ["/usr/bin/o9k-notify"]\nmodel = "x"\n');
     const step = installCodexNotify({ configPath, cli });
@@ -84,6 +91,22 @@ describe('codex session-start hook merge', () => {
       },
     };
     expect(mergeCodexSessionStart(existing, 'bash /other/tim-session-start.sh')).toBe(existing);
+  });
+
+  it('repoints older TIM entries: the checkout script and a moved node command', () => {
+    const command = `'${process.execPath}' '/new/tim/packages/tim-cli/dist/cli.js' hook agent-session-start`;
+    const existing = {
+      hooks: {
+        SessionStart: [
+          { matcher: 'startup|resume', hooks: [{ type: 'command', command: 'bash /old/tim/packages/tim-hooks/scripts/tim-session-start.sh' }] },
+          { matcher: '', hooks: [{ type: 'command', command: "'/old/node' '/old/tim/packages/tim-cli/dist/cli.js' hook agent-session-start" }] },
+          { matcher: '', hooks: [{ type: 'command', command: 'bash o9k-core-session.sh' }] },
+        ],
+      },
+    };
+    const next = mergeCodexSessionStart(existing, command);
+    expect(next.hooks?.SessionStart?.map(g => g.hooks[0].command)).toEqual([command, command, 'bash o9k-core-session.sh']);
+    expect(mergeCodexSessionStart(next, command)).toBe(next);
   });
 
   it('writes hooks.json when absent and is idempotent', () => {
