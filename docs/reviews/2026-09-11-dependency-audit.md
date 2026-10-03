@@ -6,6 +6,8 @@ On 2026-09-11, a fresh isolated installation at `435150e` with Node22.23.2 repor
 
 `git diff acb738b -- package.json package-lock.json 'packages/*/package.json'` was empty before benchmark integration. The dependency manifests and lockfile were unchanged from the original review baseline; these findings were not introduced by the memory extension source changes. They remain unresolved by the #27–#39 program and must not be hidden behind passing functional tests.
 
+Update 2026-10-03: a fresh `npm audit` on `7884562` reported 9 (5 moderate, 4 high) — the tar/fastembed/onnxruntime rows below were already gone. `db0b64e` applied `npm audit fix` without `--force` (lockfile only): `@hono/node-server` 1.19.14→1.19.17, `hono` 4.12.28→4.13.12 (both via `@modelcontextprotocol/sdk`), `fast-uri` 3.1.3→3.1.8, `ip-address` 10.2.0→10.7.3, `nanoid` 3.3.15→3.3.19, `postcss` 8.5.16→8.5.28, `qs` 6.15.3→6.16.0. `e7e086b` moved the dev dependency `vitest` 3.2.7→4.1.11, the first release outside the `@vitest/mocker` advisory range (5.x would also have dropped Node 20 and Node 22 < 22.12). After both: fresh `npm ci`, full suite (2408 passed), clean-build pipeline and CI green; `npm audit` reports 0. Contract item 5 — an independent review of the dependency diff — is still open, so #40 stays open.
+
 Update 2026-09-25: the embedding package in the first two rows was removed with the local index. This page records the 2026-09-11 audit. A fresh `npm audit` in the worktree that dropped that package reported 0 vulnerabilities.
 
 ## Verified package paths
