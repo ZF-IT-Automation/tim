@@ -67,6 +67,7 @@ import {
 import { cmdConsolidate } from './consolidate.js';
 import { cmdProject } from './project.js';
 import { auditSummarizerHealth, ensureSummarizerChain } from './summarizer-health.js';
+import { auditTimHooks } from './hook-audit.js';
 import { auditHarnessDbPaths } from './harness-db-audit.js';
 import {
   collectProjectSchemaReport,
@@ -506,6 +507,20 @@ async function cmdDoctor(args: string[] = []) {
       }
       console.log('  Agents using these read and write a different database than the one above.');
     }
+  }
+
+  const hooks = auditTimHooks();
+  if (hooks.length > 0) {
+    const broken = hooks.filter(h => h.problem);
+    const fragile = hooks.filter(h => !h.problem && h.fragile);
+    console.log('\nAgent hooks:');
+    if (broken.length === 0 && fragile.length === 0) console.log(`  ✓ ${hooks.length} TIM hook(s) can start`);
+    for (const h of broken) console.log(`  ✗ ${h.host} ${h.event}: ${h.problem} — ${h.command}`);
+    if (fragile.length > 0) {
+      console.log(`  ⚠ ${fragile.length} hook(s) call bare \`tim\` — they break when the host's PATH lacks it`);
+    }
+    const hosts = [...new Set([...broken, ...fragile].map(h => h.host))];
+    if (hosts.length > 0) console.log(`  Fix: ${hosts.map(h => `tim setup-agent --host ${h}`).join(' · ')}`);
   }
 
   const hermesDir = path.join(os.homedir(), '.hermes');
