@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { timHookCommand } from './claude-hooks-install.js';
 
 /**
  * Codex 0.147 has no turn-end hook event, and the hooks it does have are
@@ -106,10 +107,6 @@ interface CodexHooksFile {
   [key: string]: unknown;
 }
 
-function sessionStartScript(): string {
-  return path.resolve(__dirname, '..', '..', 'tim-hooks', 'scripts', 'tim-session-start.sh');
-}
-
 /**
  * The entry may already be there under a hand-placed path, so match on the
  * script name rather than the exact command string — an exact match would
@@ -118,7 +115,8 @@ function sessionStartScript(): string {
 export function mergeCodexSessionStart(file: CodexHooksFile, command: string): CodexHooksFile {
   const groups = file.hooks?.SessionStart ?? [];
   const alreadyThere = groups.some(group =>
-    group.hooks.some(hook => hook.command.includes('tim-session-start') || hook.command.includes('hook claude-session-start')),
+    group.hooks.some(hook => ['tim-session-start', 'hook claude-session-start', 'hook agent-session-start']
+      .some(needle => hook.command.includes(needle))),
   );
   if (alreadyThere) return file;
 
@@ -135,13 +133,9 @@ export function mergeCodexSessionStart(file: CodexHooksFile, command: string): C
 }
 
 export function installCodexSessionStartHook(
-  options: { hooksPath?: string; script?: string } = {},
+  options: { hooksPath?: string; cli?: string } = {},
 ): CodexInstallStep {
   const hooksPath = options.hooksPath ?? path.join(codexHome(), 'hooks.json');
-  const script = options.script ?? sessionStartScript();
-  if (!fs.existsSync(script)) {
-    return { step: 'session-start-hook', status: 'skip', path: hooksPath, detail: `shipped hook script not found at ${script}` };
-  }
 
   let existing: CodexHooksFile = {};
   if (fs.existsSync(hooksPath)) {
@@ -156,7 +150,7 @@ export function installCodexSessionStartHook(
     }
   }
 
-  const next = mergeCodexSessionStart(existing, `bash ${script}`);
+  const next = mergeCodexSessionStart(existing, timHookCommand('agent-session-start', options.cli ?? timCliPath()));
   if (JSON.stringify(next) === JSON.stringify(existing)) {
     return { step: 'session-start-hook', status: 'unchanged', path: hooksPath };
   }
@@ -167,11 +161,11 @@ export function installCodexSessionStartHook(
 }
 
 export function installCodexHooks(
-  options: { configPath?: string; hooksPath?: string; cli?: string; script?: string } = {},
+  options: { configPath?: string; hooksPath?: string; cli?: string } = {},
 ): CodexHooksInstallResult {
   const steps = [
     installCodexNotify({ configPath: options.configPath, cli: options.cli }),
-    installCodexSessionStartHook({ hooksPath: options.hooksPath, script: options.script }),
+    installCodexSessionStartHook({ hooksPath: options.hooksPath, cli: options.cli }),
   ];
   return {
     ok: steps.every(step => step.status !== 'skip'),

@@ -53,13 +53,11 @@ describe('codex notify install', () => {
 describe('codex session-start hook merge', () => {
   let root: string;
   let hooksPath: string;
-  let script: string;
+  const cli = '/opt/my tools/tim/cli.js';
 
   beforeEach(() => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), 'tim-codex-hooks-'));
     hooksPath = path.join(root, 'hooks.json');
-    script = path.join(root, 'tim-session-start.sh');
-    fs.writeFileSync(script, '#!/usr/bin/env bash\n');
   });
 
   afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -89,14 +87,19 @@ describe('codex session-start hook merge', () => {
   });
 
   it('writes hooks.json when absent and is idempotent', () => {
-    expect(installCodexSessionStartHook({ hooksPath, script })).toMatchObject({ status: 'installed' });
-    expect(installCodexSessionStartHook({ hooksPath, script })).toMatchObject({ status: 'unchanged' });
-    const parsed = JSON.parse(fs.readFileSync(hooksPath, 'utf8')) as { hooks: Record<string, unknown[]> };
+    expect(installCodexSessionStartHook({ hooksPath, cli })).toMatchObject({ status: 'installed' });
+    expect(installCodexSessionStartHook({ hooksPath, cli })).toMatchObject({ status: 'unchanged' });
+    const parsed = JSON.parse(fs.readFileSync(hooksPath, 'utf8')) as {
+      hooks: Record<string, { hooks: { command: string }[] }[]>;
+    };
     expect(parsed.hooks.SessionStart).toHaveLength(1);
+    // Quoted absolute node + cli: no jq, no PATH lookup, spaces survive.
+    expect(parsed.hooks.SessionStart[0].hooks[0].command)
+      .toBe(`'${process.execPath}' '/opt/my tools/tim/cli.js' hook agent-session-start`);
   });
 
   it('refuses to touch invalid JSON', () => {
     fs.writeFileSync(hooksPath, '{ not json');
-    expect(installCodexSessionStartHook({ hooksPath, script })).toMatchObject({ status: 'skip' });
+    expect(installCodexSessionStartHook({ hooksPath, cli })).toMatchObject({ status: 'skip' });
   });
 });

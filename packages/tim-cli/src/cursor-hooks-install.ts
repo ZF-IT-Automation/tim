@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { timHookCommand } from './claude-hooks-install.js';
 
 /**
  * cursor-agent 2026.08 has a real turn-end hook (`stop`) — but only in the
@@ -60,20 +61,12 @@ function timCliPath(): string {
   return path.resolve(__dirname, 'cli.js');
 }
 
-function sessionStartScript(): string {
-  return path.resolve(__dirname, '..', '..', 'tim-hooks', 'scripts', 'tim-session-start.sh');
-}
-
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
-}
-
 /**
  * Absolute node, like the Codex installer writes: hooks spawn without a login
  * shell, so a version-managed node is not on the PATH they inherit.
  */
 export function cursorStopCommand(cli = timCliPath(), node = process.execPath): string {
-  return `${shellQuote(node)} ${shellQuote(cli)} hook cursor-stop`;
+  return timHookCommand('cursor-stop', cli, node);
 }
 
 function writeAtomic(filePath: string, contents: string): void {
@@ -84,19 +77,20 @@ function writeAtomic(filePath: string, contents: string): void {
   fs.renameSync(tmp, filePath);
 }
 
-function hasCommand(entries: CursorHookCommand[], needle: string): boolean {
-  return entries.some(entry => typeof entry.command === 'string' && entry.command.includes(needle));
+function hasCommand(entries: CursorHookCommand[], needles: string[]): boolean {
+  return entries.some(entry =>
+    typeof entry.command === 'string' && needles.some(needle => entry.command.includes(needle)));
 }
 
 function withHook(
   file: CursorHooksFile,
   event: string,
   command: string,
-  needle: string,
+  needles: string[],
   timeout: number,
 ): CursorHooksFile {
   const entries = file.hooks?.[event] ?? [];
-  if (hasCommand(entries, needle)) return file;
+  if (hasCommand(entries, needles)) return file;
   return {
     ...file,
     version: file.version ?? 1,
@@ -104,15 +98,15 @@ function withHook(
   };
 }
 
-/** Matches on the script name, so a hand-placed session-start hook is reused. */
+/** Also matches the older script, so a hand-placed session-start hook is reused. */
 export function mergeCursorSessionStart(file: CursorHooksFile, command: string): CursorHooksFile {
-  return withHook(file, 'sessionStart', command, 'tim-session-start', 10);
+  return withHook(file, 'sessionStart', command, ['tim-session-start', 'hook agent-session-start'], 10);
 }
 
 export function mergeCursorTurnEnd(file: CursorHooksFile, command: string): CursorHooksFile {
   let next = file;
   for (const event of TURN_END_EVENTS) {
-    next = withHook(next, event, command, 'hook cursor-stop', 10);
+    next = withHook(next, event, command, ['hook cursor-stop'], 10);
   }
   return next;
 }
@@ -151,21 +145,11 @@ function applyMerge(
 }
 
 export function installCursorSessionStartHook(
-  options: { hooksPath?: string; script?: string } = {},
+  options: { hooksPath?: string; cli?: string } = {},
 ): CursorInstallStep {
   const hooksPath = options.hooksPath ?? path.join(cursorHome(), 'hooks.json');
-  const script = options.script ?? sessionStartScript();
-  if (!fs.existsSync(script)) {
-    return {
-      step: 'session-start-hook',
-      status: 'skip',
-      path: hooksPath,
-      detail: `shipped hook script not found at ${script}`,
-    };
-  }
-  return applyMerge('session-start-hook', hooksPath, file =>
-    mergeCursorSessionStart(file, `bash ${script}`),
-  );
+  const command = timHookCommand('agent-session-start', options.cli ?? timCliPath());
+  return applyMerge('session-start-hook', hooksPath, file => mergeCursorSessionStart(file, command));
 }
 
 export function installCursorTurnEndHooks(
@@ -177,12 +161,12 @@ export function installCursorTurnEndHooks(
 }
 
 export function installCursorHooks(
-  options: { hooksPath?: string; cli?: string; script?: string } = {},
+  options: { hooksPath?: string; cli?: string } = {},
 ): CursorHooksInstallResult {
   // Sequential: both steps write the same file, so the second must read the first.
   const steps = [
     installCursorTurnEndHooks({ hooksPath: options.hooksPath, cli: options.cli }),
-    installCursorSessionStartHook({ hooksPath: options.hooksPath, script: options.script }),
+    installCursorSessionStartHook({ hooksPath: options.hooksPath, cli: options.cli }),
   ];
   return {
     ok: steps.every(step => step.status !== 'skip'),
