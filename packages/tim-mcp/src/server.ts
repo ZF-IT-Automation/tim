@@ -292,17 +292,17 @@ const TimDeltaSchema = z.object({
 
 const TimRememberSchema = z.object({
   query: z.string().min(1).max(500)
-    .describe('Vage Erinnerungs-Query. Mehrere Wortvarianten werden automatisch probiert.'),
+    .describe('Vague recall query. Several word variants are tried automatically.'),
   topK: z.number().int().min(1).max(20).optional().default(5)
-    .describe('Anzahl Rückgabe-Treffer. Default 5, max 20.'),
+    .describe('Number of hits to return. Default 5, max 20.'),
   minConfidence: z.number().min(0).max(1).optional().default(0.3)
-    .describe('Treffer unter diesem Confidence werden gefiltert. Default 0.3.'),
+    .describe('Hits below this confidence are dropped. Default 0.3.'),
   includeBatchSummaries: z.boolean().optional().default(true)
-    .describe('Session-Batch-Summaries der letzten 30 Tage mit einbeziehen. Default true.'),
+    .describe('Include session batch summaries from the last 30 days. Default true.'),
   searchType: z.string().optional()
     .describe('Accepted for compatibility. Search is full-text.'),
   projectScope: z.string().regex(/^P\d{4}$/).optional()
-    .describe('Optional: Suche auf ein Projekt beschränken (z.B. "P0062"). Default: alle Projekte.'),
+    .describe('Optional: limit the search to one project (e.g. "P0062"). Default: all projects.'),
 });
 
 const TimLinkSchema = z.object({
