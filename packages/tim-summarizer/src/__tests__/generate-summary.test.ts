@@ -114,7 +114,7 @@ describe('tryCli argv', () => {
 
   beforeAll(() => {
     binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tim-trycli-'));
-    for (const name of ['opencode', 'codex']) {
+    for (const name of ['opencode', 'codex', 'claude']) {
       const stub = path.join(binDir, name);
       fs.writeFileSync(stub, '#!/bin/sh\ncat >/dev/null\necho "$@"\n');
       fs.chmodSync(stub, 0o755);
@@ -132,6 +132,12 @@ describe('tryCli argv', () => {
     const out = await tryCli('opencode', 'deepseek-v4-flash-free', 'opencode', 'prompt', 30);
     expect(out).toContain('--pure');
     expect(out).toContain('opencode/deepseek-v4-flash-free');
+  });
+
+  it('runs claude in isolated print mode: no MCP servers, tools or hooks', async () => {
+    const out = await tryCli('claude', 'haiku', undefined, 'prompt', 30);
+    expect(out).toContain('-p --model haiku --strict-mcp-config --tools  --no-session-persistence');
+    expect(out).toContain('{"disableAllHooks":true}');
   });
 
   it('appends chain-entry args verbatim', async () => {

@@ -386,6 +386,17 @@ export async function tryCli(
     command = 'codex';
     args = ['exec', '--model', model, '--skip-git-repo-check'];
     stdinPrompt = prompt;
+  } else if (cli === 'claude') {
+    // Claude Code print mode, isolated: no MCP servers (TIM's own would start for
+    // nothing), no tools, no hooks, nothing saved as a resumable session. Not
+    // --bare — that refuses OAuth, which is how most Claude Code users log in.
+    command = 'claude';
+    args = [
+      '-p', '--model', model,
+      '--strict-mcp-config', '--tools', '', '--no-session-persistence',
+      '--settings', '{"disableAllHooks":true}',
+    ];
+    stdinPrompt = prompt;
   } else if (cli === 'opencode') {
     const fullModel = provider ? `${provider}/${model}` : model;
     command = 'opencode';
