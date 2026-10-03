@@ -143,6 +143,22 @@ describe('runPromptSubmit', () => {
     expect((await runPromptSubmit(store, { prompt: 'PDCA loop' }))!.lines).toHaveLength(1);
   });
 
+  it('keeps session summaries out of recall: their open items are a past session state', async () => {
+    await store.write('Batch 1\n- Offen: Branch feat/x nicht gepusht, Push-Frage an User gestellt.', {
+      metadata: { kind: 'batch-summary' },
+    });
+    await store.write('Summary\n- Open: branch feat/x not pushed; merge needs approval.', {
+      metadata: { kind: 'session-summary-root' },
+    });
+    await store.write('Push policy\nPush to origin only after the user approves the branch.', {
+      metadata: { kind: 'decision' },
+    });
+
+    const result = await runPromptSubmit(store, { prompt: 'push branch', timeoutMs: 5000 });
+    expect(result!.lines).toHaveLength(1);
+    expect(result!.lines[0]).toContain('Push policy');
+  });
+
   it('returns null when disabled via config', async () => {
     vi.spyOn(await import('tim-core'), 'loadConfig').mockReturnValue({
       dbPath: ':memory:',
