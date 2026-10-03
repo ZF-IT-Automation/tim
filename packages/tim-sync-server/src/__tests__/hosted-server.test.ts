@@ -4,7 +4,8 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { TenantRegistry } from '../tenant-registry.js';
 import { createFile, pushBlobs } from '../storage.js';
-import { startHostedSyncServer, type HostedServerHandle, RegisterRateLimiter, createHostedSyncServer } from '../server.js';
+import { startHostedSyncServer, type HostedServerHandle, RegisterRateLimiter, createHostedSyncServer, clientIp } from '../server.js';
+import type http from 'node:http';
 import { TIER_QUOTAS } from '../quotas.js';
 
 describe('tim-sync-server tenant isolation', () => {
@@ -126,6 +127,34 @@ describe('tim-sync-server HTTP', () => {
     expect(blocked.status).toBe(429);
 
     await limitedHandle.close();
+  });
+
+  it('a spoofed X-Forwarded-For does not reset the limit unless the proxy is trusted', async () => {
+    const limitedHandle = createHostedSyncServer({ port: 0, dataDir: tmp, adminToken }, new RegisterRateLimiter());
+    await new Promise<void>(resolve => limitedHandle.server.listen(0, '127.0.0.1', () => resolve()));
+    const addr = limitedHandle.server.address();
+    const url = `http://127.0.0.1:${typeof addr === 'object' && addr ? addr.port : 0}/register`;
+
+    for (let i = 0; i < 5; i++) {
+      await fetch(url, { method: 'POST', body: '{}', headers: { 'X-Forwarded-For': `10.0.0.${i}` } });
+    }
+    const blocked = await fetch(url, { method: 'POST', body: '{}', headers: { 'X-Forwarded-For': '10.9.9.9' } });
+    expect(blocked.status).toBe(429);
+    await limitedHandle.close();
+  });
+
+  it('clientIp reads the proxy-appended last hop only when trusted', () => {
+    const req = { headers: { 'x-forwarded-for': '6.6.6.6, 203.0.113.7' }, socket: { remoteAddress: '127.0.0.1' } } as unknown as http.IncomingMessage;
+    expect(clientIp(req)).toBe('127.0.0.1');
+    expect(clientIp(req, true)).toBe('203.0.113.7');
+  });
+
+  it('the limiter forgets expired addresses once it grows large', () => {
+    const limiter = new RegisterRateLimiter();
+    const t0 = 1_000_000;
+    for (let i = 0; i <= 10_001; i++) limiter.isLimited(`ip-${i}`, t0);
+    limiter.isLimited('late', t0 + 2 * 60 * 60 * 1000);
+    expect((limiter as unknown as { attempts: Map<string, number[]> }).attempts.size).toBe(1);
   });
 
   it('rejects unauthenticated /files', async () => {
