@@ -739,7 +739,8 @@ export const TOOL_DEFS: Array<{
       'Placement: where:"P0063/Ideas" shorthand, or parentId, or parentTitle+projectId. ' +
       'A near-duplicate title in scope returns duplicate_suspected with the existing entry — ' +
       'read it and update instead; pass force:true only when it is genuinely a different thing. ' +
-      'Tags are topics (#tim, #security); status/priority belong in metadata.task.',
+      'Tags are topics (#tim, #security); status/priority belong in metadata.task. ' +
+      'Returns {id, parentId, title, tags}, not the entry.',
     schema: TimWriteSchema,
   },
   {
@@ -803,7 +804,8 @@ export const TOOL_DEFS: Array<{
       'into the stored object key by key: top-level keys you send replace theirs, keys you omit ' +
       'stay, and a key sent as null is removed. System-managed fields (verified_at, touched_at, ' +
       'provenance) are preserved. For short flips (status, priority) send only the metadata patch, ' +
-      'keep content out.',
+      'keep content out. Returns {id, title, updated} plus the stored values of the metadata ' +
+      'keys you sent, not the entry.',
     schema: TimUpdateSchema,
   },
   {
@@ -2543,9 +2545,12 @@ export async function createMcpServer(
           });
           if (!outcome.ok) return errorResult(outcome.message);
           if (!isHttp) await bindUnboundSession(s, outcome.entry.parentId);
+          // Ack, not the entry: the caller just sent the content, and echoing it
+          // back was over a third of TIM's in-context bytes. tim_read has the rest.
+          const { id, parentId, title, tags } = outcome.entry;
           const payload = outcome.warnings.length > 0
-            ? { entry: outcome.entry, warnings: outcome.warnings }
-            : outcome.entry;
+            ? { id, parentId, title, tags, warnings: outcome.warnings }
+            : { id, parentId, title, tags };
           return {
             content: [{ type: 'text', text: formatToolResponse(payload) }],
           };
@@ -2839,23 +2844,31 @@ export async function createMcpServer(
             }
           }
           const projectPath = callerProjectPath;
+          let tagWarnings: string[] = [];
           if (patch.tags !== undefined) {
-            const tagWarnings = validateTagsDeprecated(patch.tags);
-            const { clean: cleanTags } = stripDeprecatedTags(patch.tags);
-            patch.tags = cleanTags;
-            const entry = await s.update(resolved.id, patch as Partial<Entry>, { projectPath });
-            bestEffortTelemetry('markReferenced', () =>
-              s.markReferenced([entry.id], usageSid));
-            const payload = tagWarnings.length > 0 ? { entry, warnings: tagWarnings } : entry;
-            return {
-              content: [{ type: 'text', text: formatToolResponse(payload) }],
-            };
+            tagWarnings = validateTagsDeprecated(patch.tags);
+            patch.tags = stripDeprecatedTags(patch.tags).clean;
           }
           const entry = await s.update(resolved.id, patch as Partial<Entry>, { projectPath });
           bestEffortTelemetry('markReferenced', () =>
             s.markReferenced([entry.id], usageSid));
+          // Ack with what changed, not the whole entry (see tim_write). The stored
+          // values of the patched metadata keys show any server-side normalization.
+          const payload: Record<string, unknown> = {
+            id: entry.id,
+            title: entry.title,
+            updated: Object.keys(patch),
+          };
+          if (patch.metadata) {
+            const stored = entry.metadata as Record<string, unknown>;
+            payload.metadata = Object.fromEntries(
+              Object.keys(patch.metadata).filter(k => k in stored).map(k => [k, stored[k]]),
+            );
+          }
+          if (patch.tags !== undefined) payload.tags = entry.tags;
+          if (tagWarnings.length > 0) payload.warnings = tagWarnings;
           return {
-            content: [{ type: 'text', text: formatToolResponse(entry) }],
+            content: [{ type: 'text', text: formatToolResponse(payload) }],
           };
         }
 

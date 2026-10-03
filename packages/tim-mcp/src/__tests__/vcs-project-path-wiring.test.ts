@@ -51,8 +51,9 @@ describe('MCP wires projectPath for coding-task vcs detection', () => {
       metadata: { type: 'task', task: { status: 'todo', subtype: 'coding' } },
     });
     expect(writeResp.result?.isError).not.toBe(true);
-    const written = JSON.parse(writeResp.result!.content[0].text);
-    const task = written.metadata?.task ?? written.entry?.metadata?.task;
+    const { id } = JSON.parse(writeResp.result!.content[0].text);
+    const readResp = await client.callTool('tim_read', { id });
+    const task = JSON.parse(readResp.result!.content[0].text).entry.metadata?.task;
     expect(task?.vcs).toBe('git');
   });
 

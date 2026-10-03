@@ -97,6 +97,11 @@ function parseEntry(text: string): { id: string; title: string; content: string 
   return parsed.entry ?? parsed;
 }
 
+async function readEntry(client: McpClient, id: string) {
+  const resp = await client.callTool('tim_read', { id, include_body: true });
+  return parseEntry(resp.result!.content[0].text);
+}
+
 describe('tim_update title param', () => {
   let client: McpClient;
   let dbPath: string;
@@ -118,7 +123,7 @@ describe('tim_update title param', () => {
       content: 'AutoTitle\nBody stays',
       tags: ['#tim', '#test'],
     });
-    const written = parseEntry(writeResp.result!.content[0].text);
+    const written = await readEntry(client, parseEntry(writeResp.result!.content[0].text).id);
     expect(written.title).toBe('AutoTitle');
     expect(written.content).toBe('Body stays');
 
@@ -150,7 +155,6 @@ describe('tim_update title param', () => {
     });
     const updated = parseEntry(updateResp.result!.content[0].text);
     expect(updated.title).toBe('Updated');
-    expect(updated.content).toBe('Body text');
 
     const readResp = await client.callTool('tim_read', { id: written.id, include_body: true });
     const readBack = parseEntry(readResp.result!.content[0].text);
