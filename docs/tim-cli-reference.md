@@ -619,10 +619,15 @@ tim setup-agent --host codex
 
 | Host | MCP | Skills | Hooks |
 |------|-----|--------|-------|
-| `claude` | Writes Claude Code JSON MCP config | Copies bundled TIM skills to `~/.claude/skills` | No extra hook install |
-| `codex` | Writes `[mcp_servers.tim]` to `~/.codex/config.toml` with backup | Copies bundled TIM skills to `$CODEX_HOME/skills` or `~/.codex/skills` | No extra hook install |
-| `cursor` | Writes Cursor JSON MCP config | Reports manual skill guidance | No extra hook install |
+| `claude` | Writes Claude Code JSON MCP config | Copies bundled TIM skills to `~/.claude/skills` | SessionStart, UserPromptSubmit, Stop and SessionEnd in `~/.claude/settings.json` |
+| `codex` | Writes `[mcp_servers.tim]` to `~/.codex/config.toml` with backup | Copies bundled TIM skills to `$CODEX_HOME/skills` or `~/.codex/skills` | `notify` in `config.toml` (exchange logging) and a SessionStart hook in `hooks.json` (needs Codex hook trust) |
+| `cursor` | Writes Cursor JSON MCP config | Reports manual skill guidance | `sessionStart`, `stop` and `sessionEnd` in `~/.cursor/hooks.json` |
 | `hermes` | Reports manual MCP guidance | Copies bundled TIM skills to `~/.hermes/skills` | Installs Hermes TIM statusline hooks |
+
+Hook commands spell out the absolute node binary and `cli.js`, so they work
+without `tim` or node on the PATH a host gives its hooks. Rerunning setup-agent
+after moving the checkout or upgrading node rewrites older TIM hook entries in
+place; other tools' hooks and matchers are left untouched.
 
 Use `--dry-run` first when configuring a real user environment. It does not
 open or create the TIM DB.
