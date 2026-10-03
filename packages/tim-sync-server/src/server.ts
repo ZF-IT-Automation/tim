@@ -1,5 +1,6 @@
 import { SYNC_CAPABILITIES, validProtocolVersion, validProtocolBlob } from 'tim-core';
 import http from 'node:http';
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { TenantRegistry } from './tenant-registry.js';
 import { createFile, listFiles, pushBlobs, pullBlobs, acknowledgeCursor } from './storage.js';
 import type { TenantTier } from './quotas.js';
@@ -10,8 +11,12 @@ export const REGISTER_RATE_WINDOW_MS = 60 * 60 * 1000;
 
 export interface HostedServerOptions {
   port?: number;
+  /** Interface to bind. Default loopback: the server speaks plain HTTP and belongs behind a TLS proxy. */
+  host?: string;
   dataDir: string;
   adminToken?: string;
+  /** Read the client IP from X-Forwarded-For. Only behind a proxy that sets it; default TIM_SYNC_TRUST_PROXY=1. */
+  trustProxy?: boolean;
 }
 
 export interface HostedServerHandle {
@@ -57,10 +62,16 @@ function sendJson(res: http.ServerResponse, status: number, body: unknown): void
   res.end(JSON.stringify({ ...SYNC_CAPABILITIES, ...(body as object) }));
 }
 
-function clientIp(req: http.IncomingMessage): string {
+/**
+ * Without a proxy any client can send X-Forwarded-For, so it is ignored unless
+ * trusted. Behind one, the last hop is the address the proxy itself appended;
+ * everything left of it is whatever the client claimed.
+ */
+export function clientIp(req: http.IncomingMessage, trustProxy = false): string {
   const forwarded = req.headers['x-forwarded-for'];
-  if (typeof forwarded === 'string' && forwarded.length > 0) {
-    return forwarded.split(',')[0]!.trim();
+  if (trustProxy && typeof forwarded === 'string' && forwarded.trim()) {
+    const hops = forwarded.split(',').map(h => h.trim()).filter(Boolean);
+    if (hops.length > 0) return hops[hops.length - 1]!;
   }
   return req.socket.remoteAddress ?? 'unknown';
 }
@@ -70,6 +81,12 @@ export class RegisterRateLimiter {
 
   isLimited(ip: string, now = Date.now()): boolean {
     const windowStart = now - REGISTER_RATE_WINDOW_MS;
+    // ponytail: full sweep past 10k addresses keeps the map bounded; a proper LRU if registration traffic ever needs it.
+    if (this.attempts.size > 10_000) {
+      for (const [key, times] of this.attempts) {
+        if (!times.some(t => t > windowStart)) this.attempts.delete(key);
+      }
+    }
     const recent = (this.attempts.get(ip) ?? []).filter(t => t > windowStart);
     if (recent.length >= REGISTER_RATE_LIMIT) {
       this.attempts.set(ip, recent);
@@ -86,7 +103,10 @@ export class RegisterRateLimiter {
 }
 
 function isAdminToken(provided: string, expected?: string): boolean {
-  return Boolean(expected && provided && provided === expected);
+  if (!expected || !provided) return false;
+  // Equal-length digests, so the comparison time says nothing about the token.
+  const digest = (v: string) => createHash('sha256').update(v).digest();
+  return timingSafeEqual(digest(provided), digest(expected));
 }
 
 export function createHostedSyncServer(
@@ -96,6 +116,7 @@ export function createHostedSyncServer(
   const registry = new TenantRegistry(options.dataDir);
   const startedAt = Date.now();
   const adminToken = options.adminToken ?? process.env.TIM_SYNC_ADMIN_TOKEN;
+  const trustProxy = options.trustProxy ?? process.env.TIM_SYNC_TRUST_PROXY === '1';
 
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url ?? '/', 'http://localhost');
@@ -120,7 +141,7 @@ export function createHostedSyncServer(
     }
 
     if (req.method === 'POST' && url.pathname === '/register') {
-      const ip = clientIp(req);
+      const ip = clientIp(req, trustProxy);
       if (rateLimiter.isLimited(ip)) {
         sendJson(res, 429, { error: 'Registration rate limit exceeded (max 5 per hour)' });
         return;
@@ -307,7 +328,7 @@ export function createHostedSyncServer(
 export function startHostedSyncServer(options: HostedServerOptions): Promise<HostedServerHandle> {
   const handle = createHostedSyncServer(options);
   return new Promise((resolve, reject) => {
-    handle.server.listen(options.port ?? 3100, () => {
+    handle.server.listen(options.port ?? 3100, options.host ?? '127.0.0.1', () => {
       const addr = handle.server.address();
       if (addr && typeof addr === 'object') {
         handle.port = addr.port;
