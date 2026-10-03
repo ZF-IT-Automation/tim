@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { timHookCommand } from './claude-hooks-install.js';
+import { isShippedSessionStartScript, isTimHookCommand, timHookCommand } from './claude-hooks-install.js';
 
 /**
  * Codex 0.147 has no turn-end hook event, and the hooks it does have are
@@ -76,14 +76,20 @@ export function installCodexNotify(
   const current = NOTIFY_LINE_RE.exec(existing);
   if (current) {
     const claimed = existing.slice(current.index).split('\n')[0] ?? '';
-    return claimed.includes(TIM_NOTIFY_MARKER)
-      ? { step: 'notify', status: 'unchanged', path: configPath }
-      : {
-          step: 'notify',
-          status: 'skip',
-          path: configPath,
-          detail: `notify already claimed by another owner — left alone: ${claimed.trim()}`,
-        };
+    if (!claimed.includes(TIM_NOTIFY_MARKER)) {
+      return {
+        step: 'notify',
+        status: 'skip',
+        path: configPath,
+        detail: `notify already claimed by another owner — left alone: ${claimed.trim()}`,
+      };
+    }
+    if (claimed.trim() === line) return { step: 'notify', status: 'unchanged', path: configPath };
+    // TIM's own line with an old node or checkout path: repoint it in place.
+    fs.copyFileSync(configPath, `${configPath}.backup.${Date.now()}`);
+    const at = current.index;
+    writeAtomic(configPath, existing.slice(0, at) + line + existing.slice(at + claimed.length));
+    return { step: 'notify', status: 'installed', path: configPath };
   }
 
   if (existing) fs.copyFileSync(configPath, `${configPath}.backup.${Date.now()}`);
@@ -113,7 +119,21 @@ interface CodexHooksFile {
  * install a second session-start hook next to the existing one.
  */
 export function mergeCodexSessionStart(file: CodexHooksFile, command: string): CodexHooksFile {
-  const groups = file.hooks?.SessionStart ?? [];
+  // Older TIM entries — the checkout's own script, or a node command whose paths
+  // moved — are rewritten in place; a hand-placed script elsewhere stays.
+  const original = file.hooks?.SessionStart ?? [];
+  let changed = false;
+  const isTim = (c: string) => isShippedSessionStartScript(c)
+    || isTimHookCommand(c, 'agent-session-start') || isTimHookCommand(c, 'claude-session-start');
+  const groups = original.map(group => ({
+    ...group,
+    hooks: group.hooks.map(hook => {
+      if (!isTim(hook.command) || hook.command === command) return hook;
+      changed = true;
+      return { ...hook, command };
+    }),
+  }));
+  if (changed) file = { ...file, hooks: { ...file.hooks, SessionStart: groups } };
   const alreadyThere = groups.some(group =>
     group.hooks.some(hook => ['tim-session-start', 'hook claude-session-start', 'hook agent-session-start']
       .some(needle => hook.command.includes(needle))),

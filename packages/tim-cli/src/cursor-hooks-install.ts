@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { timHookCommand } from './claude-hooks-install.js';
+import { isShippedSessionStartScript, isTimHookCommand, timHookCommand } from './claude-hooks-install.js';
 
 /**
  * cursor-agent 2026.08 has a real turn-end hook (`stop`) — but only in the
@@ -82,14 +82,26 @@ function hasCommand(entries: CursorHookCommand[], needles: string[]): boolean {
     typeof entry.command === 'string' && needles.some(needle => entry.command.includes(needle)));
 }
 
+/**
+ * An older TIM entry (`isOurs`) is rewritten in place — paths move with the
+ * checkout or node — and anything else matching a needle counts as present.
+ */
 function withHook(
   file: CursorHooksFile,
   event: string,
   command: string,
   needles: string[],
   timeout: number,
+  isOurs: (command: string) => boolean = () => false,
 ): CursorHooksFile {
-  const entries = file.hooks?.[event] ?? [];
+  const original = file.hooks?.[event] ?? [];
+  const entries = original.map(entry =>
+    typeof entry.command === 'string' && entry.command !== command && isOurs(entry.command)
+      ? { ...entry, command }
+      : entry);
+  if (entries.some((entry, i) => entry !== original[i])) {
+    file = { ...file, hooks: { ...file.hooks, [event]: entries } };
+  }
   if (hasCommand(entries, needles)) return file;
   return {
     ...file,
@@ -98,15 +110,19 @@ function withHook(
   };
 }
 
-/** Also matches the older script, so a hand-placed session-start hook is reused. */
+/**
+ * The checkout's own tim-session-start.sh (what older installs wrote) is rewritten
+ * to the node command; a hand-placed copy elsewhere is reused as it is.
+ */
 export function mergeCursorSessionStart(file: CursorHooksFile, command: string): CursorHooksFile {
-  return withHook(file, 'sessionStart', command, ['tim-session-start', 'hook agent-session-start'], 10);
+  return withHook(file, 'sessionStart', command, ['tim-session-start', 'hook agent-session-start'], 10,
+    c => isShippedSessionStartScript(c) || isTimHookCommand(c, 'agent-session-start'));
 }
 
 export function mergeCursorTurnEnd(file: CursorHooksFile, command: string): CursorHooksFile {
   let next = file;
   for (const event of TURN_END_EVENTS) {
-    next = withHook(next, event, command, ['hook cursor-stop'], 10);
+    next = withHook(next, event, command, ['hook cursor-stop'], 10, c => isTimHookCommand(c, 'cursor-stop'));
   }
   return next;
 }

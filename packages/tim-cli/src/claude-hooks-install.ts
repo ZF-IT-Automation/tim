@@ -69,8 +69,18 @@ export function timHookCommand(
   return `${shellQuote(node)} ${shellQuote(cli)} hook ${sub}`;
 }
 
+/**
+ * The session-start script older installers pointed hooks at, inside a checkout.
+ * A hook naming it breaks when the checkout moves and needs jq, so it is
+ * rewritten like any other older TIM command. Copies placed elsewhere by hand
+ * (say ~/.claude/hooks/tim-session-start.sh) are someone's choice and stay.
+ */
+export function isShippedSessionStartScript(command: string): boolean {
+  return /tim-hooks\/scripts\/tim-session-start\.sh/.test(command);
+}
+
 /** Any earlier TIM form of this hook: bare `tim`, a linked `.../tim`, or `.../tim-cli/dist/cli.js`. */
-function isTimHookCommand(command: string, sub: string): boolean {
+export function isTimHookCommand(command: string, sub: string): boolean {
   return new RegExp(`(?:^|[\\s'"])(?:[^\\s'"]*/)?(?:tim|tim-cli/(?:dist|src)/cli\\.js)['"]?\\s+hook\\s+${sub}(?:\\s|$)`).test(command);
 }
 
@@ -92,11 +102,12 @@ export function mergeClaudeHooks(
       ...group,
       hooks: group.hooks.map(hook => {
         if (typeof hook.command !== 'string') return hook;
-        if (spec.equivalents?.some(name => hook.command.includes(name))) {
+        const shipped = spec.equivalents !== undefined && isShippedSessionStartScript(hook.command);
+        if (!shipped && spec.equivalents?.some(name => hook.command.includes(name))) {
           found = true;
           return hook;
         }
-        if (!isTimHookCommand(hook.command, spec.sub)) return hook;
+        if (!shipped && !isTimHookCommand(hook.command, spec.sub)) return hook;
         found = true;
         return hook.command === command ? hook : { ...hook, command };
       }),
