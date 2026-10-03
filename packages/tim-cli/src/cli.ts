@@ -350,7 +350,9 @@ async function cmdInit() {
   const health = await store.health();
   console.log(`✓ Database created: ${dbPath}`);
   console.log(`✓ Health: ${health.totalEntries} entries, FTS5=${health.ftsIntegrity ? 'OK' : 'BROKEN'}`);
-  console.log(`\nTIM ready. Connect your MCP client to ${timDir}/mcp.json`);
+  console.log(installed.length > 0
+    ? '\nTIM ready. Restart the connected agents to load it.'
+    : `\nTIM ready. Connect your MCP client to ${timDir}/mcp.json`);
 
   store.close();
 }

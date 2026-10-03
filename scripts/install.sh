@@ -47,7 +47,12 @@ else
 fi
 
 say "→ Installing dependencies and building (npm ci)"
-(cd "$dir" && npm ci --no-audit --no-fund --loglevel=error) || die "npm ci failed in $dir"
+log="$(mktemp)"
+if ! (cd "$dir" && npm ci --no-audit --no-fund) >"$log" 2>&1; then
+  tail -n 40 "$log" >&2
+  die "npm ci failed in $dir (full log: $log)"
+fi
+rm -f "$log"
 
 cli="$dir/packages/tim-cli/dist/cli.js"
 [ -f "$cli" ] || die "build did not produce $cli"
