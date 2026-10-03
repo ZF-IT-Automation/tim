@@ -3,21 +3,63 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import {
+  claudeHookCommand,
   installClaudeHooks,
   mergeClaudeHooks,
   type ClaudeSettings,
 } from '../claude-hooks-install.js';
 
 describe('mergeClaudeHooks', () => {
-  it('installs the SessionStart briefing hook through the tim binary', () => {
+  it('installs the SessionStart briefing hook through absolute node and cli.js', () => {
     const next = mergeClaudeHooks({});
     const sessionStart = next.hooks?.SessionStart;
     expect(sessionStart).toHaveLength(1);
     expect(sessionStart?.[0].hooks[0]).toEqual({
       type: 'command',
-      command: 'tim hook claude-session-start',
+      command: claudeHookCommand('claude-session-start'),
       timeout: 10,
     });
+    expect(claudeHookCommand('claude-stop', '/a b/cli.js', "/n'ode")).toBe(
+      `'/n'\\''ode' '/a b/cli.js' hook claude-stop`,
+    );
+    expect(claudeHookCommand('prompt-submit')).toMatch(/^'\/.+' '\/.+tim-cli\/(dist|src)\/cli\.js' hook prompt-submit$/);
+  });
+
+  it('rewrites older TIM commands in place and keeps shared groups and matchers', () => {
+    const existing: ClaudeSettings = {
+      hooks: {
+        SessionStart: [{
+          matcher: 'startup|clear|compact',
+          hooks: [
+            { type: 'command', command: 'bash /old/tim/packages/tim-hooks/scripts/tim-session-start.sh', timeout: 10 },
+            { type: 'command', command: 'bash /home/u/.claude/hooks/agent-role.sh', timeout: 5 },
+          ],
+        }],
+        UserPromptSubmit: [{
+          matcher: '',
+          hooks: [
+            { type: 'command', command: 'tim hook prompt-submit', timeout: 2 },
+            { type: 'command', command: 'node /x/other/cli.js hook prompt-submit', timeout: 5 },
+          ],
+        }],
+        Stop: [{ matcher: '', hooks: [{ type: 'command', command: "'/old/node' '/old/tim/packages/tim-cli/dist/cli.js' hook claude-stop", timeout: 5 }] }],
+        SessionEnd: [{ matcher: '', hooks: [{ type: 'command', command: '/home/u/.local/bin/tim hook claude-session-end', timeout: 10 }] }],
+      },
+    };
+    const next = mergeClaudeHooks(existing);
+
+    // The hand-placed session-start script already briefs: kept, nothing added.
+    expect(next.hooks?.SessionStart).toEqual(existing.hooks?.SessionStart);
+    expect(next.hooks?.UserPromptSubmit).toEqual([{
+      matcher: '',
+      hooks: [
+        { type: 'command', command: claudeHookCommand('prompt-submit'), timeout: 2 },
+        { type: 'command', command: 'node /x/other/cli.js hook prompt-submit', timeout: 5 },
+      ],
+    }]);
+    expect(next.hooks?.Stop).toEqual([{ matcher: '', hooks: [{ type: 'command', command: claudeHookCommand('claude-stop'), timeout: 5 }] }]);
+    expect(next.hooks?.SessionEnd?.[0].hooks).toEqual([{ type: 'command', command: claudeHookCommand('claude-session-end'), timeout: 10 }]);
+    expect(mergeClaudeHooks(next)).toEqual(next);
   });
 
   it('does not duplicate the SessionStart hook and keeps foreign ones', () => {
@@ -77,7 +119,7 @@ describe('mergeClaudeHooks', () => {
     const next = mergeClaudeHooks({});
     expect(next.hooks?.SessionEnd?.[0].hooks[0]).toEqual({
       type: 'command',
-      command: 'tim hook claude-session-end',
+      command: claudeHookCommand('claude-session-end'),
       timeout: 10,
     });
     expect(mergeClaudeHooks(next).hooks?.SessionEnd).toHaveLength(1);
@@ -119,7 +161,7 @@ describe('installClaudeHooks', () => {
       expect.arrayContaining([
         expect.objectContaining({
           hooks: expect.arrayContaining([
-            expect.objectContaining({ command: 'tim hook claude-session-start' }),
+            expect.objectContaining({ command: claudeHookCommand('claude-session-start') }),
           ]),
         }),
       ]),
