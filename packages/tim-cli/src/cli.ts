@@ -316,6 +316,7 @@ async function cmdInit() {
   const mcpEntry = buildTimMcpEntry(dbPath);
 
   ensureDir(timDir);
+  const existed = fs.existsSync(dbPath);
   const store = new TimStore(dbPath);
 
   try {
@@ -348,7 +349,7 @@ async function cmdInit() {
   console.log(ensureSummarizerChain());
 
   const health = await store.health();
-  console.log(`✓ Database created: ${dbPath}`);
+  console.log(`✓ Database ${existed ? 'kept' : 'created'}: ${dbPath}`);
   console.log(`✓ Health: ${health.totalEntries} entries, FTS5=${health.ftsIntegrity ? 'OK' : 'BROKEN'}`);
   console.log(installed.length > 0
     ? '\nTIM ready. Restart the connected agents to load it.'
