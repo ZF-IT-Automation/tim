@@ -187,7 +187,7 @@ flowchart LR
 
 SQLite holds local memory. MCP is the agent interface; the CLI handles setup and operations. Summarization uses a separately configured worker chain. Optional sync sits outside the core local path.
 
-Ten packages: `tim-core`, `tim-store`, `tim-mcp`, `tim-cli`, `tim-hooks`, `tim-summarizer`, `tim-migrate`, `tim-sync-client`, `tim-sync-server` and `tim-skills`.
+Eleven packages: `tim-core`, `tim-store`, `tim-mcp`, `tim-cli`, `tim-hooks`, `tim-summarizer`, `tim-migrate`, `tim-sync-client`, `tim-sync-server`, `tim-skills` and `tim-quality-benchmark`.
 
 ## Optional: Jev
 
