@@ -15,6 +15,7 @@ All notable changes to TIM are documented in this file.
 
 ### Changed
 
+- **Prompt reminders skip session summaries** — `TIM erinnert` no longer recalls `batch-summary` or `session-summary-root` entries. Their "Open: … not pushed" bullets are a past session's state and read as current open work (31% of reminders in the 2026-10-03 review; half of all reminder lines on 167 replayed real prompts were summaries). Curated entries fill the freed slots; session history stays in the briefing, `tim_resume_topic` and `tim_search`.
 - **`tim_write` / `tim_update` return an ack, not the entry** — `tim_write` returns `{id, parentId, title, tags}`, `tim_update` returns `{id, title, updated}` plus the stored values of the metadata keys sent (and `tags` when patched); `warnings` stay. Echoing the full pretty-printed entry was about a third of TIM's in-context bytes per session (impact review 2026-10-03); a 900-character entry's response drops from 1,423 to ~150 bytes. `tim_read` returns the full entry.
 
 ### Changed — session-start briefing and open work (briefing loop, 2026-09-24)

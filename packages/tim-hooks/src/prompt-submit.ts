@@ -7,8 +7,12 @@ const JEV_TIMEOUT_MS = 1500;
 const RETRIEVAL_TOP_K = 3;
 /** Fetch extra hits so harness rows filtered by shouldSkipPromptRecall still leave real matches. */
 const SEARCH_TOP_K = RETRIEVAL_TOP_K * 4;
-/** Session transcript and bookkeeping: an old prompt replayed here reads as a current instruction. */
-const TRANSCRIPT_KINDS = new Set(['exchange', 'checkpoint']);
+/**
+ * Session transcript, bookkeeping and session summaries: an old prompt replayed here reads as a
+ * current instruction, and a summary's "Open: … not pushed" bullet reads as current open work
+ * (31% of reminders in the 2026-10-03 review). Briefing and tim_resume_topic cover session history.
+ */
+const NOT_RECALLED_KINDS = new Set(['exchange', 'checkpoint', 'batch-summary', 'session-summary-root']);
 
 /** Prompt looks like a planned action — run tim_guard-style failure lookup. */
 const ACTION_PATTERN =
@@ -161,7 +165,7 @@ async function computePromptContext(
     searchType: 'fts',
     project: params.projectLabel,
     ftsQueryMode: searchQuery.includes(' OR ') ? 'or-terms' : 'literal',
-    excludeKinds: [...TRANSCRIPT_KINDS],
+    excludeKinds: [...NOT_RECALLED_KINDS],
   });
   // Past turns stay reachable via tim_resume_topic / tim_search.
   hits = hits.filter(hit => !shouldSkipPromptRecall(hit));
