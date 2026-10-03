@@ -32,52 +32,80 @@ export interface ClaudeHooksInstallResult {
   reason?: string;
 }
 
-const TIM_PROMPT: ClaudeHookMatcher = {
-  matcher: '',
-  hooks: [{ type: 'command', command: 'tim hook prompt-submit', timeout: 2 }],
-};
-
-const TIM_STOP: ClaudeHookMatcher = {
-  matcher: '',
-  hooks: [{ type: 'command', command: 'tim hook claude-stop', timeout: 5 }],
-};
-
-// Roomier timeout than the other two: this one reads the store to assemble the
-// briefing, and a missing briefing costs the whole session its context.
-const TIM_SESSION_START: ClaudeHookMatcher = {
-  matcher: '',
-  hooks: [{ type: 'command', command: 'tim hook claude-session-start', timeout: 10 }],
-};
-
-// Ends the session TIM would otherwise never see closed: /clear and exit both
-// fire this, and the checkpoint is the last thing written before the id is gone.
-const TIM_SESSION_END: ClaudeHookMatcher = {
-  matcher: '',
-  hooks: [{ type: 'command', command: 'tim hook claude-session-end', timeout: 10 }],
-};
-
-function appendUnique(
-  existing: ClaudeHookMatcher[] | undefined,
-  value: ClaudeHookMatcher,
-): ClaudeHookMatcher[] {
-  const items = existing ?? [];
-  const command = value.hooks[0]?.command;
-  return items.some(item => item.hooks.some(hook => hook.command === command))
-    ? items
-    : [...items, value];
+interface TimClaudeHook {
+  event: 'SessionStart' | 'UserPromptSubmit' | 'Stop' | 'SessionEnd';
+  sub: string;
+  timeout: number;
+  /** Older hand-placed scripts that already do this hook's job. Kept as they are. */
+  equivalents?: string[];
 }
 
-export function mergeClaudeHooks(settings: ClaudeSettings): ClaudeSettings {
-  return {
-    ...settings,
-    hooks: {
-      ...settings.hooks,
-      SessionStart: appendUnique(settings.hooks?.SessionStart, TIM_SESSION_START),
-      UserPromptSubmit: appendUnique(settings.hooks?.UserPromptSubmit, TIM_PROMPT),
-      Stop: appendUnique(settings.hooks?.Stop, TIM_STOP),
-      SessionEnd: appendUnique(settings.hooks?.SessionEnd, TIM_SESSION_END),
-    },
-  };
+const TIM_HOOKS: TimClaudeHook[] = [
+  // Roomier timeout than prompt-submit: this one reads the store to assemble the
+  // briefing, and a missing briefing costs the whole session its context.
+  { event: 'SessionStart', sub: 'claude-session-start', timeout: 10, equivalents: ['tim-session-start'] },
+  { event: 'UserPromptSubmit', sub: 'prompt-submit', timeout: 2 },
+  { event: 'Stop', sub: 'claude-stop', timeout: 5 },
+  // Ends the session TIM would otherwise never see closed: /clear and exit both
+  // fire this, and the checkpoint is the last thing written before the id is gone.
+  { event: 'SessionEnd', sub: 'claude-session-end', timeout: 10 },
+];
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+/**
+ * Absolute node and cli.js, like the Codex and Cursor installers write. A bare
+ * `tim` needs the CLI linked onto PATH and node on the PATH the host hands its
+ * hooks — neither holds after a plain source install, and the hook then fails
+ * with 127 on every prompt without anyone seeing it.
+ */
+export function claudeHookCommand(
+  sub: string,
+  cli = path.resolve(__dirname, 'cli.js'),
+  node = process.execPath,
+): string {
+  return `${shellQuote(node)} ${shellQuote(cli)} hook ${sub}`;
+}
+
+/** Any earlier TIM form of this hook: bare `tim`, a linked `.../tim`, or `.../tim-cli/dist/cli.js`. */
+function isTimHookCommand(command: string, sub: string): boolean {
+  return new RegExp(`(?:^|[\\s'"])(?:[^\\s'"]*/)?(?:tim|tim-cli/(?:dist|src)/cli\\.js)['"]?\\s+hook\\s+${sub}(?:\\s|$)`).test(command);
+}
+
+/**
+ * Per hook entry, never per matcher group: TIM's hook often shares a group with
+ * other tools' hooks, and the group's matcher belongs to whoever set it. An older
+ * TIM command is rewritten in place, so a rerun after moving the checkout or
+ * upgrading node repairs the paths instead of adding a second hook.
+ */
+export function mergeClaudeHooks(
+  settings: ClaudeSettings,
+  commandFor: (sub: string) => string = claudeHookCommand,
+): ClaudeSettings {
+  const hooks: NonNullable<ClaudeSettings['hooks']> = { ...settings.hooks };
+  for (const spec of TIM_HOOKS) {
+    const command = commandFor(spec.sub);
+    let found = false;
+    const groups = (hooks[spec.event] ?? []).map(group => ({
+      ...group,
+      hooks: group.hooks.map(hook => {
+        if (typeof hook.command !== 'string') return hook;
+        if (spec.equivalents?.some(name => hook.command.includes(name))) {
+          found = true;
+          return hook;
+        }
+        if (!isTimHookCommand(hook.command, spec.sub)) return hook;
+        found = true;
+        return hook.command === command ? hook : { ...hook, command };
+      }),
+    }));
+    hooks[spec.event] = found
+      ? groups
+      : [...groups, { matcher: '', hooks: [{ type: 'command', command, timeout: spec.timeout }] }];
+  }
+  return { ...settings, hooks };
 }
 
 function defaultSettingsPath(): string {
