@@ -88,16 +88,23 @@ node packages/tim-cli/dist/cli.js statusline
 
 ### 1. `tim init`
 
-Initialize TIM (create DB, create tables, register agents, write MCP config).
-**Idempotent-safe** — if DB exists, it validates health instead of re-creating.
+Initialize TIM (create DB, create tables, register agents, write MCP config,
+pick a summarizer chain). **Idempotent-safe** — an existing DB is kept and its
+health reported; a configured summarizer chain is never changed.
 
 ```
+✓ Agent registered: "default"
+✓ MCP config: Claude Code → <home>/.claude.json
+✓ Summarizer chain: claude/haiku (Claude Code print mode) → <home>/.tim/config.json
 ✓ Database created: <home>/.tim/tim.db
-✓ MCP config written: <home>/.tim/mcp.json
-✓ Health: 2750 entries, FTS5=OK
+✓ Health: 0 entries, FTS5=OK
 
-TIM ready. Connect your MCP client to <home>/.tim/mcp.json
+TIM ready. Restart the connected agents to load it.
 ```
+
+With no agent host detected, the MCP entry goes to `<home>/.tim/mcp.json`
+instead and the last line names that file. The summarizer chain is only written
+when Claude Code is on PATH and `config.json` has no chain yet.
 
 **Note:** `tim init --help` prints usage and exits before any DB work.
 
