@@ -1571,17 +1571,16 @@ async function fetchByWhat(
       const b = await store.getByTag('#error');
       return scopeEntries(store, dedupeById([...a, ...b]), labels);
     }
-    case 'bugs': {
-      // Bugs are marked by metadata.type='bug' since the schema change; the tag
-      // is the older marker and still the only one some entries carry.
-      const a = await store.getByMetadataType('bug');
-      const b = await store.getByTag('#bug');
+    // metadata.type is the marker since the schema change (and what the README
+    // tells agents to write); the tag is the older one some entries still carry.
+    case 'bugs':
+    case 'decisions':
+    case 'learnings': {
+      const type = lc.slice(0, -1);
+      const a = await store.getByMetadataType(type);
+      const b = await store.getByTag(`#${type}`);
       return scopeEntries(store, dedupeById([...a, ...b]), labels);
     }
-    case 'decisions':
-      return scopeEntries(store, await store.getByTag('#decision'), labels);
-    case 'learnings':
-      return scopeEntries(store, await store.getByTag('#learning'), labels);
     case 'commits':
       return scopeEntries(store, await store.getByMetadataKind('commit', 1000), labels);
     case 'ideas':

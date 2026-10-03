@@ -235,6 +235,21 @@ describe('tim_show', () => {
     expect(bothCount).toBe(1);
   });
 
+  it('what:decisions finds a decision marked only by metadata.type, as the README writes it', async () => {
+    await client.callTool('tim_create_project', { label: 'P0442', content: 'Decision Proj', memoryOnly: true });
+    const w = await client.callTool('tim_write', {
+      where: 'P0442/Decisions',
+      title: 'Use SQLite',
+      content: 'We chose SQLite for local simplicity.',
+      tags: ['#storage'],
+      metadata: { type: 'decision' },
+    });
+    expect(w.result?.isError).toBeFalsy();
+
+    const text = (await client.callTool('tim_show', { what: 'decisions', root: 'P0442' })).result!.content[0].text;
+    expect(text).toContain('Use SQLite');
+  });
+
   it('what:Ideas returns section children only', async () => {
     const proj = await client.callTool('tim_create_project', {
       label: 'P0420',
