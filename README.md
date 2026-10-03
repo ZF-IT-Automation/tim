@@ -277,6 +277,8 @@ npm run test:build-pipeline
 npm run benchmark:memory-quality
 ```
 
+Before a release, run `scripts/sandbox/run.sh` (needs Docker): it installs the committed branch into a throwaway `node:22` container like a new user — source install and one-command installer — and runs every agent hook exactly as written, without node or `tim` on PATH.
+
 `lint` runs TypeScript checks. Tests cover packages and integration entry points; they do not establish a universal recall-quality advantage over other products.
 
 The benchmark compares the same expected evidence under a 4096-byte budget for all three modes. Its JSON report includes recall, precision, missing/irrelevant evidence, context size, local latency and fixture health. See the [benchmark guide](docs/memory-quality-benchmark.md) for reproducible commands and measurement limits.
