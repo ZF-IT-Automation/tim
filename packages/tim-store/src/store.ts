@@ -391,7 +391,16 @@ export class TimStore implements MemoryInterface {
       this.lastMigration = null;
       return;
     }
-    this.db = new Database(dbPath);
+    try {
+      this.db = new Database(dbPath);
+    } catch (error) {
+      // better-sqlite3 names neither the file nor where it came from.
+      throw new Error(
+        `Cannot open TIM database ${dbPath}: ${(error as Error).message}` +
+          ' (set by TIM_DB_PATH, dbPath in ~/.tim/config.json, or the ~/.tim/tim.db default)',
+        { cause: error },
+      );
+    }
     this.databasePath = this.db.memory ? ':memory:' : fs.realpathSync(this.db.name);
     this.emitter = options.emitter;
     this.agentId = options.agentId ?? 'system';
