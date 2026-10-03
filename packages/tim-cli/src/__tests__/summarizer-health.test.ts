@@ -4,7 +4,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { TimStore, SessionManager } from 'tim-store';
 import type { TimConfigFile } from 'tim-core';
-import { auditSummarizerHealth, resolveOnPath } from '../summarizer-health.js';
+import { auditSummarizerHealth, ensureSummarizerChain, resolveOnPath } from '../summarizer-health.js';
 
 const PROJECT = 'P8001';
 const SESSION = 'sess-health';
@@ -24,6 +24,60 @@ describe('resolveOnPath', () => {
 
   it('reports a missing executable', () => {
     expect(resolveOnPath('definitely-not-a-real-cli-xyz')).toBe(false);
+  });
+});
+
+describe('ensureSummarizerChain', () => {
+  let root: string;
+  let configPath: string;
+  let originalPath: string | undefined;
+
+  beforeEach(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'tim-init-chain-'));
+    configPath = path.join(root, '.tim', 'config.json');
+    originalPath = process.env.PATH;
+  });
+
+  afterEach(() => {
+    process.env.PATH = originalPath;
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  function withClaudeOnPath(): void {
+    const bin = path.join(root, 'bin');
+    fs.mkdirSync(bin);
+    fs.writeFileSync(path.join(bin, 'claude'), '#!/bin/sh\n', { mode: 0o755 });
+    process.env.PATH = bin;
+  }
+
+  it('writes a claude chain next to existing keys when Claude Code is installed', () => {
+    withClaudeOnPath();
+    fs.mkdirSync(path.dirname(configPath));
+    fs.writeFileSync(configPath, JSON.stringify({ batch_size: 7, summarizer: { timeout_sec: 300 } }));
+    expect(ensureSummarizerChain(configPath)).toContain('claude/haiku');
+    expect(JSON.parse(fs.readFileSync(configPath, 'utf8'))).toEqual({
+      batch_size: 7,
+      summarizer: { timeout_sec: 300, chain: [{ cli: 'claude', model: 'haiku' }] },
+    });
+  });
+
+  it('never touches a configured chain or an unparseable file', () => {
+    withClaudeOnPath();
+    fs.mkdirSync(path.dirname(configPath));
+    const own = JSON.stringify({ summarizer: { chain: [{ cli: 'codex', model: 'x' }] } });
+    fs.writeFileSync(configPath, own);
+    expect(ensureSummarizerChain(configPath)).toContain('kept');
+    expect(fs.readFileSync(configPath, 'utf8')).toBe(own);
+
+    fs.writeFileSync(configPath, '{ nope');
+    expect(ensureSummarizerChain(configPath)).toContain('not valid JSON');
+    expect(fs.readFileSync(configPath, 'utf8')).toBe('{ nope');
+  });
+
+  it('only warns when no claude is on PATH', () => {
+    process.env.PATH = path.join(root, 'empty');
+    expect(ensureSummarizerChain(configPath)).toContain('No summarizer chain configured');
+    expect(fs.existsSync(configPath)).toBe(false);
   });
 });
 
