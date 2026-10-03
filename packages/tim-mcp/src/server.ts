@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// TIM MCP Server — v0.1.0-alpha
+// TIM MCP Server
 // MCP stdio server with curation, session, and core memory tools.
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -2261,7 +2261,7 @@ export async function createMcpServer(
   const server = new Server(
     {
       name: 'tim-mcp',
-      version: '0.1.0-alpha',
+      version: JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8')).version,
     },
     {
       capabilities: {
