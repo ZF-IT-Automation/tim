@@ -189,6 +189,15 @@ function insertEntryDirect(
 ): void {
   assertNoLockInternalMetadata(params.metadata);
   const { title, body } = splitTitleBody(params.content);
+  // A direct child of a project is a section — the same rule tim_write applies.
+  // Untyped, tim_project_structure filed every imported section as a loose child.
+  let metadata = params.metadata;
+  if (params.parentId && metadata.kind === undefined) {
+    const parent = db.prepare(
+      "SELECT json_extract(metadata, '$.kind') AS kind FROM entries WHERE id = ?",
+    ).get(params.parentId) as { kind: string | null } | undefined;
+    if (parent?.kind === 'project') metadata = { ...metadata, kind: 'section' };
+  }
   db.prepare(`
     INSERT INTO entries (
       id, parent_id, title, content, content_type, depth, confidence,
@@ -208,7 +217,7 @@ function insertEntryDirect(
     JSON.stringify(params.tags),
     params.irrelevant ? 1 : 0,
     params.favorite ? 1 : 0,
-    JSON.stringify(params.metadata),
+    JSON.stringify(metadata),
   );
   stageEntryRow(db, params.id);
 }

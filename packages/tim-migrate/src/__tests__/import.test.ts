@@ -129,10 +129,13 @@ describe('tim_import', () => {
       parent_id: string;
       title: string;
       content: string;
+      metadata: string;
     };
     expect(child.parent_id).toBe(rootUid);
     expect(child.title).toBe('Imported child');
     expect(child.content).toBe('');
+    // A project's direct child is a section, as tim_write types it.
+    expect(JSON.parse(child.metadata).kind).toBe('section');
   });
 
   it('imports old hmem format with level hierarchy and links', () => {
@@ -151,10 +154,11 @@ describe('tim_import', () => {
     expect(root.id).toBe('P0042');
 
     const children = store.getDb().prepare(
-      'SELECT title, content FROM entries WHERE parent_id = ?',
-    ).all(root.id) as { title: string; content: string }[];
+      'SELECT title, content, metadata FROM entries WHERE parent_id = ?',
+    ).all(root.id) as { title: string; content: string; metadata: string }[];
     expect(children[0].title).toBe('Old child');
     expect(children[0].content).toBe('');
+    expect(JSON.parse(children[0].metadata).kind).toBe('section');
 
     const otherRoot = store.getDb().prepare(
       "SELECT metadata FROM entries WHERE json_extract(metadata, '$.label') = 'L0001'",
