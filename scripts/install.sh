@@ -13,6 +13,9 @@
 # TIM_HOSTS ("claude codex cursor" to force a list, "none" to skip).
 set -euo pipefail
 
+# Everything runs from main, called on the last line: a download cut short by the
+# network never executes half an installer.
+main() {
 say() { printf '%s\n' "$*"; }
 die() { printf 'tim install: %s\n' "$*" >&2; exit 1; }
 
@@ -22,8 +25,13 @@ done
 node_major="$(node -p 'process.versions.node.split(".")[0]')"
 [ "$node_major" -ge 22 ] || die "Node.js 22+ required, found $(node --version)"
 
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-.}")" 2>/dev/null && pwd || true)"
-if [ -z "${TIM_INSTALL_DIR:-}" ] && [ -f "$script_dir/../packages/tim-cli/package.json" ]; then
+# Piped through bash there is no script file, so no checkout to adopt — never
+# guess one from the current directory.
+script_dir=""
+if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+fi
+if [ -z "${TIM_INSTALL_DIR:-}" ] && [ -n "$script_dir" ] && [ -f "$script_dir/../packages/tim-cli/package.json" ]; then
   TIM_INSTALL_DIR="$(cd "$script_dir/.." && pwd)"
   in_checkout=1
 fi
@@ -86,3 +94,6 @@ esac
 say ""
 say "Next: cd into a repository and run  tim new-project --path \"\$PWD\" --name \"My Project\""
 say "Check health any time with  tim doctor"
+}
+
+main "$@"

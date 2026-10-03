@@ -39,6 +39,13 @@ describe('generateSummaryHeuristic', () => {
 });
 
 describe('extractTags', () => {
+  it('drops the rule a model puts before the SUBSTANCE/TAGS trailer', () => {
+    const out = extractTags('**Open:**\n- CI running\n\n---\n\nSUBSTANCE: real\nTAGS: #install #hooks');
+    expect(out.body).toBe('**Open:**\n- CI running');
+    expect(out.tags).toEqual(['#install', '#hooks']);
+    expect(out.substance).toBe('real');
+  });
+
   it('parses TAGS line, normalizes, dedups, caps at 5', () => {
     const text =
       'Themes: auth work\n- decided JWT\n\nTAGS: #Auth #auth #session-start #FOO_BAR #one #two #three #four #five #six';
