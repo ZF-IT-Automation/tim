@@ -409,8 +409,11 @@ export class TimStore implements MemoryInterface {
     setStagingEnabled(this.db, options.staging ?? loadTimConfig().sync?.staging ?? true);
     // Acked staging records are push history that nothing reads back. Collect
     // the old ones once per process — without a caller the table only grows.
-    this.db.prepare('DELETE FROM staging WHERE acked = 1 AND lww_timestamp < ?')
-      .run(Date.now() - 7 * 86400_000);
+    // Look first: a DELETE takes the write lock even when nothing matches.
+    const ackedCutoff = Date.now() - 7 * 86400_000;
+    if (this.db.prepare('SELECT 1 FROM staging WHERE acked = 1 AND lww_timestamp < ? LIMIT 1').get(ackedCutoff)) {
+      this.db.prepare('DELETE FROM staging WHERE acked = 1 AND lww_timestamp < ?').run(ackedCutoff);
+    }
   }
 
   private emit(type: EventType, payload: unknown): void {

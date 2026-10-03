@@ -71,6 +71,7 @@ All notable changes to TIM are documented in this file.
 
 ### Fixed
 
+- **No DDL on store open** — opening a store rewrote all FTS/staging triggers every time (DROP + CREATE), so each hook call bumped the schema cookie and invalidated other connections' prepared statements; the live cookie passed 557,000 and the DB header watchdog reported corruption every 15 minutes. Triggers are now rewritten only when missing or different, and the acked-staging cleanup takes the write lock only when there is something to delete. The DB header watchdog (now versioned in `scripts/cron/`) drops its schema-cookie ceiling — the cookie stays high and a restore resets it — and keeps the db_size/freelist checks that caught the June corruption.
 - **Search status filter** — `tim_search` `status` now uses search-specific resolution
   (`resolveEntrySearchStatus`), not task-list display defaults. Plain notes without
   task/bug metadata no longer match `status:'todo'`; bug vocabulary (`fixed`,
