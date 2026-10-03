@@ -95,9 +95,8 @@ class McpClient {
 }
 
 function parseWriteResult(text: string): { entry: { id: string; tags: string[] }; warnings?: string[] } {
-  const parsed = JSON.parse(text);
-  if (parsed.entry) return parsed;
-  return { entry: parsed };
+  const { warnings, ...entry } = JSON.parse(text);
+  return { entry, warnings };
 }
 
 describe('tag deprecation (Schema v3 Phase 3)', () => {

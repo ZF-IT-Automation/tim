@@ -97,6 +97,11 @@ function parseEntry(text: string): { id: string; title: string; content: string 
   return parsed.entry ?? parsed;
 }
 
+async function readEntry(client: McpClient, id: string) {
+  const resp = await client.callTool('tim_read', { id, include_body: true });
+  return parseEntry(resp.result!.content[0].text);
+}
+
 describe('tim_update content preservation', () => {
   let client: McpClient;
   let dbPath: string;
@@ -125,7 +130,8 @@ describe('tim_update content preservation', () => {
       id: written.id,
       content: 'Line1\nLine2\nLine3',
     });
-    const updated = parseEntry(updateResp.result!.content[0].text);
+    expect(updateResp.result?.isError).not.toBe(true);
+    const updated = await readEntry(client, written.id);
     expect(updated.content).toBe('Line1\nLine2\nLine3');
     expect(updated.title).toBe('Title');
   });
@@ -135,7 +141,7 @@ describe('tim_update content preservation', () => {
       content: 'First\nSecond',
       tags: ['#tim', '#test'],
     });
-    const written = parseEntry(writeResp.result!.content[0].text);
+    const written = await readEntry(client, parseEntry(writeResp.result!.content[0].text).id);
     expect(written.title).toBe('First');
     expect(written.content).toBe('Second');
 
@@ -143,7 +149,8 @@ describe('tim_update content preservation', () => {
       id: written.id,
       content: 'NewFirst\nNewSecond',
     });
-    const updated = parseEntry(updateResp.result!.content[0].text);
+    expect(updateResp.result?.isError).not.toBe(true);
+    const updated = await readEntry(client, written.id);
     expect(updated.content).toBe('NewFirst\nNewSecond');
   });
 });

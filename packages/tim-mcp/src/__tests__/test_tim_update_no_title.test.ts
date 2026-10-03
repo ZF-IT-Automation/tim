@@ -105,6 +105,11 @@ function parseEntry(text: string): {
   return parsed.entry ?? parsed;
 }
 
+async function readEntry(client: McpClient, id: string) {
+  const resp = await client.callTool('tim_read', { id, include_body: true });
+  return parseEntry(resp.result!.content[0].text);
+}
+
 describe('tim_update without title param', () => {
   let client: McpClient;
   let dbPath: string;
@@ -134,21 +139,25 @@ describe('tim_update without title param', () => {
 
   it('updates content without changing title', async () => {
     const resp = await client.callTool('tim_update', { id: entryId, content: 'new content' });
-    const updated = parseEntry(resp.result!.content[0].text);
+    expect(resp.result?.isError).not.toBe(true);
+    const updated = await readEntry(client, entryId);
     expect(updated.content).toBe('new content');
     expect(updated.title).toBe(originalTitle);
   });
 
   it('updates confidence', async () => {
     const resp = await client.callTool('tim_update', { id: entryId, confidence: 0.5 });
-    const updated = parseEntry(resp.result!.content[0].text);
+    expect(resp.result?.isError).not.toBe(true);
+    const updated = await readEntry(client, entryId);
     expect(updated.confidence).toBe(0.5);
   });
 
   it('updates visibility', async () => {
     const resp = await client.callTool('tim_update', { id: entryId, visibility: 0 });
-    const updated = parseEntry(resp.result!.content[0].text);
-    expect(updated.visibility).toBe(0);
+    expect(JSON.parse(resp.result!.content[0].text).updated).toEqual(['visibility']);
+    // Visibility 0 hides the entry from tim_read: that is the stored effect.
+    const read = await client.callTool('tim_read', { id: entryId });
+    expect(read.result!.content[0].text).toMatch(/Entry not found/);
   });
 
   it('updates tags', async () => {

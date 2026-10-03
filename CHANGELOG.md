@@ -13,6 +13,10 @@ All notable changes to TIM are documented in this file.
 - Removed the vector index (FTS only); see docs/research/2026-09-multilingual-embeddings.md
 - **`tim_read_project`** — removed from the MCP tool list. Cross-project reads use `tim_load_project(label, bind:false)`.
 
+### Changed
+
+- **`tim_write` / `tim_update` return an ack, not the entry** — `tim_write` returns `{id, parentId, title, tags}`, `tim_update` returns `{id, title, updated}` plus the stored values of the metadata keys sent (and `tags` when patched); `warnings` stay. Echoing the full pretty-printed entry was about a third of TIM's in-context bytes per session (impact review 2026-10-03); a 900-character entry's response drops from 1,423 to ~150 bytes. `tim_read` returns the full entry.
+
 ### Changed — session-start briefing and open work (briefing loop, 2026-09-24)
 
 - **Stale open work** — a task is stale after 7 days *of project work* (days with a logged exchange) without a touch, so a paused project does not age its backlog. A touch is a title/body/status change (`metadata.touched_at`), `tim_verify`, or new work logged under the task or pointing at it; reorders and bulk writes are not. Future clocks are capped at now; `touched_at`/`verified_at` are system-owned.
