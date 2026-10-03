@@ -49,3 +49,24 @@ export function sessionStartEnvelope(context: string) {
     },
   };
 }
+
+const text = (value: unknown): string => (typeof value === 'string' ? value.trim() : '');
+
+/**
+ * The envelope tim-session-start.sh picks per harness, for hosts that run the
+ * start hook through node instead (no jq, no PATH lookup). Outside Claude Code the
+ * MCP server sees no session id, so the directive hands over the one the turn-end
+ * hooks log under.
+ */
+export function agentSessionStartEnvelope(payload: Record<string, unknown>, directive: string) {
+  if (payload.hook_event_name === 'SessionStart' || payload.hookSpecificOutput) {
+    return sessionStartEnvelope(directive);
+  }
+  const sid = text(payload.conversation_id) || text(payload.session_id);
+  const context = sid
+    ? `${directive}\nTIM session id: ${sid} — pass it as sessionId to tim_session_start / tim_load_project; never invent one.`
+    : directive;
+  if (text(payload.conversation_id) || text(payload.additional_context)) return { additional_context: context };
+  if (text(payload.session_id)) return { context };
+  return { additional_context: context };
+}

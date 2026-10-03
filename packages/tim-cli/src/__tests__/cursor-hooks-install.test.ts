@@ -63,15 +63,20 @@ describe('cursor hooks install', () => {
     expect(file.hooks?.sessionStart).toHaveLength(1);
   });
 
+  it('installs the session-start hook through absolute node, once', () => {
+    expect(installCursorSessionStartHook({ hooksPath, cli })).toMatchObject({ status: 'installed' });
+    expect(installCursorSessionStartHook({ hooksPath, cli })).toMatchObject({ status: 'unchanged' });
+    expect(read().hooks?.sessionStart?.map(h => h.command))
+      .toEqual([`'${process.execPath}' '/opt/tim/cli.js' hook agent-session-start`]);
+  });
+
   it('recognizes a hand-placed session-start hook instead of adding a second one', () => {
-    const script = path.join(root, 'tim-session-start.sh');
-    fs.writeFileSync(script, '#!/usr/bin/env bash\n');
     fs.writeFileSync(hooksPath, JSON.stringify({
       version: 1,
       hooks: { sessionStart: [{ command: 'bash /home/x/.cursor/hooks/tim-session-start.sh', timeout: 10 }] },
     }));
 
-    expect(installCursorSessionStartHook({ hooksPath, script })).toMatchObject({ status: 'unchanged' });
+    expect(installCursorSessionStartHook({ hooksPath, cli })).toMatchObject({ status: 'unchanged' });
     expect(read().hooks?.sessionStart).toHaveLength(1);
   });
 

@@ -477,8 +477,8 @@ describe('tim hook claude-session-start', () => {
     fs.rmSync(root, { recursive: true, force: true });
   });
 
-  function run(input: string): SpawnSyncReturns<string> {
-    return spawnSync(process.execPath, [CLI, 'hook', 'claude-session-start'], {
+  function run(input: string, sub = 'claude-session-start'): SpawnSyncReturns<string> {
+    return spawnSync(process.execPath, [CLI, 'hook', sub], {
       cwd,
       input,
       encoding: 'utf8',
@@ -531,6 +531,28 @@ describe('tim hook claude-session-start', () => {
     const garbage = run('not json');
     expect(garbage.status).toBe(0);
     expect(garbage.stdout.trim()).toBe('');
+  });
+
+  it('agent-session-start answers in the envelope each harness reads, with its session id', async () => {
+    const store = new TimStore(dbPath);
+    await store.createProject('P0063', { content: 'Hook test project' });
+    store.close();
+    fs.writeFileSync(path.join(cwd, '.tim-project'), JSON.stringify({ version: 3, project: 'P0063' }));
+    const nested = path.join(cwd, 'nested');
+
+    const cursor = JSON.parse(run(JSON.stringify({ conversation_id: 'c-1', cwd: nested }), 'agent-session-start').stdout);
+    expect(cursor.additional_context).toContain('tim_load_project(label="P0063")');
+    expect(cursor.additional_context).toContain('TIM session id: c-1 — pass it as sessionId');
+
+    const hermes = JSON.parse(run(JSON.stringify({ session_id: 's-1', cwd }), 'agent-session-start').stdout);
+    expect(hermes.context).toContain('TIM session id: s-1');
+
+    const codex = JSON.parse(run(JSON.stringify({ hook_event_name: 'SessionStart', session_id: 's-2', cwd }), 'agent-session-start').stdout);
+    expect(codex.hookSpecificOutput.additionalContext).toContain('P0063');
+
+    const silent = run(JSON.stringify({ session_id: 's-3', cwd: root }), 'agent-session-start');
+    expect(silent.status).toBe(0);
+    expect(silent.stdout).toBe('');
   });
 });
 

@@ -61,7 +61,7 @@ function shellQuote(value: string): string {
  * hooks — neither holds after a plain source install, and the hook then fails
  * with 127 on every prompt without anyone seeing it.
  */
-export function claudeHookCommand(
+export function timHookCommand(
   sub: string,
   cli = path.resolve(__dirname, 'cli.js'),
   node = process.execPath,
@@ -82,7 +82,7 @@ function isTimHookCommand(command: string, sub: string): boolean {
  */
 export function mergeClaudeHooks(
   settings: ClaudeSettings,
-  commandFor: (sub: string) => string = claudeHookCommand,
+  commandFor: (sub: string) => string = timHookCommand,
 ): ClaudeSettings {
   const hooks: NonNullable<ClaudeSettings['hooks']> = { ...settings.hooks };
   for (const spec of TIM_HOOKS) {

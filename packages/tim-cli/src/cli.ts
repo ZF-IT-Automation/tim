@@ -82,7 +82,7 @@ import { cmdSetupAgent } from './setup-agent.js';
 import { cmdViewer } from './viewer.js';
 import { cmdOpenWork } from './open-work.js';
 import { NEW_PROJECT_ALIASES, MissingOptionValueError, hasBooleanFlag, parseArgs, valueOptionsFor } from './args.js';
-import { promptSubmitEnvelope, sessionStartEnvelope, readJsonStdin } from './claude-hook-io.js';
+import { agentSessionStartEnvelope, promptSubmitEnvelope, sessionStartEnvelope, readJsonStdin } from './claude-hook-io.js';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -157,7 +157,7 @@ const COMMAND_HELP: Record<string, string> = {
   'project interfaces': 'Usage: tim project interfaces [<P>] [--set "<text>"]',
   'record-commit':
     'Usage: tim record-commit [--cwd <dir>] [--project <label>] [--session <id>] [--hash <sha>] [--message <text>] [--diff <stat>] [--author <name>] [--date <iso>] [--branch <name>]',
-  hook: 'Usage: tim hook <session-start|session-end|log|prompt-submit|claude-session-start|claude-session-end|claude-stop|cursor-stop|codex-notify> [options]',
+  hook: 'Usage: tim hook <session-start|session-end|log|prompt-submit|claude-session-start|agent-session-start|claude-session-end|claude-stop|cursor-stop|codex-notify> [options]',
   'hook session-start':
     'Usage: tim hook session-start --session <id> [--agent <name>] [--cwd <path>] [--harness <name>] [--project <label>] [--tool <name>] [--model <name>] [--task-summary <text>]',
   'hook session-end': 'Usage: tim hook session-end --session <id>',
@@ -168,6 +168,7 @@ const COMMAND_HELP: Record<string, string> = {
     'Usage: tim hook claude-session-start < Claude SessionStart JSON',
   'hook claude-session-end':
     'Usage: tim hook claude-session-end < Claude SessionEnd JSON',
+  'hook agent-session-start': 'Usage: tim hook agent-session-start < Codex/Cursor/Hermes session-start JSON',
   'hook claude-stop': 'Usage: tim hook claude-stop < Claude Stop JSON',
   'hook cursor-stop': 'Usage: tim hook cursor-stop < Cursor stop/sessionEnd JSON',
   'hook codex-notify': "Usage: tim hook codex-notify '<Codex agent-turn-complete JSON>'",
@@ -780,6 +781,21 @@ async function cmdHook(args: string[]) {
     return;
   }
 
+  // Codex and Cursor: the same directive as tim-session-start.sh, without its jq and
+  // PATH dependencies, in the envelope each harness reads.
+  if (sub === 'agent-session-start') {
+    try {
+      const payload = (await readJsonStdin()) ?? {};
+      const cwd = [payload.cwd, payload.workspace]
+        .find((v): v is string => typeof v === 'string' && v.trim() !== '')?.trim() ?? process.cwd();
+      const directive = await buildStartDirectiveForCwd(cwd, true);
+      if (directive) process.stdout.write(JSON.stringify(agentSessionStartEnvelope(payload, directive)));
+    } catch {
+      // Start hooks fail soft: no context, no nonzero exit.
+    }
+    return;
+  }
+
   if (sub === 'prompt-submit') {
     try {
       const payload = await readJsonStdin();
@@ -1009,7 +1025,7 @@ async function cmdHook(args: string[]) {
 
       default:
         console.error(`Unknown hook: ${sub ?? '(none)'}`);
-        console.error('Usage: tim hook <session-start|session-end|log|prompt-submit|claude-session-start|claude-session-end|claude-stop|cursor-stop|codex-notify> [options]');
+        console.error('Usage: tim hook <session-start|session-end|log|prompt-submit|claude-session-start|agent-session-start|claude-session-end|claude-stop|cursor-stop|codex-notify> [options]');
         process.exit(1);
     }
   } finally {
