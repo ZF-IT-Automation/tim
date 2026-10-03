@@ -66,7 +66,7 @@ import {
 } from './hermes-statusline-install.js';
 import { cmdConsolidate } from './consolidate.js';
 import { cmdProject } from './project.js';
-import { auditSummarizerHealth } from './summarizer-health.js';
+import { auditSummarizerHealth, ensureSummarizerChain } from './summarizer-health.js';
 import { auditHarnessDbPaths } from './harness-db-audit.js';
 import {
   collectProjectSchemaReport,
@@ -344,6 +344,8 @@ async function cmdInit() {
     );
     console.log(`✓ MCP config written: ${timDir}/mcp.json`);
   }
+
+  console.log(ensureSummarizerChain());
 
   const health = await store.health();
   console.log(`✓ Database created: ${dbPath}`);

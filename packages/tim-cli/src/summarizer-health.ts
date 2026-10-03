@@ -16,6 +16,35 @@ export interface SummarizerHealth {
   issues: string[];
 }
 
+export const CLAUDE_CHAIN_HINT =
+  `set "summarizer": { "chain": [{ "cli": "claude", "model": "haiku" }] } in ${getConfigPath()}.`;
+
+/**
+ * `tim init` on a config without a chain: the default chain guesses opencode
+ * models a fresh machine rarely has, so pick Claude Code when it is installed.
+ * A chain the user set — or a config.json we cannot parse — is never touched.
+ */
+export function ensureSummarizerChain(configPath = getConfigPath()): string {
+  let raw: Record<string, unknown> = {};
+  if (fs.existsSync(configPath)) {
+    try {
+      raw = JSON.parse(fs.readFileSync(configPath, 'utf8')) as Record<string, unknown>;
+    } catch {
+      return `⚠ ${configPath} is not valid JSON — summarizer chain left alone`;
+    }
+  }
+  const summarizer = (raw.summarizer ?? {}) as Record<string, unknown>;
+  if (Array.isArray(summarizer.chain)) return `✓ Summarizer chain: kept as configured in ${configPath}`;
+  if (!resolveOnPath('claude')) {
+    return `⚠ No summarizer chain configured and Claude Code not on PATH — summaries fall back to raw transcripts. ` +
+      `Add a "summarizer.chain" to ${configPath} (see README).`;
+  }
+  raw.summarizer = { ...summarizer, chain: [{ cli: 'claude', model: 'haiku' }] };
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(configPath, `${JSON.stringify(raw, null, 2)}\n`);
+  return `✓ Summarizer chain: claude/haiku (Claude Code print mode) → ${configPath}`;
+}
+
 /** Which binary a chain entry actually spawns (see tryCli in tim-summarizer). */
 function commandForCli(cli: string): string {
   return cli === 'curl-openrouter' ? 'curl' : cli;
@@ -57,7 +86,8 @@ export async function auditSummarizerHealth(
   } else if (!resolveOnPath(commandForCli(first!.cli))) {
     issues.push(
       `first chain CLI '${commandForCli(first!.cli)}' not found on PATH — ` +
-        `the chain starts by failing over.`,
+        `the chain starts by failing over.` +
+        (resolveOnPath('claude') ? ` Claude Code is installed: ${CLAUDE_CHAIN_HINT}` : ''),
     );
   }
 
