@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// TIM CLI — v0.1.0-alpha
+// TIM CLI
 
 import {
   TimStore,
@@ -1587,7 +1587,7 @@ async function main() {
       break;
     case '--version':
     case '-v':
-      console.log('tim v0.1.0-alpha');
+      console.log(`tim v${JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8')).version}`);
       break;
     case '--help':
     case '-h':
