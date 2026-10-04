@@ -22,11 +22,11 @@ Deployed and verified on this host:
 Commits added to the branch:
 
 ```
-e69e997 fix(store): skip empty sessions when listing resumable ones
-4e83b50 fix(cli): spawn the summarizer when the Stop hook fills a batch
-ac97aa1 fix(hooks,store): stop losing most of every recorded exchange
-0deb23e fix(summarizer): stop plugin output from becoming the summary, and let the chain set effort
-3d883f5 fix(hooks): read the transcript tail instead of bailing on size   (cherry-picked c06e78d)
+764c1c1 fix(store): skip empty sessions when listing resumable ones
+97d2853 fix(cli): spawn the summarizer when the Stop hook fills a batch
+38789a2 fix(hooks,store): stop losing most of every recorded exchange
+e951ed3 fix(summarizer): stop plugin output from becoming the summary, and let the chain set effort
+099f987 fix(hooks): read the transcript tail instead of bailing on size   (cherry-picked 06c3450)
 ```
 
 Current chain in `~/.tim/config.json` — machine-specific, every user must set their own:
@@ -53,7 +53,7 @@ fresh session — that needs a `/clear`.
 ## 1. Stop hook — RESOLVED, but what it recorded was truncated
 
 **Correction.** The hook does fire, on every turn. The transcript size guard was the
-entire cause; `3d883f5` fixed it. The "count stayed at 1" observation that produced this
+entire cause; `099f987` fixed it. The "count stayed at 1" observation that produced this
 item was taken before the rebuilt `dist/` reached the `tim` binary the hook invokes.
 
 Evidence, session `f8130261-3b31-4843-8090-6c52c893417b`: exchanges recorded
@@ -142,7 +142,7 @@ unattended:
 - `collectDirectiveBriefing(store, 'P0063', 1200)` now returns
   `previousSessionLabel: "2026-08-07 · 5 exchanges"` plus that rollup
 
-Suite: **1533 passed, 2 skipped, 0 failed**. Commits `ac97aa1`, `4e83b50`, `e69e997`.
+Suite: **1533 passed, 2 skipped, 0 failed**. Commits `38789a2`, `97d2853`, `764c1c1`.
 
 ### Still to do — the actual deliverable
 
@@ -222,7 +222,7 @@ s.close();"
 ## 3. `--repair-schema` must not be run yet
 
 It would create an **empty** `Codebase` section beside P0063's populated
-`Codebase — Workspace-Struktur` (802 bytes, 12 children) — the exact twinning `4d7ac22`
+`Codebase — Workspace-Struktur` (802 bytes, 12 children) — the exact twinning `a38c508`
 set out to prevent.
 
 The retitle path (`packages/tim-store/src/project-schema-init.ts:111-118`) only fires for
@@ -267,7 +267,7 @@ Needs a merge decision from the operator before anything else touches P0062.
 ## 5. P2 (`tim resummarize`) needs a different trigger
 
 `docs/OPEN-POINTS.md` assumes the failure marker identifies damaged sessions. It does not:
-`SUMMARY_FAILURE_MARKER` was introduced *by this branch* in `fbcd525`, so no historical
+`SUMMARY_FAILURE_MARKER` was introduced *by this branch* in `de1ed74`, so no historical
 session can carry it. Current count of marked sessions: **0**.
 
 The real signature in this database:
@@ -286,7 +286,7 @@ building it.
 
 The single non-empty `session-summary-root` is not a summary either: it contains TIM's own
 session-start directive, captured from opencode plugin stdout. That path is closed by
-`--pure` in `0deb23e`.
+`--pure` in `e951ed3`.
 
 ---
 
@@ -324,8 +324,8 @@ session-start directive, captured from opencode plugin stdout. That path is clos
 - **Stashed work.** `git stash list` still holds
   `pre-validation: skill md + tsbuildinfo (fix/session-briefing-chain)` — 10 `SKILL.md`
   files and 2 `tsbuildinfo`.
-- **Two commits from `fix/session-briefing-chain` remain unmerged:** `27a526e`
-  (never resolve an unattended session as the current one) and `6ce0d40` (statusline
+- **Two commits from `fix/session-briefing-chain` remain unmerged:** `6b253e0`
+  (never resolve an unattended session as the current one) and `61ace0b` (statusline
   resolution below the marker dir). Both touch session resolution and may matter for
   item 1.
 - **`tsconfig.tsbuildinfo` is tracked** despite `.gitignore` listing `dist/`

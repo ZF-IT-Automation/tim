@@ -1,6 +1,6 @@
 # TIM — Full review, 2026-09-04
 
-Host: strato (`ubun`). Branch under review: `fix/review-4dd2bf7-deploy` (HEAD `0b127cf`),
+Host: strato (`ubun`). Branch under review: `fix/review-4dd2bf7-deploy` (HEAD `b29e3d0`),
 three commits ahead of `master`. Reviewer: Claude Opus 5.
 
 Scope, in the order it was worked:
@@ -57,7 +57,7 @@ the symptom, not the cause.
   index. `packages/tim-core/dist/maintenance-lock.{js,d.ts,js.map,d.ts.map}` and
   `packages/tim-core/dist/summary-budget.*` exist on disk but are **absent from
   `git ls-files packages/tim-core/dist/`** — while `dist/index.js`, which `require`s them,
-  *is* tracked and was updated by commit `0b127cf`.
+  *is* tracked and was updated by commit `b29e3d0`.
 
 The result is a tracked build artefact that is internally inconsistent: `index.js` imports
 modules that git does not carry.
@@ -116,7 +116,7 @@ loudly on 2026-09-03.
 ### Finding 3 — automatic `error_log` rotation was removed, and nothing replaced it (high)
 
 `packages/tim-store/src/error-log.ts` previously called `this.rotate()` on every
-`logError()`. Commit `85c793d` removes that call, with the comment:
+`logError()`. Commit `2d85642` removes that call, with the comment:
 
 ```
 // Heavy cleanup is explicit (tim compact-error-log). Routine logging must
@@ -140,7 +140,7 @@ The single remaining call site is inside `compactErrorLog()`, which only the CLI
 invokes. No health check, idle sweep, or server path calls `rotate()`.
 
 Net effect: `error_log` is once again unbounded. Growth is slower than the EPIPE storm
-because the EPIPE guard (`6a38034`, extended by `handleStdioStreamError` on this branch)
+because the EPIPE guard (`61c922f`, extended by `handleStdioStreamError` on this branch)
 stops the storm at source, but the backstop that used to cap the table is gone.
 
 **Recommendation.** Add a daily cron entry alongside the existing jobs, e.g.
@@ -172,8 +172,8 @@ file (`Sep 3 13:48`, i.e. written during the incident) is **not** the `master` v
 **not** the branch version — it sits between them:
 
 - Against `master` it is *ahead*: it already has `reap_stdio_writers()`, `run_checkpoint()`,
-  and checkpoint-timeout-as-failure. That is the content of commit `090d0a0`.
-- Against the branch it is *behind*: it lacks everything commit `0b127cf` added —
+  and checkpoint-timeout-as-failure. That is the content of commit `ba7d196`.
+- Against the branch it is *behind*: it lacks everything commit `b29e3d0` added —
   `MIN_WRITE_RATE_BPS` / `SAMPLE_SEC`, the two-sample `sample_stdio_writers()` rate
   measurement, the 20 % ambiguity guard, and the busy-flag parse inside
   `checkpoint_failed()`.
@@ -187,7 +187,7 @@ elif [[ "${writes}" -gt "${best_writes}" ]]; then
   best_writes="${writes}"; best_pid="${pid}"
 ```
 
-That is precisely the behaviour `0b127cf` was written to remove — its own header says
+That is precisely the behaviour `b29e3d0` was written to remove — its own header says
 "rate over interval, not lifetime bytes". Under the deployed logic, the process most likely
 to be killed on a WAL alarm is the *oldest healthy* MCP server, because it has accumulated
 the most bytes over its lifetime, not the one currently running away. It also has no

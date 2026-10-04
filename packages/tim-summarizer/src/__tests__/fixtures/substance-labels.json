@@ -76,7 +76,7 @@
     },
     {
       "sessionTitle": "2026-09-23-1928",
-      "summaryText": "- Implemented four briefing fixes: readable multiline overview, fresh-task priority, exact drill-down hints, protected 16-title section index.\n- Split changes into commits `183ef60`, `8d2afe2`, `96bd238`, `d305f00`; commits unpushed.\n- Current state: lint clean; 2103 tests passed, 2 skipped. Outputs within expected sizes.\n- Open thread: Eval 8/9; G3 fails because summary needs regeneration.\n- Next step: regenerate summary, then rerun G3/evaluation checks.",
+      "summaryText": "- Implemented four briefing fixes: readable multiline overview, fresh-task priority, exact drill-down hints, protected 16-title section index.\n- Split changes into commits `1514a3e`, `612958a`, `75203da`, `36e9ed0`; commits unpushed.\n- Current state: lint clean; 2103 tests passed, 2 skipped. Outputs within expected sizes.\n- Open thread: Eval 8/9; G3 fails because summary needs regeneration.\n- Next step: regenerate summary, then rerun G3/evaluation checks.",
       "expected": "real"
     },
     {

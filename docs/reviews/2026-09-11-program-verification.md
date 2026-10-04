@@ -4,7 +4,7 @@ The implementation program covers GitHub issues #27–#39. This record distingui
 
 ## Tested source
 
-Final implementation and regression baseline: `41cbb4e`. Source changes after the third independent review are in `80ce5f9`; `41cbb4e` adds the actual MCP repair regression. Later commits update documentation and execution records only.
+Final implementation and regression baseline: `69c6337`. Source changes after the third independent review are in `ac31752`; `69c6337` adds the actual MCP repair regression. Later commits update documentation and execution records only.
 
 The coordinator verified the merged source in isolated full clones. No live installation was rebuilt and no production database migration or maintenance was performed.
 

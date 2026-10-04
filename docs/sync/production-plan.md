@@ -14,7 +14,7 @@ The production gates are: safe protocol and edge deletion semantics; bounded, du
 
 ### Audit provenance and limits
 
-Repository inspected: `/home/bbbee/projects/tim`, commit `4406ff073e651d07ed73e3daa124e9a0b74a00b6`; the working tree was clean at entry. All repository paths and line references below refer to that commit. No builds or test suites were run in the shared checkout, because its built artifacts serve live processes.
+Repository inspected: `/home/bbbee/projects/tim`, commit `1a25fbf369b38087a87ac0915420ed210b52fa65`; the working tree was clean at entry. All repository paths and line references below refer to that commit. No builds or test suites were run in the shared checkout, because its built artifacts serve live processes.
 
 The installed `tim` resolves to `packages/tim-cli/dist/cli.js`. `tim --help` and `docs/tim-cli-reference.md:805` show no generic CLI `read` or `search`. The five task bodies were therefore recovered with `tim export --format text` against a **task-local copy of an existing completed snapshot**, `/home/bbbee/.tim/snapshots/tim-20260925-1900.db` (17:00 UTC). No SQL was issued against the live TIM database or its snapshot. Extracts are in `TASK-EVIDENCE.txt`; snapshot diagnostics are in `SNAPSHOT-DOCTOR.txt`.
 

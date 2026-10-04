@@ -140,7 +140,7 @@ seam and a fake summarize function, so no test calls an LLM.
   session id, and the spawn is ordered after the checkpoint write: a handoff note written by
   the checkpoint survives a subsequent `updateSessionSummary`.
 
-Plus the existing suite stays green (1 721 passed / 2 skipped at `5d115f6`).
+Plus the existing suite stays green (1 721 passed / 2 skipped at `fedd033`).
 
 ## Interfaces & data
 

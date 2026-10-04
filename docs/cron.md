@@ -35,7 +35,7 @@ Only the third line is new (review Finding 3). The other jobs
 ### Why `tim-compact-error-log.sh` needs an entry
 
 `ErrorLogger.logError()` used to call `this.rotate()` on every write. Commit
-`85c793d` removed that — correctly, a mass `DELETE` on the write path is what
+`2d85642` removed that — correctly, a mass `DELETE` on the write path is what
 produced the 69 GB WAL — and replaced it with the explicit
 `tim compact-error-log`. Nothing scheduled that replacement, so `error_log` is
 unbounded again. The daily 04:41 entry is the backstop. It only runs when no TIM MCP process is

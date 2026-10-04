@@ -172,8 +172,8 @@ zweimal passiert).
 
 | Commit | Inhalt |
 |---|---|
-| `fbcd525` | Summarizer-Kette: Default-Chain, `previousSummaries` trägt Bodies statt „Batch N", LLM-Rollup statt Konkatenation, sichtbarer Degradationszustand, `tim doctor`-Check |
-| `e9e7d5d` | Briefing: SessionStart-Hook wird installiert, Direktive trägt Inhalt, Renderer zerstört Summaries nicht mehr, Skill-Parität |
-| `33a4b27` | Projektschema vereinheitlicht (vier divergente Definitionen → eine), `ensureProjectSchema`, `tim doctor --repair-schema` |
-| `d40de0b` | `tim viewer` — read-only, loopback-only, ohne Truncation |
-| `4d7ac22` | Migration benennt falsch betitelte Legacy-Sections um, statt sie zu doppeln |
+| `de1ed74` | Summarizer-Kette: Default-Chain, `previousSummaries` trägt Bodies statt „Batch N", LLM-Rollup statt Konkatenation, sichtbarer Degradationszustand, `tim doctor`-Check |
+| `149335d` | Briefing: SessionStart-Hook wird installiert, Direktive trägt Inhalt, Renderer zerstört Summaries nicht mehr, Skill-Parität |
+| `1f95fb6` | Projektschema vereinheitlicht (vier divergente Definitionen → eine), `ensureProjectSchema`, `tim doctor --repair-schema` |
+| `a43d746` | `tim viewer` — read-only, loopback-only, ohne Truncation |
+| `a38c508` | Migration benennt falsch betitelte Legacy-Sections um, statt sie zu doppeln |

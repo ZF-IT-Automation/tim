@@ -1814,7 +1814,7 @@ const DB_PATH = process.env.TIM_DB_PATH || loadConfig().dbPath || process.env.HO
 // - SQLite WAL mode: one writer, many readers; journal not blocked across readers
 // - tim-store sets synchronous=FULL and busy_timeout for write coordination
 // - systemd --user unit runs the single long-lived HTTP daemon (singleton)
-// - HTTP/SSE transport (7a733c5) is the cross-process path; stdio is for
+// - HTTP/SSE transport (eb4e39a) is the cross-process path; stdio is for
 //   in-process use (e.g. tests, tim-summarizer child processes)
 
 if (!CLI.http) {

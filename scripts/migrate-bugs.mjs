@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * One-shot migration: move the children of a project's `Bugs` section onto the
- * `metadata.bug` annotation introduced in aa5a70b.
+ * `metadata.bug` annotation introduced in 04c290f.
  *
  * Per node:
  *   - metadata.type      = 'bug'

@@ -1,3 +1,3 @@
 #!/usr/bin/env bash
-# Same check as post-merge — a checkout across 0708e77 deletes dist too.
+# Same check as post-merge — a checkout across e51932a deletes dist too.
 exec "$(dirname "${BASH_SOURCE[0]}")/post-merge" "$@"

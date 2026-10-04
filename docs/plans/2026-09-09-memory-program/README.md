@@ -6,7 +6,7 @@ Deliver an accurate public introduction to TIM, fix the eleven findings from the
 
 ## Starting point
 
-Baseline commit: `acb738b`. The review ran 215 test files: 1829 tests passed and 2 were skipped. TypeScript checking and build completeness passed. Those results are historical baseline evidence, not a claim about subsequent commits or real-model quality.
+Baseline commit: `bb7518a`. The review ran 215 test files: 1829 tests passed and 2 were skipped. TypeScript checking and build completeness passed. Those results are historical baseline evidence, not a claim about subsequent commits or real-model quality.
 
 ## Tickets and blocking edges
 

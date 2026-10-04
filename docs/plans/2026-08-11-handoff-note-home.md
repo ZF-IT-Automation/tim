@@ -64,7 +64,7 @@ the previous session.
     the first two; `#commit` becomes useful the moment tag-only retrieval lands
     in the follow-up spec.
 11. Existing rows carrying the retired tags are cleaned through the migration
-    mechanism (explicit opt-in gate, `c56696d`) — `tim migrate
+    mechanism (explicit opt-in gate, `fe6a08b`) — `tim migrate
     retire-deprecated-tags` — not by ad-hoc SQL, which would bypass staging and
     LWW and would be undone by the next write anyway. This touches thousands of
     rows (`#exchange` alone is on 2262): take

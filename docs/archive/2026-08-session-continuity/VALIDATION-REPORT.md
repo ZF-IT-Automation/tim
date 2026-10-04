@@ -7,7 +7,7 @@ Host: strato (hostname `ubun`), 2026-08-07. Covers P1 and P2 from `docs/OPEN-POI
 ## 1. Deployment and test suite
 
 ```
-git checkout claude/tim-hmem-analysis-xt5j59   # HEAD = 252f301
+git checkout claude/tim-hmem-analysis-xt5j59   # HEAD = b675eca
 npm ci && npm run clean && npm run build
 npx vitest run
 ```
@@ -33,9 +33,9 @@ the code the hooks execute — no globally installed copy shadows it.
 The previous working branch `fix/session-briefing-chain` carries three commits that are
 **not** on the branch under test, and all three sit in the path being validated:
 
-- `c06e78d` fix(hooks): read the transcript tail instead of bailing on size
-- `27a526e` fix(session): never resolve an unattended session as the current one
-- `6ce0d40` fix(statusline): resolve sessions started below the marker dir
+- `06c3450` fix(hooks): read the transcript tail instead of bailing on size
+- `6b253e0` fix(session): never resolve an unattended session as the current one
+- `61ace0b` fix(statusline): resolve sessions started below the marker dir
 
 Uncommitted work on that branch (10 `SKILL.md` files, 2 `tsconfig.tsbuildinfo`) was
 stashed, not committed:
@@ -192,7 +192,7 @@ A green `tim doctor` is not evidence the chain produces output.
 That number is misleading on its own, and the reason matters more than the count.
 
 `SUMMARY_FAILURE_MARKER` (`[ALL SUMMARIZER CLIs FAILED`) was introduced *by this branch*,
-in commit `fbcd525`. Sessions that were summarized before this branch existed cannot
+in commit `de1ed74`. Sessions that were summarized before this branch existed cannot
 carry a marker that did not yet exist. P2's expectation in `docs/OPEN-POINTS.md` — "in a
 real grown DB this should be every session from before this branch" — does not hold.
 
@@ -302,7 +302,7 @@ Label: content landet im Title" in P0063/Bugs.
 
 ### Not a regression from this PR
 
-`collectBindingReport` entered `tim doctor` in commit `9dfc8bf`, which is an ancestor of
+`collectBindingReport` entered `tim doctor` in commit `ebb8915`, which is an ancestor of
 `origin/master`. The crash reproduces independently of the branch under test. This PR
 neither caused it nor claims to fix it — but it does block validating the PR through the
 documented CLI path.
@@ -420,7 +420,7 @@ unknown: []
 `Codebase — Workspace-Struktur` holding 802 bytes of body and 12 children. Running the
 repair would create a second, empty `Codebase` beside it.
 
-That is precisely the twinning commit `4d7ac22` set out to prevent. The prevention has two
+That is precisely the twinning commit `a38c508` set out to prevent. The prevention has two
 prerequisites, and this node meets neither:
 
 - `packages/tim-store/src/project-schema-init.ts:57` —
@@ -531,13 +531,13 @@ This session sat about 33 KB below the cutoff while the checks ran. Any substant
 working session crosses it early and goes dark for the remainder.
 
 **This is the commit that was excluded from the validation:**
-`c06e78d fix(hooks): read the transcript tail instead of bailing on size`, on
+`06c3450 fix(hooks): read the transcript tail instead of bailing on size`, on
 `fix/session-briefing-chain`. The branch under test does not contain it.
 
-### Cause 1 is fixed — `c06e78d` cherry-picked
+### Cause 1 is fixed — `06c3450` cherry-picked
 
-With operator approval, `c06e78d` was cherry-picked onto the validation branch as
-`3d883f5`, followed by `npm run clean && npm run build`.
+With operator approval, `06c3450` was cherry-picked onto the validation branch as
+`099f987`, followed by `npm run clean && npm run build`.
 
 Suite after the cherry-pick: **184 files, 1529 passed, 2 skipped, 0 failed** — unchanged.
 
@@ -608,7 +608,7 @@ are not caused by empty exchanges.
 
 ### What this means for the PR
 
-The summarizer chain repaired by `fbcd525` is configured, healthy, and reachable —
+The summarizer chain repaired by `de1ed74` is configured, healthy, and reachable —
 verified against a live LLM in section 3. It still cannot be validated end to end, because
 the stage before it delivers nothing automatically (cause 2). `tim doctor` reports
 `✓ chain: …` while zero exchanges accumulate, which is the same false-green shape noted in
@@ -622,8 +622,8 @@ Not run: the `/clear` and successor-session test. In this state it would produce
 Everything above this heading was written while the chain was still broken. It is kept as
 the record of the investigation. Part of its conclusion no longer holds; cause 2 does.
 
-Four further defects were found and fixed on this branch (`ac97aa1`, `4e83b50`, `e69e997`,
-plus `0deb23e`). The decisive one was that nothing ever called `maybeSpawnSummarizer` from
+Four further defects were found and fixed on this branch (`38789a2`, `97d2853`, `764c1c1`,
+plus `e951ed3`). The decisive one was that nothing ever called `maybeSpawnSummarizer` from
 the Stop hook — it was wired only into the MCP server, which is not the writer of exchanges
 under Claude Code. The full list is in the task node "Session-continuity chain" in
 `P0063/Next Steps` and in `HANDOFF-next-session.md`.
@@ -730,7 +730,7 @@ and the same transcript file, while `/clear` mints a new id and a new file.
 
 That pointed at a hypothesis — that the Stop hook stops firing once a running process moves
 to a new session id, as `/clear` does — which was written up here and committed in
-`eb16664`.
+`b50133a`.
 
 ### Correction: the hook does fire, and the `/clear` hypothesis is dead
 
@@ -767,7 +767,7 @@ $ listProjectSessionsByActivity('01KSJ85W6KXSNN2H9ZHAP5QMPA', 6)   # P0054 root
 ```
 
 That reads as "no session history", and two revisions of this section drew conclusions from
-it. **It was the wrong query.** `listProjectSessionsByActivity` is the function `e69e997`
+it. **It was the wrong query.** `listProjectSessionsByActivity` is the function `764c1c1`
 taught to skip sessions with `exchange_count = 0` — so it hides exactly the nodes that matter
 here. Asking for the raw children instead:
 
@@ -797,7 +797,7 @@ content. Whether Codex offers a turn-end event that simply is not configured, or
 at all, was not established.
 
 This is break #5's phantom-node population seen at its source, and it is broader than the
-`e69e997` note assumed: it is not only the sub-agent the summarizer spawns, it is *every*
+`764c1c1` note assumed: it is not only the sub-agent the summarizer spawns, it is *every*
 Codex session. For a project worked primarily through Codex — as MAIMO currently is — TIM
 accumulates empty nodes and records nothing.
 
@@ -856,7 +856,7 @@ way: a confident claim from an aggregate, without reading the record underneath 
 2. "P0054 proves what the 1 MiB guard cost" — counted Stop-hook runs without reading which
    command they invoked. They were hmem's.
 3. "P0054 has no sessions, so MAIMO has not been worked in" — asked
-   `listProjectSessionsByActivity`, which is precisely the function `e69e997` taught to hide
+   `listProjectSessionsByActivity`, which is precisely the function `764c1c1` taught to hide
    `exchange_count = 0` nodes. There were four, from today, and the project was being worked
    in while the claim was written.
 
@@ -874,7 +874,7 @@ logs, "session end → summary → briefing" is demonstrated only for small tran
 ### Caveats that stand regardless
 
 - Exchanges `seq 1–4` of the source session are stored truncated. They were recorded before
-  `ac97aa1`, so the rollup summarizes damaged input.
+  `38789a2`, so the rollup summarizes damaged input.
 - **The stale tail is not a rounding error — it actively misinforms the successor.** The
   spawn gate fires on `pending >= batch_size` and no `SessionEnd` hook is registered
   (`packages/tim-cli/src/claude-hooks-install.ts:69` registers SessionStart,
@@ -884,7 +884,7 @@ logs, "session end → summary → briefing" is demonstrated only for small tran
   wiring the summarizer spawn as the next step, when both were already done. A successor
   that trusts its brief redoes finished work. This is the argument for the `SessionEnd`
   hook.
-- The 118 phantom session nodes are still in the database, and `e69e997` only filters them
+- The 118 phantom session nodes are still in the database, and `764c1c1` only filters them
   out of `listResumableSessions`. `tim_load_project`'s "Recent Sessions" render still lists
   five `0 exchanges` nodes as the newest.
 
@@ -948,8 +948,8 @@ Reachable over an SSH tunnel with `ssh -L 7373:127.0.0.1:7373 bbbee@<host>`.
    registered, so the tail exchanges of every session are dropped from the briefing. See
    section 7's resolution note.
 9. **118 phantom session nodes remain in the database**, and the render used by
-   `tim_load_project` still shows them. `e69e997` fixed only the resumable-sessions query.
-10. **Exercise the tail-read fix against a >1 MiB transcript.** `3d883f5` replaced the size
+   `tim_load_project` still shows them. `764c1c1` fixed only the resumable-sessions query.
+10. **Exercise the tail-read fix against a >1 MiB transcript.** `099f987` replaced the size
     guard with a tail read, but no live session has yet crossed a megabyte and kept logging.
     P0054 cannot serve as the case — its transcripts predate TIM's hooks entirely. See
     section 7.

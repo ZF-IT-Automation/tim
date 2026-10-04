@@ -1,6 +1,6 @@
 # TIM: Review zu Wirkung und Potenzial
 
-Datum: 2026-10-03. Stand: `5bf5dcd` (master). DB-Snapshot von `~/.tim/tim.db`, per `.backup` gezogen um 12:55 MESZ.
+Datum: 2026-10-03. Stand: `a7d9705` (master). DB-Snapshot von `~/.tim/tim.db`, per `.backup` gezogen um 12:55 MESZ.
 
 Frage: Wie groß ist das Potenzial von TIM, und wie stark verbessert es bestehende LLMs und Coding-Agents?
 
@@ -49,7 +49,7 @@ Aufbau:
 | Q1 | Warum FTS statt Embeddings | ja | 3 | 3 | Research-Doc reicht |
 | Q2 | Warum kein Hermes-seitiges Opt-out | nein | 1 | 3 | Repo: „unbekannt“ |
 | Q3 | Stale-Regel für Tasks | ja | 3 | 3 | |
-| Q4 | Disk-voll-Incident September | ja (teilweise) | 1 ✗ | 3 | Repo-Arm übernahm den falschen Hergang aus `docs/cron.md`, mit Konfidenz 0,8. Commit 6a38034 hätte es richtig gesagt. Recovery-Details stehen nur in TIM |
+| Q4 | Disk-voll-Incident September | ja (teilweise) | 1 ✗ | 3 | Repo-Arm übernahm den falschen Hergang aus `docs/cron.md`, mit Konfidenz 0,8. Commit 61c922f hätte es richtig gesagt. Recovery-Details stehen nur in TIM |
 | Q5 | Englisch-Memory-Experiment | nein | 0 | 3 | nur in TIM |
 | Q6 | Stand Sync / nächster Schritt | nein | 1 ✗ | 2 | Repo nennt den geparkten Schritt T05 als nächsten |
 | Q7 | Session-ID-Duplikate erledigt? | nein | 2 | 3 | Dass OpenCode noch offen ist, steht nur in TIM |
@@ -178,7 +178,7 @@ Den größten Nutzen hat wahrscheinlich der passive Pfad, und der ist ungemessen
 **Sicherheit**
 
 - **Memory-Injektion ohne Datenrahmung:** Wieder eingespeistes Memory ist nur in zwei Tool-Beschreibungen als Daten gekennzeichnet, Hook-Injektionen gar nicht. Die Forschung zeigt, dass persistentes Memory Prompt-Injection dauerhaft macht: PMPA (09/2026) erreichte 81,7 % Cross-Session-Erfolg gegen Claude Code.
-- **Offener Regelkanal:** Seit `5bf5dcd` ist `P0000/Rules` ein projektübergreifender Instruktionskanal, in den jeder Agent ohne Autoritätsprüfung schreiben kann.
+- **Offener Regelkanal:** Seit `a7d9705` ist `P0000/Rules` ein projektübergreifender Instruktionskanal, in den jeder Agent ohne Autoritätsprüfung schreiben kann.
 - **Daten an Dritte:** Zwei von drei Jev-Aufrufstellen senden Memory-Inhalte an OpenRouter, sobald ein Key existiert. Einen Config-Schalter dafür gibt es nicht.
 - **Keine Redaction beim Capture:** 41 Exchanges enthalten Key-Präfixe, allerdings kein vollständiger Key. 0 Einträge sind als secret markiert.
 - **Abhängigkeiten:** npm audit meldet 9 Advisories (4 high; nur Produktion: 5, davon 2 high). Sie sind nach dem Audit vom 25.09. erschienen; der Lockfile ist unverändert.

@@ -3,7 +3,7 @@
 # post-checkout (core.hooksPath is set globally to that directory on this host,
 # so .git/hooks/ is ignored everywhere).
 #
-# Why this exists: commit 0708e77 removed packages/*/dist from the index. Any
+# Why this exists: commit e51932a removed packages/*/dist from the index. Any
 # checkout or merge that crosses it deletes the build output from the working
 # tree. On a host where the checkout *is* the install — ~/.local/bin/tim and the
 # MCP server both run out of packages/*/dist — that silently replaces the running
@@ -39,7 +39,7 @@ cat >&2 <<EOF
 
 ⚠  Build output is incomplete after this git operation.
 
-   packages/*/dist is not tracked, so a checkout or merge across 0708e77
+   packages/*/dist is not tracked, so a checkout or merge across e51932a
    removes it. If this checkout is also the running install, the MCP server
    and the 'tim' CLI are broken right now.
 

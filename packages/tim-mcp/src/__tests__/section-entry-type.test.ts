@@ -80,7 +80,7 @@ describe('validateBugStatus', () => {
   });
 
   it("accepts 'fixed' with a commit", () => {
-    expect(validateBugStatus({ bug: { status: 'fixed', commit: '5f0c5fc' } }).ok).toBe(true);
+    expect(validateBugStatus({ bug: { status: 'fixed', commit: '84179e4' } }).ok).toBe(true);
   });
 
   it('rejects a blank commit rather than counting it as evidence', () => {

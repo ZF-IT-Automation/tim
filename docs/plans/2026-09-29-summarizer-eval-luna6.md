@@ -51,7 +51,7 @@ calls each, always a batch), so the chain stays as it is (`gpt-6-luna` medium).
 - Reliability 100 % across all 264 calls. The production codex failures of 2026-09-29 are
   therefore not the model's fault, see the health check (deleted spawn cwd).
 
-## Run 3: after the fixes (`d5089ab`)
+## Run 3: after the fixes (`fca3755`)
 
 Vocabulary filter, cost tie band (±10 %), spawn cwd = home. Prompt hash `b44e00d88c87`
 (new, because the vocabulary block shrank). Run `~/.tim/bench/runs/2026-09-29T13-40-07-168Z`:

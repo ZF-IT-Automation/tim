@@ -113,11 +113,11 @@ node scripts/multilingual-embeddings.mjs summarize
 The encoder processes are run sequentially. `results.json` records aggregates, per-prompt metrics, timings, file sizes, and artifact hashes; `provenance.json` records snapshot and label hashes. `corpus.json`, `cases.json`, database copies, downloaded models, and raw output stay under ignored `tmp/`. The committed [per-prompt CSV](2026-09-multilingual-embeddings.csv) contains counts without prompt or memory text. The [evaluation script](../../scripts/multilingual-embeddings.mjs) and [regression tests](../../scripts/__tests__/multilingual-embeddings.test.mjs) are the only code additions.
 
 Snapshot SHA-256: `9c739e72b9b3ee4ccec66f746e4d5999f5b886f1ac6b0e1a812b89d34106c1f0`.
-Repository baseline: `4406ff073e651d07ed73e3daa124e9a0b74a00b6`.
+Repository baseline: `1a25fbf369b38087a87ac0915420ed210b52fa65`.
 
 ## Verification
 
-Worktree `HEAD` was `4406ff073e651d07ed73e3daa124e9a0b74a00b6`, matching `provenance.json`. `EVAL_DIR` was `tmp/multilingual-eval` (gitignored). `prepare` was not rerun: `snapshot.db` was already there, and the script refuses to overwrite it. Snapshot SHA-256 in `provenance.json` matches the hash above. `download` was not rerun: `models/e5-small/model_qint8_avx512_vnni.onnx` and the tokenizer files were already present.
+Worktree `HEAD` was `1a25fbf369b38087a87ac0915420ed210b52fa65`, matching `provenance.json`. `EVAL_DIR` was `tmp/multilingual-eval` (gitignored). `prepare` was not rerun: `snapshot.db` was already there, and the script refuses to overwrite it. Snapshot SHA-256 in `provenance.json` matches the hash above. `download` was not rerun: `models/e5-small/model_qint8_avx512_vnni.onnx` and the tokenizer files were already present.
 
 `model e5` was not rerun. `e5.log` records progress through `10008/10253` and then the cost object. `e5.json` has 90 rows, each with 12 ids, 12 scores, and `currentKinds`, and `corpusMs` 715,804.7. `model minilm` was run to completion:
 

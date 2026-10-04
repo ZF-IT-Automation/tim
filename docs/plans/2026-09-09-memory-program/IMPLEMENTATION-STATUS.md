@@ -15,18 +15,18 @@ Updated: 2026-09-11. The original #27–#39 implementation program is integrated
 | #38 | A standalone bilingual fixture benchmark with shared evidence expectations and a 4096-byte context budget, synthetic CI mode, optional real-provider execution or explicit skip, and packaged dataset assets. |
 | #39 | Rewritten README, dated primary-source comparisons, concrete workflows, feature references, benchmark instructions, and explicit beta/security limitations. |
 
-The initial README and plans were published in `4940fab`. The completed source, feature references and verification report accompany this closeout. GitHub issue state records the publication/closure outcome; the separately discovered dependency-upgrade work remains open in #40.
+The initial README and plans were published in `54d162d`. The completed source, feature references and verification report accompany this closeout. GitHub issue state records the publication/closure outcome; the separately discovered dependency-upgrade work remains open in #40.
 
 ## Verification
 
-Final implementation and regression baseline: `41cbb4e`. Subsequent closeout commits change documentation only.
+Final implementation and regression baseline: `69c6337`. Subsequent closeout commits change documentation only.
 
 - Node.js 22.23.2 build, TypeScript checking and full test suite passed: **246 test files, 2,089 tests passed, two skipped**, in 124.64 seconds. A fresh installation had already passed before the final source-only corrections.
 - Node.js 24.14 TypeScript checking and clean build passed: **180 modules** complete with executable entrypoints. The final full suite passed **246 test files, 2,089 tests and two skips**, in 134.16 seconds.
 - Targeted temporal/MCP/benchmark checks passed 43 tests, the isolated-telemetry and health check passed 31 tests, and the final review-correction check passed 49 tests before the additional actual-MCP repair regression joined the whole suite.
 - Benchmark CLI executed from built output. Package dry-run contains `dist/dataset/1.0.0.json` and the executable CLI.
 - Local Markdown-link checks across eight public feature/status documents found no missing targets.
-- Three extension integration reviews completed. The final review `20260911T135834Z-5e24` found seven issues; coordinator corrections in `80ce5f9` and `41cbb4e` passed targeted and whole-suite verification. This is not a claim of a clean fourth independent review.
+- Three extension integration reviews completed. The final review `20260911T135834Z-5e24` found seven issues; coordinator corrections in `ac31752` and `69c6337` passed targeted and whole-suite verification. This is not a claim of a clean fourth independent review.
 - The two existing skipped tests cover associative-recall chain timeout and database-lock handling; these scenarios are not claimed as passing.
 
 The corrected synthetic fixture run found eight of eight expected references for TIM and six for fixed handoff; TIM also returned 60 irrelevant references versus 22 for handoff. These are agent-authored fixture mechanics, not real-model quality or agent-task success. Final checks used synthetic vectors and an explicit real-provider opt-out; a cached real-model run by the independent reviewer concerned the earlier fixture only.
@@ -43,4 +43,4 @@ TIM MCP transport remains closed. Pending memory task updates are not claimed as
 
 ## Historical evidence
 
-The original baseline `acb738b` passed 1,829 tests with two skips across 215 files. Earlier integrated checkpoints and defects are recorded chronologically in the run ledger. At `2e9aad9`, the previous extension baseline passed 2,054 tests with two skips; the current result above supersedes that count. Worker reports alone were never treated as integration approval.
+The original baseline `bb7518a` passed 1,829 tests with two skips across 215 files. Earlier integrated checkpoints and defects are recorded chronologically in the run ledger. At `fb3a399`, the previous extension baseline passed 2,054 tests with two skips; the current result above supersedes that count. Worker reports alone were never treated as integration approval.

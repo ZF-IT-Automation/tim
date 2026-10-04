@@ -17,13 +17,13 @@ const batchCase: EvalCase = {
     sessionId: 's', summaryNodeId: '', exchangesNodeId: '', batchIndex: 1, batchSize: 1, hasMore: false,
     previousSummaries: [], sessionMeta: {},
     exchanges: [{ seq: 1, userId: 'u', userContent: 'fix spawn cwd in packages/tim-summarizer/src/generate-summary.ts',
-      agentId: 'a', agentContent: 'fixed in 4c589f0, spawn now uses homedir' }],
+      agentId: 'a', agentContent: 'fixed in 9f616d5, spawn now uses homedir' }],
   },
 };
 
 describe('eval-summarizer scoring', () => {
   it('scores a compliant batch output', () => {
-    const out = '- Summarizer spawned with a deleted cwd; now spawns in the homedir (4c589f0).\n' +
+    const out = '- Summarizer spawned with a deleted cwd; now spawns in the homedir (9f616d5).\n' +
       'SUBSTANCE: real\nTAGS: #summarizer #debugging';
     const s = scoreOutput(batchCase, out);
     expect(s.violations).toEqual([]);
@@ -50,8 +50,8 @@ describe('eval-summarizer scoring', () => {
   });
 
   it('finds identifiers', () => {
-    expect([...identifiers('P0063 at f2f8662 in docs/a.md and eval.ts, not deadbeef words')])
-      .toEqual(expect.arrayContaining(['f2f8662', 'P0063', 'docs/a.md', 'eval.ts']));
+    expect([...identifiers('P0063 at 0e98850 in docs/a.md and eval.ts, not deadbeef words')])
+      .toEqual(expect.arrayContaining(['0e98850', 'P0063', 'docs/a.md', 'eval.ts']));
     expect(isEnglish('the fix is in and the tests are green')).toBe(true);
   });
 

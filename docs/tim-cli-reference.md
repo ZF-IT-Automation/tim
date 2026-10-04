@@ -1020,4 +1020,4 @@ Setup:          tim init, tim setup-hermes-statusline
 ---
 
 *Generated 2026-06-17 from live TIM DB (2750 entries).*
-*Commit: 7b15407 (feature/tim-update-title-fix)*
+*Commit: 4457f44 (feature/tim-update-title-fix)*
