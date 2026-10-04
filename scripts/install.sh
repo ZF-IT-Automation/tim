@@ -20,10 +20,9 @@ say() { printf '%s\n' "$*"; }
 die() { printf 'tim install: %s\n' "$*" >&2; exit 1; }
 
 for cmd in git node npm; do
-  command -v "$cmd" >/dev/null 2>&1 || die "$cmd is required (Node.js 22+ with npm, and git)"
+  command -v "$cmd" >/dev/null 2>&1 || die "$cmd is required (Node.js 22.12+ with npm, and git)"
 done
-node_major="$(node -p 'process.versions.node.split(".")[0]')"
-[ "$node_major" -ge 22 ] || die "Node.js 22+ required, found $(node --version)"
+node -e 'const [a,b]=process.versions.node.split(".").map(Number);process.exit(a>22||(a===22&&b>=12)?0:1)' || die "Node.js 22.12+ required, found $(node --version)"
 
 # Piped through bash there is no script file, so no checkout to adopt — never
 # guess one from the current directory.

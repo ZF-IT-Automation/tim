@@ -9,7 +9,7 @@ A local-first memory system for AI agents, built around projects and the work be
 
 [![CI](https://github.com/ZF-IT-Automation/tim/actions/workflows/ci.yml/badge.svg)](https://github.com/ZF-IT-Automation/tim/actions/workflows/ci.yml)
 ![Public beta](https://img.shields.io/badge/status-public_beta-orange)
-![Node.js 22+](https://img.shields.io/badge/Node.js-22%2B-339933)
+![Node.js 22.12+](https://img.shields.io/badge/Node.js-22.12%2B-339933)
 
 [Get started](#get-started) · [Features](#what-tim-remembers) · [Compare](#how-tim-compares) · [Roadmap](#status-and-roadmap)
 
@@ -40,7 +40,7 @@ Local storage does not mean every optional operation stays local: the configured
 
 ## Get started
 
-TIM is a **public beta**. Interfaces can change. You need **Node.js 22+**, **npm 10+** and **git**. One command installs or updates it:
+TIM is a **public beta**. Interfaces can change. You need **Node.js 22.12+**, **npm 10+** and **git**. One command installs or updates it:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ZF-IT-Automation/tim/master/scripts/install.sh | bash
