@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { buildPrompt, buildSessionRollupPrompt, ENGLISH_SUMMARY_INSTRUCTION } from '../generate-summary.js';
+import {
+  buildCompressPrompt,
+  buildProjectSummaryPrompt,
+  buildPrompt,
+  buildSessionRollupPrompt,
+  ENGLISH_SUMMARY_INSTRUCTION,
+} from '../generate-summary.js';
+import { CAVEMAN_STYLE } from 'tim-core';
 import { BATCH_SUMMARY_MAX_CHARS, ROLLUP_INPUT_MAX_CHARS } from 'tim-core';
 import type { UnsummarizedBatch } from '../mcp-client.js';
 
@@ -140,5 +147,22 @@ describe('English summary instruction (C10)', () => {
   it('requires English output in batch, rollup, and project prompts', () => {
     expect(buildPrompt(base)).toContain(ENGLISH_SUMMARY_INSTRUCTION);
     expect(buildSessionRollupPrompt(['- one'])).toContain(ENGLISH_SUMMARY_INSTRUCTION);
+  });
+});
+
+describe('caveman style (Benni 2026-10-04)', () => {
+  it('every summary prompt asks for it, next to the format part rather than the top', () => {
+    const batch = buildPrompt(base);
+    expect(batch).toContain(CAVEMAN_STYLE);
+    // Measured: at the top of a long prompt the model ignored it.
+    expect(batch.indexOf(CAVEMAN_STYLE)).toBeGreaterThan(batch.indexOf('JSON:'));
+    expect(batch.indexOf(CAVEMAN_STYLE)).toBeLessThan(batch.indexOf('SUBSTANCE:'));
+    for (const prompt of [
+      buildSessionRollupPrompt(['- one']),
+      buildProjectSummaryPrompt(['- one'], 800),
+      buildCompressPrompt('- one', 800),
+    ]) {
+      expect(prompt).toContain(CAVEMAN_STYLE);
+    }
   });
 });

@@ -18,5 +18,8 @@ description: TIM session lifecycle — start, bind project, log exchanges.
 - The UserPromptSubmit hook injects retrieval context. Do not call it yourself.
 - Installed Claude hooks log exchanges automatically — do not call internal logging tools.
 
+## Writing
+Entries, notes, handoffs: caveman style — terse fragments, no articles/filler/hedging; code, paths, ids, hashes, numbers exact.
+
 ## Inbox fallback (P0000)
 If no project bound, response includes ACTION to `tim_load_project` a real project.

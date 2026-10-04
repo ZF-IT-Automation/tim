@@ -22,6 +22,7 @@ Every entry you write is read later as a one-line preview by an agent that knows
 The brief can only be as good as these entries.
 
 - **Title** ≤ 80 chars, names the subject. Status/severity go in `metadata.task`/metadata, never in the title — the renderer prints them.
+- **Caveman style.** Agents read TIM, people rarely: terse fragments, every word carries information. Drop articles, filler, hedging, restated context; use → = + /. Code, paths, ids, hashes, numbers exact.
 - **First body line is the conclusion.** Previews show ~500 chars; reasoning comes after.
 - **One language per project** — the language of its Overview. Don't switch mid-project.
 - **Put it in an existing section** (`where: "P0063/Bugs"`, `/Decisions`, `/Log`, `/Ideas`). Never create new direct children of the project root.

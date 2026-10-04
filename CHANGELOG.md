@@ -4,6 +4,11 @@ All notable changes to TIM are documented in this file.
 
 ## [Unreleased]
 
+### Caveman style for everything TIM stores (2026-10-04)
+
+- **One rule, every writer** — `CAVEMAN_STYLE` (tim-core) goes into the batch, rollup, project-summary and compress prompts, placed next to the format part (at the top of a long prompt the model ignored it). `tim_write`/`tim_update` describe `content` with the one-line form; the tim-using, tim-handoff and tim-session-start skills say the same; a global rule in P0000/Rules reaches every briefing. Benni: briefings and entries are read by agents, almost never by people.
+- **Measured** on 8 real batches (claude/haiku, 2 runs each): 9% shorter, markedly more hashes, numbers and commands per character; the 1200-character budget still caps length. New writes only — existing entries are not rewritten.
+
 ### Install and setup (2026-10-03)
 
 - **One-command install** — `scripts/install.sh` (also `curl … | bash`) clones or fast-forwards TIM, builds it, links `tim` into `~/.local/bin`, runs `tim init` and connects every detected host (Claude Code, Codex, Cursor). Rerun to update; it repairs hook and MCP paths in place.

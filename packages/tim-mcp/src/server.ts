@@ -48,6 +48,7 @@ import {
   validateEvidenceMetadata,
   validateCallerTemporalMetadata,
   taskPriorityRank,
+  CAVEMAN_STYLE_SHORT,
 } from 'tim-core';
 import { annotateTrust } from './trust.js';
 import { EVIDENCE_DISCLAIMER, isDefaultPresentedEvidence, projectEntryEvidence } from './evidence-presentation.js';
@@ -223,7 +224,7 @@ const TimReadSchema = TimReadSchemaBase.refine(
 );
 
 const TimWriteSchema = z.object({
-  content: z.string().describe('Entry body content'),
+  content: z.string().describe(`Entry body content. ${CAVEMAN_STYLE_SHORT}`),
   title: z.string().optional(),
   parentId: z.string().optional(),
   parentTitle: z.string().optional().describe('Section title; requires projectId'),
@@ -338,7 +339,7 @@ const TimTraceSchema = z.object({
 const TimUpdateSchema = z.object({
   id: z.string(),
   title: z.string().optional().describe('Update entry title'),
-  content: z.string().optional(),
+  content: z.string().optional().describe(`Replaces the whole body. ${CAVEMAN_STYLE_SHORT}`),
   confidence: z.number().min(0).max(1).optional(),
   tags: z.array(z.string()).optional()
     .describe('Topic tags only. Deprecated status/priority tags are stripped — use metadata.task.status / metadata.task.priority.'),

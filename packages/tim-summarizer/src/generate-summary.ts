@@ -10,6 +10,7 @@ import {
   getTimDir,
   loadConfig,
   rollupInputBudget,
+  CAVEMAN_STYLE,
 } from 'tim-core';
 
 function resolveEnvVar(name: string): string | undefined {
@@ -129,6 +130,7 @@ export function buildPrompt(batch: UnsummarizedBatch): string {
     // has none, so every run invents its own phrasing. Four fixed words cannot
     // drift, and they answer the question a subject tag alone cannot: not "the
     // summarizer" but "the session where the summarizer was debugged".
+    `${CAVEMAN_STYLE}\n\n` +
     `End your response with two lines (in this order):\n` +
     `SUBSTANCE: none | low | real — none = no project work or decisions (version checks, greetings, aborted starts); ` +
     `low = minor housekeeping; real = work, findings or decisions. ` +
@@ -534,7 +536,7 @@ export function buildSessionRollupPrompt(batchSummaries: string[]): string {
     `- Current state (what works, what is half-finished)\n` +
     `- Open threads / unresolved questions\n` +
     `- The single most likely next step\n\n` +
-    `Format: 4-6 short bullets, 200 words max. Output ONLY the bullets, no preamble.\n\n` +
+    `Format: 4-6 short bullets, 200 words max. Output ONLY the bullets, no preamble. ${CAVEMAN_STYLE}\n\n` +
     `Batch summaries (chronological):\n${joined}`
   );
 }
@@ -582,7 +584,7 @@ export function buildProjectSummaryPrompt(sessionSummaries: string[], maxChars: 
     `Below are summaries of the last N sessions. Produce a project-level summary ` +
     `of the project's CURRENT STATE: what works, what is in progress, what blocks.\n\n` +
     `Format: 2-3 terse bullet points, ${maxChars} characters total at most. ` +
-    `Output ONLY the bullets, no preamble.\n\n` +
+    `Output ONLY the bullets, no preamble. ${CAVEMAN_STYLE}\n\n` +
     `Session summaries:\n${joined}`
   );
 }
@@ -591,7 +593,7 @@ export function buildCompressPrompt(summary: string, maxChars: number): string {
   return (
     `${ENGLISH_SUMMARY_INSTRUCTION} ` +
     `Shorten this project summary to ${maxChars} characters or fewer. Keep 2-3 bullet ` +
-    `points and the most important facts. Output ONLY the bullets, no preamble.\n\n${summary}`
+    `points and the most important facts. Output ONLY the bullets, no preamble. ${CAVEMAN_STYLE}\n\n${summary}`
   );
 }
 
