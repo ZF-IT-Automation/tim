@@ -112,6 +112,21 @@ describe('tim hook claude-stop', () => {
     store.close();
   });
 
+  it('logs nothing for a team-up worker', async () => {
+    await seedProject('P0001');
+    writeMarker(cwd, 'P0001');
+    const transcript = writeTranscript([
+      { type: 'user', uuid: 'u1', message: { role: 'user', content: 'worker turn' } },
+      { type: 'assistant', uuid: 'a1', message: { role: 'assistant', content: 'done' } },
+    ]);
+    const result = run({ session_id: 'worker-sess', transcript_path: transcript, cwd }, { TEAMUP_WORKER: '1' });
+    expect(result.status).toBe(0);
+
+    const store = new TimStore(dbPath);
+    expect((await deriveCounters(store, 'worker-sess')).exchangeCount).toBe(0);
+    store.close();
+  });
+
   it('is idempotent across duplicate Stop deliveries', async () => {
     await seedProject('P0001');
     writeMarker(cwd, 'P0001');

@@ -477,7 +477,7 @@ describe('tim hook claude-session-start', () => {
     fs.rmSync(root, { recursive: true, force: true });
   });
 
-  function run(input: string, sub = 'claude-session-start'): SpawnSyncReturns<string> {
+  function run(input: string, sub = 'claude-session-start', extraEnv: Record<string, string> = {}): SpawnSyncReturns<string> {
     return spawnSync(process.execPath, [CLI, 'hook', sub], {
       cwd,
       input,
@@ -487,6 +487,7 @@ describe('tim hook claude-session-start', () => {
         HOME: home,
         TIM_DB_PATH: dbPath,
         TIM_MARKER_MAX_ROOT: root,
+        ...extraEnv,
       },
     });
   }
@@ -531,6 +532,20 @@ describe('tim hook claude-session-start', () => {
     const garbage = run('not json');
     expect(garbage.status).toBe(0);
     expect(garbage.stdout.trim()).toBe('');
+  });
+
+  it('team-up workers still get the start briefing; only the summarizer tree is skipped', async () => {
+    const store = new TimStore(dbPath);
+    await store.createProject('P0063', { content: 'Hook test project' });
+    store.close();
+    fs.writeFileSync(path.join(cwd, '.tim-project'), JSON.stringify({ version: 3, project: 'P0063' }));
+    const payload = JSON.stringify({ hook_event_name: 'SessionStart', session_id: 'w-1', cwd });
+
+    for (const sub of ['claude-session-start', 'agent-session-start']) {
+      const worker = run(payload, sub, { TEAMUP_WORKER: '1' });
+      expect(JSON.parse(worker.stdout).hookSpecificOutput.additionalContext).toContain('P0063');
+      expect(run(payload, sub, { TIM_SUMMARIZER: '1' }).stdout).toBe('');
+    }
   });
 
   it('agent-session-start answers in the envelope each harness reads, with its session id', async () => {

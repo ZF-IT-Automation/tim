@@ -779,9 +779,12 @@ async function cmdHook(args: string[]) {
   // their turns would store the summarizer's prompt as a user exchange and spawn a
   // fresh summarizer off it — so every hook no-ops inside the summarizer process tree.
   if (isSummarizerChild()) return;
-  if (isTeamupWorker()) return;
-
   const sub = args[0];
+  // Workers must not start sessions or log exchanges, but they still read the
+  // project's rules: the start briefing is read-only, so it stays on for them
+  // (as tim-session-start.sh always did).
+  const startBriefing = sub === 'claude-session-start' || sub === 'agent-session-start';
+  if (isTeamupWorker() && !startBriefing) return;
 
   if (sub === 'claude-session-start') {
     try {
