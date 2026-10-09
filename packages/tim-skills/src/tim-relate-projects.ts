@@ -1,6 +1,6 @@
 export const TIM_RELATE_PROJECTS_SKILL = {
   name: 'tim-relate-projects',
-  description: 'Link TIM projects so resume-topic and continue recall neighbour sessions; set descriptions for briefing lines.',
+  description: 'Link TIM projects so resume-topic and continue recall neighbour sessions; then give both sides a description and a current Interfaces entry.',
   content: `# tim-relate-projects
 
 Use when work spans repositories that should recall each other's sessions (e.g. Game-Harness ↔ MAIMO).
@@ -14,7 +14,7 @@ Use when work spans repositories that should recall each other's sessions (e.g. 
 tim project related                       # neighbours of this directory's project
 tim project relate game-harness           # this project ↔ Game Harness
 tim project relate MAIMO "game harness"   # any two projects
-tim project describe "One to three sentences: what this project IS."
+tim project describe MAIMO "One to three sentences: what this project IS."   # project optional, defaults to this one
 tim project interfaces                    # show this project's Interfaces entry (node ID + text)
 tim project interfaces MAIMO --set "CLI: …; MCP tools: …; files: …; env: …"
 tim project unrelate game-harness
@@ -26,6 +26,12 @@ tim project unrelate game-harness
 - \`relate\` no-ops when already linked (either direction) or when A == B. \`unrelate\` drops the edge either way.
 - Archived neighbours stay hidden in briefings.
 - Interfaces = what the project exposes (CLI, MCP tools, files, env, APIs), kept in one child entry of the project root. Hand its node ID to workers; \`--set\` replaces the text in place.
+
+## Every relate: finish both sides
+\`relate\` alone is half the job — a neighbour without description or Interfaces is a bare name to the other side. Right after it, for **each** of the two projects:
+1. \`tim project related\` — no description → \`tim project describe <P> "…"\` (from README / package.json).
+2. \`tim project interfaces <P>\` — missing, or stale (commands/files the repo no longer has, changelog shape) → rewrite with \`--set\`. Source = the repo (\`--help\`, CLI dispatch, env reads), not memory. Shape: header with date + commit, then CLI / MCP / files / env / touchpoints with the neighbour.
+3. Text with \`$\`, backticks or \`<…>\` → write it to a file with a quoted heredoc (\`<<'EOF'\`), then \`--set "$(cat file)"\`.
 
 ## After relating
 - \`tim_load_project\` and session-start directives list neighbours (label, name, optional description).
