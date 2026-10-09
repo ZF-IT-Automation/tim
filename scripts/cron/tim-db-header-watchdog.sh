@@ -18,6 +18,19 @@ mkdir -p "${LOG_DIR}"
 
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 LOG_FILE="${LOG_DIR}/${TIMESTAMP}.log"
+# Per-run logs: keep two weeks (41k files had piled up by 2026-10-09).
+find "${LOG_DIR}" -name '*.log' -mtime +14 -delete 2>/dev/null || true
+
+# Alerts reach Benni through the cron Telegram bot, not only this log (2026-10-09).
+send_alerts() {
+  local lines
+  lines=$(grep -E '^\[(ALERT|CRIT|FAIL|ERROR)\]' "${LOG_FILE}" 2>/dev/null || true)
+  [[ -z "${lines}" ]] && return 0
+  lines="${lines//&/&amp;}"; lines="${lines//</&lt;}"; lines="${lines//>/&gt;}"
+  "${HOME}/.hermes/bin/send-cron-telegram" "TIM $(basename "$0" .sh):"$'\n'"${lines}" >/dev/null 2>&1 \
+    || echo "[WARN] telegram alert failed" >>"${LOG_FILE}"
+}
+trap send_alerts EXIT
 
 if [[ ! -f "${DB_PATH}" ]]; then
   echo "[ALERT] DB file missing: ${DB_PATH}" | tee -a "${LOG_FILE}"

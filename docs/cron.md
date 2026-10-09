@@ -18,40 +18,34 @@ archived to `~/.hermes/scripts/archive/<name>.<timestamp>` first.
 ## Crontab
 
 The repo does not install crontab lines — a human pastes them into `crontab -e`.
-`scripts/deploy-cron.sh` prints the block below when a script it deployed has no
-matching entry, so the two cannot drift silently.
+`scripts/deploy-cron.sh` copies the scripts to `~/.hermes/scripts`; it never edits
+the crontab.
 
 ```cron
 */30 * * * * /home/bbbee/.hermes/scripts/tim-snapshot.sh >> /home/bbbee/.hermes/cron-outputs/tim-snapshot.log 2>&1
 0 * * * * /home/bbbee/.hermes/scripts/tim-wal-watchdog.sh >> /home/bbbee/.hermes/cron-outputs/tim-wal-watchdog.log 2>&1
-41 4 * * * /home/bbbee/.hermes/scripts/tim-compact-error-log.sh >> /home/bbbee/.hermes/cron-outputs/tim-compact-error-log.log 2>&1
 ```
 
-Only the third line is new (review Finding 3). The other jobs
-(`tim-snapshot-watchdog.sh`, `tim-snapshot-prune.sh`,
-`tim-single-instance-check.sh`, `tim-db-header-watchdog.sh`) are already registered;
-`crontab -l` is authoritative for their exact schedules.
+The other jobs (`tim-snapshot-watchdog.sh`, `tim-snapshot-prune.sh`,
+`tim-db-header-watchdog.sh`) are already registered; `crontab -l` is
+authoritative for their exact schedules.
 
-### Why `tim-compact-error-log.sh` needs an entry
+### Alerts
 
-`ErrorLogger.logError()` used to call `this.rotate()` on every write. Commit
-`2d85642` removed that — correctly, a mass `DELETE` on the write path is what
-produced the 69 GB WAL — and replaced it with the explicit
-`tim compact-error-log`. Nothing scheduled that replacement, so `error_log` is
-unbounded again. The daily 04:41 entry is the backstop. It only runs when no TIM MCP process is
-alive; otherwise it logs `SKIP` with the process IDs and retries at the next
-scheduled run. A process-discovery error fails closed. The CLI repeats writer
-verification under its maintenance lock before touching the database.
+The WAL, header and snapshot watchdogs send `[ALERT]`/`[CRIT]`/`[FAIL]`/`[ERROR]`
+lines to Telegram through `~/.hermes/bin/send-cron-telegram` (cron bot). A failed
+send is noted in the run log, never fatal. Per-run log files are kept 14 days.
 
-Unattended compaction never stops or starts MCP servers. The old stop/start
-wrapper killed host-owned stdio children every night. Starting an HTTP daemon
-cannot restore those existing Claude Code, Cursor, or Codex pipes.
+### Removed 2026-10-09
 
-On a machine with continuously running MCP servers, compaction will remain
-deferred. Arrange an explicit maintenance window, close the host sessions (and
-stop any HTTP daemon), then run `tim compact-error-log --vacuum`. Start the
-hosts again afterward. `scripts/tim-mcp-stop.sh` remains an explicit, disruptive
-operator tool for maintenance such as restores; cron does not call it.
+- `tim-compact-error-log.sh` (daily 04:41): its safety check counted the resident
+  `tim-mcp.service` as a writer, so it skipped every day and `error_log` grew
+  unbounded. `ErrorLogger.logError()` now trims at most two rows past the cap per
+  write — a ring buffer, never the mass `DELETE` that once grew a 69 GB WAL
+  (`2d85642`). `tim compact-error-log --vacuum` stays for a table already far past
+  the cap, in a maintenance window with host sessions closed.
+- `tim-single-instance-check.sh` (every 5 min): `systemctl --user` is unreachable
+  from cron, so every run failed; `tim-mcp.service` has `Restart=always`.
 
 ### Environment cron does not give you
 

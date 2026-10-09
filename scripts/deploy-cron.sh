@@ -39,7 +39,6 @@ done
 
 SOURCES=(
   "${ROOT}"/scripts/cron/*.sh
-  "${ROOT}/scripts/tim-compact-error-log.sh"
   # Not cron entries themselves, but the cron job and `tim restore` both invoke
   # them from ~/.hermes/scripts. Leaving them unsynced is how the deployed
   # stop script stayed fail-open and the start script kept its user-unit bug.
@@ -98,16 +97,3 @@ if [[ "${DRY_RUN}" -eq 1 && $((new + changed)) -gt 0 ]]; then
   echo "${PREFIX} rerun without --dry-run to deploy"
 fi
 
-# Copying the file is only half the job — cron still has to call it. Read only:
-# this script never edits the crontab.
-CRONTAB="$(crontab -l 2>/dev/null || true)"
-if [[ "${CRONTAB}" != *tim-compact-error-log.sh* ]]; then
-  cat <<EOF
-
-${PREFIX} no crontab entry for tim-compact-error-log.sh. Paste into \`crontab -e\`:
-
-41 4 * * * ${DEST}/tim-compact-error-log.sh >> \${HOME}/.hermes/cron-outputs/tim-compact-error-log.log 2>&1
-
-See docs/cron.md.
-EOF
-fi

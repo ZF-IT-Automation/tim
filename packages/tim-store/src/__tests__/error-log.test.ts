@@ -46,6 +46,26 @@ describe('ErrorLogger', () => {
       expect(row.session_id).toBeNull();
     });
 
+    it('keeps the table at maxEntries by dropping at most two old rows per write', () => {
+      const ring = new ErrorLogger(db, { maxEntries: 5, maxAgeDays: 365 });
+      db.prepare("INSERT INTO error_log (timestamp, tool, args_json, error) VALUES (?, 'schema_migration', '{}', 'audit')")
+        .run(new Date(0).toISOString());
+      for (let i = 0; i < 20; i++) ring.logError({ tool: 't', error: `e${i}` });
+      const rows = db.prepare("SELECT error FROM error_log WHERE tool = 't' ORDER BY id").all() as { error: string }[];
+      expect(rows.map(r => r.error)).toEqual(['e15', 'e16', 'e17', 'e18', 'e19'].slice(-rows.length));
+      expect(rows.length).toBeLessThanOrEqual(5);
+      // Audit rows are never trimmed.
+      expect(db.prepare("SELECT COUNT(*) c FROM error_log WHERE tool = 'schema_migration'").get()).toEqual({ c: 1 });
+    });
+
+    it('never mass-deletes: a table far past the cap loses at most two rows per write', () => {
+      const ring = new ErrorLogger(db, { maxEntries: 5, maxAgeDays: 365 });
+      const insert = db.prepare("INSERT INTO error_log (timestamp, tool, args_json, error) VALUES (?, 't', '{}', 'old')");
+      for (let i = 0; i < 50; i++) insert.run(new Date().toISOString());
+      ring.logError({ tool: 't', error: 'new' });
+      expect(db.prepare('SELECT COUNT(*) c FROM error_log').get()).toEqual({ c: 49 });
+    });
+
     it('should log with all fields', () => {
       logger.logError({
         tool: 'tim_write',

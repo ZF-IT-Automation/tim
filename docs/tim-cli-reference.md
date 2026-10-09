@@ -545,8 +545,9 @@ use --force to override (NOT recommended unless you know what you are doing)
 Rebuild `error_log` to the newest N rows (default 10_000) without a
 multi-million-row DELETE. Requires exclusive maintenance, fail-closed writer
 verification, and (when `--vacuum` is set) free-space preflight. Refuses
-while any `tim-mcp` writer holds the DB. Host wrapper:
-`scripts/tim-compact-error-log.sh` (stop → compact → guaranteed restart).
+while any `tim-mcp` writer holds the DB. Routine growth needs no maintenance:
+every write trims at most two rows past the cap (ring buffer). This command is
+for a table that is already far past it — run it in a maintenance window.
 
 ```
 tim compact-error-log --vacuum

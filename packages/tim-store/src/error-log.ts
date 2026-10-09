@@ -74,12 +74,23 @@ export class ErrorLogger {
     const argsJson = args ? safeStringify(args) : '{}';
 
     try {
-      this.db.prepare(`
+      const { lastInsertRowid } = this.db.prepare(`
         INSERT INTO error_log (timestamp, tool, args_json, error, stack, session_id)
         VALUES (?, ?, ?, ?, ?, ?)
       `).run(timestamp, tool, argsJson, error, stack ?? null, sessionId ?? null);
-      // Heavy cleanup is explicit (tim compact-error-log). Routine logging must
-      // not rebuild, DROP, VACUUM, or mass-DELETE on the write path.
+      // Ring buffer: each insert drops at most two rows that fell more than
+      // maxEntries ids behind, so a table at the cap stays there. Never a mass
+      // DELETE on the write path — that is what once grew a 69 GB WAL. A table
+      // already far past the cap shrinks only through `tim compact-error-log`.
+      // (The daily compaction cron could not run: a resident MCP server always
+      // counts as a writer, so error_log grew unbounded — Benni 2026-10-09.)
+      this.db.prepare(`
+        DELETE FROM error_log WHERE id IN (
+          SELECT id FROM error_log
+          WHERE id <= ? AND tool != 'schema_migration'
+          ORDER BY id LIMIT 2
+        )
+      `).run(Number(lastInsertRowid) - this.maxEntries);
     } catch {
       // Never let error logging itself cause a crash
     }

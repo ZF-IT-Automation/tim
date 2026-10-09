@@ -1,6 +1,6 @@
 #!/bin/bash
 # tim-snapshot-watchdog.sh — Alert if the newest snapshot is > 2h old.
-# no_agent cron (hourly). Writes alert to TIM P0062/Tasks via tim-wrap-cli.sh.
+# no_agent cron (hourly). Alerts go to Telegram via ~/.hermes/bin/send-cron-telegram.
 #
 # Environment:
 #   TIM_SNAPSHOT_DIR — snapshot directory (default: ${HOME}/.tim/snapshots)
@@ -16,14 +16,10 @@ ROLE="[tim-snapshot-watchdog]"
 alert() {
   local msg="$1"
   echo "${ROLE} ${msg}" >&2
-  # Write to TIM via tim-wrap-cli.sh, timeout in case MCP is down
-  if [ -x ~/.hermes/scripts/tim-wrap-cli.sh ]; then
-    timeout 10 ~/.hermes/scripts/tim-wrap-cli.sh write \
-      --content "TIM-BACKUP-WATCHDOG: ${msg}" \
-      --parent-title Tasks --project-id P0062 \
-      --tags '#task,#urgent,#backup,#watchdog' \
-      --confidence 1.0 2>/dev/null || echo "${ROLE} alert delivery failed (TIM MCP unreachable?)" >&2
-  fi
+  # Telegram via the cron bot (Benni 2026-10-09); the old path wrote into the retired P0062.
+  local esc="${msg//&/&amp;}"; esc="${esc//</&lt;}"; esc="${esc//>/&gt;}"
+  "${HOME}/.hermes/bin/send-cron-telegram" "TIM backup watchdog: ${esc}" >/dev/null 2>&1 \
+    || echo "${ROLE} telegram alert failed" >&2
 }
 
 LATEST=$(ls -t "${SNAPSHOT_DIR}"/tim-*.db 2>/dev/null | head -1 || true)
