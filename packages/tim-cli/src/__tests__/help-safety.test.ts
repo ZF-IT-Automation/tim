@@ -54,6 +54,7 @@ const HELP_CASES: HelpCase[] = [
   { args: ['sync', 'repair'], usage: 'Usage: tim sync repair' },
   { args: ['sync', 'dev'], usage: 'Usage: tim sync dev' },
   { args: ['root-entries'], usage: 'Usage: tim root-entries' },
+  { args: ['read'], usage: 'Usage: tim read' },
   { args: ['consolidate'], usage: 'Usage: tim consolidate' },
   { args: ['consolidate', 'find-duplicates'], usage: 'Usage: tim consolidate find-duplicates' },
   { args: ['consolidate', 'find-decay'], usage: 'Usage: tim consolidate find-decay' },

@@ -1,12 +1,15 @@
 // `tim open-work` — every open task, bug and idea of every project as JSON.
+// `tim read <id>...` — those entries in full (body + children), as JSON.
 //
-// A read surface for outside tools (the team-up dashboard panel): they get the
-// backlog through this command instead of opening the database themselves.
-// It adds no SELECTs of its own — getTasks/getBugs and the Ideas section are
-// the same queries the briefing and tim_show already run.
+// A read surface for outside tools (the team-up dashboard panel, usage-spender):
+// they get the backlog through these commands instead of opening the database
+// themselves. open-work adds no SELECTs of its own — getTasks/getBugs and the
+// Ideas section are the same queries the briefing and tim_show already run.
+// Secret entries never leave through either: their text may end up in a prompt
+// sent to an outside model.
 
-import { TimStore, isSecret } from 'tim-store';
-import { loadConfig, isClosedBugStatus } from 'tim-core';
+import { TimStore, isSecret, isTaskMarker, isIdeaMarker } from 'tim-store';
+import { loadConfig, isClosedBugStatus, type Entry } from 'tim-core';
 import * as path from 'path';
 import * as os from 'os';
 
@@ -101,12 +104,102 @@ export async function collectOpenWork(store: TimStore): Promise<OpenWorkReport> 
   return { projects: projects.map(p => ({ label: p.label, title: p.title })), items };
 }
 
-export async function cmdOpenWork(_args: string[]): Promise<void> {
+export interface ReadItem {
+  id: string;
+  title: string;
+  kind: string;
+  status: string | null;
+  priority: string | null;
+  project: string | null;
+  tags: string[];
+  body: string;
+  truncated: boolean;
+}
+
+export type ReadResult = ReadItem | { id: string; error: 'not_found' | 'secret' };
+
+/** A prompt-sized body: whole task trees are usually far below this. */
+export const READ_BODY_MAX_CHARS = 20_000;
+const READ_CHILD_DEPTH = 3;
+
+const asObject = (v: unknown): Record<string, unknown> =>
+  typeof v === 'object' && v !== null && !Array.isArray(v) ? v as Record<string, unknown> : {};
+const asString = (v: unknown): string | null => (typeof v === 'string' && v ? v : null);
+
+/** Same markers as getTasks / getBugs / the Ideas list, so kinds agree with open-work. */
+function classify(entry: Entry): Pick<ReadItem, 'kind' | 'status' | 'priority'> {
+  const m = entry.metadata;
+  const type = m.type as string | undefined; // legacy 'bug' / 'idea' values predate MetadataType
+  if (isTaskMarker(m.task)) {
+    const t = asObject(m.task);
+    return { kind: 'task', status: asString(t.status ?? m.status) ?? 'todo', priority: asString(t.priority) };
+  }
+  if (type === 'bug' || (m.bug !== undefined && m.bug !== null && m.bug !== false) || entry.tags.includes('#bug')) {
+    const b = asObject(m.bug);
+    return { kind: 'bug', status: asString(b.status ?? m.status) ?? 'open', priority: asString(b.severity ?? m.severity) };
+  }
+  if (isIdeaMarker(m.idea) || type === 'idea') return { kind: 'idea', status: ideaStatus(m), priority: null };
+  return { kind: asString(type) ?? asString(m.kind) ?? 'entry', status: asString(m.status), priority: null };
+}
+
+async function renderChildren(store: TimStore, parentId: string, level: number, out: string[]): Promise<void> {
+  if (level > READ_CHILD_DEPTH + 1) return;
+  const db = store.getDb();
+  for (const child of await store.getChildren(parentId)) {
+    if (isSecret(db, child.id)) continue;
+    out.push(`${'#'.repeat(level)} ${listTitle(child.title)}`, child.content.trim());
+    await renderChildren(store, child.id, level + 1, out);
+  }
+}
+
+export async function readEntries(store: TimStore, ids: string[], maxChars = READ_BODY_MAX_CHARS): Promise<ReadResult[]> {
+  const results: ReadResult[] = [];
+  for (const id of ids) {
+    const entry = await store.read(id);
+    if (!entry) { results.push({ id, error: 'not_found' }); continue; }
+    if (isSecret(store.getDb(), entry.id)) { results.push({ id: entry.id, error: 'secret' }); continue; }
+    const parts = [entry.content.trim()];
+    await renderChildren(store, entry.id, 2, parts);
+    const full = parts.filter(Boolean).join('\n\n');
+    results.push({
+      id: entry.id,
+      title: listTitle(entry.title),
+      ...classify(entry),
+      project: store.getProjectLabel(entry.id),
+      tags: entry.tags,
+      body: full.slice(0, maxChars),
+      truncated: full.length > maxChars,
+    });
+  }
+  return results;
+}
+
+function openStore(): TimStore {
   const config = loadConfig();
   const dbPath = process.env.TIM_DB_PATH || config.dbPath || path.join(os.homedir(), '.tim', 'tim.db');
-  const store = new TimStore(dbPath);
+  return new TimStore(dbPath);
+}
+
+export async function cmdOpenWork(_args: string[]): Promise<void> {
+  const store = openStore();
   try {
     console.log(JSON.stringify(await collectOpenWork(store), null, 2));
+  } finally {
+    store.close();
+  }
+}
+
+/** `tim read <id>... [--json]` — always a JSON array, one result per id, in order. */
+export async function cmdRead(args: string[]): Promise<void> {
+  const ids = args.filter(a => a !== '--json');
+  if (ids.length === 0 || ids.some(a => a.startsWith('-'))) {
+    console.error('Usage: tim read <id>... [--json]');
+    process.exitCode = 1;
+    return;
+  }
+  const store = openStore();
+  try {
+    console.log(JSON.stringify(await readEntries(store, ids), null, 2));
   } finally {
     store.close();
   }

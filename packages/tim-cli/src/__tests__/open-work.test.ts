@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { TimStore, setSecretSubtree } from 'tim-store';
-import { collectOpenWork } from '../open-work.js';
+import { collectOpenWork, readEntries } from '../open-work.js';
 
 describe('collectOpenWork', () => {
   let dbPath: string;
@@ -50,5 +50,58 @@ describe('collectOpenWork', () => {
     await setSecretSubtree(store, bug.id);
     const after = await collectOpenWork(store);
     expect(after.items.some(i => i.id === bug.id)).toBe(false);
+  });
+});
+
+describe('readEntries', () => {
+  let dbPath: string;
+  let store: TimStore;
+
+  beforeEach(() => {
+    dbPath = path.join(os.tmpdir(), `tim-read-${Date.now()}.db`);
+    store = new TimStore(dbPath);
+  });
+
+  afterEach(() => {
+    store.close();
+    for (const suffix of ['', '-wal', '-shm']) {
+      if (fs.existsSync(dbPath + suffix)) fs.unlinkSync(dbPath + suffix);
+    }
+  });
+
+  it('returns body with children, kind, status and project; hides secret children', async () => {
+    const project = await store.write('Widget', {
+      metadata: { kind: 'project', label: 'P0900', prefix: 'P', seq: 900 },
+    });
+    const task = await store.write('Why: it breaks.', {
+      title: 'Fix the widget', parentId: project.id,
+      tags: ['#widget'], metadata: { task: { status: 'todo', priority: 'P1' } },
+    });
+    await store.write('Patch the gear.', { title: 'Step one', parentId: task.id });
+    const hidden = await store.write('hunter2', { title: 'Credentials', parentId: task.id });
+    await setSecretSubtree(store, hidden.id);
+
+    const [item] = await readEntries(store, [task.id]);
+    expect(item).toMatchObject({
+      id: task.id, title: 'Fix the widget', kind: 'task', status: 'todo',
+      priority: 'P1', project: 'P0900', tags: ['#widget'], truncated: false,
+    });
+    expect('body' in item && item.body).toBe('Why: it breaks.\n\n## Step one\n\nPatch the gear.');
+  });
+
+  it('reports missing and secret ids instead of their text, and caps the body', async () => {
+    const project = await store.write('Widget', {
+      metadata: { kind: 'project', label: 'P0901', prefix: 'P', seq: 901 },
+    });
+    const secret = await store.write('key', { title: 'Vault', parentId: project.id });
+    await setSecretSubtree(store, secret.id);
+    const big = await store.write('x'.repeat(50), {
+      title: 'Big bug', parentId: project.id, metadata: { bug: { status: 'open', severity: 'high' } },
+    });
+
+    const results = await readEntries(store, ['nope', secret.id, big.id], 10);
+    expect(results[0]).toEqual({ id: 'nope', error: 'not_found' });
+    expect(results[1]).toEqual({ id: secret.id, error: 'secret' });
+    expect(results[2]).toMatchObject({ kind: 'bug', status: 'open', priority: 'high', body: 'x'.repeat(10), truncated: true });
   });
 });

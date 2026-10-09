@@ -29,7 +29,7 @@ node packages/tim-cli/dist/cli.js statusline
 
 ---
 
-## Command Overview (45 commands)
+## Command Overview (46 commands)
 
 ### Top-Level Summary
 
@@ -79,7 +79,8 @@ node packages/tim-cli/dist/cli.js statusline
 | 42 | `tim viewer` | Browse the entry tree in a local web UI; move and soft-delete nodes |
 | 43 | `tim sessions reap` | Reap empty session skeletons that never logged an exchange |
 | 44 | `tim open-work` | Print every project's open tasks, bugs and ideas as JSON |
-| 45 | `tim --help` | Show top-level help |
+| 45 | `tim read` | Print entries with body and children as JSON |
+| 46 | `tim --help` | Show top-level help |
 
 ---
 
@@ -758,7 +759,28 @@ Secret entries are left out.
 
 ---
 
-### 38. `tim --help`
+### 38. `tim read <id>... [--json]`
+
+Print entries in full as a JSON array, one result per id, in the order given — the
+companion to `open-work` for outside tools that hand a task to a model (team-up
+usage-spender). Ids may be entry ids or labels. `body` is the entry's content
+followed by its children (three levels, as `##`/`###`/`####` headings), capped at
+20,000 characters (`truncated: true` when cut). Secret entries come back as
+`{"id", "error": "secret"}` and secret children are left out; unknown or deleted
+ids as `{"id", "error": "not_found"}`. `--json` is accepted; the output is always JSON.
+
+```json
+[
+  { "id": "ubun-1009-ns-01M4…", "title": "…", "kind": "task", "status": "todo",
+    "priority": "P1", "project": "P0073", "tags": ["#usage-spender"],
+    "body": "Why: …\n\n## Step one\n\n…", "truncated": false },
+  { "id": "nope", "error": "not_found" }
+]
+```
+
+---
+
+### 39. `tim --help`
 
 Print the top-level command inventory without opening the TIM database.
 
@@ -849,7 +871,8 @@ never replaces a different local marker; reconcile that conflict explicitly inst
 
 ### How to read a specific entry
 
-The CLI doesn't have a built-in `tim read` command — use the TIM MCP tools instead.
+`tim read <id> --json` prints an entry with its children (see above). For
+anything richer — edges, history, depth control — use the TIM MCP tools.
 Configure your MCP client with `~/.tim/mcp.json`:
 
 ```json
