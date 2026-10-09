@@ -1,7 +1,6 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { HOST_TOOLS } from './install.js';
 
 export interface UpdateSkillsResult {
   copied: { skill: string; target: string }[];
@@ -45,7 +44,7 @@ export function copySkillsTo(srcRoot: string, skillsBase: string): { skill: stri
   return copied;
 }
 
-export function resolveHostSkillsBase(host: SkillsHost): string | null {
+export function resolveHostSkillsBase(host: SkillsHost): string {
   const home = process.env.HOME || os.homedir();
   return (
     host === 'claude'
@@ -54,18 +53,13 @@ export function resolveHostSkillsBase(host: SkillsHost): string | null {
         ? path.join(process.env.CODEX_HOME ?? path.join(home, '.codex'), 'skills')
         : host === 'hermes'
           ? path.join(home, '.hermes', 'skills')
-          : null
+          : path.join(home, '.cursor', 'skills')
   );
 }
 
 export function updateSkillsForHost(host: SkillsHost): UpdateSkillsResult {
   const srcRoot = bundledSkillsDir();
-  const skillsBase = resolveHostSkillsBase(host);
-
-  if (!skillsBase) {
-    return { copied: [], skipped: ['Cursor has no TIM skill install path; use MCP guidance instead'] };
-  }
-  return { copied: copySkillsTo(srcRoot, skillsBase), skipped: [] };
+  return { copied: copySkillsTo(srcRoot, resolveHostSkillsBase(host)), skipped: [] };
 }
 
 export function updateSkills(): UpdateSkillsResult {
@@ -73,22 +67,18 @@ export function updateSkills(): UpdateSkillsResult {
   const skipped: string[] = [];
   const copied: { skill: string; target: string }[] = [];
   const home = process.env.HOME || os.homedir();
+  const bases = [
+    ...(['claude', 'codex', 'hermes', 'cursor'] as const).map(resolveHostSkillsBase),
+    path.join(home, '.config', 'opencode', 'skills'),
+    path.join(home, '.gemini', 'skills'),
+  ];
 
-  for (const tool of HOST_TOOLS) {
-    if (!tool.detect()) continue;
-    const skillsBase = tool.id === 'claude-code'
-      ? path.join(home, '.claude', 'skills')
-      : tool.id === 'opencode'
-        ? path.join(home, '.config', 'opencode', 'skills')
-        : null;
-    if (!skillsBase) {
-      skipped.push(`${tool.name} (no skills dir)`);
-      continue;
-    }
-    copied.push(...copySkillsTo(srcRoot, skillsBase));
+  // A host is installed when its config dir (the skills dir's parent) exists.
+  for (const base of bases) {
+    if (fs.existsSync(path.dirname(base))) copied.push(...copySkillsTo(srcRoot, base));
   }
 
-  if (copied.length === 0 && skipped.length === 0) {
+  if (copied.length === 0) {
     skipped.push('No supported hosts detected');
   }
 
