@@ -1035,7 +1035,7 @@ export const TOOL_DEFS: Array<{
   {
     name: 'tim_load_project',
     description:
-      'Load a project by label or alias and bind the session to it. Loading a different project re-binds the session there (follow the work) — pass bind:false for a cross-project read that leaves the binding alone.',
+      'Load a project by label or alias and bind the session to it. Loading a different project re-binds the session there (follow the work) — pass bind:false for a cross-project read that leaves the binding alone. Work that changes or needs another project → a worker in its repo (skill tim-cross-project).',
     schema: TimLoadProjectSchema,
   },
   {

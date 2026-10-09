@@ -1,6 +1,6 @@
 ---
 name: tim-relate-projects
-description: Link TIM projects so resume-topic and continue recall neighbour sessions; then give both sides a description and a current Interfaces entry.
+description: Link TIM projects so resume-topic and continue recall neighbour sessions, then give both sides a description and a current Interfaces entry.
 ---
 
 # tim-relate-projects
@@ -32,8 +32,11 @@ tim project unrelate game-harness
 ## Every relate: finish both sides
 `relate` alone is half the job — a neighbour without description or Interfaces is a bare name to the other side. Right after it, for **each** of the two projects:
 1. `tim project related` — no description → `tim project describe <P> "…"` (from README / package.json).
-2. `tim project interfaces <P>` — missing, or stale (commands/files the repo no longer has, changelog shape) → rewrite with `--set`. Source = the repo (`--help`, CLI dispatch, env reads), not memory. Shape: header with date + commit, then CLI / MCP / files / env / touchpoints with the neighbour.
+2. `tim project interfaces <P>` — missing, or stale (commands/files the repo no longer has, changelog shape) → rewrite with `--set`. Source = the repo (`--help`, CLI dispatch, env reads), not memory. This session's own project: read its repo directly. The other project: a read-only worker in its repo collects it (skill `tim-cross-project`); you `--set` from its report. Shape: header with repo path, date and commit, then CLI / MCP / files / env / touchpoints with the neighbour.
 3. Text with `$`, backticks or `<…>` → write it to a file with a quoted heredoc (`<<'EOF'`), then `--set "$(cat file)"`.
+
+## Work that touches another project
+Skill `tim-cross-project` — a worker in that project's repo, not this session.
 
 ## After relating
 - `tim_load_project` and session-start directives list neighbours (label, name, optional description).

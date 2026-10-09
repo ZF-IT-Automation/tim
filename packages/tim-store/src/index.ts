@@ -54,6 +54,7 @@ export {
   RELATED_EDGE_TYPE,
   listRelatedProjects,
   formatRelatedProjectLine,
+  RELATED_PROJECTS_WORK_HINT,
   relateProjects,
   unrelateProjects,
   setProjectDescription,

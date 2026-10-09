@@ -3,7 +3,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as crypto from 'node:crypto';
 import { LOCK_TTL_MS, TIM_META_DIR, SUMMARIZER_LOCK, MARKER_LOCK } from './constants.js';
-import type { TimStore } from 'tim-store';
+import { RELATED_PROJECTS_WORK_HINT, type TimStore } from 'tim-store';
 
 export const MARKER_FILENAME = '.tim-project';
 export { SUMMARIZER_LOCK, MARKER_LOCK } from './constants.js';
@@ -565,7 +565,7 @@ function briefingBlock(briefing?: DirectiveBriefing): string[] {
 
   const related = (briefing.relatedProjectLines ?? []).map(l => l.trimEnd()).filter(l => l.trim());
   if (related.length > 0) {
-    out.push('', '── Related projects ──', ...related);
+    out.push('', '── Related projects ──', ...related, RELATED_PROJECTS_WORK_HINT);
   }
 
   const activity = briefing.neighbourActivity ?? [];

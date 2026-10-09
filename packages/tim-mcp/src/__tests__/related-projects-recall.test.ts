@@ -157,6 +157,7 @@ describe('related project briefing surfaces', () => {
       tokenBudget: 8000,
     });
     expect(out).toContain('── Related projects ──');
+    expect(out).toContain('skill tim-cross-project');
     expect(out).toContain('Does side work.');
     expect(out).toContain('P0931');
   });

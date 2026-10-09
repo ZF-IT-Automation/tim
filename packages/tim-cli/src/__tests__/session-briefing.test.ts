@@ -121,6 +121,7 @@ describe('session-start directive carries content', () => {
     store.close();
     const out = run(['resolve-project', '--cwd', cwd, '--format', 'directive']).stdout;
     expect(out).toContain('── Related projects ──');
+    expect(out).toContain('skill tim-cross-project');
     expect(out).toContain('P0064');
   });
 

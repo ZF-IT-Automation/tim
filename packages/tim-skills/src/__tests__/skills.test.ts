@@ -208,6 +208,7 @@ describe('weak-model skills', () => {
       'tim-continue',
       'tim-tag-inventory',
       'tim-relate-projects',
+      'tim-cross-project',
     ]);
   });
 });

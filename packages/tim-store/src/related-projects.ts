@@ -78,6 +78,10 @@ export async function listRelatedProjects(
   return out;
 }
 
+/** Last line of every briefing's related-projects block. */
+export const RELATED_PROJECTS_WORK_HINT =
+  'Work that changes or needs another project → a worker in that repo (skill tim-cross-project).';
+
 export function formatRelatedProjectLine(info: RelatedProjectInfo): string {
   const base = `${info.label} — ${info.displayName}`;
   const desc = info.description?.trim();

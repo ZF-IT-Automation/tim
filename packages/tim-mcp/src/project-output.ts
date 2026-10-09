@@ -1,5 +1,6 @@
 import type { Entry, ProjectSchema } from 'tim-core';
 import { findSchemaSection, isClosedBugMetadata, resolveBugStatusFromMetadata, taskPriorityRank } from 'tim-core';
+import { RELATED_PROJECTS_WORK_HINT } from 'tim-store';
 import type { LoadProjectResult } from 'tim-store';
 import { isTaskMarker, SUMMARY_NODE_TITLE } from 'tim-store';
 import { DEFAULT_BRIEFING_RECENT_SESSIONS, clampSummary } from 'tim-hooks';
@@ -986,7 +987,7 @@ function formatProjectOutputWithTokenBudget(
       id: 'related-projects',
       priority: BRIEFING_PRIORITY.header,
       order: LOAD_BLOCK_ORDER.relatedProjects,
-      lines: ['', '── Related projects ──', '', ...ctx.relatedProjectLines],
+      lines: ['', '── Related projects ──', '', ...ctx.relatedProjectLines, RELATED_PROJECTS_WORK_HINT],
     });
   }
 
