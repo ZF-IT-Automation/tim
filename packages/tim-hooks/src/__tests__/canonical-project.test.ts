@@ -15,7 +15,6 @@ const HOOK_SCRIPTS = [
   'tim-session-start.sh',
   'tim-post-commit.sh',
   'tim-hermes-session-cache.sh',
-  'tim-hermes-statusline.sh',
   'tim-cursor-inject.sh',
   'tim-statusline.sh',
 ];

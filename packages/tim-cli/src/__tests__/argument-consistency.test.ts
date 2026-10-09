@@ -11,7 +11,6 @@ const HANDLERS = [
   'restore.ts',
   'compact-error-log.ts',
   'new-project.ts',
-  'hermes-statusline-install.ts',
   'viewer.ts',
 ];
 

@@ -133,32 +133,6 @@ export function formatNoProjectStatusLine(): string {
   return 'no project';
 }
 
-/** JSON for Hermes CLI status bar (see packages/tim-hooks/scripts/hermes-cli-tim-statusline.patch). */
-export interface HermesStatusJson {
-  device: string;
-  project: string;
-  o_node: string;
-  counter: string;
-}
-
-export function formatHermesStatus(
-  counters: StatuslineCounters | null,
-  projectName?: string,
-): HermesStatusJson {
-  if (!counters) {
-    return { device: '', project: 'no project', o_node: '', counter: '' };
-  }
-  const batchSize = counters.batchSize > 0 ? counters.batchSize : DEFAULT_BATCH_SIZE;
-  const inBatch = exchangesInCurrentBatch(counters.exchanges, batchSize);
-  const k = summaryIn(counters.exchanges, batchSize);
-  return {
-    device: '',
-    project: projectName?.trim() || counters.project,
-    o_node: '',
-    counter: `${inBatch}/${batchSize} · Σ${k}`,
-  };
-}
-
 async function projectNameForStatusline(
   store: TimStore,
   counters: StatuslineCounters,
@@ -208,22 +182,6 @@ export async function statuslineFromCwd(
   }
 }
 
-export async function hermesStatusFromCwd(
-  cwd: string,
-  options?: FindMarkerOptions,
-  sessionIdArg?: string,
-): Promise<HermesStatusJson> {
-  const store = new TimStore(dbPath());
-  try {
-    const counters = await resolveStatuslineData(cwd, sessionIdArg, options, store);
-    if (!counters) return formatHermesStatus(null);
-    const name = await projectNameForStatusline(store, counters);
-    return formatHermesStatus(counters, name);
-  } finally {
-    store.close();
-  }
-}
-
 /** Sync stdin read — reliable when Claude pipes JSON (async iterator can miss short pipes). */
 export function readStatuslineInputSync(): StatusLineInput {
   try {
@@ -239,7 +197,6 @@ export function readStatuslineInputSync(): StatusLineInput {
 export interface StatuslineCliOptions {
   cwd?: string;
   sessionId?: string;
-  format?: 'text' | 'hermes';
 }
 
 export async function runStatusline(opts: StatuslineCliOptions = {}): Promise<void> {
@@ -251,11 +208,6 @@ export async function runStatusline(opts: StatuslineCliOptions = {}): Promise<vo
     const counters = await resolveStatuslineData(cwd, opts.sessionId?.trim(), findOpts, store);
     const projectName = counters ? await projectNameForStatusline(store, counters) : undefined;
 
-    const format = opts.format ?? 'text';
-    if (format === 'hermes') {
-      process.stdout.write(`${JSON.stringify(formatHermesStatus(counters, projectName))}\n`);
-      return;
-    }
     const line = counters
       ? formatTimStatusLine(counters, projectName)
       : formatNoProjectStatusLine();

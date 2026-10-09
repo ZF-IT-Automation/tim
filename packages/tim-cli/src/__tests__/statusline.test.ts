@@ -3,7 +3,6 @@ import {
   exchangesInCurrentBatch,
   summaryIn,
   formatTimStatusLine,
-  formatHermesStatus,
   formatNoProjectStatusLine,
   statuslineFromCwd,
   resolveStatuslineCwd,
@@ -55,25 +54,6 @@ describe('statusline', () => {
 
   it('no project line', () => {
     expect(formatNoProjectStatusLine()).toBe('no project');
-  });
-
-  it('hermes JSON format uses display name', () => {
-    expect(
-      formatHermesStatus(
-        {
-          project: 'P0063',
-          exchanges: 1,
-          batchSize: 5,
-          batchesSummarized: 0,
-        },
-        'TIM',
-      ),
-    ).toEqual({
-      device: '',
-      project: 'TIM',
-      o_node: '',
-      counter: '1/5 · Σ4',
-    });
   });
 
   it('resolveStatuslineCwd prefers workspace.current_dir', () => {

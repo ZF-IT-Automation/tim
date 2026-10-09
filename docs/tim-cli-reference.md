@@ -29,7 +29,7 @@ node packages/tim-cli/dist/cli.js statusline
 
 ---
 
-## Command Overview (46 commands)
+## Command Overview (45 commands)
 
 ### Top-Level Summary
 
@@ -49,38 +49,37 @@ node packages/tim-cli/dist/cli.js statusline
 | 12 | `tim hook log` | Log a single exchange to a session |
 | 13 | `tim checkpoint` | Manual checkpoint for a session |
 | 14 | `tim rebalance` | Rebalance exchange batches at boundaries |
-| 15 | `tim statusline` | Status text or Hermes JSON for UI display |
-| 16 | `tim setup-hermes-statusline` | Install Hermes TUI status bar integration |
-| 17 | `tim export` | Export TIM DB to `.hmem` or text format |
-| 18 | `tim import` | Import from `.hmem` file |
-| 19 | `tim migrate-from-hmem` | Guided hmem-to-TIM migration with dry-run, snapshot, import, audit handoff |
-| 20 | `tim migrate-schema` | Apply pending database schema migrations (explicit opt-in) |
-| 21 | `tim migrate` | Metadata migrations (`tags-to-types`, `project-kind`, `retire-deprecated-tags`) |
-| 22 | `tim reap-checkpoints` | Reap checkpoints whose session already has a summarizer rollup |
-| 23 | `tim snapshot` | Snapshot live DB to `~/.tim/snapshots/` (SQLite backup) |
-| 24 | `tim restore` | Restore DB from a snapshot |
-| 25 | `tim compact-error-log` | Rebuild a bloated error_log; refuses while writers hold the DB |
-| 26 | `tim release-check` | Verify release gates, beta smoke checks, and packaging safety |
-| 27 | `tim setup-agent` | Install TIM MCP, skills, hooks, and smoke guidance for one agent host |
-| 28 | `tim sync connect` | Connect to o9k-sync server |
-| 29 | `tim sync disconnect` | Remove local sync configuration |
-| 30 | `tim sync push` | Push unacked staging to server |
-| 31 | `tim sync pull` | Pull remote changes |
-| 32 | `tim sync owner` | Drain sync on an interval; one owner per database |
-| 33 | `tim sync status` | Show sync configuration and health |
-| 34 | `tim sync audit` | Read-only sync diagnostic (`--json`) |
-| 35 | `tim sync repair` | Archive unbound state and write a new null cursor |
-| 36 | `tim sync dev` | Start local dev sync server (port 3100) |
-| 37 | `tim user init` | Create the human profile scaffold |
-| 38 | `tim user profile` | Show the human profile tree summary |
-| 39 | `tim update-skills` | Copy bundled TIM skills to detected agent hosts |
-| 40 | `tim root-entries` | List root entries |
-| 41 | `tim consolidate` | Run memory consolidation |
-| 42 | `tim secret` | Manage secret entry metadata |
-| 43 | `tim viewer` | Browse the entry tree in a local web UI; move and soft-delete nodes |
-| 44 | `tim sessions reap` | Reap empty session skeletons that never logged an exchange |
-| 45 | `tim open-work` | Print every project's open tasks, bugs and ideas as JSON |
-| 46 | `tim --help` | Show top-level help |
+| 15 | `tim statusline` | One-line status text (shell prompt, Claude Code status line) |
+| 16 | `tim export` | Export TIM DB to `.hmem` or text format |
+| 17 | `tim import` | Import from `.hmem` file |
+| 18 | `tim migrate-from-hmem` | Guided hmem-to-TIM migration with dry-run, snapshot, import, audit handoff |
+| 19 | `tim migrate-schema` | Apply pending database schema migrations (explicit opt-in) |
+| 20 | `tim migrate` | Metadata migrations (`tags-to-types`, `project-kind`, `retire-deprecated-tags`) |
+| 21 | `tim reap-checkpoints` | Reap checkpoints whose session already has a summarizer rollup |
+| 22 | `tim snapshot` | Snapshot live DB to `~/.tim/snapshots/` (SQLite backup) |
+| 23 | `tim restore` | Restore DB from a snapshot |
+| 24 | `tim compact-error-log` | Rebuild a bloated error_log; refuses while writers hold the DB |
+| 25 | `tim release-check` | Verify release gates, beta smoke checks, and packaging safety |
+| 26 | `tim setup-agent` | Install TIM MCP, skills, hooks, and smoke guidance for one agent host |
+| 27 | `tim sync connect` | Connect to o9k-sync server |
+| 28 | `tim sync disconnect` | Remove local sync configuration |
+| 29 | `tim sync push` | Push unacked staging to server |
+| 30 | `tim sync pull` | Pull remote changes |
+| 31 | `tim sync owner` | Drain sync on an interval; one owner per database |
+| 32 | `tim sync status` | Show sync configuration and health |
+| 33 | `tim sync audit` | Read-only sync diagnostic (`--json`) |
+| 34 | `tim sync repair` | Archive unbound state and write a new null cursor |
+| 35 | `tim sync dev` | Start local dev sync server (port 3100) |
+| 36 | `tim user init` | Create the human profile scaffold |
+| 37 | `tim user profile` | Show the human profile tree summary |
+| 38 | `tim update-skills` | Copy bundled TIM skills to detected agent hosts |
+| 39 | `tim root-entries` | List root entries |
+| 40 | `tim consolidate` | Run memory consolidation |
+| 41 | `tim secret` | Manage secret entry metadata |
+| 42 | `tim viewer` | Browse the entry tree in a local web UI; move and soft-delete nodes |
+| 43 | `tim sessions reap` | Reap empty session skeletons that never logged an exchange |
+| 44 | `tim open-work` | Print every project's open tasks, bugs and ideas as JSON |
+| 45 | `tim --help` | Show top-level help |
 
 ---
 
@@ -395,38 +394,12 @@ Usage: tim rebalance --session <id>
 
 ---
 
-### 14. `tim statusline [--cwd <dir>] [--session <id>] [--format text|hermes]`
+### 14. `tim statusline [--cwd <dir>] [--session <id>]`
 
-Short status string for shell prompts or Hermes TUI status bar.
+Short status string for shell prompts or the Claude Code status line.
 
-**Text format** (default):
 ```
 P9999 · 0/5 exchanges · summary in 5
-```
-
-**Hermes JSON format** (`--format hermes`):
-```json
-{"device":"","project":"P9999","o_node":"","counter":"0/5 · Σ5"}
-```
-
----
-
-### 15. `tim setup-hermes-statusline [--dry-run] [--skip-build]`
-
-Install the Hermes TUI status bar integration. Symlinks hooks, patches `cli.py`,
-builds TypeScript, and verifies the integration.
-
-```
-✓ scripts: <tim-repo>/packages/tim-hooks/scripts
-○ symlink:tim-hermes-session-cache.sh: already linked
-○ symlink:tim-hermes-statusline.sh: already linked
-○ config.yaml: tim-hermes-session-cache.sh already registered
-✓ hermes-cli: patched cli.py
-✓ build: npx tsc -b completed
-✓ verify: statusline JSON: {"device":"","project":"P9999","o_node":"","counter":"0/5 · Σ5"}
-
-Done. Restart Hermes so cli.py changes load.
-Test: bash ~/.hermes/agent-hooks/tim-hermes-statusline.sh | jq .
 ```
 
 ---
@@ -629,7 +602,7 @@ tim setup-agent --host codex
 | `claude` | Writes Claude Code JSON MCP config | Copies bundled TIM skills to `~/.claude/skills` | SessionStart, UserPromptSubmit, Stop and SessionEnd in `~/.claude/settings.json` |
 | `codex` | Writes `[mcp_servers.tim]` to `~/.codex/config.toml` with backup | Copies bundled TIM skills to `$CODEX_HOME/skills` or `~/.codex/skills` | `notify` in `config.toml` (exchange logging) and a SessionStart hook in `hooks.json` (needs Codex hook trust) |
 | `cursor` | Writes Cursor JSON MCP config | Reports manual skill guidance | `sessionStart`, `stop` and `sessionEnd` in `~/.cursor/hooks.json` |
-| `hermes` | Reports manual MCP guidance | Copies bundled TIM skills to `~/.hermes/skills` | Installs Hermes TIM statusline hooks |
+| `hermes` | Reports manual MCP guidance | Copies bundled TIM skills to `~/.hermes/skills` | Links and registers the `tim-hermes-session-cache.sh` pre_llm_call hook |
 
 Hook commands spell out the absolute node binary and `cli.js`, so they work
 without `tim` or node on the PATH a host gives its hooks. Rerunning setup-agent
@@ -999,7 +972,7 @@ Commands that support `--format`:
 |---------|---------|
 | `resolve-project` | `label` (default), `json`, `directive` |
 | `resolve-session` | `label`, `directive`, `json` |
-| `statusline` | `text` (default), `hermes` |
+| `statusline` | none (text only) |
 | `export` | `hmem` (default), `text` |
 
 ### Quick Reference Card
@@ -1014,7 +987,7 @@ Status:         tim statusline
 Data Mgmt:      tim export, tim import, tim migrate
 Safety:         tim snapshot, tim restore
 Sync:           tim sync {connect,push,pull,owner,status,dev}
-Setup:          tim init, tim setup-hermes-statusline
+Setup:          tim init, tim setup-agent
 ```
 
 ---

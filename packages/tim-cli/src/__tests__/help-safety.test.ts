@@ -31,7 +31,6 @@ const HELP_CASES: HelpCase[] = [
   { args: ['checkpoint'], usage: 'Usage: tim checkpoint' },
   { args: ['rebalance'], usage: 'Usage: tim rebalance' },
   { args: ['statusline'], usage: 'Usage: tim statusline' },
-  { args: ['setup-hermes-statusline'], usage: 'Usage: tim setup-hermes-statusline' },
   { args: ['export'], usage: 'Usage: tim export' },
   { args: ['import'], usage: 'Usage: tim import' },
   { args: ['migrate-from-hmem'], usage: 'Usage: tim migrate-from-hmem' },

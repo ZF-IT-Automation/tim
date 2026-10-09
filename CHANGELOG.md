@@ -4,6 +4,10 @@ All notable changes to TIM are documented in this file.
 
 ## [Unreleased]
 
+### Removed (2026-10-09)
+
+- **Hermes status bar** — `tim setup-hermes-statusline`, `tim statusline --format hermes`, the `cli.py` patch, `tim-hermes-statusline.sh` and doctor's "Hermes statusline" check. It patched Hermes' own source and never ran on the live install. `setup-agent --host hermes` now installs the skills and the `tim-hermes-session-cache.sh` pre_llm_call hook only. The Claude Code status line (`tim statusline`, `tim-statusline.sh`) stays.
+
 ### Caveman style for everything TIM stores (2026-10-04)
 
 - **One rule, every writer** — `CAVEMAN_STYLE` (tim-core) goes into the batch, rollup, project-summary and compress prompts, placed next to the format part (at the top of a long prompt the model ignored it). `tim_write`/`tim_update` describe `content` with the one-line form; the tim-using, tim-handoff and tim-session-start skills say the same; a global rule in P0000/Rules reaches every briefing. Benni: briefings and entries are read by agents, almost never by people.

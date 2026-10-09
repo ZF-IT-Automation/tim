@@ -19,7 +19,6 @@ const RELOCATED_ENTRYPOINTS = [
   'tim-session-start.sh',
   'tim-post-commit.sh',
   'tim-hermes-session-cache.sh',
-  'tim-hermes-statusline.sh',
   'tim-cursor-inject.sh',
   'tim-statusline.sh',
 ];
@@ -184,7 +183,6 @@ exec ${JSON.stringify(systemReadlink)} "$@"
       'tim-hermes-session-cache.sh': {
         input: JSON.stringify({ cwd: repo, session_id: 'relocated-session' }),
       },
-      'tim-hermes-statusline.sh': {},
       'tim-cursor-inject.sh': { args: [repo] },
       'tim-statusline.sh': {},
     };

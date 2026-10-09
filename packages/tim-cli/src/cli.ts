@@ -60,10 +60,6 @@ import { requiresSnapshot } from './safety.js';
 import { runStatusline } from './statusline.js';
 import { cmdRecordCommit } from './record-commit.js';
 import { cmdNewProject } from './new-project.js';
-import {
-  auditHermesStatusline,
-  cmdSetupHermesStatusline,
-} from './hermes-statusline-install.js';
 import { cmdConsolidate } from './consolidate.js';
 import { cmdProject } from './project.js';
 import { auditSummarizerHealth, ensureSummarizerChain } from './summarizer-health.js';
@@ -176,9 +172,7 @@ const COMMAND_HELP: Record<string, string> = {
   checkpoint: 'Usage: tim checkpoint --session <id> [--handoff-note <text>]',
   rebalance: 'Usage: tim rebalance --session <id> [--cwd <dir>]',
   statusline:
-    'Usage: tim statusline [--cwd <dir>] [--session <id>] [--format text|hermes]',
-  'setup-hermes-statusline':
-    'Usage: tim setup-hermes-statusline [--dry-run] [--skip-build]',
+    'Usage: tim statusline [--cwd <dir>] [--session <id>]',
   export: 'Usage: tim export [path.hmem] [--format hmem|text]',
   import:
     'Usage: tim import <path.hmem> [--dry-run] [--deduplicate] [--repair-flags] [--no-snapshot-check]',
@@ -276,8 +270,7 @@ Commands:
   hook log                 Log a single exchange to a session
   checkpoint               Create a manual checkpoint
   rebalance                Rebalance exchange batches
-  statusline               Print status text or Hermes JSON
-  setup-hermes-statusline  Install the Hermes status bar
+  statusline               Print the one-line TIM status
   export                   Export TIM memory
   import                   Import TIM memory
   migrate-from-hmem        Run guided hmem migration
@@ -521,18 +514,6 @@ async function cmdDoctor(args: string[] = []) {
     }
     const hosts = [...new Set([...broken, ...fragile].map(h => h.host))];
     if (hosts.length > 0) console.log(`  Fix: ${hosts.map(h => `tim setup-agent --host ${h}`).join(' · ')}`);
-  }
-
-  const hermesDir = path.join(os.homedir(), '.hermes');
-  if (fs.existsSync(hermesDir)) {
-    const { installed, issues } = auditHermesStatusline();
-    if (installed) {
-      console.log('\nHermes statusline: ✓ installed');
-    } else {
-      console.log('\nHermes statusline: ✗ not fully installed');
-      issues.forEach(i => console.log(`  - ${i}`));
-      console.log('  Fix: tim setup-hermes-statusline');
-    }
   }
 
   store.close();
@@ -1518,16 +1499,9 @@ async function main() {
       const { flags } = parseArgs(rest, {
         valueOptions: valueOptionsFor('statusline'),
       });
-      await runStatusline({
-        cwd: flags.cwd,
-        sessionId: flags.session,
-        format: flags.format === 'hermes' ? 'hermes' : 'text',
-      });
+      await runStatusline({ cwd: flags.cwd, sessionId: flags.session });
       break;
     }
-    case 'setup-hermes-statusline':
-      await cmdSetupHermesStatusline(rest);
-      break;
     case 'export':
       await cmdExport(rest);
       break;

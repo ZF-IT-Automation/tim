@@ -33,7 +33,7 @@ const COMMAND_VALUE_OPTIONS: Record<string, ReadonlySet<string>> = {
   ]),
   checkpoint: new Set(['session', 'handoff-note']),
   rebalance: new Set(['session', 'cwd']),
-  statusline: new Set(['cwd', 'session', 'format']),
+  statusline: new Set(['cwd', 'session']),
   export: new Set(['format']),
   'migrate tags-to-types': new Set(['sample-limit']),
   'migrate retire-deprecated-tags': new Set(['sample-limit']),

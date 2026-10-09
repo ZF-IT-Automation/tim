@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 # tim-statusline.sh — debug helper: one-line TIM status (stdin JSON optional, like Claude Code)
-# Hermes TUI bar: use tim-hermes-statusline.sh + hermes-cli-tim-statusline.patch instead.
 set -euo pipefail
 
 SCRIPT_PATH="${BASH_SOURCE[0]}"

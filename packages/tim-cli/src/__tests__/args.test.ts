@@ -68,8 +68,6 @@ describe('parseArgs', () => {
     ['resolve-project', undefined, 'walk-up'],
     ['new-project', undefined, 'no-git'],
     ['new-project', undefined, 'confirm'],
-    ['setup-hermes-statusline', undefined, 'dry-run'],
-    ['setup-hermes-statusline', undefined, 'skip-build'],
     ['import', undefined, 'dry-run'],
     ['import', undefined, 'deduplicate'],
     ['import', undefined, 'repair-flags'],

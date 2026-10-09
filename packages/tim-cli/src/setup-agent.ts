@@ -6,7 +6,7 @@ import { TimStore } from 'tim-store';
 import { HOST_TOOLS, buildTimMcpEntry, installMcpForHostTool, type HostTool } from './install.js';
 import type { TimMcpServerOptions } from './mcp-command.js';
 import { updateSkillsForHost } from './update-skills.js';
-import { installHermesStatusline } from './hermes-statusline-install.js';
+import { installHermesHooks } from './hermes-hooks-install.js';
 import { installClaudeHooks } from './claude-hooks-install.js';
 import { installCodexHooks } from './codex-hooks-install.js';
 import { installCursorHooks } from './cursor-hooks-install.js';
@@ -318,7 +318,7 @@ export async function cmdSetupAgent(args: string[]): Promise<void> {
       skills: { action: host === 'cursor' ? 'manual' : 'would-copy' },
       hooks: {
         action: host === 'hermes'
-          ? 'would-install-hermes-statusline'
+          ? 'would-install-hermes-session-cache-hook'
           : host === 'claude'
             ? 'would-install-claude-hooks'
             : host === 'codex'
@@ -347,7 +347,7 @@ export async function cmdSetupAgent(args: string[]): Promise<void> {
 
   const skills = updateSkillsForHost(host);
   const hooks = host === 'hermes'
-    ? await installHermesStatusline({ skipBuild: true })
+    ? await installHermesHooks()
     : host === 'claude'
       ? installClaudeHooks()
     : host === 'codex'

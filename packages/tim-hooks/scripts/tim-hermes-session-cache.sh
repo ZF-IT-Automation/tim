@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tim-hermes-session-cache.sh — Hermes pre_llm_call: cache session_id + cwd for status bar
-# Output: {} (no prompt injection). Register before tim-hermes-statusline refresh.
+# Output: {} (no prompt injection).
 set -euo pipefail
 
 SCRIPT_PATH="${BASH_SOURCE[0]}"
