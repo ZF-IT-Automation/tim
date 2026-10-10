@@ -10,6 +10,7 @@ export const VIEWER_PAGE = String.raw`<!doctype html>
 <style>
   :root {
     color-scheme: light dark;
+    --project-column: 15rem;
     --bg: #f5f7fa; --panel: #fff; --panel2: #edf1f6; --line: #d5dce5;
     --fg: #202832; --dim: #586575; --accent: #1769c2; --warn: #8a4b00;
     --danger: #a32020; --focus: #1769c2;
@@ -32,7 +33,7 @@ export const VIEWER_PAGE = String.raw`<!doctype html>
   * { box-sizing: border-box; }
   body {
     margin: 0; height: 100vh; display: flex; flex-direction: column;
-    background: var(--bg); color: var(--fg); font: 14px/1.45 system-ui, sans-serif;
+    overflow: hidden; background: var(--bg); color: var(--fg); font: 14px/1.45 system-ui, sans-serif;
   }
   button, input, select, textarea { font: inherit; color: inherit; }
   button, select, input, textarea {
@@ -56,32 +57,41 @@ export const VIEWER_PAGE = String.raw`<!doctype html>
   #viewtoggle button.on { color: var(--accent); border-color: var(--accent); background: var(--panel2); }
   #stats { color: var(--dim); white-space: nowrap; font-size: 12px; }
   #movebar { color: var(--warn); font-size: 12px; }
-  main { display: grid; grid-template-columns: 224px minmax(0, 1fr) 360px; flex: 1; min-height: 0; }
-  aside { min-width: 0; overflow: auto; border-right: 1px solid var(--line); background: var(--panel); }
-  .sidehead { padding: 12px 14px 7px; color: var(--dim); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; }
-  #projectlist { padding: 0 8px 14px; }
+  main { display: grid; grid-template-columns: var(--project-column) minmax(0, 1fr); flex: 1; min-height: 0; }
+  main.detail-open { grid-template-columns: var(--project-column) minmax(0, 1fr) clamp(320px, 28vw, 520px); }
+  body.projects-collapsed { --project-column: 44px; }
+  aside { display: flex; min-width: 0; min-height: 0; flex-direction: column; overflow: hidden; border-right: 1px solid var(--line); background: var(--panel); }
+  .sidehead { display: flex; flex: none; align-items: center; justify-content: space-between; gap: 6px; padding: 6px 8px; color: var(--dim); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; }
+  .sidehead > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sidehead button { flex: none; padding: 1px 6px; font-size: 14px; line-height: 1.2; }
+  #projectlist { flex: 1; min-height: 0; overflow: auto; padding: 0 6px 8px; }
+  body.projects-collapsed #projects .sidehead { justify-content: center; padding: 5px 2px; }
+  body.projects-collapsed #projects .sidehead > span, body.projects-collapsed #projectlist { display: none; }
   .project-item {
-    width: 100%; display: flex; gap: 9px; align-items: flex-start; text-align: left;
-    border-color: transparent; background: transparent; padding: 8px; margin: 1px 0;
+    width: 100%; display: flex; gap: 6px; align-items: center; text-align: left;
+    border-color: transparent; background: transparent; padding: 4px 6px; margin: 1px 0;
   }
   .project-item:hover { color: var(--fg); background: var(--panel2); }
   .project-item.on { color: var(--accent); background: var(--panel2); border-color: var(--line); }
   .project-copy { min-width: 0; flex: 1; }
-  .project-title { display: -webkit-box; overflow: hidden; overflow-wrap: anywhere; font-weight: 600; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
-  .project-sub { display: block; margin-top: 2px; color: var(--dim); font-size: 11px; }
+  .project-title { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+  .project-sub { display: block; overflow: hidden; margin-top: 0; color: var(--dim); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
   #workspace { display: flex; min-width: 0; min-height: 0; flex-direction: column; }
   #graphControls {
-    display: flex; align-items: center; flex-wrap: wrap; gap: 12px; padding: 8px 12px;
-    border-bottom: 1px solid var(--line); background: var(--panel);
+    display: flex; flex: none; align-items: center; flex-wrap: nowrap; gap: 8px;
+    padding: 5px 8px; border-bottom: 1px solid var(--line); background: var(--panel); white-space: nowrap;
   }
   #graphControls[hidden] { display: none; }
+  #graphOptions { display: flex; flex: 1 0 auto; align-items: center; flex-wrap: nowrap; gap: 7px; white-space: nowrap; }
+  main.detail-open #graphControls { flex-wrap: wrap; }
+  main.detail-open #legend { flex-basis: 100%; }
   .toggle { display: inline-flex; align-items: center; gap: 5px; color: var(--dim); font-size: 12px; white-space: nowrap; }
   .toggle input { accent-color: var(--accent); }
   #depthwrap { display: inline-flex; align-items: center; gap: 7px; color: var(--dim); font-size: 12px; }
-  #graphDepth { width: 116px; padding: 0; }
-  #graphNote { color: var(--dim); font-size: 11px; }
-  #graphCount { margin-left: auto; color: var(--dim); font-size: 12px; }
-  #legend { display: flex; gap: 9px; flex-wrap: wrap; padding: 5px 12px; color: var(--dim); font-size: 10px; }
+  #graphDepth { width: 84px; padding: 0; }
+  #graphNote { color: var(--dim); font-size: 10px; white-space: nowrap; }
+  #graphCount { margin-left: auto; color: var(--dim); font-size: 11px; }
+  #legend { display: flex; flex: none; gap: 7px; flex-wrap: nowrap; padding: 0; color: var(--dim); font-size: 10px; white-space: nowrap; }
   .legend-item { display: inline-flex; gap: 4px; align-items: center; }
   .swatch { width: 9px; height: 9px; border-radius: 50%; background: var(--swatch); }
   .view { flex: 1; min-height: 0; }
@@ -93,9 +103,9 @@ export const VIEWER_PAGE = String.raw`<!doctype html>
   }
   #wires { position: absolute; inset: 0 auto auto 0; pointer-events: none; color: var(--line); overflow: visible; }
   .col { flex: none; width: 252px; display: flex; flex-direction: column; gap: 8px; }
-  .nwrap { display: flex; align-items: center; gap: 7px; }
+  .nwrap { display: flex; align-items: center; gap: 4px; }
   .node {
-    flex: 1; min-width: 0; padding: 8px 10px; border: 1px solid var(--line);
+    flex: 1; min-width: 0; padding: 6px 8px; border: 1px solid var(--line);
     border-left: 4px solid var(--node-kind, var(--line)); border-radius: 8px;
     background: var(--panel); cursor: pointer; box-shadow: 0 1px 2px #0000000b;
   }
@@ -104,7 +114,7 @@ export const VIEWER_PAGE = String.raw`<!doctype html>
   .node.sel { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--panel)); }
   .nmeta { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; }
   .ntitle { font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
-  .kids { flex: none; color: var(--dim); font-size: 11px; white-space: nowrap; cursor: pointer; }
+  .kids { flex: none; color: var(--dim); font-size: 10px; white-space: nowrap; cursor: pointer; }
   .kids:hover { color: var(--accent); text-decoration: underline; }
   .kids.leaf { opacity: .55; cursor: default; }
   .b {
@@ -127,11 +137,14 @@ export const VIEWER_PAGE = String.raw`<!doctype html>
     color: var(--fg); background: var(--panel); box-shadow: 0 4px 14px #0003; font-size: 12px;
   }
   #graphTip strong { display: block; overflow-wrap: anywhere; }
-  #right { min-width: 0; min-height: 0; display: flex; flex-direction: column; border-left: 1px solid var(--line); background: var(--panel); }
-  #tabs { display: flex; gap: 4px; padding: 7px 8px 0; border-bottom: 1px solid var(--line); }
+  #right { min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; border-left: 1px solid var(--line); background: var(--panel); }
+  #right[hidden] { display: none; }
+  #detailHeader { display: flex; flex: none; align-items: center; min-width: 0; border-bottom: 1px solid var(--line); }
+  #tabs { display: flex; min-width: 0; gap: 4px; padding: 5px 6px 0; border: 0; }
   #tabs button { padding: 6px 8px; font-size: 12px; border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
   #tabs button.on { color: var(--accent); border-color: var(--accent); border-bottom-color: var(--panel); }
-  .pane { flex: 1; overflow: auto; padding: 14px; }
+  #detailclose { flex: none; margin: 0 7px 0 auto; padding: 1px 7px; font-size: 18px; line-height: 1.2; }
+  .pane { flex: 1; min-height: 0; overflow: auto; padding: 12px; }
   .pane[hidden] { display: none; }
   #detailTitle { margin: 0 0 7px; font-size: 19px; line-height: 1.25; overflow-wrap: anywhere; }
   #crumbs { margin-bottom: 8px; color: var(--dim); font-size: 12px; overflow-wrap: anywhere; }
@@ -160,7 +173,7 @@ export const VIEWER_PAGE = String.raw`<!doctype html>
   #actions .ask { border: 1px solid var(--warn); border-radius: 7px; padding: 9px; margin-top: 8px; }
   #actions .ask p { margin: 0 0 9px; }
   #toolpane:not([hidden]) { display: flex; gap: 10px; align-items: flex-start; }
-  #toollist { width: 124px; flex: none; overflow: auto; }
+  #toollist { width: 124px; flex: none; }
   #toollist button { display: block; width: 100%; text-align: left; border: 0; background: transparent; padding: 5px; font-size: 11px; }
   #toollist button.on { color: var(--accent); background: var(--panel2); }
   #toolform { flex: 1; min-width: 0; }
@@ -172,19 +185,32 @@ export const VIEWER_PAGE = String.raw`<!doctype html>
   .forced { color: var(--warn); font-size: 11px; margin-bottom: 7px; }
   #simpane select, #simpane input { width: 100%; }
   .small { color: var(--dim); font-size: 11px; }
-  body.embed header { padding-top: 6px; padding-bottom: 6px; gap: 7px; }
+  body.embed header { padding-top: 5px; padding-bottom: 5px; gap: 7px; }
   body.embed header h1 { font-size: 15px; }
-  body.embed #tabs, body.embed #tabs button[data-pane="toolpane"], body.embed #tabs button[data-pane="simpane"] { display: none; }
+  body.embed #tabs { display: none; }
+  @media (min-width: 1400px) {
+    header { flex-wrap: nowrap; gap: 7px; padding: 6px 10px; }
+    header h1 { margin-right: 2px; font-size: 16px; }
+    #projectpicker { flex: none; width: 190px; }
+    #jump { flex: 1; min-width: 150px; max-width: none; }
+    #graphControls { gap: 7px; }
+  }
+  @media (min-width: 1600px) {
+    main.detail-open #graphControls { flex-wrap: nowrap; }
+    main.detail-open #legend { flex-basis: auto; }
+  }
   @media (max-width: 1050px) {
-    main { grid-template-columns: 190px minmax(0, 1fr); }
-    #right { position: absolute; right: 0; top: 58px; bottom: 0; width: min(390px, 45vw); box-shadow: -4px 0 18px #0002; }
+    main, main.detail-open { grid-template-columns: var(--project-column) minmax(0, 1fr); }
+    #right { position: absolute; right: 0; top: 58px; bottom: 0; width: clamp(320px, 28vw, 520px); box-shadow: -4px 0 18px #0002; }
   }
   @media (max-width: 680px) {
-    header { gap: 6px; } header h1 { width: 100%; }
+    header { flex-wrap: wrap; gap: 6px; } header h1 { width: 100%; }
     #projectpicker { flex: 1; width: auto; } #jump { min-width: 130px; }
-    main { grid-template-columns: 128px minmax(0, 1fr); }
+    :root { --project-column: 128px; }
+    body.projects-collapsed { --project-column: 44px; }
+    main, main.detail-open { grid-template-columns: var(--project-column) minmax(0, 1fr); }
     #right { top: 104px; width: min(360px, 78vw); }
-    .project-item { padding: 6px; } .project-sub { display: none; }
+    .project-item { padding: 4px 5px; }
   }
 </style>
 </head>
@@ -203,23 +229,22 @@ export const VIEWER_PAGE = String.raw`<!doctype html>
   <span id="movebar" hidden></span>
   <button id="reload" type="button" title="Reload projects">↻</button>
 </header>
-<main>
-  <aside aria-label="Projects">
-    <div class="sidehead">Projects</div>
+<main id="main">
+  <aside id="projects" aria-label="Projects">
+    <div class="sidehead"><span class="sidehead-label">Projects</span><button id="projectlistToggle" type="button" aria-expanded="true" aria-label="Collapse project list" title="Collapse project list">‹</button></div>
     <div id="projectlist"><div class="empty">Loading…</div></div>
   </aside>
   <section id="workspace" aria-label="Memory tree and graph">
     <div id="graphControls" hidden>
-      <label class="toggle"><input type="checkbox" id="graphTags" checked> All tags</label>
-      <label class="toggle"><input type="checkbox" id="graphCross"> Cross-links</label>
-      <label class="toggle"><input type="checkbox" id="graphSessions"> Sessions</label>
-      <label class="toggle"><input type="checkbox" id="graphCommits"> Commits</label>
-      <label id="depthwrap">Depth <input type="range" id="graphDepth" min="1" max="12" value="6"><span id="depthValue">6</span></label>
-      <span id="graphNote" aria-live="polite"></span>
-      <span id="graphCount" aria-live="polite"></span>
-    </div>
-    <div id="tree" class="view"><div id="board"><svg id="wires" aria-hidden="true"></svg></div></div>
-    <div id="graphView" class="view" hidden>
+      <div id="graphOptions">
+        <label class="toggle"><input type="checkbox" id="graphTags" checked> All tags</label>
+        <label class="toggle"><input type="checkbox" id="graphCross"> Cross-links</label>
+        <label class="toggle"><input type="checkbox" id="graphSessions"> Sessions</label>
+        <label class="toggle"><input type="checkbox" id="graphCommits"> Commits</label>
+        <label id="depthwrap">Depth <input type="range" id="graphDepth" min="1" max="12" value="6"><span id="depthValue">6</span></label>
+        <span id="graphNote" aria-live="polite"></span>
+        <span id="graphCount" aria-live="polite"></span>
+      </div>
       <div id="legend" aria-label="Node kind legend">
         <span class="legend-item"><i class="swatch" style="--swatch:var(--kind-project)"></i>Project</span>
         <span class="legend-item"><i class="swatch" style="--swatch:var(--kind-section)"></i>Section</span>
@@ -232,15 +257,21 @@ export const VIEWER_PAGE = String.raw`<!doctype html>
         <span class="legend-item"><i class="swatch" style="--swatch:var(--kind-tag)"></i>Tag</span>
         <span class="legend-item"><i class="swatch" style="--swatch:var(--kind-other)"></i>Other</span>
       </div>
-      <canvas id="graphCanvas" aria-label="Interactive memory graph"></canvas>
+    </div>
+    <div id="tree" class="view"><div id="board"><svg id="wires" aria-hidden="true"></svg></div></div>
+    <div id="graphView" class="view" hidden>
+      <canvas id="graphCanvas" aria-label="Interactive memory graph" tabindex="0"></canvas>
       <div id="graphTip" role="status"></div>
     </div>
   </section>
-  <section id="right" aria-label="Node details">
+  <section id="right" aria-label="Node details" hidden>
+    <div id="detailHeader">
     <div id="tabs" role="tablist">
       <button type="button" data-pane="inspector" class="on" role="tab">Node</button>
       <button type="button" data-pane="toolpane" role="tab">Read tools</button>
       <button type="button" data-pane="simpane" role="tab">Session start</button>
+    </div>
+      <button id="detailclose" type="button" aria-label="Close details" title="Close details">×</button>
     </div>
     <div id="inspector" class="pane" role="tabpanel"><span class="small">Select a node to see details.</span></div>
     <div id="toolpane" class="pane" role="tabpanel" hidden><div id="toollist"></div><div id="toolform"></div></div>
@@ -260,6 +291,8 @@ export const VIEWER_PAGE = String.raw`<!doctype html>
   var treeEl = document.getElementById('tree');
   var graphViewEl = document.getElementById('graphView');
   var canvas = document.getElementById('graphCanvas');
+  var mainEl = document.getElementById('main');
+  var rightEl = document.getElementById('right');
   var ctx = canvas.getContext('2d');
   var inspEl = document.getElementById('inspector');
   var columns = [];
@@ -271,6 +304,8 @@ export const VIEWER_PAGE = String.raw`<!doctype html>
   var projectData = { projects: [], otherRoots: [] };
   var pendingMove = null;
   var embedMode = new URLSearchParams(window.location.search).get('embed') === '1';
+  var projectListCollapsed = false;
+  try { projectListCollapsed = localStorage.getItem('tim-viewer-projects-collapsed') === '1'; } catch (_) {}
   if (embedMode) document.body.classList.add('embed');
 
   function api(path) {
@@ -503,6 +538,7 @@ export const VIEWER_PAGE = String.raw`<!doctype html>
     var actions = renderActions(n); if (actions) inspEl.appendChild(actions);
   }
   function select(id, scrollTree) {
+    openDetail();
     var nodeTab = document.querySelector('#tabs button[data-pane="inspector"]');
     if (nodeTab && inspEl.hidden && !embedMode) nodeTab.click();
     inspEl.textContent = ''; inspEl.appendChild(el('div', 'small', 'Loading…'));
@@ -575,7 +611,7 @@ export const VIEWER_PAGE = String.raw`<!doctype html>
     return loadTreeRoot(id);
   }
   function loadTreeRoot(id) {
-    truncateTo(-1); nodeEls = Object.create(null); selected = null;
+    truncateTo(-1); nodeEls = Object.create(null); selected = null; closeDetail(false);
     var first = addColumn(); first.el.appendChild(el('div', 'empty', 'Loading…')); drawWires();
     if (!id || id === '*') { first.el.textContent = ''; first.el.appendChild(el('div', 'empty', 'Choose a project to browse its entries.')); return Promise.resolve(); }
     var q = 'api/children?id=' + encodeURIComponent(id) + (showHidden() ? '&hidden=1' : '');
@@ -697,7 +733,53 @@ export const VIEWER_PAGE = String.raw`<!doctype html>
   var graphAdj = Object.create(null), graphMatches = new Set(), graphHover = null;
   var camera = { x: 0, y: 0, scale: 1 }, alpha = 0, frame = 0, graphLoadedRoot = null, fitWhenCool = false;
   var pointer = null, draggingNode = null, graphHasFit = false;
+  var graphViewport = { width: 0, height: 0 };
   var graphColors = {};
+  function captureGraphCenter() {
+    if (currentView !== 'graph') return null;
+    var rect = canvas.getBoundingClientRect();
+    return rect.width && rect.height ? screenWorld(rect.width / 2, rect.height / 2) : null;
+  }
+  function scheduleLayoutResize(center) {
+    window.requestAnimationFrame(function () {
+      drawWires();
+      if (currentView === 'graph') resizeGraphCanvas(center);
+    });
+  }
+  function setProjectListCollapsed(collapsed, persist) {
+    var center = captureGraphCenter();
+    projectListCollapsed = collapsed;
+    document.body.classList.toggle('projects-collapsed', collapsed);
+    var button = document.getElementById('projectlistToggle');
+    button.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    button.setAttribute('aria-label', collapsed ? 'Expand project list' : 'Collapse project list');
+    button.title = collapsed ? 'Expand project list' : 'Collapse project list';
+    button.textContent = collapsed ? '›' : '‹';
+    if (persist) {
+      try { localStorage.setItem('tim-viewer-projects-collapsed', collapsed ? '1' : '0'); } catch (_) {}
+    }
+    scheduleLayoutResize(center);
+  }
+  function openDetail() {
+    if (!rightEl.hidden) return;
+    var center = captureGraphCenter();
+    mainEl.classList.add('detail-open');
+    rightEl.hidden = false;
+    scheduleLayoutResize(center);
+  }
+  function closeDetail(restoreFocus) {
+    if (rightEl.hidden) return;
+    var center = captureGraphCenter();
+    rightEl.hidden = true;
+    mainEl.classList.remove('detail-open');
+    if (restoreFocus) {
+      var target = selected && nodeEls[selected] ? nodeEls[selected].box : null;
+      if (target) target.focus();
+      else if (currentView === 'graph') canvas.focus();
+      else document.getElementById('treebtn').focus();
+    }
+    scheduleLayoutResize(center);
+  }
   function graphColor(kind) {
     var cls = kindClass(kind), key = cls;
     if (!graphColors[key]) graphColors[key] = getComputedStyle(document.documentElement).getPropertyValue('--kind-' + cls).trim();
@@ -709,9 +791,22 @@ export const VIEWER_PAGE = String.raw`<!doctype html>
     var width = Math.round(rect.width * dpr), height = Math.round(rect.height * dpr);
     if (canvas.width !== width || canvas.height !== height) { canvas.width = width; canvas.height = height; }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    graphViewport = { width: rect.width, height: rect.height };
   }
   function graphPoint(node) { return { x: node.x * camera.scale + camera.x, y: node.y * camera.scale + camera.y }; }
   function screenWorld(x, y) { return { x: (x - camera.x) / camera.scale, y: (y - camera.y) / camera.scale }; }
+  function resizeGraphCanvas(center) {
+    if (center === undefined && graphViewport.width && graphViewport.height) {
+      center = screenWorld(graphViewport.width / 2, graphViewport.height / 2);
+    }
+    canvasSize();
+    var after = canvas.getBoundingClientRect();
+    if (center && after.width && after.height) {
+      camera.x = after.width / 2 - center.x * camera.scale;
+      camera.y = after.height / 2 - center.y * camera.scale;
+    }
+    drawGraph();
+  }
   function nodeRadius(node) { return Math.max(4, Math.min(15, 3.2 + Math.sqrt(Math.max(0, node.degree + node.childCount)) * 1.25)); }
   function graphHit(x, y) {
     var world = screenWorld(x, y), best = null, distance = Infinity;
@@ -1135,6 +1230,7 @@ export const VIEWER_PAGE = String.raw`<!doctype html>
   }
   function selectGraphNode(node) {
     if (node.kind !== 'tag') return select(node.id, false);
+    openDetail();
     selected = node.id;
     inspEl.textContent = '';
     inspEl.appendChild(el('h2', null, node.title));
@@ -1268,16 +1364,19 @@ export const VIEWER_PAGE = String.raw`<!doctype html>
   document.getElementById('jump').addEventListener('keydown', function (event) { if (event.key === 'Enter') document.getElementById('jumpbtn').click(); });
   document.getElementById('treebtn').onclick = function () { setView('tree'); };
   document.getElementById('graphbtn').onclick = function () { setView('graph'); };
+  document.getElementById('projectlistToggle').onclick = function () { setProjectListCollapsed(!projectListCollapsed, true); };
+  document.getElementById('detailclose').onclick = function () { closeDetail(true); };
   document.getElementById('reload').onclick = function () { loadStats(); loadProjects(); };
   document.getElementById('showhidden').onchange = function () { if (currentView === 'graph') loadGraph(); else loadTreeRoot(selectedRoot); };
   ['graphTags', 'graphCross', 'graphSessions', 'graphCommits'].forEach(function (id) { document.getElementById(id).onchange = loadGraph; });
   document.getElementById('graphDepth').oninput = function (event) { graphDepthChanged = true; document.getElementById('depthValue').textContent = event.target.value; };
   document.getElementById('graphDepth').onchange = loadGraph;
-  window.addEventListener('resize', function () { drawWires(); if (currentView === 'graph') { canvasSize(); drawGraph(); } });
+  window.addEventListener('resize', function () { drawWires(); if (currentView === 'graph') resizeGraphCanvas(); });
   window.addEventListener('keydown', function (event) {
     var target = event.target, editing = target && /INPUT|TEXTAREA|SELECT/.test(target.tagName);
     if (event.key === 'Escape') {
       var previous = selected; selected = null;
+      closeDetail(false);
       document.getElementById('jump').value = ''; updateMatches();
       if (inspEl) { inspEl.textContent = ''; inspEl.appendChild(el('span', 'small', 'Select a node to see details.')); }
       if (previous && nodeEls[previous]) nodeEls[previous].box.classList.remove('sel'); drawGraph(); return;
@@ -1289,6 +1388,7 @@ export const VIEWER_PAGE = String.raw`<!doctype html>
 
   var initialView = 'tree';
   try { var savedView = localStorage.getItem('tim-viewer-view'); if (savedView === 'graph' || savedView === 'tree') initialView = savedView; } catch (_) {}
+  setProjectListCollapsed(projectListCollapsed, false);
   loadStats();
   loadProjects().then(function () { setView(initialView); });
 })();

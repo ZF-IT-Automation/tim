@@ -629,6 +629,18 @@ describe('viewer page', () => {
     expect(VIEWER_PAGE).toContain('if (embedMode) return null;');
     expect(VIEWER_PAGE).toContain('body.embed #tabs');
   });
+
+  it('keeps detail and project panes collapsed until requested', () => {
+    expect(VIEWER_PAGE).toContain('<section id="right" aria-label="Node details" hidden>');
+    expect(VIEWER_PAGE).toContain('main.detail-open { grid-template-columns: var(--project-column) minmax(0, 1fr) clamp(320px, 28vw, 520px); }');
+    expect(VIEWER_PAGE).toContain('id="projectlistToggle"');
+    expect(VIEWER_PAGE).toContain("localStorage.getItem('tim-viewer-projects-collapsed')");
+    expect(VIEWER_PAGE).toContain("localStorage.setItem('tim-viewer-projects-collapsed'");
+    expect(VIEWER_PAGE).toContain('id="detailclose"');
+    expect(VIEWER_PAGE).toContain("document.getElementById('detailclose').onclick");
+    expect(VIEWER_PAGE).toContain('closeDetail(false);');
+    expect(VIEWER_PAGE).toContain('resizeGraphCanvas(center)');
+  });
 });
 
 // POST /api/mutate is the only route in this server that can change the database
