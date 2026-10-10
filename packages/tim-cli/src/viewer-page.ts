@@ -15,7 +15,7 @@ export const VIEWER_PAGE = String.raw`<!doctype html>
     --danger: #a32020; --focus: #1769c2;
     --kind-project: #3478c9; --kind-section: #7693b5; --kind-task: #33855b;
     --kind-bug: #c04444; --kind-idea: #8e62b8; --kind-decision: #a56b23;
-    --kind-learning: #218b94; --kind-log: #79828d; --kind-tag: #bd7d18;
+    --kind-learning: #218b94; --kind-log: #79828d; --kind-tag: #4b9e68;
     --kind-other: #69768a;
   }
   @media (prefers-color-scheme: dark) {
@@ -25,7 +25,7 @@ export const VIEWER_PAGE = String.raw`<!doctype html>
       --danger: #ff8585; --focus: #86c2ff;
       --kind-project: #73b4ff; --kind-section: #9bacc2; --kind-task: #68cf91;
       --kind-bug: #ff7979; --kind-idea: #c29aef; --kind-decision: #e2aa66;
-      --kind-learning: #63cbd2; --kind-log: #a4afbb; --kind-tag: #f0bb5d;
+      --kind-learning: #63cbd2; --kind-log: #a4afbb; --kind-tag: #70d18d;
       --kind-other: #aab6c8;
     }
   }
@@ -190,7 +190,7 @@ export const VIEWER_PAGE = String.raw`<!doctype html>
 <body>
 <header>
   <h1>TIM viewer</h1>
-  <select id="projectpicker" aria-label="Choose project"><option value="">Choose project</option></select>
+  <select id="projectpicker" aria-label="Choose project"><option value="*">All projects</option><option value="">Choose project</option></select>
   <input id="jump" placeholder="Search title, entry id or label" autocomplete="off" aria-label="Search entries">
   <button id="jumpbtn" type="button">Go</button>
   <div id="viewtoggle" role="group" aria-label="View mode">
@@ -209,9 +209,10 @@ export const VIEWER_PAGE = String.raw`<!doctype html>
   </aside>
   <section id="workspace" aria-label="Memory tree and graph">
     <div id="graphControls" hidden>
-      <label class="toggle"><input type="checkbox" id="graphTags"> Tags</label>
+      <label class="toggle"><input type="checkbox" id="graphTags" checked> Tags</label>
       <label class="toggle"><input type="checkbox" id="graphCross"> Cross-links</label>
       <label class="toggle"><input type="checkbox" id="graphSessions"> Sessions</label>
+      <label class="toggle"><input type="checkbox" id="graphCommits"> Commits</label>
       <label id="depthwrap">Depth <input type="range" id="graphDepth" min="1" max="12" value="6"><span id="depthValue">6</span></label>
       <span id="graphCount" aria-live="polite"></span>
     </div>
@@ -263,6 +264,8 @@ export const VIEWER_PAGE = String.raw`<!doctype html>
   var nodeEls = Object.create(null);
   var selected = null;
   var selectedRoot = null;
+  var graphAllDefault = true;
+  var graphDepthChanged = false;
   var projectData = { projects: [], otherRoots: [] };
   var pendingMove = null;
   var embedMode = new URLSearchParams(window.location.search).get('embed') === '1';
@@ -285,6 +288,13 @@ export const VIEWER_PAGE = String.raw`<!doctype html>
   function badge(row, text, cls) { row.appendChild(el('span', 'b ' + (cls || ''), text)); }
   function showHidden() { return document.getElementById('showhidden').checked; }
   function expandableCount(n) { return n.childCount + (showHidden() ? n.hiddenChildCount : 0); }
+  function projectDisplayTitle(title) { return String(title || '').split(' | ', 1)[0]; }
+  function updateGraphDepthDefault() {
+    if (graphDepthChanged) return;
+    var value = graphAllDefault ? '2' : '6';
+    document.getElementById('graphDepth').value = value;
+    document.getElementById('depthValue').textContent = value;
+  }
   function kindClass(kind) {
     if (kind === 'project') return 'project';
     if (kind === 'section') return 'section';
@@ -314,8 +324,9 @@ export const VIEWER_PAGE = String.raw`<!doctype html>
     box.setAttribute('role', 'button');
     box.setAttribute('tabindex', '0');
     box.setAttribute('aria-label', (n.kind || 'entry') + ': ' + (n.title || n.id));
+    box.title = n.title || n.id;
     decorate(box, n);
-    box.appendChild(el('div', 'ntitle', n.title || '(untitled)'));
+    box.appendChild(el('div', 'ntitle', n.kind === 'project' ? projectDisplayTitle(n.title) : (n.title || '(untitled)')));
     box.onclick = function () { select(n.id); };
     box.onkeydown = function (event) { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); select(n.id); } };
     var count = expandableCount(n);
@@ -455,7 +466,9 @@ export const VIEWER_PAGE = String.raw`<!doctype html>
     var crumbs = el('div', null); crumbs.id = 'crumbs';
     (n.path || []).forEach(function (c, i) {
       if (i) crumbs.appendChild(document.createTextNode(' / '));
-      var button = el('button', 'crumb', (c.label ? c.label + ' · ' : '') + (c.title || c.id));
+      var title = c.kind === 'project' ? projectDisplayTitle(c.title) : (c.title || c.id);
+      var button = el('button', 'crumb', (c.label ? c.label + ' · ' : '') + title);
+      button.title = c.title || c.id;
       button.type = 'button'; button.onclick = function () { reveal(c.id); }; crumbs.appendChild(button);
     });
     if (n.path && n.path.length) inspEl.appendChild(crumbs);
@@ -507,19 +520,25 @@ export const VIEWER_PAGE = String.raw`<!doctype html>
   function updateProjectSelection() {
     var active = null;
     Array.prototype.forEach.call(document.querySelectorAll('.project-item'), function (item) {
-      item.classList.toggle('on', item.dataset.root === selectedRoot);
-      item.setAttribute('aria-current', item.dataset.root === selectedRoot ? 'true' : 'false');
-      if (item.dataset.root === selectedRoot) active = item;
+      var current = !(currentView === 'graph' && graphAllDefault) && item.dataset.root === selectedRoot;
+      item.classList.toggle('on', current);
+      item.setAttribute('aria-current', current ? 'true' : 'false');
+      if (current) active = item;
     });
     var picker = document.getElementById('projectpicker');
-    picker.value = projectData.projects.some(function (p) { return p.id === selectedRoot; }) ? selectedRoot : '';
+    picker.value = (currentView === 'graph' && graphAllDefault) || !selectedRoot ? '*' :
+      (projectData.projects.some(function (p) { return p.id === selectedRoot; }) ? selectedRoot : '');
+    updateGraphDepthDefault();
     if (active) active.scrollIntoView({ block: 'nearest' });
   }
   function addProjectButton(root, title, label, count, section) {
     var button = el('button', 'project-item'); button.type = 'button'; button.dataset.root = root.id;
+    button.title = title || root.id;
     button.appendChild(el('span', 'project-copy'));
     var copy = button.firstChild;
-    copy.appendChild(el('span', 'project-title', title || '(untitled)'));
+    var titleEl = el('span', 'project-title', root.kind === 'project' ? projectDisplayTitle(title) : (title || '(untitled)'));
+    titleEl.title = title || root.id;
+    copy.appendChild(titleEl);
     copy.appendChild(el('span', 'project-sub', (label ? label + ' · ' : '') + count + ' entries'));
     button.onclick = function () { openRoot(root.id); };
     section.appendChild(button);
@@ -527,9 +546,12 @@ export const VIEWER_PAGE = String.raw`<!doctype html>
   function renderProjectList() {
     var list = document.getElementById('projectlist'), picker = document.getElementById('projectpicker');
     list.textContent = ''; picker.textContent = '';
+    picker.appendChild(new Option('All projects', '*'));
     picker.appendChild(new Option('Choose project', ''));
     projectData.projects.forEach(function (p) {
-      picker.appendChild(new Option((p.label ? p.label + ' · ' : '') + p.title, p.id));
+      var option = new Option((p.label ? p.label + ' · ' : '') + projectDisplayTitle(p.title), p.id);
+      option.title = p.title || p.id;
+      picker.appendChild(option);
       addProjectButton(p, p.title, p.label, typeof p.entryCount === 'number' ? p.entryCount : p.childCount, list);
     });
     if (projectData.otherRoots.length) {
@@ -539,6 +561,13 @@ export const VIEWER_PAGE = String.raw`<!doctype html>
     updateProjectSelection();
   }
   function openRoot(id) {
+    if (id === '*') {
+      graphAllDefault = true;
+      updateProjectSelection();
+      if (currentView !== 'graph') { setView('graph'); return Promise.resolve(); }
+      return loadGraph();
+    }
+    graphAllDefault = false;
     selectedRoot = id; updateProjectSelection();
     if (currentView === 'graph') return loadGraph();
     return loadTreeRoot(id);
@@ -546,7 +575,7 @@ export const VIEWER_PAGE = String.raw`<!doctype html>
   function loadTreeRoot(id) {
     truncateTo(-1); nodeEls = Object.create(null); selected = null;
     var first = addColumn(); first.el.appendChild(el('div', 'empty', 'Loading…')); drawWires();
-    if (!id) { first.el.textContent = ''; first.el.appendChild(el('div', 'empty', 'Choose a project to browse its entries.')); return Promise.resolve(); }
+    if (!id || id === '*') { first.el.textContent = ''; first.el.appendChild(el('div', 'empty', 'Choose a project to browse its entries.')); return Promise.resolve(); }
     var q = 'api/children?id=' + encodeURIComponent(id) + (showHidden() ? '&hidden=1' : '');
     return api(q).then(function (data) {
       first.el.textContent = ''; makeNode(data.parent, first.el, first, 0);
@@ -664,7 +693,7 @@ export const VIEWER_PAGE = String.raw`<!doctype html>
   var currentView = 'tree';
   var graphData = null, graphNodes = [], graphLinks = [], graphById = Object.create(null);
   var graphAdj = Object.create(null), graphMatches = new Set(), graphHover = null;
-  var camera = { x: 0, y: 0, scale: 1 }, alpha = 0, frame = 0, graphLoadedRoot = null;
+  var camera = { x: 0, y: 0, scale: 1 }, alpha = 0, frame = 0, graphLoadedRoot = null, fitWhenCool = false;
   var pointer = null, draggingNode = null, graphHasFit = false;
   var graphColors = {};
   function graphColor(kind) {
@@ -694,14 +723,18 @@ export const VIEWER_PAGE = String.raw`<!doctype html>
   function graphBounds() {
     if (!graphNodes.length) return null;
     var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    graphNodes.forEach(function (n) { minX = Math.min(minX, n.x); minY = Math.min(minY, n.y); maxX = Math.max(maxX, n.x); maxY = Math.max(maxY, n.y); });
+    graphNodes.forEach(function (n) {
+      var radius = nodeRadius(n) + 18;
+      minX = Math.min(minX, n.x - radius); minY = Math.min(minY, n.y - radius);
+      maxX = Math.max(maxX, n.x + radius); maxY = Math.max(maxY, n.y + radius);
+    });
     return { minX: minX, minY: minY, maxX: maxX, maxY: maxY };
   }
   function fitGraph() {
     canvasSize(); var rect = canvas.getBoundingClientRect(), bounds = graphBounds();
     if (!bounds || !rect.width || !rect.height) return;
     var width = Math.max(90, bounds.maxX - bounds.minX), height = Math.max(90, bounds.maxY - bounds.minY);
-    camera.scale = Math.max(.08, Math.min(2.4, Math.min((rect.width - 70) / width, (rect.height - 70) / height)));
+    camera.scale = Math.max(.025, Math.min(2.4, Math.min((rect.width - 150) / width, (rect.height - 110) / height)));
     camera.x = rect.width / 2 - ((bounds.minX + bounds.maxX) / 2) * camera.scale;
     camera.y = rect.height / 2 - ((bounds.minY + bounds.maxY) / 2) * camera.scale;
     graphHasFit = true; drawGraph();
@@ -720,25 +753,27 @@ export const VIEWER_PAGE = String.raw`<!doctype html>
     ctx.clearRect(0, 0, rect.width, rect.height);
     if (!graphNodes.length) return;
     var css = getComputedStyle(document.documentElement);
-    var lineColor = css.getPropertyValue('--line').trim();
     var accentColor = css.getPropertyValue('--accent').trim();
     var fgColor = css.getPropertyValue('--fg').trim();
+    var dimColor = css.getPropertyValue('--dim').trim();
+    var bgColor = css.getPropertyValue('--bg').trim();
     var warnColor = css.getPropertyValue('--warn').trim();
-    var hovered = graphHover && graphById[graphHover], near = new Set();
-    if (hovered) { near.add(hovered.id); (graphAdj[hovered.id] || []).forEach(function (id) { near.add(id); }); }
+    var focusId = graphHover || selected;
+    var focused = focusId && graphById[focusId], near = new Set();
+    if (focused) { near.add(focused.id); (graphAdj[focused.id] || []).forEach(function (id) { near.add(id); }); }
     graphLinks.forEach(function (link) {
       var a = graphById[link.source], b = graphById[link.target]; if (!a || !b) return;
       var p = graphPoint(a), q = graphPoint(b);
-      var active = !hovered || link.source === hovered.id || link.target === hovered.id;
-      ctx.globalAlpha = hovered ? (active ? .8 : .08) : (link.type === 'child' ? .28 : .48);
-      ctx.strokeStyle = link.type === 'child' ? lineColor : accentColor;
-      ctx.lineWidth = link.type === 'child' ? 1 : 1.25;
+      var highlighted = focused && (link.source === focused.id || link.target === focused.id);
+      ctx.globalAlpha = focused ? (highlighted ? .96 : .055) : (link.type === 'child' ? .26 : .4);
+      ctx.strokeStyle = highlighted ? accentColor : fgColor;
+      ctx.lineWidth = highlighted ? 1.6 : (link.type === 'child' ? .9 : 1.1);
       ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(q.x, q.y); ctx.stroke();
     });
     graphNodes.forEach(function (node) {
       var p = graphPoint(node), radius = nodeRadius(node) * camera.scale;
-      var active = !hovered || near.has(node.id), match = graphMatches.has(node.id), chosen = node.id === selected;
-      ctx.globalAlpha = hovered ? (active ? 1 : .13) : 1;
+      var active = !focused || near.has(node.id), match = graphMatches.has(node.id), chosen = node.id === selected;
+      ctx.globalAlpha = focused ? (active ? 1 : .13) : 1;
       if (match) { ctx.beginPath(); ctx.arc(p.x, p.y, radius + 5, 0, Math.PI * 2); ctx.strokeStyle = warnColor; ctx.lineWidth = 2; ctx.stroke(); }
       ctx.beginPath(); ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
       ctx.fillStyle = graphColor(node.kind); ctx.fill();
@@ -749,15 +784,133 @@ export const VIEWER_PAGE = String.raw`<!doctype html>
         ctx.strokeStyle = node.taskStatus === 'done' ? graphColor('task') : warnColor;
         ctx.lineWidth = 1.5; ctx.stroke();
       }
-      if ((camera.scale > 1.45 && graphNodes.length < 1800) || node.id === graphHover || chosen || match) {
-        var label = node.label || node.title || node.id;
-        if (label.length > 44) label = label.slice(0, 41) + '…';
-        ctx.globalAlpha = hovered ? (active ? 1 : .16) : .9;
-        ctx.font = '11px system-ui, sans-serif'; ctx.fillStyle = fgColor;
-        ctx.fillText(label, p.x + radius + 4, p.y + 4);
-      }
     });
+    var zoomFade = Math.max(0, Math.min(1, (camera.scale - .72) / .78));
+    ctx.textAlign = 'center'; ctx.textBaseline = 'top'; ctx.font = '11px system-ui, sans-serif';
+    var labels = [];
+    graphNodes.forEach(function (node) {
+      var forced = near.has(node.id) || graphMatches.has(node.id) || node.id === selected;
+      var opacity = forced ? 1 : (node.labelCore ? .82 : zoomFade * .88);
+      if (focused && !near.has(node.id)) opacity *= .14;
+      if (opacity < .035) return;
+      var point = graphPoint(node), radius = nodeRadius(node) * camera.scale;
+      var label = node.kind === 'project' ? projectDisplayTitle(node.title) : (node.title || node.label || node.id);
+      if (label.length > 32) label = label.slice(0, 31) + '…';
+      if (point.x < -160 || point.x > rect.width + 160 || point.y < -30 || point.y > rect.height + 30) return;
+      labels.push({ node: node, point: point, radius: radius, label: label, opacity: opacity, forced: forced });
+    });
+    labels.sort(function (a, b) {
+      if (a.forced !== b.forced) return a.forced ? -1 : 1;
+      var rank = function (node) { return node.kind === 'project' ? 3 : (node.kind === 'section' ? 2 : 1); };
+      return rank(b.node) - rank(a.node) || b.node.degree - a.node.degree;
+    });
+    var occupied = Object.create(null), labelCellWidth = 112, labelCellHeight = 18;
+    function overlapsLabel(left, top, width) {
+      var x0 = Math.floor((left - 4) / labelCellWidth), x1 = Math.floor((left + width + 4) / labelCellWidth);
+      var y0 = Math.floor((top - 2) / labelCellHeight), y1 = Math.floor((top + 15) / labelCellHeight);
+      for (var gx = x0; gx <= x1; gx++) for (var gy = y0; gy <= y1; gy++) {
+        var bucket = occupied[gx + ':' + gy] || [];
+        for (var i = 0; i < bucket.length; i++) {
+          var prior = bucket[i];
+          if (left < prior.right + 4 && left + width + 4 > prior.left && top < prior.bottom + 2 && top + 15 > prior.top) return true;
+        }
+      }
+      return false;
+    }
+    labels.forEach(function (item) {
+      var width = ctx.measureText(item.label).width, left = item.point.x - width / 2;
+      var top = item.point.y + item.radius + 5, originalTop = top;
+      for (var offset = 0; offset <= 96; offset += 12) {
+        var candidateTop = originalTop + offset;
+        if (!overlapsLabel(left, candidateTop, width) || offset === 96) { top = candidateTop; break; }
+      }
+      var rectBox = { left: left, right: left + width, top: top, bottom: top + 15 };
+      var x0 = Math.floor((left - 4) / labelCellWidth), x1 = Math.floor((left + width + 4) / labelCellWidth);
+      var y0 = Math.floor((top - 2) / labelCellHeight), y1 = Math.floor((top + 15) / labelCellHeight);
+      for (var gx = x0; gx <= x1; gx++) for (var gy = y0; gy <= y1; gy++) (occupied[gx + ':' + gy] || (occupied[gx + ':' + gy] = [])).push(rectBox);
+      ctx.globalAlpha = item.opacity;
+      ctx.lineWidth = 3; ctx.lineJoin = 'round'; ctx.strokeStyle = bgColor;
+      ctx.strokeText(item.label, item.point.x, top);
+      ctx.fillStyle = dimColor; ctx.fillText(item.label, item.point.x, top);
+    });
+    ctx.textAlign = 'start'; ctx.textBaseline = 'alphabetic';
     ctx.globalAlpha = 1;
+  }
+  function seedGraphPositions() {
+    var children = Object.create(null), positioned = new Set(), goldenAngle = 2.399963229728653;
+    graphLinks.forEach(function (link) {
+      if (link.type !== 'child') return;
+      (children[link.source] || (children[link.source] = [])).push(link.target);
+    });
+    graphNodes.forEach(function (node) { if (node.seeded) positioned.add(node.id); });
+    var roots = graphNodes.filter(function (node) { return node.depth === 0; });
+    var allProjects = graphData && graphData.root === '*';
+    var rootRadius = allProjects && roots.length > 1 ? Math.max(420, roots.length * 420 / (Math.PI * 2)) : 0;
+    roots.forEach(function (root, index) {
+      var angle = roots.length > 1 ? -Math.PI / 2 + Math.PI * 2 * index / roots.length : 0;
+      if (!root.seeded) {
+        root.x = rootRadius ? Math.cos(angle) * rootRadius : 0;
+        root.y = rootRadius ? Math.sin(angle) * rootRadius : 0;
+        root.seeded = true; positioned.add(root.id);
+      }
+      function placeDescendants(parent, orientation, level) {
+        var descendants = children[parent.id] || [];
+        descendants.forEach(function (id, childIndex) {
+          var child = graphById[id]; if (!child) return;
+          var direction, distance;
+          if (parent.depth === 0 && !allProjects) {
+            direction = -Math.PI / 2 + Math.PI * 2 * childIndex / Math.max(1, descendants.length);
+            distance = 440;
+          } else if (parent.depth === 0) {
+            direction = orientation + (childIndex - (descendants.length - 1) / 2) * .42;
+            distance = 125;
+          } else {
+            direction = orientation + childIndex * goldenAngle;
+            distance = 50 + Math.sqrt(childIndex) * 17;
+          }
+          if (!child.seeded) {
+            child.x = parent.x + Math.cos(direction) * distance;
+            child.y = parent.y + Math.sin(direction) * distance;
+            child.seeded = true; positioned.add(child.id);
+          }
+          placeDescendants(child, direction, level + 1);
+        });
+      }
+      placeDescendants(root, angle, 1);
+    });
+
+    graphLinks.forEach(function (link, index) {
+      if (link.type === 'child' || link.type === 'tag') return;
+      var a = graphById[link.source], b = graphById[link.target]; if (!a || !b) return;
+      var unplaced = positioned.has(a.id) ? b : (positioned.has(b.id) ? a : null);
+      var anchor = unplaced === b ? a : b;
+      if (!unplaced || unplaced.seeded) return;
+      var angle = index * goldenAngle;
+      unplaced.x = anchor.x + Math.cos(angle) * 82;
+      unplaced.y = anchor.y + Math.sin(angle) * 82;
+      unplaced.seeded = true; positioned.add(unplaced.id);
+    });
+
+    graphNodes.filter(function (node) { return node.kind === 'tag' && !node.seeded; }).forEach(function (tag, tagIndex) {
+      var sources = graphLinks.filter(function (link) { return link.type === 'tag' && link.target === tag.id; })
+        .map(function (link) { return graphById[link.source]; })
+        .filter(function (node) { return node && positioned.has(node.id); });
+      if (sources.length) {
+        var center = sources.reduce(function (point, node) { point.x += node.x; point.y += node.y; return point; }, { x: 0, y: 0 });
+        center.x /= sources.length; center.y /= sources.length;
+        var angle = tagIndex * goldenAngle, distance = 62 + Math.sqrt(tagIndex) * 11;
+        tag.x = center.x + Math.cos(angle) * distance; tag.y = center.y + Math.sin(angle) * distance;
+      } else { tag.x = Math.cos(tagIndex * goldenAngle) * 80; tag.y = Math.sin(tagIndex * goldenAngle) * 80; }
+      tag.seeded = true; positioned.add(tag.id);
+    });
+
+    graphNodes.forEach(function (node, index) {
+      if (node.seeded) return;
+      var angle = index * goldenAngle, distance = 48 + Math.sqrt(index) * 14;
+      node.x = Math.cos(angle) * distance; node.y = Math.sin(angle) * distance;
+      node.seeded = true; positioned.add(node.id);
+    });
+    graphNodes.forEach(function (node) { delete node.seeded; });
   }
   function tickGraph() {
     if (!graphNodes.length) return;
@@ -766,7 +919,7 @@ export const VIEWER_PAGE = String.raw`<!doctype html>
       var key = Math.floor(node.x / cellSize) + ':' + Math.floor(node.y / cellSize);
       (grid[key] || (grid[key] = [])).push(index);
     });
-    var maxDist = 148;
+    var maxDist = 100;
     graphNodes.forEach(function (node, index) {
       if (node.pinned) return;
       var cx = Math.floor(node.x / cellSize), cy = Math.floor(node.y / cellSize);
@@ -775,9 +928,14 @@ export const VIEWER_PAGE = String.raw`<!doctype html>
         bucket.forEach(function (otherIndex) {
           if (otherIndex <= index) return;
           var other = graphNodes[otherIndex], dx = other.x - node.x, dy = other.y - node.y, d2 = dx * dx + dy * dy;
-          if (!d2 || d2 > maxDist * maxDist) return;
-          var d = Math.sqrt(d2), force = (maxDist - d) / d * .045 * alpha;
-          var fx = dx * force, fy = dy * force;
+          if (d2 > maxDist * maxDist) return;
+          var d = Math.sqrt(d2);
+          if (d < .001) { var angle = (index + 1) * (otherIndex + 7) * .37; dx = Math.cos(angle); dy = Math.sin(angle); d = 1; }
+          var collision = nodeRadius(node) + nodeRadius(other) + 10;
+          var force = d < collision
+            ? (collision - d) * .18 * (.25 + .75 * alpha)
+            : Math.max(0, maxDist - d) * .0025 * alpha;
+          var fx = dx / d * force, fy = dy / d * force;
           node.vx -= fx; node.vy -= fy; other.vx += fx; other.vy += fy;
         });
       }
@@ -785,15 +943,18 @@ export const VIEWER_PAGE = String.raw`<!doctype html>
     graphLinks.forEach(function (link) {
       var a = graphById[link.source], b = graphById[link.target]; if (!a || !b) return;
       var dx = b.x - a.x, dy = b.y - a.y, d = Math.sqrt(dx * dx + dy * dy) || .01;
-      var target = link.type === 'child' ? 76 : (link.type === 'tag' ? 52 : 118);
-      var force = (d - target) * (link.type === 'child' ? .006 : .0035) * alpha;
+      var childLink = link.type === 'child';
+      var target = childLink
+        ? (a.kind === 'project' ? (graphData.root === '*' ? 160 : 440) : 100)
+        : (link.type === 'tag' ? 58 : 132);
+      var strength = childLink ? .03 : (link.type === 'tag' ? .0005 : .0007);
+      var force = Math.max(-4, Math.min(4, (d - target) * strength * alpha));
       var fx = dx / d * force, fy = dy / d * force;
       if (!a.pinned) { a.vx += fx; a.vy += fy; }
       if (!b.pinned) { b.vx -= fx; b.vy -= fy; }
     });
     graphNodes.forEach(function (node) {
       if (node.pinned) { node.vx = 0; node.vy = 0; return; }
-      node.vx += -node.x * .00018 * alpha; node.vy += -node.y * .00018 * alpha;
       node.vx *= .84; node.vy *= .84; node.x += node.vx; node.y += node.vy;
     });
     alpha *= .986;
@@ -801,46 +962,66 @@ export const VIEWER_PAGE = String.raw`<!doctype html>
   function animateGraph() {
     frame = 0;
     if (alpha > .025) { tickGraph(); drawGraph(); frame = requestAnimationFrame(animateGraph); }
-    else { alpha = 0; drawGraph(); }
+    else {
+      alpha = 0;
+      if (fitWhenCool) { fitWhenCool = false; fitGraph(); }
+      else drawGraph();
+    }
   }
   function startGraph() { alpha = 1; if (!frame) frame = requestAnimationFrame(animateGraph); }
   function graphQuery() {
     var params = new URLSearchParams();
-    params.set('root', selectedRoot || '');
+    params.set('root', graphAllDefault || !selectedRoot ? '*' : selectedRoot);
     params.set('depth', document.getElementById('graphDepth').value);
     if (document.getElementById('graphTags').checked) params.set('tags', '1');
     if (document.getElementById('graphCross').checked) params.set('cross', '1');
-    if (document.getElementById('graphSessions').checked) params.set('include', 'sessions');
+    var include = [];
+    if (document.getElementById('graphSessions').checked) include.push('sessions');
+    if (document.getElementById('graphCommits').checked) include.push('commits');
+    if (include.length) params.set('include', include.join(','));
     if (showHidden()) params.set('hidden', '1');
     return params.toString();
   }
   function loadGraph() {
-    if (!selectedRoot) { document.getElementById('graphCount').textContent = 'Choose a project'; graphNodes = []; drawGraph(); return Promise.resolve(); }
     document.getElementById('graphCount').textContent = 'Loading graph…';
     var priorRoot = graphLoadedRoot;
-    graphLoadedRoot = selectedRoot;
+    var root = graphAllDefault || !selectedRoot ? '*' : selectedRoot;
+    graphLoadedRoot = root;
     return api('api/graph?' + graphQuery()).then(function (data) {
       var old = graphById, rect = canvas.getBoundingClientRect();
       graphData = data; graphNodes = []; graphLinks = data.links || []; graphById = Object.create(null); graphAdj = Object.create(null);
       var count = document.getElementById('graphCount');
       count.textContent = data.nodes.length + ' nodes · ' + data.total + ' total' + (data.truncated ? ' · truncated' : '');
-      data.nodes.forEach(function (raw, i) {
-        var prior = old[raw.id], angle = i * 2.399963, radius = 24 * Math.sqrt(i);
-        var node = Object.assign({}, raw, { x: prior ? prior.x : Math.cos(angle) * radius, y: prior ? prior.y : Math.sin(angle) * radius, vx: 0, vy: 0, pinned: false });
+      data.nodes.forEach(function (raw) {
+        var prior = priorRoot === root ? old[raw.id] : null;
+        var node = Object.assign({}, raw, {
+          x: prior ? prior.x : 0,
+          y: prior ? prior.y : 0,
+          seeded: !!prior,
+          vx: 0,
+          vy: 0,
+          pinned: false,
+        });
         graphNodes.push(node); graphById[node.id] = node; graphAdj[node.id] = [];
       });
       graphLinks.forEach(function (link) {
         if (graphAdj[link.source]) graphAdj[link.source].push(link.target);
         if (graphAdj[link.target]) graphAdj[link.target].push(link.source);
       });
+      var ranked = graphNodes.slice().sort(function (a, b) { return b.degree - a.degree; });
+      var highDegree = new Set(ranked.slice(0, Math.ceil(graphNodes.length * .15)).map(function (node) { return node.id; }));
+      graphNodes.forEach(function (node) { node.labelCore = node.kind === 'project' || node.kind === 'section' || highDegree.has(node.id); });
+      seedGraphPositions();
       updateMatches(); canvasSize();
-      if (!graphHasFit || priorRoot !== selectedRoot || !rect.width) fitGraph();
-      else drawGraph();
-      startGraph();
+      fitWhenCool = !graphHasFit || priorRoot !== root || !rect.width;
+      if (fitWhenCool) fitGraph(); else drawGraph();
+      if (graphNodes.length) startGraph();
+      else fitWhenCool = false;
     }).catch(function (e) { document.getElementById('graphCount').textContent = 'Graph unavailable: ' + e.message; });
   }
   function setView(mode) {
     currentView = mode;
+    updateProjectSelection();
     treeEl.hidden = mode !== 'tree'; graphViewEl.hidden = mode !== 'graph';
     document.getElementById('graphControls').hidden = mode !== 'graph';
     document.getElementById('treebtn').classList.toggle('on', mode === 'tree');
@@ -966,7 +1147,10 @@ export const VIEWER_PAGE = String.raw`<!doctype html>
   function loadSimProjects() {
     if (embedMode) return Promise.resolve(); var selectEl = document.getElementById('simproject');
     if (selectEl.options.length) return Promise.resolve();
-    return api('api/projects').then(function (data) { data.projects.forEach(function (p) { selectEl.appendChild(new Option((p.label ? p.label + ' · ' : '') + p.title, p.label || p.id)); }); })
+    return api('api/projects').then(function (data) { data.projects.forEach(function (p) {
+      var option = new Option((p.label ? p.label + ' · ' : '') + projectDisplayTitle(p.title), p.label || p.id);
+      option.title = p.title || p.id; selectEl.appendChild(option);
+    }); })
       .catch(function (e) { reportError(document.getElementById('simout'), e); });
   }
   document.getElementById('simrun').onclick = function () {
@@ -995,8 +1179,8 @@ export const VIEWER_PAGE = String.raw`<!doctype html>
   document.getElementById('graphbtn').onclick = function () { setView('graph'); };
   document.getElementById('reload').onclick = function () { loadStats(); loadProjects(); };
   document.getElementById('showhidden').onchange = function () { if (currentView === 'graph') loadGraph(); else loadTreeRoot(selectedRoot); };
-  ['graphTags', 'graphCross', 'graphSessions'].forEach(function (id) { document.getElementById(id).onchange = loadGraph; });
-  document.getElementById('graphDepth').oninput = function (event) { document.getElementById('depthValue').textContent = event.target.value; };
+  ['graphTags', 'graphCross', 'graphSessions', 'graphCommits'].forEach(function (id) { document.getElementById(id).onchange = loadGraph; });
+  document.getElementById('graphDepth').oninput = function (event) { graphDepthChanged = true; document.getElementById('depthValue').textContent = event.target.value; };
   document.getElementById('graphDepth').onchange = loadGraph;
   window.addEventListener('resize', function () { drawWires(); if (currentView === 'graph') { canvasSize(); drawGraph(); } });
   window.addEventListener('keydown', function (event) {

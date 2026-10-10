@@ -164,6 +164,7 @@ export interface ViewerGraph {
 export interface ViewerGraphOptions {
   includeHidden?: boolean;
   includeSessions?: boolean;
+  includeCommits?: boolean;
   includeTags?: boolean;
   includeCrossLinks?: boolean;
   depth?: number;
@@ -198,6 +199,12 @@ export const GRAPH_SESSION_KINDS: ReadonlySet<string> = new Set([
   'session-alias',
 ]);
 
+/** Git history is useful on demand, but overwhelms the default graph. */
+export const GRAPH_COMMIT_KINDS: ReadonlySet<string> = new Set([
+  'commit',
+  'commits-root',
+]);
+
 function graphPriority(metadata: Record<string, unknown>): string | null {
   for (const key of ['task', 'bug', 'idea']) {
     const nested = metadata[key];
@@ -223,6 +230,10 @@ function isGraphSessionKind(kind: string | null): boolean {
   if (!kind) return false;
   return GRAPH_SESSION_KINDS.has(kind) ||
     /(?:session|exchange|batch|summary|checkpoint|log[-_]turn)/i.test(kind);
+}
+
+function isGraphCommitKind(kind: string | null): boolean {
+  return kind !== null && GRAPH_COMMIT_KINDS.has(kind);
 }
 
 /** Mirrors store.ts rowToEntry: metadata coerced, tags parsed defensively. */
@@ -491,29 +502,36 @@ export class ViewerData {
    * descendants can still appear in the graph.
    */
   graph(rootId: string, options: ViewerGraphOptions = {}): ViewerGraph | null {
-    const root = this.readEntry(rootId);
-    if (!root) return null;
-
+    const allProjects = rootId === '*';
+    const roots = allProjects
+      ? this.listProjects().map(project => this.readEntry(project.id)).filter((entry): entry is ParsedEntry => entry !== null)
+      : [this.readEntry(rootId)].filter((entry): entry is ParsedEntry => entry !== null);
+    if (!allProjects && roots.length === 0) return null;
     const includeHidden = options.includeHidden === true;
-    if (!includeHidden && (root.row.irrelevant === 1 || root.row.tombstoned_at !== null)) {
+    if (!includeHidden && roots.some(root => root.row.irrelevant === 1 || root.row.tombstoned_at !== null)) {
       return null;
     }
 
     const limit = Math.max(1, Math.min(5000, Math.floor(options.limit ?? 1500)));
-    const depthLimit = options.depth === undefined ? Number.POSITIVE_INFINITY : options.depth;
+    const depthLimit = options.depth === undefined
+      ? (allProjects ? 2 : Number.POSITIVE_INFINITY)
+      : options.depth;
     const candidates: Array<{ entry: ParsedEntry; depth: number; secret: boolean }> = [];
-    const visited = new Set<string>([root.row.id]);
-    const rootSecret = isSecret(this.db, root.row.id);
+    const visited = new Set<string>(roots.map(root => root.row.id));
 
     type FrontierEntry = { entry: ParsedEntry; depth: number; secret: boolean };
-    let frontier: FrontierEntry[] = [{ entry: root, depth: 0, secret: rootSecret }];
+    let frontier: FrontierEntry[] = roots.map(entry => ({
+      entry,
+      depth: 0,
+      secret: isSecret(this.db, entry.row.id),
+    }));
     const addCandidate = (item: FrontierEntry): void => {
       const kind = metaString(item.entry, 'kind');
-      if (options.includeSessions === true || !isGraphSessionKind(kind)) {
-        candidates.push(item);
-      }
+      if (options.includeSessions !== true && isGraphSessionKind(kind)) return;
+      if (options.includeCommits !== true && isGraphCommitKind(kind)) return;
+      candidates.push(item);
     };
-    addCandidate(frontier[0]);
+    for (const root of frontier) addCandidate(root);
 
     const visibility = includeHidden ? '' : 'AND irrelevant = 0 AND tombstoned_at IS NULL';
     while (frontier.length > 0) {
@@ -584,6 +602,7 @@ export class ViewerData {
         if (!entry) return true;
         if (!includeHidden && (entry.row.irrelevant === 1 || entry.row.tombstoned_at !== null)) return false;
         if (options.includeSessions !== true && isGraphSessionKind(metaString(entry, 'kind'))) return false;
+        if (options.includeCommits !== true && isGraphCommitKind(metaString(entry, 'kind'))) return false;
         return true;
       };
       if (externalEntries.has(id)) {
@@ -765,7 +784,7 @@ export class ViewerData {
     }
 
     return {
-      root: root.row.id,
+      root: allProjects ? '*' : roots[0].row.id,
       nodes,
       links,
       truncated: nodes.length < total,

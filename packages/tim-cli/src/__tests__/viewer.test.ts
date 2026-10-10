@@ -59,6 +59,18 @@ async function seed(): Promise<void> {
     parentId: 'SEC-HIDDEN',
     metadata: { kind: 'note', order: 1 },
   });
+  await store.write('Commits', {
+    id: 'COMMITS-ROOT',
+    title: 'Commits',
+    parentId: 'SEC-HIDDEN-KID',
+    metadata: { kind: 'commits-root' },
+  });
+  await store.write('abc123 first commit', {
+    id: 'COMMIT-1',
+    title: 'abc123 first commit',
+    parentId: 'COMMITS-ROOT',
+    metadata: { kind: 'commit' },
+  });
 
   await store.write('Notes', {
     id: 'SEC-NOTES',
@@ -280,6 +292,16 @@ describe('viewer graph endpoint', () => {
     expect(body.truncated).toBe(true);
   });
 
+  it('hides git commit volume by default and includes it on request', async () => {
+    const normal = await get('/api/graph?root=PROJ-1');
+    expect(normal.body.nodes.some((node: Json) => node.kind === 'commit' || node.kind === 'commits-root')).toBe(false);
+
+    const commits = await get('/api/graph?root=PROJ-1&include=commits');
+    expect(commits.body.nodes.some((node: Json) => node.id === 'COMMITS-ROOT')).toBe(true);
+    expect(commits.body.nodes.some((node: Json) => node.id === 'COMMIT-1')).toBe(true);
+    expect(commits.body.nodes.some((node: Json) => node.kind === 'session')).toBe(false);
+  });
+
   it('filters session-style kinds unless include=sessions is set', async () => {
     const normal = await get('/api/graph?root=PROJ-1');
     expect(normal.body.nodes.some((node: Json) => node.kind === 'session')).toBe(false);
@@ -287,6 +309,31 @@ describe('viewer graph endpoint', () => {
     const expanded = await get('/api/graph?root=PROJ-1&include=sessions');
     expect(expanded.body.nodes.some((node: Json) => node.id === 'SESSION-1')).toBe(true);
     expect(expanded.body.nodes.some((node: Json) => node.id === 'TURN-1')).toBe(true);
+
+    const combined = await get('/api/graph?root=PROJ-1&include=sessions,commits');
+    expect(combined.body.nodes.some((node: Json) => node.id === 'SESSION-1')).toBe(true);
+    expect(combined.body.nodes.some((node: Json) => node.id === 'COMMIT-1')).toBe(true);
+  });
+
+  it('builds a depth-limited all-project overview and respects the node cap', async () => {
+    const projects = await get('/api/projects');
+    const overview = await get('/api/graph?root=*');
+    const projectIds = projects.body.projects.map((project: Json) => project.id);
+    const overviewProjectIds = overview.body.nodes
+      .filter((node: Json) => node.kind === 'project')
+      .map((node: Json) => node.id);
+
+    expect(overview.body.root).toBe('*');
+    expect(overviewProjectIds).toEqual(projectIds);
+    expect(overview.body.nodes.every((node: Json) => node.depth <= 2)).toBe(true);
+    expect(overview.body.nodes.some((node: Json) => node.id === 'SEC-HIDDEN-KID')).toBe(true);
+    expect(overview.body.nodes.some((node: Json) => node.id === 'ROOT-KINDED')).toBe(false);
+
+    const capped = await get('/api/graph?root=*&limit=3');
+    expect(capped.body.nodes).toHaveLength(3);
+    expect(capped.body.total).toBeGreaterThan(3);
+    expect(capped.body.truncated).toBe(true);
+    expect(capped.body.nodes.filter((node: Json) => node.kind === 'project')).toHaveLength(2);
   });
 
   it('applies depth and hidden filters to subtree entries', async () => {
@@ -558,6 +605,9 @@ describe('viewer page', () => {
     expect(VIEWER_PAGE).not.toMatch(/fetch\s*\(\s*['"]\/api\//);
     expect(VIEWER_PAGE).not.toMatch(/['"]\/api\/(?:stats|projects|children|node|graph|tools|tool|mutate)/);
     expect(VIEWER_PAGE).toContain("get('embed') === '1'");
+    expect(VIEWER_PAGE).toContain('id="graphTags" checked');
+    expect(VIEWER_PAGE).toContain('id="graphCommits"');
+    expect(VIEWER_PAGE).toContain('All projects');
     expect(VIEWER_PAGE).toContain('if (embedMode) return null;');
     expect(VIEWER_PAGE).toContain('body.embed #tabs');
   });

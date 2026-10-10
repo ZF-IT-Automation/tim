@@ -257,9 +257,14 @@ export function createViewerServer(data: ViewerData): http.Server {
           sendJson(res, 400, { error: 'depth must be a non-negative integer and limit a positive integer' });
           return;
         }
+        const includes = new Set((url.searchParams.get('include') ?? '')
+          .split(',')
+          .map(value => value.trim())
+          .filter(Boolean));
         const graph = data.graph(root, {
           includeHidden: url.searchParams.get('hidden') === '1',
-          includeSessions: url.searchParams.get('include') === 'sessions',
+          includeSessions: includes.has('sessions'),
+          includeCommits: includes.has('commits'),
           includeTags: url.searchParams.get('tags') === '1',
           includeCrossLinks: url.searchParams.get('cross') === '1',
           depth,
