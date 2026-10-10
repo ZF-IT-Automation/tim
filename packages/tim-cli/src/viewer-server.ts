@@ -239,6 +239,40 @@ export function createViewerServer(data: ViewerData): http.Server {
         return;
       }
 
+      if (url.pathname === '/api/graph') {
+        const root = url.searchParams.get('root');
+        if (!root) {
+          sendJson(res, 400, { error: 'root required' });
+          return;
+        }
+        const parseOptionalInteger = (name: string, min: number): number | undefined | null => {
+          const raw = url.searchParams.get(name);
+          if (raw === null || raw === '') return undefined;
+          const value = Number(raw);
+          return Number.isInteger(value) && value >= min ? value : null;
+        };
+        const depth = parseOptionalInteger('depth', 0);
+        const limit = parseOptionalInteger('limit', 1);
+        if (depth === null || limit === null) {
+          sendJson(res, 400, { error: 'depth must be a non-negative integer and limit a positive integer' });
+          return;
+        }
+        const graph = data.graph(root, {
+          includeHidden: url.searchParams.get('hidden') === '1',
+          includeSessions: url.searchParams.get('include') === 'sessions',
+          includeTags: url.searchParams.get('tags') === '1',
+          includeCrossLinks: url.searchParams.get('cross') === '1',
+          depth,
+          limit: limit === undefined ? undefined : Math.min(5000, limit),
+        });
+        if (!graph) {
+          sendJson(res, 404, { error: `No visible entry with id or label "${root}"` });
+          return;
+        }
+        sendJson(res, 200, graph);
+        return;
+      }
+
       if (url.pathname === '/api/node') {
         const id = url.searchParams.get('id');
         if (!id) {

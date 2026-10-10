@@ -12,6 +12,7 @@ import {
 } from '../viewer-server.js';
 import { ViewerData, REDACTED_TITLE } from '../viewer-data.js';
 import { inspectorToolArgs, parseDoctorDbPath } from '../viewer-tools.js';
+import { VIEWER_PAGE } from '../viewer-page.js';
 
 // Deliberately wider than the MCP renderer's MAX_CHILDREN_PER_LEVEL (10).
 const WIDE_CHILD_COUNT = 25;
@@ -162,6 +163,9 @@ async function seed(): Promise<void> {
     metadata: { kind: 'note', order: 1 },
   });
 
+  await store.link('NOTE-1', 'NOTE-2', 'relates', 2);
+  await store.link('NOTE-1', 'SECRET-CHILD', 'relates', 3);
+
   store.close();
 }
 
@@ -187,6 +191,7 @@ describe('viewer project list', () => {
     expect(p1.id).toBe('PROJ-1');
     expect(p1.kind).toBe('project');
     expect(p1.childCount).toBe(3); // hidden section + notes + sessions
+    expect(p1.entryCount).toBeGreaterThan(WIDE_CHILD_COUNT);
   });
 });
 
@@ -261,6 +266,65 @@ describe('viewer children endpoint', () => {
   it('400s without an id and 404s on an unknown id', async () => {
     expect((await get('/api/children')).status).toBe(400);
     expect((await get('/api/children?id=NOPE')).status).toBe(404);
+  });
+});
+
+describe('viewer graph endpoint', () => {
+  it('accepts project labels and keeps breadth-first nodes under the hard cap', async () => {
+    const { status, body } = await get('/api/graph?root=P0001&limit=3');
+    expect(status).toBe(200);
+    expect(body.root).toBe('PROJ-1');
+    expect(body.nodes.map((node: Json) => node.id)).toEqual(['PROJ-1', 'SEC-HIDDEN', 'SEC-NOTES']);
+    expect(body.nodes).toHaveLength(3);
+    expect(body.total).toBeGreaterThan(3);
+    expect(body.truncated).toBe(true);
+  });
+
+  it('filters session-style kinds unless include=sessions is set', async () => {
+    const normal = await get('/api/graph?root=PROJ-1');
+    expect(normal.body.nodes.some((node: Json) => node.kind === 'session')).toBe(false);
+    expect(normal.body.nodes.some((node: Json) => node.kind === 'exchange')).toBe(false);
+    const expanded = await get('/api/graph?root=PROJ-1&include=sessions');
+    expect(expanded.body.nodes.some((node: Json) => node.id === 'SESSION-1')).toBe(true);
+    expect(expanded.body.nodes.some((node: Json) => node.id === 'TURN-1')).toBe(true);
+  });
+
+  it('applies depth and hidden filters to subtree entries', async () => {
+    const shallow = await get('/api/graph?root=PROJ-1&depth=1');
+    expect(shallow.body.nodes.map((node: Json) => node.id)).toEqual(['PROJ-1', 'SEC-HIDDEN', 'SEC-NOTES']);
+    const normal = await get('/api/graph?root=PROJ-1');
+    expect(normal.body.nodes.some((node: Json) => node.id === 'NOTE-DELETED')).toBe(false);
+    const hidden = await get('/api/graph?root=PROJ-1&hidden=1');
+    expect(hidden.body.nodes.find((node: Json) => node.id === 'NOTE-DELETED').hidden).toBe(true);
+  });
+
+  it('keeps relation edges inside node set unless cross=1 adds external ghosts', async () => {
+    const normal = await get('/api/graph?root=PROJ-1');
+    expect(normal.body.links.some((link: Json) => link.type === 'relates' && link.source === 'NOTE-1' && link.target === 'NOTE-2')).toBe(true);
+    expect(normal.body.nodes.some((node: Json) => node.id === 'SECRET-CHILD')).toBe(false);
+
+    const cross = await get('/api/graph?root=PROJ-1&cross=1');
+    const ghost = cross.body.nodes.find((node: Json) => node.id === 'SECRET-CHILD');
+    expect(ghost).toMatchObject({ external: true, title: REDACTED_TITLE, redacted: true });
+    expect(cross.body.links.some((link: Json) => link.type === 'relates' && link.target === 'SECRET-CHILD')).toBe(true);
+  });
+
+  it('adds one linked node per tag when tags=1', async () => {
+    const { body } = await get('/api/graph?root=PROJ-1&tags=1');
+    const tag = body.nodes.find((node: Json) => node.id === 'tag:#fixture');
+    expect(tag).toMatchObject({ kind: 'tag', title: '#fixture' });
+    expect(body.links.some((link: Json) => link.type === 'tag' && link.target === 'tag:#fixture')).toBe(true);
+  });
+
+  it('redacts secret titles in graph nodes', async () => {
+    const { body } = await get('/api/graph?root=P0002');
+    const secret = body.nodes.find((node: Json) => node.id === 'SECRET-CHILD');
+    expect(secret).toMatchObject({ title: REDACTED_TITLE, secret: true, redacted: true, tags: [] });
+  });
+
+  it('returns 400 without root and 404 for an unknown root', async () => {
+    expect((await get('/api/graph')).status).toBe(400);
+    expect((await get('/api/graph?root=NOPE')).status).toBe(404);
   });
 });
 
@@ -488,6 +552,14 @@ describe('viewer page', () => {
     expect(html).not.toMatch(/src=["']https?:/i);
     expect(html).not.toMatch(/href=["']https?:/i);
     expect(html).not.toMatch(/@import/);
+  });
+
+  it('uses relative API paths and keeps embed mode free of tools and mutation actions', () => {
+    expect(VIEWER_PAGE).not.toMatch(/fetch\s*\(\s*['"]\/api\//);
+    expect(VIEWER_PAGE).not.toMatch(/['"]\/api\/(?:stats|projects|children|node|graph|tools|tool|mutate)/);
+    expect(VIEWER_PAGE).toContain("get('embed') === '1'");
+    expect(VIEWER_PAGE).toContain('if (embedMode) return null;');
+    expect(VIEWER_PAGE).toContain('body.embed #tabs');
   });
 });
 
