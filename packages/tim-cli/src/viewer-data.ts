@@ -186,6 +186,7 @@ const ENTRY_COLUMNS =
 
 /** High-volume conversation and checkpoint records omitted from the graph by default. */
 export const GRAPH_SESSION_KINDS: ReadonlySet<string> = new Set([
+  'batch',
   'sessions-root',
   'session',
   'session-summary-root',
@@ -194,8 +195,6 @@ export const GRAPH_SESSION_KINDS: ReadonlySet<string> = new Set([
   'exchange-batch',
   'exchange',
   'checkpoint',
-  'checkpoint-summary',
-  'log-turn',
   'session-alias',
 ]);
 
