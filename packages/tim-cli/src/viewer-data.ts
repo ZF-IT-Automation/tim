@@ -159,6 +159,8 @@ export interface ViewerGraph {
   links: ViewerGraphLink[];
   truncated: boolean;
   total: number;
+  /** Overview tag hubs omitted by the default filtered tag view. */
+  hiddenTagCount?: number;
 }
 
 export interface ViewerGraphOptions {
@@ -166,6 +168,7 @@ export interface ViewerGraphOptions {
   includeSessions?: boolean;
   includeCommits?: boolean;
   includeTags?: boolean;
+  includeTagHubs?: boolean;
   includeCrossLinks?: boolean;
   depth?: number;
   limit?: number;
@@ -203,6 +206,14 @@ export const GRAPH_SESSION_KINDS: ReadonlySet<string> = new Set([
 export const GRAPH_COMMIT_KINDS: ReadonlySet<string> = new Set([
   'commit',
   'commits-root',
+]);
+
+/** Reserved schema tags add little meaning to an all-project overview. */
+const GRAPH_OVERVIEW_STRUCTURAL_TAGS: ReadonlySet<string> = new Set([
+  '#project',
+  '#entry',
+  '#section',
+  '#schema',
 ]);
 
 function graphPriority(metadata: Record<string, unknown>): string | null {
@@ -516,14 +527,15 @@ export class ViewerData {
     const depthLimit = options.depth === undefined
       ? (allProjects ? 2 : Number.POSITIVE_INFINITY)
       : options.depth;
-    const candidates: Array<{ entry: ParsedEntry; depth: number; secret: boolean }> = [];
+    const candidates: Array<{ entry: ParsedEntry; depth: number; secret: boolean; projectId: string }> = [];
     const visited = new Set<string>(roots.map(root => root.row.id));
 
-    type FrontierEntry = { entry: ParsedEntry; depth: number; secret: boolean };
+    type FrontierEntry = { entry: ParsedEntry; depth: number; secret: boolean; projectId: string };
     let frontier: FrontierEntry[] = roots.map(entry => ({
       entry,
       depth: 0,
       secret: isSecret(this.db, entry.row.id),
+      projectId: entry.row.id,
     }));
     const addCandidate = (item: FrontierEntry): void => {
       const kind = metaString(item.entry, 'kind');
@@ -561,7 +573,7 @@ export class ViewerData {
           if (visited.has(entry.row.id)) continue;
           visited.add(entry.row.id);
           const secret = parent.secret || entryIsSecret(entry);
-          const child = { entry, depth: parent.depth + 1, secret };
+          const child = { entry, depth: parent.depth + 1, secret, projectId: parent.projectId };
           addCandidate(child);
           next.push(child);
         }
@@ -614,9 +626,49 @@ export class ViewerData {
     };
 
     const allTags = new Set<string>();
+    const tagEntries = new Map<string, number>();
+    const tagProjects = new Map<string, Set<string>>();
     for (const item of candidates) {
       if (item.secret && !this.showSecrets) continue;
-      for (const tag of item.entry.tags) if (typeof tag === 'string') allTags.add(tag);
+      for (const tag of new Set(item.entry.tags)) {
+        if (typeof tag !== 'string') continue;
+        allTags.add(tag);
+        tagEntries.set(tag, (tagEntries.get(tag) ?? 0) + 1);
+        const projects = tagProjects.get(tag) ?? new Set<string>();
+        projects.add(item.projectId);
+        tagProjects.set(tag, projects);
+      }
+    }
+
+    const tagHubs = new Set<string>();
+    if (allProjects && roots.length > 0 && candidates.length > 0) {
+      for (const tag of allTags) {
+        const entryShare = (tagEntries.get(tag) ?? 0) / candidates.length;
+        const projectShare = (tagProjects.get(tag)?.size ?? 0) / roots.length;
+        if (
+          entryShare > 0.25 || projectShare > 0.5 ||
+          GRAPH_OVERVIEW_STRUCTURAL_TAGS.has(tag.toLocaleLowerCase())
+        ) tagHubs.add(tag);
+      }
+    }
+
+    if (allProjects) {
+      const kindRank = (item: (typeof candidates)[number]): number => {
+        const kind = metaString(item.entry, 'kind');
+        if (kind === 'project') return 0;
+        if (kind === 'section') return 1;
+        if (kind === 'task' || kind === 'bug' || kind === 'idea' || kind === 'decision') return 2;
+        return 3;
+      };
+      candidates.sort((a, b) => {
+        const aRank = kindRank(a), bRank = kindRank(b);
+        if (aRank !== bRank) return aRank - bRank;
+        if (aRank >= 2) {
+          const recent = b.entry.row.updated_at.localeCompare(a.entry.row.updated_at);
+          if (recent !== 0) return recent;
+        }
+        return a.depth - b.depth || a.entry.row.created_at.localeCompare(b.entry.row.created_at);
+      });
     }
 
     const allGhosts = new Set<string>();
@@ -631,8 +683,13 @@ export class ViewerData {
       }
     }
 
-    const total = candidates.length +
-      (options.includeTags === true ? allTags.size : 0) + allGhosts.size;
+    const includeTag = (tag: string): boolean =>
+      options.includeTags === true &&
+      (!allProjects || options.includeTagHubs === true || !tagHubs.has(tag));
+    const availableTags = Array.from(allTags).filter(includeTag);
+    const filterOverviewTagHubs = options.includeTags === true && allProjects && options.includeTagHubs !== true;
+    const hiddenTagCount = filterOverviewTagHubs ? tagHubs.size : 0;
+    const total = candidates.length + availableTags.length + allGhosts.size;
     let selected = candidates.slice(0, limit);
 
     const extrasFor = (items: typeof candidates): { tags: string[]; ghosts: string[] } => {
@@ -641,7 +698,7 @@ export class ViewerData {
       if (options.includeTags === true) {
         for (const item of items) {
           if (item.secret && !this.showSecrets) continue;
-          for (const tag of item.entry.tags) if (typeof tag === 'string') tagSet.add(tag);
+          for (const tag of item.entry.tags) if (typeof tag === 'string' && includeTag(tag)) tagSet.add(tag);
         }
       }
       const ghostSet = new Set<string>();
@@ -789,6 +846,7 @@ export class ViewerData {
       links,
       truncated: nodes.length < total,
       total,
+      ...(filterOverviewTagHubs ? { hiddenTagCount } : {}),
     };
   }
 

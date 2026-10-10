@@ -79,6 +79,7 @@ export const VIEWER_PAGE = String.raw`<!doctype html>
   .toggle input { accent-color: var(--accent); }
   #depthwrap { display: inline-flex; align-items: center; gap: 7px; color: var(--dim); font-size: 12px; }
   #graphDepth { width: 116px; padding: 0; }
+  #graphNote { color: var(--dim); font-size: 11px; }
   #graphCount { margin-left: auto; color: var(--dim); font-size: 12px; }
   #legend { display: flex; gap: 9px; flex-wrap: wrap; padding: 5px 12px; color: var(--dim); font-size: 10px; }
   .legend-item { display: inline-flex; gap: 4px; align-items: center; }
@@ -209,11 +210,12 @@ export const VIEWER_PAGE = String.raw`<!doctype html>
   </aside>
   <section id="workspace" aria-label="Memory tree and graph">
     <div id="graphControls" hidden>
-      <label class="toggle"><input type="checkbox" id="graphTags" checked> Tags</label>
+      <label class="toggle"><input type="checkbox" id="graphTags" checked> All tags</label>
       <label class="toggle"><input type="checkbox" id="graphCross"> Cross-links</label>
       <label class="toggle"><input type="checkbox" id="graphSessions"> Sessions</label>
       <label class="toggle"><input type="checkbox" id="graphCommits"> Commits</label>
       <label id="depthwrap">Depth <input type="range" id="graphDepth" min="1" max="12" value="6"><span id="depthValue">6</span></label>
+      <span id="graphNote" aria-live="polite"></span>
       <span id="graphCount" aria-live="polite"></span>
     </div>
     <div id="tree" class="view"><div id="board"><svg id="wires" aria-hidden="true"></svg></div></div>
@@ -734,7 +736,7 @@ export const VIEWER_PAGE = String.raw`<!doctype html>
     canvasSize(); var rect = canvas.getBoundingClientRect(), bounds = graphBounds();
     if (!bounds || !rect.width || !rect.height) return;
     var width = Math.max(90, bounds.maxX - bounds.minX), height = Math.max(90, bounds.maxY - bounds.minY);
-    camera.scale = Math.max(.025, Math.min(2.4, Math.min((rect.width - 150) / width, (rect.height - 110) / height)));
+    camera.scale = Math.max(.001, Math.min(2.4, Math.min((rect.width - 40) / width, (rect.height - 40) / height)));
     camera.x = rect.width / 2 - ((bounds.minX + bounds.maxX) / 2) * camera.scale;
     camera.y = rect.height / 2 - ((bounds.minY + bounds.maxY) / 2) * camera.scale;
     graphHasFit = true; drawGraph();
@@ -765,9 +767,14 @@ export const VIEWER_PAGE = String.raw`<!doctype html>
       var a = graphById[link.source], b = graphById[link.target]; if (!a || !b) return;
       var p = graphPoint(a), q = graphPoint(b);
       var highlighted = focused && (link.source === focused.id || link.target === focused.id);
-      ctx.globalAlpha = focused ? (highlighted ? .96 : .055) : (link.type === 'child' ? .26 : .4);
+      var overview = graphData && graphData.root === '*';
+      var crossProject = overview && a.projectId && b.projectId && a.projectId !== b.projectId;
+      var quietAlpha = overview
+        ? (crossProject ? .06 : (link.type === 'child' ? .15 : (link.type === 'tag' ? .08 : .12)))
+        : (link.type === 'child' ? .26 : .4);
+      ctx.globalAlpha = focused ? (highlighted ? .96 : .055) : quietAlpha;
       ctx.strokeStyle = highlighted ? accentColor : fgColor;
-      ctx.lineWidth = highlighted ? 1.6 : (link.type === 'child' ? .9 : 1.1);
+      ctx.lineWidth = highlighted ? 1.6 : (overview ? .7 : (link.type === 'child' ? .9 : 1.1));
       ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(q.x, q.y); ctx.stroke();
     });
     graphNodes.forEach(function (node) {
@@ -800,9 +807,15 @@ export const VIEWER_PAGE = String.raw`<!doctype html>
       labels.push({ node: node, point: point, radius: radius, label: label, opacity: opacity, forced: forced });
     });
     labels.sort(function (a, b) {
-      if (a.forced !== b.forced) return a.forced ? -1 : 1;
-      var rank = function (node) { return node.kind === 'project' ? 3 : (node.kind === 'section' ? 2 : 1); };
-      return rank(b.node) - rank(a.node) || b.node.degree - a.node.degree;
+      var rank = function (item) {
+        if (item.node.id === selected || item.node.id === graphHover) return 5;
+        if (near.has(item.node.id)) return 4;
+        if (graphMatches.has(item.node.id)) return 3;
+        if (item.node.kind === 'project') return 2;
+        if (item.node.kind === 'section') return 1;
+        return 0;
+      };
+      return rank(b) - rank(a) || b.node.degree - a.node.degree;
     });
     var occupied = Object.create(null), labelCellWidth = 112, labelCellHeight = 18;
     function overlapsLabel(left, top, width) {
@@ -820,10 +833,12 @@ export const VIEWER_PAGE = String.raw`<!doctype html>
     labels.forEach(function (item) {
       var width = ctx.measureText(item.label).width, left = item.point.x - width / 2;
       var top = item.point.y + item.radius + 5, originalTop = top;
+      var placed = false;
       for (var offset = 0; offset <= 96; offset += 12) {
         var candidateTop = originalTop + offset;
-        if (!overlapsLabel(left, candidateTop, width) || offset === 96) { top = candidateTop; break; }
+        if (!overlapsLabel(left, candidateTop, width)) { top = candidateTop; placed = true; break; }
       }
+      if (!placed) return;
       var rectBox = { left: left, right: left + width, top: top, bottom: top + 15 };
       var x0 = Math.floor((left - 4) / labelCellWidth), x1 = Math.floor((left + width + 4) / labelCellWidth);
       var y0 = Math.floor((top - 2) / labelCellHeight), y1 = Math.floor((top + 15) / labelCellHeight);
@@ -845,39 +860,103 @@ export const VIEWER_PAGE = String.raw`<!doctype html>
     graphNodes.forEach(function (node) { if (node.seeded) positioned.add(node.id); });
     var roots = graphNodes.filter(function (node) { return node.depth === 0; });
     var allProjects = graphData && graphData.root === '*';
-    var rootRadius = allProjects && roots.length > 1 ? Math.max(420, roots.length * 420 / (Math.PI * 2)) : 0;
-    roots.forEach(function (root, index) {
-      var angle = roots.length > 1 ? -Math.PI / 2 + Math.PI * 2 * index / roots.length : 0;
-      if (!root.seeded) {
-        root.x = rootRadius ? Math.cos(angle) * rootRadius : 0;
-        root.y = rootRadius ? Math.sin(angle) * rootRadius : 0;
-        root.seeded = true; positioned.add(root.id);
+    if (allProjects) {
+      var projectRoots = roots.filter(function (node) { return node.kind === 'project'; });
+      var projectMembers = Object.create(null), projectRadii = Object.create(null), projectCenters = Object.create(null);
+      function collectProject(nodeId, rootId, seen) {
+        if (seen.has(nodeId)) return;
+        seen.add(nodeId);
+        var node = graphById[nodeId]; if (!node) return;
+        node.projectId = rootId;
+        (projectMembers[rootId] || (projectMembers[rootId] = [])).push(node);
+        (children[nodeId] || []).forEach(function (id) { collectProject(id, rootId, seen); });
       }
-      function placeDescendants(parent, orientation, level) {
-        var descendants = children[parent.id] || [];
-        descendants.forEach(function (id, childIndex) {
-          var child = graphById[id]; if (!child) return;
-          var direction, distance;
-          if (parent.depth === 0 && !allProjects) {
-            direction = -Math.PI / 2 + Math.PI * 2 * childIndex / Math.max(1, descendants.length);
-            distance = 440;
-          } else if (parent.depth === 0) {
-            direction = orientation + (childIndex - (descendants.length - 1) / 2) * .42;
-            distance = 125;
-          } else {
-            direction = orientation + childIndex * goldenAngle;
-            distance = 50 + Math.sqrt(childIndex) * 17;
+      projectRoots.forEach(function (root) {
+        collectProject(root.id, root.id, new Set());
+        var members = projectMembers[root.id] || [];
+        var count = members.length;
+        var widestBranch = members.reduce(function (max, node) {
+          return Math.max(max, (children[node.id] || []).length);
+        }, 0);
+        projectRadii[root.id] = 90 + Math.sqrt(Math.max(1, count - 1)) * 11 + Math.sqrt(widestBranch) * 8;
+      });
+      var maxRadius = projectRoots.reduce(function (value, root) { return Math.max(value, projectRadii[root.id] || 130); }, 130);
+      var centerStep = Math.max(260, maxRadius * 1.2 + 80), placedCenters = [];
+      projectRoots.forEach(function (root, rootIndex) {
+        var center = root.seeded ? { x: root.x, y: root.y } : null;
+        if (!center) {
+          var candidate = rootIndex === 0 ? 0 : 1, accepted = false;
+          while (!accepted && candidate < 100000) {
+            var angle = candidate * goldenAngle;
+            var distance = candidate === 0 ? 0 : centerStep * Math.sqrt(candidate);
+            var x = Math.cos(angle) * distance, y = Math.sin(angle) * distance;
+            var radius = projectRadii[root.id] || 130;
+            accepted = placedCenters.every(function (prior) {
+              var dx = x - prior.x, dy = y - prior.y;
+              return dx * dx + dy * dy >= Math.pow(radius + prior.radius + 90, 2);
+            });
+            if (accepted) center = { x: x, y: y };
+            else candidate++;
           }
+          if (!center) center = { x: rootIndex * centerStep, y: 0 };
+          root.x = center.x; root.y = center.y; root.seeded = true; positioned.add(root.id);
+        }
+        projectCenters[root.id] = center;
+        placedCenters.push({ x: center.x, y: center.y, radius: projectRadii[root.id] || 130 });
+        (projectMembers[root.id] || []).forEach(function (node) { node.projectCenter = center; });
+
+        var direct = children[root.id] || [];
+        var ring = Math.min((projectRadii[root.id] || 130) * .48, 42 + Math.sqrt(direct.length) * 13);
+        direct.forEach(function (id, childIndex) {
+          var child = graphById[id]; if (!child) return;
+          var direction = -Math.PI / 2 + Math.PI * 2 * childIndex / Math.max(1, direct.length);
           if (!child.seeded) {
-            child.x = parent.x + Math.cos(direction) * distance;
-            child.y = parent.y + Math.sin(direction) * distance;
+            child.x = center.x + Math.cos(direction) * ring;
+            child.y = center.y + Math.sin(direction) * ring;
             child.seeded = true; positioned.add(child.id);
           }
-          placeDescendants(child, direction, level + 1);
+          function placeDescendants(parent, orientation) {
+            (children[parent.id] || []).forEach(function (descendantId, index, siblings) {
+              var descendant = graphById[descendantId]; if (!descendant) return;
+              var childDirection = orientation + (index - (siblings.length - 1) / 2) * .48;
+              var distance = 28 + Math.sqrt(index) * 9;
+              if (!descendant.seeded) {
+                descendant.x = parent.x + Math.cos(childDirection) * distance;
+                descendant.y = parent.y + Math.sin(childDirection) * distance;
+                descendant.seeded = true; positioned.add(descendant.id);
+              }
+              placeDescendants(descendant, childDirection);
+            });
+          }
+          placeDescendants(child, direction);
         });
-      }
-      placeDescendants(root, angle, 1);
-    });
+      });
+    } else {
+      roots.forEach(function (root) {
+        if (!root.seeded) { root.x = 0; root.y = 0; root.seeded = true; positioned.add(root.id); }
+        function placeDescendants(parent, orientation) {
+          var descendants = children[parent.id] || [];
+          descendants.forEach(function (id, childIndex) {
+            var child = graphById[id]; if (!child) return;
+            var direction, distance;
+            if (parent.depth === 0) {
+              direction = -Math.PI / 2 + Math.PI * 2 * childIndex / Math.max(1, descendants.length);
+              distance = 440;
+            } else {
+              direction = orientation + childIndex * goldenAngle;
+              distance = 50 + Math.sqrt(childIndex) * 17;
+            }
+            if (!child.seeded) {
+              child.x = parent.x + Math.cos(direction) * distance;
+              child.y = parent.y + Math.sin(direction) * distance;
+              child.seeded = true; positioned.add(child.id);
+            }
+            placeDescendants(child, direction);
+          });
+        }
+        placeDescendants(root, 0);
+      });
+    }
 
     graphLinks.forEach(function (link, index) {
       if (link.type === 'child' || link.type === 'tag') return;
@@ -955,6 +1034,10 @@ export const VIEWER_PAGE = String.raw`<!doctype html>
     });
     graphNodes.forEach(function (node) {
       if (node.pinned) { node.vx = 0; node.vy = 0; return; }
+      if (node.projectCenter) {
+        node.vx += (node.projectCenter.x - node.x) * .003 * alpha;
+        node.vy += (node.projectCenter.y - node.y) * .003 * alpha;
+      }
       node.vx *= .84; node.vy *= .84; node.x += node.vx; node.y += node.vy;
     });
     alpha *= .986;
@@ -971,9 +1054,11 @@ export const VIEWER_PAGE = String.raw`<!doctype html>
   function startGraph() { alpha = 1; if (!frame) frame = requestAnimationFrame(animateGraph); }
   function graphQuery() {
     var params = new URLSearchParams();
-    params.set('root', graphAllDefault || !selectedRoot ? '*' : selectedRoot);
+    var root = graphAllDefault || !selectedRoot ? '*' : selectedRoot;
+    params.set('root', root);
     params.set('depth', document.getElementById('graphDepth').value);
     if (document.getElementById('graphTags').checked) params.set('tags', '1');
+    else if (root === '*') params.set('tags', 'filtered');
     if (document.getElementById('graphCross').checked) params.set('cross', '1');
     var include = [];
     if (document.getElementById('graphSessions').checked) include.push('sessions');
@@ -984,14 +1069,20 @@ export const VIEWER_PAGE = String.raw`<!doctype html>
   }
   function loadGraph() {
     document.getElementById('graphCount').textContent = 'Loading graph…';
+    document.getElementById('graphNote').textContent = '';
     var priorRoot = graphLoadedRoot;
     var root = graphAllDefault || !selectedRoot ? '*' : selectedRoot;
+    if (priorRoot !== root) document.getElementById('graphTags').checked = root !== '*';
     graphLoadedRoot = root;
     return api('api/graph?' + graphQuery()).then(function (data) {
       var old = graphById, rect = canvas.getBoundingClientRect();
       graphData = data; graphNodes = []; graphLinks = data.links || []; graphById = Object.create(null); graphAdj = Object.create(null);
       var count = document.getElementById('graphCount');
       count.textContent = data.nodes.length + ' nodes · ' + data.total + ' total' + (data.truncated ? ' · truncated' : '');
+      var note = document.getElementById('graphNote');
+      note.textContent = typeof data.hiddenTagCount === 'number'
+        ? data.hiddenTagCount + ' common tag nodes hidden. All tags shows them.'
+        : (root === '*' && document.getElementById('graphTags').checked ? 'All tag nodes shown.' : '');
       data.nodes.forEach(function (raw) {
         var prior = priorRoot === root ? old[raw.id] : null;
         var node = Object.assign({}, raw, {

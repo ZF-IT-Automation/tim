@@ -38,11 +38,13 @@ async function seed(): Promise<void> {
   await store.write('TIM Viewer Fixture', {
     id: 'PROJ-1',
     title: 'TIM Viewer Fixture',
+    tags: ['#shared-project'],
     metadata: { kind: 'project', label: 'P0001', path: '/tmp/fixture' },
   });
   await store.write('Second Project', {
     id: 'PROJ-2',
     title: 'Second Project',
+    tags: ['#shared-project'],
     metadata: { kind: 'project', label: 'P0002' },
   });
 
@@ -333,7 +335,23 @@ describe('viewer graph endpoint', () => {
     expect(capped.body.nodes).toHaveLength(3);
     expect(capped.body.total).toBeGreaterThan(3);
     expect(capped.body.truncated).toBe(true);
-    expect(capped.body.nodes.filter((node: Json) => node.kind === 'project')).toHaveLength(2);
+    expect(capped.body.nodes.filter((node: Json) => node.kind === 'project').map((node: Json) => node.id)).toEqual(projectIds);
+    expect(capped.body.nodes.some((node: Json) => node.kind === 'section')).toBe(true);
+  });
+
+  it('filters high-share tag nodes in the all-project overview but keeps the all-tags override', async () => {
+    const filtered = await get('/api/graph?root=*&tags=filtered');
+    expect(filtered.body.hiddenTagCount).toBe(2);
+    expect(filtered.body.nodes.some((node: Json) => node.id === 'tag:#fixture')).toBe(false);
+    expect(filtered.body.nodes.some((node: Json) => node.id === 'tag:#shared-project')).toBe(false);
+
+    const allTags = await get('/api/graph?root=*&tags=1');
+    expect(allTags.body.nodes.some((node: Json) => node.id === 'tag:#fixture')).toBe(true);
+    expect(allTags.body.nodes.some((node: Json) => node.id === 'tag:#shared-project')).toBe(true);
+
+    const project = await get('/api/graph?root=PROJ-1&tags=filtered');
+    expect(project.body.nodes.some((node: Json) => node.id === 'tag:#fixture')).toBe(true);
+    expect(project.body.nodes.some((node: Json) => node.id === 'tag:#shared-project')).toBe(true);
   });
 
   it('applies depth and hidden filters to subtree entries', async () => {

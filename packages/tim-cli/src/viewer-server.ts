@@ -261,11 +261,13 @@ export function createViewerServer(data: ViewerData): http.Server {
           .split(',')
           .map(value => value.trim())
           .filter(Boolean));
+        const tags = url.searchParams.get('tags');
         const graph = data.graph(root, {
           includeHidden: url.searchParams.get('hidden') === '1',
           includeSessions: includes.has('sessions'),
           includeCommits: includes.has('commits'),
-          includeTags: url.searchParams.get('tags') === '1',
+          includeTags: tags === '1' || tags === 'all' || tags === 'filtered',
+          includeTagHubs: tags === '1' || tags === 'all',
           includeCrossLinks: url.searchParams.get('cross') === '1',
           depth,
           limit: limit === undefined ? undefined : Math.min(5000, limit),
