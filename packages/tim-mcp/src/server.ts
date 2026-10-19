@@ -279,7 +279,7 @@ const TimGuardSchema = z.object({
   action: z.string().min(3)
     .describe('The planned action, in plain words — e.g. "upload PDF via rmapi"'),
   project: z.string().optional()
-    .describe('Scope to a project (label/alias/name). Default: all projects'),
+    .describe('Rank this project first (label/alias/name); with a project, a match needs two keywords. Default: all projects equal'),
   topK: z.number().min(1).max(20).optional().default(5),
 });
 
@@ -769,8 +769,9 @@ export const TOOL_DEFS: Array<{
   {
     name: 'tim_guard',
     description: 'Pre-action check against negative memory: search known ' +
-      'failures (kind=error) and learnings (kind=learning) matching a planned ' +
-      'action. Call BEFORE risky/expensive actions — returns warnings with ' +
+      'failures and learnings (kind/type error, learning, lesson) in all projects, ' +
+      'archived ones included, matching a planned action (English or German). ' +
+      'Call BEFORE risky/expensive actions — returns warnings with ' +
       'entry ids to tim_read, or status "clear".',
     schema: TimGuardSchema,
   },

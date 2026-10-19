@@ -20,7 +20,9 @@ import {
   resolveEntrySearchStatus,
   resolveBugStatusFromMetadata,
   entrySearchStatusSql,
+  extractPromptTerms,
 } from 'tim-core';
+import { matchActionVerbs } from './action-verbs.js';
 import {
   runMigrations,
   createTriggers,
@@ -49,7 +51,7 @@ import {
   recordFromPayload,
   remoteEdgeWins,
 } from './sync-methods.js';
-import { assertEntryUnlocked, assertNoLockInternalMetadata, parentIsSecret } from './secret.js';
+import { assertEntryUnlocked, assertNoLockInternalMetadata, isSecret, parentIsSecret } from './secret.js';
 import {
   assertValidEvidenceMetadata,
   assertValidCallerTemporalMetadata,
@@ -100,6 +102,10 @@ const MACHINE_STAMPED_TAGS = new Set([COMMIT_TAG, '#commits']);
  * quoted string would match nothing or error).
  */
 export type FtsQueryMode = 'literal' | 'or-terms';
+
+/** Failure knowledge for searchFailures: metadata.kind or .type, or the same word as a tag. */
+const FAILURE_KINDS = ['error', 'learning', 'lesson'];
+const FAILURE_TAGS = FAILURE_KINDS.map(k => `#${k}`);
 
 const FTS_REAL_COLUMNS = new Set(['title', 'content', 'tags']);
 
@@ -2922,6 +2928,8 @@ ${zeroExchangeFilter}
        * kind allow-list does not drop type-only rows before LIMIT.
        */
       includeTypes?: string[];
+      /** Only entries carrying one of these exact tags; OR-combined with the two lists above. */
+      includeTags?: string[];
       type?: string;
       tag?: string;
       status?: string;
@@ -2962,28 +2970,21 @@ ${zeroExchangeFilter}
       scopeSql += ` AND COALESCE(json_extract(e.metadata, '$.kind'), '') NOT IN (${holes})`;
       params.push(...excludeKinds);
     }
-    // Kind and type allow-lists are one predicate. AND would hide log/decision
+    // Kind, type and tag allow-lists are one predicate. AND would hide log/decision
     // rows (they have a type and no kind) whenever a kind list is also set,
     // and filtering after LIMIT would let other kinds fill the window.
-    const includeKinds = opts.includeKinds ?? [];
-    const includeTypes = opts.includeTypes ?? [];
-    if (includeKinds.length && includeTypes.length) {
-      const kindHoles = includeKinds.map(() => '?').join(', ');
-      const typeHoles = includeTypes.map(() => '?').join(', ');
-      scopeSql += ` AND (
-        json_extract(e.metadata, '$.kind') IN (${kindHoles})
-        OR json_extract(e.metadata, '$.type') IN (${typeHoles})
-      )`;
-      params.push(...includeKinds, ...includeTypes);
-    } else if (includeKinds.length) {
-      const holes = includeKinds.map(() => '?').join(', ');
-      scopeSql += ` AND json_extract(e.metadata, '$.kind') IN (${holes})`;
-      params.push(...includeKinds);
-    } else if (includeTypes.length) {
-      const holes = includeTypes.map(() => '?').join(', ');
-      scopeSql += ` AND json_extract(e.metadata, '$.type') IN (${holes})`;
-      params.push(...includeTypes);
+    const allowLists: Array<[string[] | undefined, (holes: string) => string]> = [
+      [opts.includeKinds, h => `json_extract(e.metadata, '$.kind') IN (${h})`],
+      [opts.includeTypes, h => `json_extract(e.metadata, '$.type') IN (${h})`],
+      [opts.includeTags, h => `EXISTS (SELECT 1 FROM json_each(e.tags) WHERE value IN (${h}))`],
+    ];
+    const allow: string[] = [];
+    for (const [values, clause] of allowLists) {
+      if (!values?.length) continue;
+      allow.push(clause(values.map(() => '?').join(', ')));
+      params.push(...values);
     }
+    if (allow.length) scopeSql += ` AND (${allow.join(' OR ')})`;
     if (opts.type) {
       scopeSql += ` AND json_extract(e.metadata, '$.type') = ?`;
       params.push(opts.type);
@@ -3090,48 +3091,62 @@ ${zeroExchangeFilter}
   }
 
   /**
-   * Negative-memory lookup for the tim_guard pre-action check: FTS over
-   * the query, filtered to failure knowledge (kind error/learning, or
-   * #error/#learning tagged). Over-fetches because most FTS hits are not
-   * failures. Plain-language actions are split into keywords (OR semantics)
-   * because FTS5 AND-matching every token is too strict for guard queries.
+   * Negative-memory lookup for tim_guard and the prompt hook: failure knowledge
+   * (kind or type error/learning/lesson, or tagged so) matching any keyword of
+   * the query, across all projects including archived ones — learnings transfer.
+   * Ranked by matched keywords, plus one for the given project and a half for
+   * #universal: a five-keyword learning elsewhere beats a two-keyword one at home.
+   * With a given project (the prompt hook) every entry needs two keywords: on the
+   * real DB one shared word ("server", "start") picked unrelated entries in every
+   * project, the bound one too.
    */
   async searchFailures(
     query: string,
     opts: { projectLabel?: string; limit?: number } = {},
   ): Promise<Entry[]> {
     const limit = opts.limit ?? 5;
-    const STOP = new Set([
-      'the', 'and', 'for', 'with', 'from', 'this', 'that', 'via', 'into',
-      'your',
-      // German function words — actions often mix DE/EN (Finding 2 established DE matters)
-      'der', 'die', 'das', 'und', 'mit', 'von', 'für', 'auf', 'ist', 'nicht',
-    ]);
-    const keywords = query
-      .toLowerCase()
-      .split(/[^\p{L}\p{N}]+/u)
-      .filter(w => w.length >= 3 && !STOP.has(w));
-    const terms = keywords.length > 0 ? keywords : [query.trim()].filter(Boolean);
+    // A verb's forms and its added search terms count as one keyword.
+    const verbs = matchActionVerbs(query);
+    const keyOf = new Map<string, string>();
+    for (const { words, terms } of verbs) {
+      for (const w of [...words, ...terms]) keyOf.set(w, terms[0]);
+    }
+    const keywords = extractPromptTerms(query);
+    const terms = keywords.length > 0
+      ? [...new Set([...keywords, ...verbs.flatMap(v => v.terms)])]
+      : [query.trim()].filter(Boolean);
 
-    const seen = new Set<string>();
-    const hits: Entry[] = [];
+    const matches = new Map<string, { entry: Entry; keys: Set<string> }>();
     for (const term of terms) {
-      for (const e of await this.searchFts(term, 50)) {
-        if (seen.has(e.id)) continue;
-        seen.add(e.id);
-        hits.push(e);
+      const hits = await this.searchFts(term, 50, {
+        includeKinds: FAILURE_KINDS,
+        includeTypes: FAILURE_KINDS,
+        includeTags: FAILURE_TAGS,
+      });
+      for (const entry of hits) {
+        const m = matches.get(entry.id) ?? { entry, keys: new Set<string>() };
+        m.keys.add(keyOf.get(term) ?? term);
+        matches.set(entry.id, m);
       }
     }
 
-    const failures = hits.filter(e => {
-      const kind = typeof e.metadata.kind === 'string' ? e.metadata.kind : '';
-      return kind === 'error' || kind === 'learning'
-        || e.tags.includes('#error') || e.tags.includes('#learning');
-    });
-    if (!opts.projectLabel) return failures.slice(0, limit);
-    return failures
-      .filter(e => this.getProjectLabel(e.id) === opts.projectLabel)
-      .slice(0, limit);
+    const home = opts.projectLabel;
+    const queryKeys = new Set(terms.map(t => keyOf.get(t) ?? t)).size;
+    return [...matches.values()]
+      .filter(m => !home || m.keys.size >= Math.min(2, queryKeys))
+      // FTS skips only rows flagged themselves; a subtree marked secret later stays indexed,
+      // and the hook sends these hits to Jev.
+      .filter(m => !isSecret(this.db, m.entry.id))
+      .map(m => ({
+        ...m,
+        score: m.keys.size
+          + (home && this.getProjectLabel(m.entry.id) === home ? 1 : 0)
+          + (m.entry.tags.includes('#universal') ? 0.5 : 0),
+      }))
+      // Stable sort: ties keep first-found order (keyword order, then FTS rank).
+      .sort((a, b) => b.score - a.score)
+      .slice(0, limit)
+      .map(m => m.entry);
   }
 
   /**

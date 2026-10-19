@@ -83,6 +83,7 @@ export {
   sanitizeUserExchangeContent,
   isCountableUserExchange,
 } from './harness-prompt.js';
+export { matchActionVerbs } from './action-verbs.js';
 export {
   SessionManager,
   resolveCurrentSession,

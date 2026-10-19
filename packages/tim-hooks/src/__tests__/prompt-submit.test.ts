@@ -73,6 +73,60 @@ describe('runPromptSubmit', () => {
     expect(result!.context).toMatch(/E0001/);
   });
 
+  describe('guard lookup', () => {
+    it.each([
+      'Pushe den Branch bitte',
+      'Deploye das auf Strato',
+      'Installiere hmem-sync neu',
+      'Lösche die alten Clones',
+      'Committe das',
+      'Starte den Server neu',
+      'push it',
+    ])('takes the guard path for "%s"', async prompt => {
+      vi.spyOn(store, 'search').mockResolvedValue([]);
+      const guard = vi.spyOn(store, 'searchFailures').mockResolvedValue([]);
+      await runPromptSubmit(store, { prompt, projectLabel: 'P0001' });
+      expect(guard).toHaveBeenCalledWith(prompt, expect.objectContaining({ projectLabel: 'P0001' }));
+    });
+
+    it.each([
+      'Wie funktioniert das Deployment?',
+      'Der Start war holprig',
+      'Ich habe gestern gepusht',
+    ])('skips the guard path for prose "%s"', async prompt => {
+      vi.spyOn(store, 'search').mockResolvedValue([]);
+      const guard = vi.spyOn(store, 'searchFailures').mockResolvedValue([]);
+      await runPromptSubmit(store, { prompt });
+      expect(guard).not.toHaveBeenCalled();
+    });
+
+    it('surfaces learnings from other and archived projects for a matching action only', async () => {
+      await store.write('Home', { metadata: { kind: 'project', label: 'P0001' } });
+      const other = await store.write('Other', { metadata: { kind: 'project', label: 'P0002' } });
+      const archived = await store.write('Old', {
+        metadata: { kind: 'project', label: 'P0072', status: 'archived' },
+      });
+      const fromOther = await store.write(
+        'Strato deploy needs daemon-reload\nsystemd keeps the old unit otherwise.',
+        { parentId: other.id, metadata: { kind: 'learning' } },
+      );
+      const fromArchived = await store.write(
+        'Strato deploy: free disk first\nBuild cache fills the volume.',
+        { parentId: archived.id, metadata: { kind: 'learning' } },
+      );
+      const guardLines = async (prompt: string) =>
+        ((await runPromptSubmit(store, { prompt, projectLabel: 'P0001' }))?.lines ?? [])
+          .filter(l => l.startsWith('TIM guard'));
+
+      const lines = await guardLines('Deploye das auf Strato');
+      expect(lines.some(l => l.includes(fromOther.id))).toBe(true);
+      expect(lines.some(l => l.includes(fromArchived.id))).toBe(true);
+      // Sharing only the verb, or no action at all, adds nothing.
+      expect(await guardLines('Deploye das Frontend')).toEqual([]);
+      expect(await guardLines('Wie ist das Wetter auf Strato?')).toEqual([]);
+    });
+  });
+
   it('returns null on timeout skip', async () => {
     vi.spyOn(store, 'search').mockImplementation(() => new Promise(() => {}));
 
@@ -270,6 +324,41 @@ describe('runPromptSubmit', () => {
       const result = await runPromptSubmit(store, { prompt: 'decay worldclock', jev: true });
       expect(result!.lines).toHaveLength(2);
       expect(result!.lines[0]).toContain('Ledger hash');
+    });
+
+    it('lets Jev drop guard hits that only share words', async () => {
+      vi.spyOn(store, 'search').mockResolvedValue([]);
+      const useful = await store.write('Strato deploy needs daemon-reload\nOld unit stays otherwise.', { metadata: { kind: 'learning' } });
+      const chance = await store.write('Strato invoice deploy note\nUnrelated.', { metadata: { kind: 'error' } });
+      vi.spyOn(store, 'searchFailures').mockResolvedValue([chance, useful]);
+      vi.spyOn(timCore, 'askJev').mockImplementation(async (_c, state) => ({
+        rel: { type: 'noul', noul: String((state as { memory: string }).memory).includes('daemon') ? 0.9 : 0.1 },
+      }));
+
+      const result = await runPromptSubmit(store, { prompt: 'Deploye das auf Strato', jev: true });
+      expect(result!.lines).toEqual([expect.stringContaining(`TIM guard (learning): Strato deploy needs daemon-reload [${useful.id}]`)]);
+    });
+
+    it('judges guard hits for prompts without a known action verb', async () => {
+      vi.spyOn(store, 'search').mockResolvedValue([]);
+      const upload = await store.write('rmapi put is broken\nUse the sync fox v3 upload.', { metadata: { kind: 'learning' } });
+      const guard = vi.spyOn(store, 'searchFailures').mockResolvedValue([upload]);
+      vi.spyOn(timCore, 'askJev').mockResolvedValue({ rel: { type: 'noul', noul: 0.9 } });
+
+      const result = await runPromptSubmit(store, { prompt: 'Schick das PDF aufs reMarkable', jev: true });
+      expect(guard).toHaveBeenCalled();
+      expect(result!.lines).toEqual([expect.stringContaining(`TIM guard (learning): rmapi put is broken [${upload.id}]`)]);
+    });
+
+    it('shows unjudged guard hits only behind a known action verb when Jev does not answer', async () => {
+      vi.spyOn(store, 'search').mockResolvedValue([]);
+      const hit = await store.write('Sync passphrase lives in .mcp.json\nNot in .env.', { metadata: { kind: 'error' } });
+      vi.spyOn(store, 'searchFailures').mockResolvedValue([hit]);
+      vi.spyOn(timCore, 'askJev').mockResolvedValue(null);
+
+      expect(await runPromptSubmit(store, { prompt: 'Erklär mir den Sync', jev: true })).toBeNull();
+      const result = await runPromptSubmit(store, { prompt: 'Installiere den Sync neu', jev: true });
+      expect(result!.lines).toEqual([expect.stringContaining(`[${hit.id}]`)]);
     });
 
     it('never sends secret entries to Jev', async () => {
