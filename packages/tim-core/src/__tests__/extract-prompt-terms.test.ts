@@ -40,6 +40,14 @@ describe('buildPromptSearchQuery', () => {
       .toBe('"fix" OR "sqlite" OR "wal" OR "size"');
   });
 
+  it('leaves conversational filler out, so the topic word drives the ranking', () => {
+    const prompt = 'Aber wie gut funktioniert TIM jetzt als Gedächtnis? Wenn ich dich zum Beispiel frage, '
+      + 'was dir zum Thema hmem einfällt.. Springt da dein Memory an? Welche Erinnerungen kommen dir?';
+    expect(buildPromptSearchQuery(prompt)).toBe(
+      '"funktioniert" OR "tim" OR "gedächtnis" OR "hmem" OR "einfällt" OR "springt" OR "memory" OR "erinnerungen"',
+    );
+  });
+
   it('falls back to trimmed prompt when no terms survive', () => {
     expect(buildPromptSearchQuery('  a b  ')).toBe('a b');
   });

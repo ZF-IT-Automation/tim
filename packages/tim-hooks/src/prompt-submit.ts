@@ -1,5 +1,12 @@
 import { loadConfig, buildPromptSearchQuery, askJev, jevNoul, type Entry, type JevQuestion } from 'tim-core';
-import { isHarnessOnlyPrompt, shouldSkipPromptRecall, type TimStore } from 'tim-store';
+import {
+  formatRelatedProjectLine,
+  INBOX_PROJECT_LABEL,
+  isHarnessOnlyPrompt,
+  projectDisplayNameFromEntry,
+  shouldSkipPromptRecall,
+  type TimStore,
+} from 'tim-store';
 
 const DEFAULT_TIMEOUT_MS = 1000;
 /** Search plus one parallel round of Jev calls (JEV_DEADLINE_MS each), inside Claude's 2 s hook timeout. */
@@ -13,6 +20,17 @@ const SEARCH_TOP_K = RETRIEVAL_TOP_K * 4;
  * (31% of reminders in the 2026-10-03 review). Briefing and tim_resume_topic cover session history.
  */
 const NOT_RECALLED_KINDS = new Set(['exchange', 'checkpoint', 'batch-summary', 'session-summary-root']);
+
+/** A named project is a side source: half the pool, since every hit costs one Jev call. */
+const NAMED_PROJECT_TOP_K = SEARCH_TOP_K / 2;
+/**
+ * Prompt asks what is remembered: "was fällt dir zu hmem ein", "erinnerst du dich", "what do you
+ * know about". Only then does a named project get its line without Jev — on 90 labelled prompts a
+ * project name came up 7 times in passing ("schick einen team-up Agenten los") and never with this.
+ * ponytail: phrase list, misses paraphrases; a Jev question for recall intent if that matters.
+ */
+const RECALL_INTENT =
+  /\b(?:erinner\w*|einf[äa]ll\w*|f[äa]llt\s+dir|wei(?:ß|ss)t\s+du|remember\w*|what\s+do\s+you\s+know)\b/iu;
 
 /** Prompt looks like a planned action — run tim_guard-style failure lookup. */
 const ACTION_PATTERN =
@@ -132,6 +150,47 @@ async function jevRecallLines(prompt: string, hits: Entry[]): Promise<string[] |
     .slice(0, JEV_TOP_K);
 }
 
+// Paths and URLs carry names by accident: /home/bbbee/… would name the "bbbee" project.
+const withoutPaths = (text: string) => text.replace(/\S*[/\\]\S*/g, ' ');
+const fold = (text: string) => ` ${text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim()} `;
+
+interface NamedProject {
+  root: Entry;
+  label: string;
+  /** Folded name words, left out of that project's query. */
+  nameTerms: Set<string>;
+}
+
+/** Projects other than the bound one that the prompt names by label, alias or full name. */
+async function namedProjects(store: TimStore, prompt: string, boundLabel?: string): Promise<NamedProject[]> {
+  const text = fold(withoutPaths(prompt));
+  const out: NamedProject[] = [];
+  for (const { id, label } of await store.listProjects()) {
+    if (label === boundLabel || label === INBOX_PROJECT_LABEL) continue;
+    const root = await store.read(id);
+    if (!root || root.metadata.secret) continue;
+    const aliases = Array.isArray(root.metadata.aliases) ? root.metadata.aliases.map(String) : [];
+    const names = [label, ...aliases, projectDisplayNameFromEntry(root)].map(fold).filter(n => n.trim());
+    if (!names.some(n => text.includes(n))) continue;
+    out.push({ root, label, nameTerms: new Set(names.flatMap(n => n.trim().split(' '))) });
+  }
+  return out;
+}
+
+function namedProjectLine({ root, label }: NamedProject): string {
+  const meta = root.metadata.description;
+  const description = typeof meta === 'string' && meta.trim()
+    ? meta
+    : root.content.split('\n').find(l => l.trim() && !l.trim().startsWith('#'));
+  return `TIM erinnert: ${formatRelatedProjectLine({
+    label,
+    displayName: projectDisplayNameFromEntry(root),
+    description: description ? excerpt(description, 200) : undefined,
+    lastActivity: '',
+    projectId: root.id,
+  })}`;
+}
+
 /** Output of a slash command or `!` shell command, not something the user asked. */
 const COMMAND_OUTPUT_ONLY =
   /^(?:\s*<(local-command-std(?:out|err)|bash-(?:input|stdout|stderr))>[\s\S]*?<\/\1>)+\s*$/i;
@@ -159,14 +218,17 @@ async function computePromptContext(
   const searchQuery = buildPromptSearchQuery(query);
   if (!searchQuery.trim()) return null;
 
-  let hits = await store.search({
-    query: searchQuery,
-    topK: SEARCH_TOP_K,
+  const named = await namedProjects(store, query, params.projectLabel);
+  const scopes = [
+    { project: params.projectLabel, query: searchQuery, topK: SEARCH_TOP_K },
+    ...named.map(n => ({ project: n.label, query: buildPromptSearchQuery(query, n.nameTerms), topK: NAMED_PROJECT_TOP_K })),
+  ].filter(scope => scope.query);
+  let hits = (await Promise.all(scopes.map(scope => store.search({
+    ...scope,
     searchType: 'fts',
-    project: params.projectLabel,
-    ftsQueryMode: searchQuery.includes(' OR ') ? 'or-terms' : 'literal',
+    ftsQueryMode: scope.query.includes(' OR ') ? 'or-terms' : 'literal',
     excludeKinds: [...NOT_RECALLED_KINDS],
-  });
+  })))).flat();
   // Past turns stay reachable via tim_resume_topic / tim_search.
   hits = hits.filter(hit => !shouldSkipPromptRecall(hit));
 
@@ -180,6 +242,8 @@ async function computePromptContext(
       if (lines.length === RETRIEVAL_TOP_K) break;
     }
   }
+
+  if (RECALL_INTENT.test(withoutPaths(query))) lines.push(...named.map(namedProjectLine));
 
   if (looksLikeAction(query)) {
     const failures = await store.searchFailures(query, {

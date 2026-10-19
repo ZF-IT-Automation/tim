@@ -25,6 +25,8 @@ export const PROMPT_STOP_WORDS = new Set([
   'geben', 'schauen', 'guck', 'prüf', 'prüfe', 'check', 'wären', 'seine', 'seinen', 'darf',
   'dürfen', 'jemand', 'dies', 'diesen', 'zwei', 'drei', 'neue', 'neuen', 'neu', 'erst',
   'thing', 'things', 'something', 'make', 'sure', 'onto',
+  'als', 'dich', 'dir', 'welche', 'welcher', 'welches', 'welchen', 'kommen', 'kommt',
+  'beispiel', 'frage', 'thema',
 ]);
 
 /**
@@ -41,11 +43,13 @@ export function extractPromptTerms(prompt: string, minLength = 3): string[] {
 
 /**
  * Build an OR-joined FTS query for prompt recall. Falls back to the trimmed
- * prompt when no content terms survive stop-word removal.
+ * prompt when no content terms survive stop-word removal. Terms in `skip` are
+ * left out, and then nothing is no query: a project's own name matches its
+ * whole tree, so it ranks nothing there.
  */
-export function buildPromptSearchQuery(prompt: string): string {
+export function buildPromptSearchQuery(prompt: string, skip?: ReadonlySet<string>): string {
   if (isHarnessOnlyPrompt(prompt)) return '';
-  const terms = extractPromptTerms(prompt);
-  if (terms.length === 0) return prompt.trim();
+  const terms = extractPromptTerms(prompt).filter(t => !skip?.has(t));
+  if (terms.length === 0) return skip ? '' : prompt.trim();
   return terms.map(t => `"${t.replace(/"/g, '""')}"`).join(' OR ');
 }

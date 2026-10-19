@@ -169,6 +169,64 @@ describe('runPromptSubmit', () => {
     const result = await runPromptSubmit(store, { prompt: 'anything' });
     expect(result).toBeNull();
   });
+  describe('named projects', () => {
+    beforeEach(async () => {
+      await store.createProject('P0063', { content: 'TIM — Theoretically Infinite Memory' });
+      await store.createProject('P0048', {
+        content: 'hmem\nhmem — predecessor memory system (hmem-mcp + hmem-sync). ARCHIVED: read-only.',
+      });
+      await store.createProject('P0073', { content: 'team-up\nMulti-CLI agent roster.', aliases: ['team-up'] });
+    });
+
+    const scopes = (search: { mock: { calls: Array<[{ project?: string; query: string }]> } }) =>
+      search.mock.calls.map(([o]) => [o.project, o.query]);
+
+    it('also searches a project the prompt names, without its name as a search term', async () => {
+      const search = vi.spyOn(store, 'search').mockResolvedValue([]);
+      await runPromptSubmit(store, { prompt: 'Warum hat hmem-sync die falsche DB gelesen?', projectLabel: 'P0063' });
+      expect(scopes(search)).toContainEqual(['P0063', expect.stringContaining('"hmem"')]);
+      const named = scopes(search).find(([p]) => p === 'P0048');
+      expect(named?.[1]).toContain('"sync"');
+      expect(named?.[1]).not.toContain('"hmem"');
+
+      search.mockClear();
+      await runPromptSubmit(store, { prompt: 'Gehört das ins Team up Repo?', projectLabel: 'P0063' });
+      expect(scopes(search).map(([p]) => p)).toEqual(['P0063', 'P0073']);
+    });
+
+    it('ignores names inside paths and the bound project itself', async () => {
+      const search = vi.spyOn(store, 'search').mockResolvedValue([]);
+      await runPromptSubmit(store, {
+        prompt: 'Lies ~/projects/team-up/src/x.ts und /home/bbbee/hmem/store.ts für P0063',
+        projectLabel: 'P0063',
+      });
+      expect(scopes(search).map(([p]) => p)).toEqual(['P0063']);
+    });
+
+    it('answers a recall question about a named project with its line, even when Jev keeps nothing', async () => {
+      const noise = await store.write('Projekt-Start als Greenfield-Rewrite\nPhase 0.', { metadata: { kind: 'decision' } });
+      vi.spyOn(store, 'search').mockResolvedValue([noise]);
+      vi.spyOn(timCore, 'askJev').mockResolvedValue({ rel: { type: 'noul', noul: 0.2 } });
+
+      const result = await runPromptSubmit(store, {
+        prompt: 'Wenn ich dich frage, was dir zum Thema hmem einfällt: welche Erinnerungen kommen?',
+        projectLabel: 'P0063',
+        jev: true,
+      });
+      expect(result!.lines).toEqual([
+        'TIM erinnert: P0048 — hmem · hmem — predecessor memory system (hmem-mcp + hmem-sync). ARCHIVED: read-only.'
+          + ' · tim_load_project({ label: "P0048", bind: false })',
+      ]);
+    });
+
+    it('adds no project line for a passing mention', async () => {
+      vi.spyOn(store, 'search').mockResolvedValue([]);
+      for (const prompt of ['Schick einen team-up Agenten los', 'Lies skills/tim-remember.ts für team-up']) {
+        expect(await runPromptSubmit(store, { prompt, projectLabel: 'P0063', jev: true })).toBeNull();
+      }
+    });
+  });
+
   describe('with Jev', () => {
     const summary = [
       '- **Soak:** 20h stable, RSS 116 MB.',
