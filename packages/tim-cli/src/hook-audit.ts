@@ -14,7 +14,7 @@ export interface HookFinding {
   fragile: boolean;
 }
 
-const TIM_HOOK_RE = /(?:^|[\s'"/])(?:tim|cli\.js)['"]?\s+hook\s+[a-z-]+|tim-session-start\.sh/;
+const TIM_HOOK_RE = /(?:^|[\s'"/])(?:tim|cli\.js)['"]?\s+hook\s+[a-z-]+|tim-session-start\.sh|tim-cli\/(?:dist|src)\/pre-tool-use-hook\.js/;
 
 /** Absolute paths a command names, quoted or not. */
 function absolutePaths(command: string): string[] {

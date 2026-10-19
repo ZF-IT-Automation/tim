@@ -4,6 +4,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import {
   timHookCommand,
+  timScriptCommand,
   installClaudeHooks,
   mergeClaudeHooks,
   type ClaudeSettings,
@@ -99,7 +100,11 @@ describe('mergeClaudeHooks', () => {
     const next = mergeClaudeHooks(existing);
 
     expect(next.permissions).toEqual(existing.permissions);
-    expect(next.hooks?.PreToolUse).toEqual(existing.hooks?.PreToolUse);
+    // The user's Bash group stays as it is; TIM's guard gets a group of its own.
+    expect(next.hooks?.PreToolUse).toEqual([
+      ...existing.hooks!.PreToolUse!,
+      { matcher: 'Bash', hooks: [{ type: 'command', command: timScriptCommand('pre-tool-use-hook.js'), timeout: 3 }] },
+    ]);
     expect(next.hooks?.UserPromptSubmit).toContainEqual(
       expect.objectContaining({
         hooks: expect.arrayContaining([
@@ -122,6 +127,21 @@ describe('mergeClaudeHooks', () => {
       }),
     );
     expect(mergeClaudeHooks(next)).toEqual(next);
+  });
+
+  it('rewrites a moved PreToolUse guard path instead of adding a second hook', () => {
+    const existing: ClaudeSettings = {
+      hooks: {
+        PreToolUse: [{ matcher: 'Bash', hooks: [
+          { type: 'command', command: "'/old/node' '/old/tim/packages/tim-cli/dist/pre-tool-use-hook.js'", timeout: 3 },
+        ] }],
+      },
+    };
+    const next = mergeClaudeHooks(existing);
+    expect(next.hooks?.PreToolUse).toEqual([
+      { matcher: 'Bash', hooks: [{ type: 'command', command: timScriptCommand('pre-tool-use-hook.js'), timeout: 3 }] },
+    ]);
+    expect(timScriptCommand('pre-tool-use-hook.js')).toMatch(/^'\/.+' '\/.+tim-cli\/(dist|src)\/pre-tool-use-hook\.js'$/);
   });
 
   it('installs the SessionEnd checkpoint hook once', () => {

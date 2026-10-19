@@ -41,6 +41,16 @@ export function promptSubmitEnvelope(context: string) {
   };
 }
 
+/** Context only: no permissionDecision, so the normal permission flow decides the call. */
+export function preToolUseEnvelope(context: string) {
+  return {
+    hookSpecificOutput: {
+      hookEventName: 'PreToolUse',
+      additionalContext: context,
+    },
+  };
+}
+
 export function sessionStartEnvelope(context: string) {
   return {
     hookSpecificOutput: {

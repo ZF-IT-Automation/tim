@@ -84,6 +84,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { getDbPath } from './db-path.js';
+import { resolveHookProject } from './hook-project.js';
 
 function defaultLiveDbPath(): string {
   return path.resolve(path.join(os.homedir(), '.tim', 'tim.db'));
@@ -737,24 +738,6 @@ async function cmdBindProject(args: string[]) {
   } finally {
     store.close();
   }
-}
-
-/**
- * Project a turn hook should use. A bound session (`kind === 'session'` and a
- * string `project_ref`) wins over cwd: Claude's cwd drifts into subdirectories
- * where the cwd-only marker lookup finds nothing. No session entry → the marker
- * in cwd itself. No walk-up.
- */
-async function resolveHookProject(
-  store: TimStore,
-  sessionId: string,
-  cwd: string,
-): Promise<string | undefined> {
-  const session = sessionId ? await store.read(sessionId) : null;
-  const bound = session?.metadata.kind === 'session' && typeof session.metadata.project_ref === 'string'
-    ? session.metadata.project_ref
-    : undefined;
-  return bound ?? findMarker(cwd)?.marker.project;
 }
 
 async function cmdHook(args: string[]) {

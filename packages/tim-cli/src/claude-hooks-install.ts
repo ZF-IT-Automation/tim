@@ -18,6 +18,7 @@ export interface ClaudeSettings {
   hooks?: {
     SessionStart?: ClaudeHookMatcher[];
     UserPromptSubmit?: ClaudeHookMatcher[];
+    PreToolUse?: ClaudeHookMatcher[];
     Stop?: ClaudeHookMatcher[];
     SessionEnd?: ClaudeHookMatcher[];
     [event: string]: ClaudeHookMatcher[] | undefined;
@@ -33,9 +34,13 @@ export interface ClaudeHooksInstallResult {
 }
 
 interface TimClaudeHook {
-  event: 'SessionStart' | 'UserPromptSubmit' | 'Stop' | 'SessionEnd';
+  event: 'SessionStart' | 'UserPromptSubmit' | 'PreToolUse' | 'Stop' | 'SessionEnd';
   sub: string;
   timeout: number;
+  /** Tool-name matcher of the group TIM adds; default '' (every event). */
+  matcher?: string;
+  /** Own entry script next to cli.js instead of `cli.js hook <sub>`. */
+  script?: string;
   /** Older hand-placed scripts that already do this hook's job. Kept as they are. */
   equivalents?: string[];
 }
@@ -45,6 +50,9 @@ const TIM_HOOKS: TimClaudeHook[] = [
   // briefing, and a missing briefing costs the whole session its context.
   { event: 'SessionStart', sub: 'claude-session-start', timeout: 10, equivalents: ['tim-session-start'] },
   { event: 'UserPromptSubmit', sub: 'prompt-submit', timeout: 2 },
+  // Starts on every Bash call, so not through cli.js (~250 ms to load); does nothing
+  // unless hooks.preToolUse.enabled is set.
+  { event: 'PreToolUse', sub: 'pre-tool-use', matcher: 'Bash', script: 'pre-tool-use-hook.js', timeout: 3 },
   { event: 'Stop', sub: 'claude-stop', timeout: 5 },
   // Ends the session TIM would otherwise never see closed: /clear and exit both
   // fire this, and the checkpoint is the last thing written before the id is gone.
@@ -79,6 +87,15 @@ export function isShippedSessionStartScript(command: string): boolean {
   return /tim-hooks\/scripts\/tim-session-start\.sh/.test(command);
 }
 
+/** `node <dir of cli.js>/<script>`, for a hook with its own entry script. */
+export function timScriptCommand(
+  script: string,
+  dir = __dirname,
+  node = process.execPath,
+): string {
+  return `${shellQuote(node)} ${shellQuote(path.join(dir, script))}`;
+}
+
 /** Any earlier TIM form of this hook: bare `tim`, a linked `.../tim`, or `.../tim-cli/dist/cli.js`. */
 export function isTimHookCommand(command: string, sub: string): boolean {
   return new RegExp(`(?:^|[\\s'"])(?:[^\\s'"]*/)?(?:tim|tim-cli/(?:dist|src)/cli\\.js)['"]?\\s+hook\\s+${sub}(?:\\s|$)`).test(command);
@@ -93,10 +110,14 @@ export function isTimHookCommand(command: string, sub: string): boolean {
 export function mergeClaudeHooks(
   settings: ClaudeSettings,
   commandFor: (sub: string) => string = timHookCommand,
+  scriptCommandFor: (script: string) => string = timScriptCommand,
 ): ClaudeSettings {
   const hooks: NonNullable<ClaudeSettings['hooks']> = { ...settings.hooks };
   for (const spec of TIM_HOOKS) {
-    const command = commandFor(spec.sub);
+    const command = spec.script ? scriptCommandFor(spec.script) : commandFor(spec.sub);
+    const isTim = (cmd: string) => spec.script
+      ? new RegExp(`tim-cli/(?:dist|src)/${spec.script.replace(/\./g, '\\.')}['"]?$`).test(cmd)
+      : isTimHookCommand(cmd, spec.sub);
     let found = false;
     const groups = (hooks[spec.event] ?? []).map(group => ({
       ...group,
@@ -107,14 +128,14 @@ export function mergeClaudeHooks(
           found = true;
           return hook;
         }
-        if (!shipped && !isTimHookCommand(hook.command, spec.sub)) return hook;
+        if (!shipped && !isTim(hook.command)) return hook;
         found = true;
         return hook.command === command ? hook : { ...hook, command };
       }),
     }));
     hooks[spec.event] = found
       ? groups
-      : [...groups, { matcher: '', hooks: [{ type: 'command', command, timeout: spec.timeout }] }];
+      : [...groups, { matcher: spec.matcher ?? '', hooks: [{ type: 'command', command, timeout: spec.timeout }] }];
   }
   return { ...settings, hooks };
 }

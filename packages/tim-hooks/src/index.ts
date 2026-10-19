@@ -43,6 +43,8 @@ export {
   type PromptSubmitParams,
   type PromptSubmitResult,
 } from './prompt-submit.js';
+export { runToolGuard, type ToolGuardParams } from './tool-guard.js';
+export { isRiskyCommand, scrubCommand } from './risky-command.js';
 
 export {
   runClaudeStop,

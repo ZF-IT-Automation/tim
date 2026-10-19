@@ -13,6 +13,13 @@ export interface HooksConfig {
     /** Opt-in: Jev judges each recall candidate and picks its most relevant part. Sends the prompt to OpenRouter. */
     jev?: boolean;
   };
+  /**
+   * Opt-in: before a risky Bash command (git push, rm, npm publish …) Jev judges which
+   * learnings apply. Sends the command, credentials scrubbed, to OpenRouter.
+   */
+  preToolUse?: {
+    enabled?: boolean;
+  };
 }
 
 export interface RememberConfig {
